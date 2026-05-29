@@ -1457,12 +1457,14 @@ export interface Dict {
   'connectors.emptyNoMatchBody': string;
   'connectors.emptyNoMatchAction': string;
 
-  // Code-mode permission selector (Claude native modes)
-  'code.permMode.label': string;
-  'code.permMode.plan': string;
-  'code.permMode.acceptEdits': string;
-  'code.permMode.full': string;
-  'code.permMode.planHint': string;
+  // Code-mode agent-mode switcher (Code / Plan / Ask, modeled on CodePilot)
+  'code.agentMode.label': string;
+  'code.agentMode.code': string;
+  'code.agentMode.plan': string;
+  'code.agentMode.ask': string;
+  'code.agentMode.codeHint': string;
+  'code.agentMode.planHint': string;
+  'code.agentMode.askHint': string;
   'designFiles.emptyCode': string;
   // New project panel
   'newproj.tabCode': string;

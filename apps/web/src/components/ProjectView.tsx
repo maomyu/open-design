@@ -549,12 +549,13 @@ export function ProjectView({
       clearOnboardingSessionId();
     }
   }, [analytics.track, project.id]);
-  // Claude-native permission mode for code-mode projects. 'bypassPermissions'
-  // (full access) keeps the historical behavior; the composer lets code
-  // projects switch to 'plan' (read/plan only) or 'acceptEdits' (auto-accept).
-  const [codePermissionMode, setCodePermissionMode] = useState<
-    'plan' | 'acceptEdits' | 'bypassPermissions'
-  >('bypassPermissions');
+  // Agent interaction mode for code-mode projects, modeled on CodePilot's
+  // Code / Plan / Ask switcher. Each maps to a Claude-native permission mode
+  // (no prompt injection): Code = full access (read/write/run), Plan = plan
+  // mode (analyze + propose, no execution), Ask = read-only Q&A (no changes).
+  const [codeAgentMode, setCodeAgentMode] = useState<'code' | 'plan' | 'ask'>(
+    'code',
+  );
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
     null,
@@ -2774,7 +2775,11 @@ export function ProjectView({
           // (Plan / Accept edits / Full access). Design modes leave this null
           // so the daemon keeps its headless bypass default.
           permissionMode:
-            project.metadata?.kind === 'code' ? codePermissionMode : null,
+            project.metadata?.kind === 'code'
+              ? codeAgentMode === 'code'
+                ? 'bypassPermissions'
+                : 'plan'
+              : null,
           locale,
           ...(dsAnalyticsHints ? { analyticsHints: dsAnalyticsHints } : {}),
           onRunCreated: (runId) => {
@@ -4454,9 +4459,9 @@ export function ProjectView({
         >
           {project.metadata?.kind === 'code' ? (
             <div
-              className="code-perm-bar"
+              className="code-mode-bar"
               role="radiogroup"
-              aria-label={t('code.permMode.label')}
+              aria-label={t('code.agentMode.label')}
               style={{
                 display: 'flex',
                 gap: 6,
@@ -4467,25 +4472,31 @@ export function ProjectView({
                 borderBottom: '1px solid var(--border, #e4e4e7)',
               }}
             >
-              <span style={{ opacity: 0.6 }}>{t('code.permMode.label')}</span>
-              {(['plan', 'acceptEdits', 'bypassPermissions'] as const).map((m) => {
-                const active = codePermissionMode === m;
+              <span style={{ opacity: 0.6 }}>{t('code.agentMode.label')}</span>
+              {(['code', 'plan', 'ask'] as const).map((m) => {
+                const active = codeAgentMode === m;
                 const label =
-                  m === 'plan'
-                    ? t('code.permMode.plan')
-                    : m === 'acceptEdits'
-                      ? t('code.permMode.acceptEdits')
-                      : t('code.permMode.full');
+                  m === 'code'
+                    ? t('code.agentMode.code')
+                    : m === 'plan'
+                      ? t('code.agentMode.plan')
+                      : t('code.agentMode.ask');
+                const hint =
+                  m === 'code'
+                    ? t('code.agentMode.codeHint')
+                    : m === 'plan'
+                      ? t('code.agentMode.planHint')
+                      : t('code.agentMode.askHint');
                 return (
                   <button
                     key={m}
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    title={m === 'plan' ? t('code.permMode.planHint') : label}
-                    onClick={() => setCodePermissionMode(m)}
+                    title={hint}
+                    onClick={() => setCodeAgentMode(m)}
                     style={{
-                      padding: '2px 10px',
+                      padding: '2px 12px',
                       borderRadius: 999,
                       border: '1px solid var(--border, #d4d4d8)',
                       cursor: 'pointer',
