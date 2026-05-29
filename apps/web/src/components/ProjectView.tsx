@@ -4343,11 +4343,13 @@ export function ProjectView({
             {projectMeta !== t('project.metaFreeform') ? (
               <span className="meta" data-testid="project-meta">{projectMeta}</span>
             ) : null}
-            <ProjectDesignSystemPicker
-              designSystems={designSystems}
-              selectedId={project.designSystemId ?? null}
-              onChange={handleChangeDesignSystemId}
-            />
+            {project.metadata?.kind === 'code' ? null : (
+              <ProjectDesignSystemPicker
+                designSystems={designSystems}
+                selectedId={project.designSystemId ?? null}
+                onChange={handleChangeDesignSystemId}
+              />
+            )}
             {hasProjectInstructions ? (
               <button
                 type="button"
