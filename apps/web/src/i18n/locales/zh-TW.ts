@@ -1253,6 +1253,7 @@ export const zhTW: Dict = {
   'designFiles.pasteText': '貼上為文字檔案',
   'designFiles.newSketch': '新建草圖',
   'designFiles.empty': '生成的設計會出現在這裡',
+  'designFiles.emptyCode': '生成的檔案會出現在這裡',
   'designFiles.refresh': '重新整理',
   'designFiles.delete': '刪除',
   'designFiles.searchPlaceholder': '搜尋檔案…',

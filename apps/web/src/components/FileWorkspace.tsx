@@ -108,6 +108,8 @@ interface Props {
   githubConnected?: boolean;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
+  // True for general code-mode projects; shed design-specific copy.
+  codeMode?: boolean;
 }
 
 interface SketchState {
@@ -193,6 +195,7 @@ const DESIGN_SYSTEM_IMAGE_OR_FONT_EXTENSIONS = /\.(svg|png|jpe?g|gif|webp|avif|i
 export function FileWorkspace({
   projectId,
   projectKind,
+  codeMode = false,
   files,
   liveArtifacts,
   filesRefreshKey = 0,
@@ -975,6 +978,7 @@ export function FileWorkspace({
         ) : activeTab === DESIGN_FILES_TAB ? (
           <DesignFilesPanel
             key={projectId}
+            codeMode={codeMode}
             projectId={projectId}
             files={visibleFiles}
             liveArtifacts={liveArtifactEntries}

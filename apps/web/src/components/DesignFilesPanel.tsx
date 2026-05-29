@@ -40,6 +40,9 @@ interface Props {
   ) => Promise<{ message?: string; url?: string } | void> | { message?: string; url?: string } | void;
   activePluginActionPaths?: Set<string>;
   hiddenPluginActionPaths?: Set<string>;
+  // Code-mode projects produce arbitrary files, not design artifacts, so the
+  // empty-state copy uses a generic "files" noun instead of "creations".
+  codeMode?: boolean;
 }
 
 interface ActionNotice {
@@ -133,6 +136,7 @@ export function DesignFilesPanel({
   onPluginFolderAgentAction,
   activePluginActionPaths = new Set(),
   hiddenPluginActionPaths = new Set(),
+  codeMode = false,
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
@@ -1094,7 +1098,7 @@ export function DesignFilesPanel({
             <div className="df-empty" data-testid="design-files-empty">
               <div className="df-empty-pill">
                 <span className="df-empty-title">
-                  {t('designFiles.empty')}
+                  {t(codeMode ? 'designFiles.emptyCode' : 'designFiles.empty')}
                 </span>
                 <button
                   type="button"

@@ -1463,6 +1463,7 @@ export interface Dict {
   'code.permMode.acceptEdits': string;
   'code.permMode.full': string;
   'code.permMode.planHint': string;
+  'designFiles.emptyCode': string;
   // New project panel
   'newproj.tabCode': string;
   'newproj.titleCode': string;

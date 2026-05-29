@@ -4610,6 +4610,7 @@ export function ProjectView({
         ) : null}
         <FileWorkspace
           projectId={project.id}
+          codeMode={project.metadata?.kind === 'code'}
           projectKind={projectKindToTracking(project.metadata?.kind) ?? 'prototype'}
           files={projectFiles}
           liveArtifacts={liveArtifacts}

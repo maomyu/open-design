@@ -1660,6 +1660,7 @@ export const en: Dict = {
   'designFiles.pasteText': 'Paste as text file',
   'designFiles.newSketch': 'New sketch',
   'designFiles.empty': 'Creations will appear here',
+  'designFiles.emptyCode': 'Files will appear here',
   'designFiles.refresh': 'Refresh',
   'designFiles.delete': 'Delete',
   'designFiles.searchPlaceholder': 'Search files…',
