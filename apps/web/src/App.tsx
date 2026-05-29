@@ -1504,6 +1504,8 @@ function AppInner() {
         onApiProtocolChange={handleApiProtocolChange}
         onApiModelChange={handleApiModelChange}
         onConfigPersist={handleConfigPersist}
+        onSkillsRefresh={refreshSkills}
+        onSkillsChanged={handleSkillsChanged}
         onRefreshAgents={refreshAgents}
         onThemeChange={handleThemeChange}
         skillsLoading={skillsLoading}
@@ -1611,12 +1613,10 @@ function AppInner() {
             setSettingsHighlight(null);
           }}
           onRefreshAgents={refreshAgents}
-          onSkillsRefresh={refreshSkills}
           daemonMediaProviders={daemonMediaProviders}
           daemonMediaProvidersFetchState={daemonMediaProvidersFetchState}
           mediaProvidersNotice={mediaProvidersNotice}
           onReloadMediaProviders={reloadMediaProvidersFromDaemon}
-          onSkillsChanged={handleSkillsChanged}
           onDesignSystemsChanged={handleDesignSystemsChanged}
         />
       ) : null}

@@ -3000,79 +3000,10 @@ describe('SettingsDialog pets interactions', () => {
   });
 });
 
-describe('SettingsDialog skills section', () => {
-  afterEach(() => {
-    cleanup();
-  });
-
-  it('lists functional skills and filters them by mode + search', async () => {
-    renderSettingsDialog(
-      { mode: 'daemon', agentId: 'codex' },
-      { initialSection: 'skills' },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('blog-post')).toBeTruthy();
-      expect(screen.getByText('sales-deck')).toBeTruthy();
-    });
-
-    fireEvent.change(screen.getByRole('combobox', { name: 'Type' }), {
-      target: { value: 'deck' },
-    });
-    expect(screen.queryByText('blog-post')).toBeNull();
-    expect(screen.getByText('sales-deck')).toBeTruthy();
-
-    fireEvent.change(screen.getByPlaceholderText('Search...'), {
-      target: { value: 'sales' },
-    });
-    expect(screen.getByText('sales-deck')).toBeTruthy();
-    expect(screen.queryByText('dashboard')).toBeNull();
-  });
-
-  it('opens a skill detail panel and persists disabled skills from toggle switches', async () => {
-    const { onPersist } = renderSettingsDialog(
-      { mode: 'daemon', agentId: 'codex' },
-      { initialSection: 'skills' },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('blog-post')).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByText('blog-post'));
-    await waitFor(() => {
-      expect(fetchSkillMock).toHaveBeenCalledWith('blog-post');
-      expect(screen.getByText('skill body for blog-post')).toBeTruthy();
-    });
-
-    const toggles = screen.getAllByTitle('Toggle');
-    fireEvent.click(toggles[0] as HTMLElement);
-
-    await waitForPersist(
-      onPersist,
-      expect.objectContaining({
-        disabledSkills: ['blog-post'],
-      }),
-      {},
-    );
-  });
-
-  it('shows an empty state when search matches nothing', async () => {
-    renderSettingsDialog(
-      { mode: 'daemon', agentId: 'codex' },
-      { initialSection: 'skills' },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('blog-post')).toBeTruthy();
-    });
-
-    fireEvent.change(screen.getByPlaceholderText('Search...'), {
-      target: { value: 'zzz-no-match' },
-    });
-    expect(screen.getByText('No items match your search.')).toBeTruthy();
-  });
-});
+// Skills management moved out of Settings into the Integrations route.
+// Coverage now lives in tests/components/IntegrationsView.skills.test.tsx
+// (tab surfaces SkillsSection + persists disabled toggles) and the
+// component-level tests/components/SkillsSection.test.tsx.
 
 describe('SettingsDialog design systems section', () => {
   afterEach(() => {

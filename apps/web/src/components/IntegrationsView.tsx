@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import type { AppConfig } from '../types';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackIntegrationsConnectorsTabClick,
-  trackIntegrationsSkillsTabClick,
   trackIntegrationsTabClick,
   trackPageView,
   trackSettingsConnectorAuthResult,
@@ -11,6 +11,7 @@ import {
 import { ConnectorSection } from './SettingsDialog';
 import { Icon } from './Icon';
 import { McpClientSection } from './McpClientSection';
+import { SkillsSection } from './SkillsSection';
 import { UseEverywhereGuidePanel } from './UseEverywhereModal';
 import { useT } from '../i18n';
 
@@ -21,6 +22,12 @@ interface Props {
   initialTab?: IntegrationTab;
   composioConfigLoading?: boolean;
   onPersistComposioKey: (composio: AppConfig['composio']) => Promise<void> | void;
+  // Persist a full config change. The Skills tab toggles `disabledSkills`
+  // and needs each flip written through immediately — unlike the modal
+  // Settings surface there is no "close to save" gesture on this page.
+  onPersistConfig?: (cfg: AppConfig) => Promise<void> | void;
+  onSkillsRefresh?: () => Promise<void> | void;
+  onSkillsChanged?: (affectedSkillId?: string) => void;
 }
 
 const INTEGRATION_TABS: ReadonlyArray<{
@@ -44,6 +51,9 @@ export function IntegrationsView({
   initialTab = 'mcp',
   composioConfigLoading = false,
   onPersistComposioKey,
+  onPersistConfig,
+  onSkillsRefresh,
+  onSkillsChanged,
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
@@ -66,6 +76,32 @@ export function IntegrationsView({
       composio: config.composio,
     }));
   }, [config.composio]);
+
+  // Keep the Skills toggle state in sync with the canonical config so an
+  // external change (another surface, a daemon push) is reflected here.
+  useEffect(() => {
+    setLocalConfig((curr) => ({
+      ...curr,
+      disabledSkills: config.disabledSkills,
+    }));
+  }, [config.disabledSkills]);
+
+  // SkillsSection mutates config via a standard React setter. Resolve the
+  // update against local state for an instant UI flip, then persist the
+  // resolved config so the disabled-skill preference survives a reload.
+  const setSkillsCfg = useCallback<Dispatch<SetStateAction<AppConfig>>>(
+    (action) => {
+      setLocalConfig((curr) => {
+        const next =
+          typeof action === 'function'
+            ? (action as (c: AppConfig) => AppConfig)(curr)
+            : action;
+        void onPersistConfig?.(next);
+        return next;
+      });
+    },
+    [onPersistConfig],
+  );
 
   const liveDaemonUrl =
     typeof window !== 'undefined' ? window.location.origin : undefined;
@@ -148,7 +184,14 @@ export function IntegrationsView({
           />
         ) : null}
 
-        {activeTab === 'skills' ? <SkillsComingSoonPanel /> : null}
+        {activeTab === 'skills' ? (
+          <SkillsSection
+            cfg={localConfig}
+            setCfg={setSkillsCfg}
+            {...(onSkillsRefresh ? { onSkillsRefresh } : {})}
+            {...(onSkillsChanged ? { onSkillsChanged } : {})}
+          />
+        ) : null}
 
         {activeTab === 'use-everywhere' ? (
           <div className="integrations-view__use-everywhere">
@@ -158,35 +201,6 @@ export function IntegrationsView({
             />
           </div>
         ) : null}
-      </div>
-    </section>
-  );
-}
-
-function SkillsComingSoonPanel() {
-  const t = useT();
-  const analytics = useAnalytics();
-  return (
-    <section
-      className="integrations-view__coming-soon"
-      aria-labelledby="integration-skills-title"
-      onClick={() =>
-        trackIntegrationsSkillsTabClick(analytics.track, {
-          page_name: 'integrations',
-          area: 'skills_tab',
-          element: 'coming_soon',
-        })
-      }
-    >
-      <div className="integrations-view__coming-icon" aria-hidden="true">
-        <Icon name="sparkles" size={22} />
-      </div>
-      <div>
-        <p className="integrations-view__coming-kicker">{t('tasks.comingSoon')}</p>
-        <h2 id="integration-skills-title">{t('integrations.skillsTitle')}</h2>
-        <p>
-          {t('integrations.skillsBody')}
-        </p>
       </div>
     </section>
   );
@@ -205,7 +219,7 @@ function integrationTabHint(id: IntegrationTab, t: ReturnType<typeof useT>): str
   switch (id) {
     case 'mcp': return t('integrations.tabHint.mcp');
     case 'connectors': return t('integrations.tabHint.connectors');
-    case 'skills': return t('tasks.comingSoon');
+    case 'skills': return t('settings.skillsHint');
     case 'use-everywhere': return t('integrations.tabHint.useEverywhere');
   }
 }

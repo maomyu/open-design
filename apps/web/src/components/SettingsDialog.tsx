@@ -91,7 +91,6 @@ import type { MediaProvider } from '../media/models';
 import { Toast } from './Toast';
 import { PetSettings } from './pet/PetSettings';
 import { McpClientSection } from './McpClientSection';
-import { SkillsSection } from './SkillsSection';
 import { DesignSystemsSection } from './DesignSystemsSection';
 import { PrivacySection } from './PrivacySection';
 import { RoutinesSection } from './RoutinesSection';
@@ -133,7 +132,6 @@ export type SettingsSection =
   | 'critiqueTheater'
   | 'notifications'
   | 'pet'
-  | 'skills'
   | 'designSystems'
   | 'memory'
   | 'privacy'
@@ -188,21 +186,11 @@ interface Props {
   onRefreshAgents: (
     options?: AgentRefreshOptions,
   ) => AgentInfo[] | Promise<AgentInfo[] | void> | void;
-  /** Re-fetch functional skills into App state after Settings mutations. */
-  onSkillsRefresh?: () => Promise<void> | void;
   daemonMediaProviders?: AppConfig['mediaProviders'] | null;
   daemonMediaProvidersFetchState?: 'idle' | 'ok' | 'error';
   mediaProvidersNotice?: string | null;
   onReloadMediaProviders?: () => Promise<AppConfig['mediaProviders'] | null>;
-  /**
-   * Notified by Settings → Skills after a successful skill registry
-   * mutation (create / edit / delete). App.tsx uses this to drop preview
-   * iframes whose project depends on the affected skill — body-only
-   * edits do not move SkillSummary fields, so ProjectView's signature
-   * path can miss them.
-   */
-  onSkillsChanged?: (affectedSkillId?: string) => void;
-  /** Same channel for design-system registry mutations. */
+  /** Notified after a design-system registry mutation. */
   onDesignSystemsChanged?: (affectedDesignSystemId?: string) => void;
 }
 
@@ -828,12 +816,10 @@ export function SettingsDialog({
   composioConfigLoading = false,
   onClose,
   onRefreshAgents,
-  onSkillsRefresh,
   daemonMediaProviders,
   daemonMediaProvidersFetchState = 'idle',
   mediaProvidersNotice,
   onReloadMediaProviders,
-  onSkillsChanged,
   onDesignSystemsChanged,
 }: Props) {
   const { t, locale, setLocale } = useI18n();
@@ -2023,7 +2009,6 @@ export function SettingsDialog({
     notifications: { title: t('settings.notifications'), subtitle: t('settings.notificationsHint') },
     privacy: { title: t('settings.privacy'), subtitle: t('settings.privacyHint') },
     pet: { title: t('pet.title'), subtitle: t('pet.subtitle') },
-    skills: { title: t('settings.skills'), subtitle: t('settings.skillsHint') },
     designSystems: {
       title: t('settings.designSystems'),
       subtitle: t('settings.designSystemsHint'),
@@ -2343,17 +2328,6 @@ export function SettingsDialog({
               <span>
                 <strong>{t('settings.mediaProviders')}</strong>
                 <small>Image / video / audio</small>
-              </span>
-            </button>
-            <button
-              type="button"
-              className={`settings-nav-item${activeSection === 'skills' ? ' active' : ''}`}
-              onClick={() => setActiveSection('skills')}
-            >
-              <Icon name="grid" size={18} />
-              <span>
-                <strong>{t('settings.skills')}</strong>
-                <small>{t('settings.skillsHint')}</small>
               </span>
             </button>
             <button
@@ -3626,15 +3600,6 @@ export function SettingsDialog({
 
           {activeSection === 'pet' ? (
             <PetSettings cfg={cfg} setCfg={setCfg} />
-          ) : null}
-
-          {activeSection === 'skills' ? (
-            <SkillsSection
-              cfg={cfg}
-              setCfg={setCfg}
-              onSkillsRefresh={onSkillsRefresh}
-              onSkillsChanged={onSkillsChanged}
-            />
           ) : null}
 
           {activeSection === 'designSystems' ? (

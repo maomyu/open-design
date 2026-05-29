@@ -238,6 +238,12 @@ interface Props {
   onApiProtocolChange: (protocol: ApiProtocol) => void;
   onApiModelChange: (model: string) => void;
   onConfigPersist: (cfg: AppConfig) => Promise<void> | void;
+  // Skills management moved out of the Settings dialog into the
+  // Integrations route. These let the Integrations Skills tab refresh
+  // derived skill state and evict dependent preview iframes, matching
+  // the callbacks the dialog used to receive.
+  onSkillsRefresh?: () => Promise<void> | void;
+  onSkillsChanged?: (affectedSkillId?: string) => void;
   onRefreshAgents: () => Promise<AgentInfo[]> | AgentInfo[];
   // Quick theme switch from the avatar-popover dropdown. Lets the user
   // flip between system / light / dark without opening the full Settings
@@ -361,6 +367,8 @@ export function EntryShell({
   onApiProtocolChange,
   onApiModelChange,
   onConfigPersist,
+  onSkillsRefresh,
+  onSkillsChanged,
   onRefreshAgents,
   onThemeChange,
   onCreateProject,
@@ -391,7 +399,7 @@ export function EntryShell({
   const [previewSystemId, setPreviewSystemId] = useState<string | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newProjectInitialTab, setNewProjectInitialTab] =
-    useState<CreateTab>('prototype');
+    useState<CreateTab>('code');
   const [integrationTab, setIntegrationTab] = useState<IntegrationTab>(integrationInitialTab);
   const [homePromptHandoff, setHomePromptHandoff] = useState<HomePromptHandoff | null>(null);
   const analytics = useAnalytics();
@@ -433,7 +441,10 @@ export function EntryShell({
     changeView('integrations');
   }
 
-  function openNewProject(tab: CreateTab = 'prototype') {
+  // Default to the general-purpose "code" mode — it's the broadest
+  // capability and the product's new default. Callers that open the modal
+  // for a specific design surface (home-hero chips, etc.) pass their tab.
+  function openNewProject(tab: CreateTab = 'code') {
     setNewProjectInitialTab(tab);
     setNewProjectOpen(true);
   }
@@ -708,6 +719,9 @@ export function EntryShell({
                 initialTab={integrationTab}
                 composioConfigLoading={composioConfigLoading}
                 onPersistComposioKey={onPersistComposioKey}
+                onPersistConfig={onConfigPersist}
+                {...(onSkillsRefresh ? { onSkillsRefresh } : {})}
+                {...(onSkillsChanged ? { onSkillsChanged } : {})}
               />
             ) : null}
           </div>

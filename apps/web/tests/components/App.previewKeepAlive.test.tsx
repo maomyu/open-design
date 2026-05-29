@@ -51,8 +51,26 @@ vi.mock('../../src/components/IframeKeepAlivePool', async () => {
   };
 });
 
+// Skills management moved out of the Settings dialog into the Integrations
+// route, which lives inside the home EntryView. The skill-change callback is
+// now threaded App → EntryView (→ EntryShell → IntegrationsView), so the
+// trigger buttons that exercise App.handleSkillsChanged live on this mock.
 vi.mock('../../src/components/EntryView', () => ({
-  EntryView: () => <div>Entry view</div>,
+  EntryView: ({
+    onSkillsChanged,
+  }: {
+    onSkillsChanged?: (id?: string) => void;
+  }) => (
+    <div>
+      Entry view
+      <button type="button" onClick={() => onSkillsChanged?.('old-skill')}>
+        Trigger skill body change
+      </button>
+      <button type="button" onClick={() => onSkillsChanged?.('unrelated-skill')}>
+        Trigger unrelated skill change
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('../../src/components/ProjectView', () => ({
@@ -108,25 +126,11 @@ vi.mock('../../src/components/ProjectView', () => ({
 
 vi.mock('../../src/components/SettingsDialog', () => ({
   SettingsDialog: ({
-    onSkillsChanged,
     onDesignSystemsChanged,
   }: {
-    onSkillsChanged?: (id?: string) => void;
     onDesignSystemsChanged?: (id?: string) => void;
   }) => (
     <div>
-      <button
-        type="button"
-        onClick={() => onSkillsChanged?.('old-skill')}
-      >
-        Trigger skill body change
-      </button>
-      <button
-        type="button"
-        onClick={() => onSkillsChanged?.('unrelated-skill')}
-      >
-        Trigger unrelated skill change
-      </button>
       <button
         type="button"
         onClick={() => onDesignSystemsChanged?.('old-design-system')}
@@ -248,6 +252,14 @@ const project: Project = {
 
 describe('App preview keep-alive invalidation', () => {
   beforeEach(() => {
+    // Default every test back to the open-project route; the skill tests
+    // opt into the home route where the Integrations surface lives.
+    useRouteMock.mockReturnValue({
+      kind: 'project',
+      projectId: 'project-1',
+      conversationId: null,
+      fileName: null,
+    });
     mockedUseIframeKeepAlivePool.mockReturnValue({
       attach: vi.fn(),
       release: vi.fn(),
@@ -307,9 +319,13 @@ describe('App preview keep-alive invalidation', () => {
   // mutation so the pool drops any project that depends on the affected
   // id — active or parked — regardless of which summary fields moved.
   it('evicts pool entries for projects that use a changed skill, even on body-only edits', async () => {
+    // Skills now live in the Integrations route inside the home EntryView.
+    useRouteMock.mockReturnValue({
+      kind: 'home',
+      view: 'integrations',
+    } as unknown as ReturnType<typeof useRouteMock>);
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Open settings' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Trigger skill body change' }));
 
     await waitFor(() => {
@@ -328,9 +344,12 @@ describe('App preview keep-alive invalidation', () => {
   });
 
   it('does not evict pool entries for projects that use a different skill', async () => {
+    useRouteMock.mockReturnValue({
+      kind: 'home',
+      view: 'integrations',
+    } as unknown as ReturnType<typeof useRouteMock>);
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Open settings' }));
     fireEvent.click(
       await screen.findByRole('button', { name: 'Trigger unrelated skill change' }),
     );
