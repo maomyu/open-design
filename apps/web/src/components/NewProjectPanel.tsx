@@ -104,7 +104,7 @@ const DESIGN_PLATFORMS: Array<{
   },
 ];
 
-export type CreateTab = 'prototype' | 'live-artifact' | 'deck' | 'template' | 'media' | 'other';
+export type CreateTab = 'code' | 'prototype' | 'live-artifact' | 'deck' | 'template' | 'media' | 'other';
 export type MediaSurface = 'image' | 'video' | 'audio';
 
 export interface CreateInput {
@@ -149,6 +149,9 @@ interface Props {
 }
 
 const TAB_LABEL_KEYS: Record<CreateTab, keyof Dict> = {
+  // General-purpose coding mode leads — it's the default and the broadest
+  // capability (full Claude Code). The design surfaces follow.
+  code: 'newproj.tabCode',
   prototype: 'newproj.tabPrototype',
   'live-artifact': 'newproj.tabLiveArtifact',
   deck: 'newproj.tabDeck',
@@ -165,6 +168,8 @@ function newProjectTabToApplyKind(
   tab: CreateTab,
 ): TrackingDesignSystemApplyTargetKind {
   switch (tab) {
+    case 'code':
+      return 'unknown';
     case 'prototype':
       return 'prototype';
     case 'deck':
@@ -261,6 +266,9 @@ export function NewProjectPanel({
   connectorsLoading = false,
   onOpenConnectorsTab,
   loading = false,
+  // Fallback only — the app always passes an explicit initialTab (EntryShell
+  // defaults it to 'code'). Kept as 'prototype' so prop-less test renders and
+  // any legacy caller still land on the design path they expect.
   initialTab = 'prototype',
 }: Props) {
   const t = useT();
@@ -451,7 +459,8 @@ export function NewProjectPanel({
   // pick a default-rendered skill (so the agent gets the right SKILL.md
   // body) without requiring the user to choose one explicitly.
   const skillIdForTab = useMemo(() => {
-    if (tab === 'other') return null;
+    // Code mode is general-purpose engineering — no design skill is bound.
+    if (tab === 'other' || tab === 'code') return null;
     if (tab === 'prototype') {
       const list = skills.filter((s) => s.mode === 'prototype');
       return list.find((s) => s.defaultFor.includes('prototype'))?.id
@@ -2844,7 +2853,10 @@ function buildMetadata(input: {
       ...inspirations,
     };
   }
-  return { kind: 'other', ...base, ...inspirations };
+  // Fallthrough covers the `other` and `code` tabs. Use the computed `kind`
+  // (line above) so code mode produces `kind: 'code'` while `other` stays
+  // `other` — both ship the minimal metadata with no design scaffolding.
+  return { kind, ...base, ...inspirations };
 }
 
 function normalizeSelectedPlatforms(platforms: NewProjectPlatform[]): NewProjectPlatform[] {
@@ -2932,6 +2944,8 @@ function titleForTab(
   t: TranslateFn,
 ): string {
   switch (tab) {
+    case 'code':
+      return t('newproj.titleCode');
     case 'prototype':
       return t('newproj.titlePrototype');
     case 'live-artifact':

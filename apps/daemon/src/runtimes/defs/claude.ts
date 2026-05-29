@@ -69,7 +69,12 @@ export const claudeAgentDef = {
       if (dirs.length > 0 && caps.addDir !== false) {
         args.push('--add-dir', ...dirs);
       }
-      args.push('--permission-mode', 'bypassPermissions');
+      // Permission mode is now caller-configurable so code mode can expose
+      // Claude Code's native Plan / per-action approval / auto-accept / full
+      // access modes. Default stays `bypassPermissions` to preserve the
+      // historical headless design-mode behavior (no interactive prompts).
+      const permissionMode = options.permissionMode || 'bypassPermissions';
+      args.push('--permission-mode', permissionMode);
       return args;
     },
     promptViaStdin: true,

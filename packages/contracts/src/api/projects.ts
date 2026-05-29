@@ -10,6 +10,10 @@ export type ProjectKind =
   | 'deck'
   | 'template'
   | 'other'
+  // General-purpose coding mode: the agent runs as a full software
+  // engineering agent (any language, shell, backend) with no design /
+  // HTML-artifact steering. See `composeSystemPrompt`'s code-mode branch.
+  | 'code'
   | 'image'
   | 'video'
   | 'audio';

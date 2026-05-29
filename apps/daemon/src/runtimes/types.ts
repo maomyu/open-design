@@ -14,6 +14,12 @@ export type RuntimeReasoningOption = RuntimeModelOption;
 export type RuntimeBuildOptions = {
   model?: string | null;
   reasoning?: string | null;
+  // Claude Code native permission mode, exposed through code mode so the
+  // user can pick Plan (read/plan only, no edits), per-action approval,
+  // auto-accept edits, or full access. Adapters that don't support it
+  // ignore this. When unset, claude.ts keeps its historical default
+  // (`bypassPermissions`) so existing design-mode runs are unchanged.
+  permissionMode?: 'plan' | 'default' | 'acceptEdits' | 'bypassPermissions' | null;
 };
 
 export type RuntimeContext = {

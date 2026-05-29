@@ -38,7 +38,7 @@ export interface PluginLoopSubmit {
   // Null means the caller did not stamp an explicit kind. HomeView's
   // free-form fallback uses `other` and binds the hidden od-default
   // router plugin so the agent asks for the exact task type in-chat.
-  projectKind?: 'prototype' | 'deck' | 'template' | 'image' | 'video' | 'audio' | 'other' | null;
+  projectKind?: 'code' | 'prototype' | 'deck' | 'template' | 'image' | 'video' | 'audio' | 'other' | null;
   projectMetadata?: ProjectMetadata | null;
   workingDir?: string | null;
   // Files staged on Home before the project exists. App uploads them

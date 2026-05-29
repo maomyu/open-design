@@ -576,4 +576,57 @@ describe('composeSystemPrompt', () => {
       expect(prompt).not.toContain('## Reference fixture');
     });
   });
+
+  describe('code mode — general-purpose engineering agent', () => {
+    it('emits the general code prompt and drops the entire design stack', () => {
+      const prompt = composeSystemPrompt({
+        metadata: { kind: 'code' },
+        // Even when a design system / skill is passed, code mode ignores them.
+        designSystemBody: '# Brand\n\nAccent: hot pink.',
+        designSystemTitle: 'Test brand',
+        skillBody: 'Some design skill body.',
+        skillName: 'saas-landing',
+      });
+      // General coding identity present.
+      expect(prompt).toContain('general-purpose software engineering agent');
+      expect(prompt).toContain('You are NOT limited to design work');
+      // Designer base + design scaffolding absent. (The code prompt may
+      // mention `<artifact>` to say it is NOT required, so assert against the
+      // designer's artifact-handoff directive rather than the bare tag.)
+      expect(prompt).not.toContain('You are an expert designer');
+      expect(prompt).not.toContain('Artifact handoff');
+      expect(prompt).not.toContain('Active design system');
+      expect(prompt).not.toContain('saas-landing');
+      expect(prompt).not.toContain('hot pink');
+    });
+
+    it('also triggers via skillMode and skillModes', () => {
+      const viaMode = composeSystemPrompt({ skillMode: 'code' });
+      const viaModes = composeSystemPrompt({ skillModes: ['code'] });
+      expect(viaMode).toContain('general-purpose software engineering agent');
+      expect(viaMode).not.toContain('You are an expert designer');
+      expect(viaModes).toContain('general-purpose software engineering agent');
+    });
+
+    it('still honors UI locale, memory, and custom instructions in code mode', () => {
+      const prompt = composeSystemPrompt({
+        metadata: { kind: 'code' },
+        locale: 'zh-CN',
+        memoryBody: 'User prefers TypeScript over JavaScript.',
+        userInstructions: 'Always write tests.',
+        projectInstructions: 'This repo uses pnpm.',
+      });
+      expect(prompt).toContain('# UI locale override');
+      expect(prompt).toContain('general-purpose software engineering agent');
+      expect(prompt).toContain('User prefers TypeScript over JavaScript.');
+      expect(prompt).toContain('Always write tests.');
+      expect(prompt).toContain('This repo uses pnpm.');
+    });
+
+    it('leaves the default (design) path untouched', () => {
+      const prompt = composeSystemPrompt({});
+      expect(prompt).toContain('You are an expert designer');
+      expect(prompt).not.toContain('general-purpose software engineering agent');
+    });
+  });
 });

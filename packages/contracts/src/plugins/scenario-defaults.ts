@@ -61,6 +61,9 @@ export const DEFAULT_SCENARIO_PLUGIN_BY_KIND: Record<ProjectKind, DefaultScenari
   // "headline + subtitle + absolute footer" collision).
   deck:      'example-simple-deck',
   template:  'od-new-generation',
+  // Code mode is general-purpose engineering with no design scaffolding, so
+  // it binds the neutral default scenario rather than a generation/media one.
+  code:      'od-default',
   image:     'od-media-generation',
   video:     'od-media-generation',
   audio:     'od-media-generation',

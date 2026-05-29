@@ -29,7 +29,7 @@
  * The composed string is what the daemon sees as `systemPrompt` and what
  * the Anthropic path sends as `system`.
  */
-import { OFFICIAL_DESIGNER_PROMPT } from './official-system.js';
+import { GENERAL_CODE_PROMPT, OFFICIAL_DESIGNER_PROMPT } from './official-system.js';
 import { DISCOVERY_AND_PHILOSOPHY } from './discovery.js';
 import { DECK_FRAMEWORK_DIRECTIVE } from './deck-framework.js';
 import { renderMediaGenerationContract } from './media-contract.js';
@@ -264,11 +264,12 @@ export interface ComposeInput {
     | 'deck'
     | 'template'
     | 'design-system'
+    | 'code'
     | 'image'
     | 'video'
     | 'audio'
     | undefined;
-  skillModes?: Array<'prototype' | 'deck' | 'template' | 'design-system' | 'image' | 'video' | 'audio'> | undefined;
+  skillModes?: Array<'prototype' | 'deck' | 'template' | 'design-system' | 'code' | 'image' | 'video' | 'audio'> | undefined;
   designSystemBody?: string | undefined;
   designSystemTitle?: string | undefined;
   // Compiled (machine-readable) form of the active brand's design system,
@@ -411,6 +412,42 @@ export function composeSystemPrompt({
   projectInstructions,
   mediaExecution,
 }: ComposeInput): string {
+  // General-purpose "code" mode short-circuits the entire design stack.
+  // When the project is in code mode the agent is a plain Claude Code-style
+  // software engineering agent: no designer identity, no discovery form, no
+  // direction cards, no <artifact> handoff, no design-system / skill / deck
+  // injection. We still honor UI locale and the user's memory + custom /
+  // project instructions so the agent speaks the right language and keeps
+  // the user's standing preferences.
+  const isCodeMode =
+    metadata?.kind === 'code' ||
+    skillMode === 'code' ||
+    (Array.isArray(skillModes) && skillModes.includes('code'));
+  if (isCodeMode) {
+    const codeParts: string[] = [];
+    const codeLocalePrompt = renderUiLocalePrompt(locale);
+    if (codeLocalePrompt) {
+      codeParts.push(codeLocalePrompt, '\n\n---\n\n');
+    }
+    codeParts.push(GENERAL_CODE_PROMPT);
+    if (memoryBody && memoryBody.trim().length > 0) {
+      codeParts.push(
+        `\n\n## Personal memory (auto-extracted from past chats)\n\nThe following facts have been sedimented from this user's previous conversations. Treat them as preferences and context, not hard rules.\n\n${memoryBody.trim()}`,
+      );
+    }
+    if (userInstructions && userInstructions.trim().length > 0) {
+      codeParts.push(
+        `\n\n## Custom instructions (user-level)\n\nThe user has set the following persistent instructions. Apply them as defaults to every project.\n\n${userInstructions.trim()}`,
+      );
+    }
+    if (projectInstructions && projectInstructions.trim().length > 0) {
+      codeParts.push(
+        `\n\n## Project instructions\n\nInstructions scoped to this specific project. They override the user-level instructions above on any conflict.\n\n${projectInstructions.trim()}`,
+      );
+    }
+    return codeParts.join('');
+  }
+
   // Discovery + philosophy goes FIRST so its hard rules ("emit a form on
   // turn 1", "branch on brand on turn 2", "TodoWrite on turn 3", run
   // checklist + critique before <artifact>) win precedence over softer

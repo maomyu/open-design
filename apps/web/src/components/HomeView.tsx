@@ -1244,8 +1244,11 @@ export function HomeView({
       status: item.connector.status,
       ...(item.connector.accountLabel ? { accountLabel: item.connector.accountLabel } : {}),
     }));
+    // Bare free-text (no chip, no active skill) defaults to general-purpose
+    // code mode — the product's new default. Chips, scenario plugins, and
+    // @-mentioned skills still win and route to their design surface.
     const submittedProjectKind =
-      submittedActive?.projectKind ?? fallbackProjectKind ?? projectKindForSkill(activeSkill) ?? 'other';
+      submittedActive?.projectKind ?? fallbackProjectKind ?? projectKindForSkill(activeSkill) ?? 'code';
     const submittedProjectMetadata = submittedActive?.mediaSurface
       ? metadataForHomeMediaComposer(submittedActive.mediaSurface, submittedActive.inputs, promptTemplates)
       : homeCreateProjectMetadata(
