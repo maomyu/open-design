@@ -329,6 +329,9 @@ interface Props {
   byokImageModel?: string;
   onChangeByokImageModel?: (model: string) => void;
   composerFooterAccessory?: ReactNode;
+  // Rendered immediately above the composer input (below the queued-send
+  // strip). Code-mode projects use it for the Code/Plan/Ask mode switcher.
+  composerLeadingSlot?: ReactNode;
 }
 
 type Tab = 'chat' | 'comments';
@@ -405,6 +408,7 @@ export function ChatPane({
   byokImageModel,
   onChangeByokImageModel,
   composerFooterAccessory,
+  composerLeadingSlot,
 }: Props) {
   const t = useT();
   const analytics = useAnalytics();
@@ -1286,6 +1290,7 @@ export function ChatPane({
             onUpdate={onUpdateQueuedSend}
             onSendNow={onSendQueuedNow}
           />
+          {composerLeadingSlot}
           <ChatComposer
             ref={composerRef}
             projectId={projectId}
