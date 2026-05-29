@@ -10945,21 +10945,30 @@ export async function startServer({
       safeImages,
       amrStagedImages,
     );
-    const composed = [
-      instructionPrompt
-        ? `# Instructions (read first)\n\n${formOverride}${instructionPrompt}${cwdHint}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
-        : cwdHint
-          ? `# Instructions\n\n${formOverride}${cwdHint}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
-          : linkedDirsHint
-            ? `# Instructions\n\n${formOverride}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
-            : formOverride
-              ? `# Instructions\n\n${formOverride}${ECHO_GUARD}\n\n---\n`
-              : '',
-      `# User request\n\n${userRequestPrompt}${attachmentHint}${commentHint}`,
-      promptImagePaths.length
-        ? `\n\n${promptImagePaths.map((p) => `@${p}`).join(' ')}`
-        : '',
-    ].join('');
+    // Code mode is raw Claude Code: send ONLY the user's request (plus any
+    // attachments/images) with no injected Open Design instruction block.
+    // The agent then answers exactly as `claude` would natively — its own
+    // system prompt, no design/HTML/artifact steering, no daemon or tool
+    // preamble forced in the middle.
+    const isCodeModeProject = projectRecord?.metadata?.kind === 'code';
+    const imagePathSuffix = promptImagePaths.length
+      ? `\n\n${promptImagePaths.map((p) => `@${p}`).join(' ')}`
+      : '';
+    const composed = isCodeModeProject
+      ? `${userRequestPrompt}${attachmentHint}${commentHint}${imagePathSuffix}`
+      : [
+          instructionPrompt
+            ? `# Instructions (read first)\n\n${formOverride}${instructionPrompt}${cwdHint}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
+            : cwdHint
+              ? `# Instructions\n\n${formOverride}${cwdHint}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
+              : linkedDirsHint
+                ? `# Instructions\n\n${formOverride}${linkedDirsHint}${ECHO_GUARD}\n\n---\n`
+                : formOverride
+                  ? `# Instructions\n\n${formOverride}${ECHO_GUARD}\n\n---\n`
+                  : '',
+          `# User request\n\n${userRequestPrompt}${attachmentHint}${commentHint}`,
+          imagePathSuffix,
+        ].join('');
     // Per-agent model + reasoning the user picked in the model menu.
     // Trust the value when it matches the most recent /api/agents listing
     // (live or fallback). Otherwise allow it through if it passes a
@@ -10980,7 +10989,7 @@ export async function startServer({
     // Claude-native permission mode is only honored for code-mode projects —
     // design modes always run headless with the historical bypass default.
     // The adapter (claude.ts) falls back to bypassPermissions when this is null.
-    const isCodeModeProject = projectRecord?.metadata?.kind === 'code';
+    // `isCodeModeProject` is computed above (composed-prompt branch).
     const safePermissionMode =
       isCodeModeProject &&
       (permissionMode === 'plan' ||
