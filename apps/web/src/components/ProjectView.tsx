@@ -4464,20 +4464,21 @@ export function ProjectView({
               key={`${project.id}:${activeConversationId ?? 'conversation-unavailable'}:${chatSeed?.id ?? 'ready'}`}
               {...(project.metadata?.kind === 'code'
                 ? {
-                    composerLeadingSlot: (
+                    composerFooterAccessory: (
                       <div
-                        className="code-mode-bar"
+                        className="code-mode-seg"
                         role="radiogroup"
                         aria-label={t('code.agentMode.label')}
                         style={{
-                          display: 'flex',
-                          gap: 6,
+                          display: 'inline-flex',
                           alignItems: 'center',
-                          padding: '4px 2px 8px',
-                          fontSize: 12,
+                          gap: 2,
+                          padding: 2,
+                          borderRadius: 8,
+                          border: '1px solid var(--border, #e4e4e7)',
+                          background: 'var(--surface-subtle, rgba(0,0,0,0.04))',
                         }}
                       >
-                        <span style={{ opacity: 0.6 }}>{t('code.agentMode.label')}</span>
                         {(['code', 'plan', 'ask'] as const).map((m) => {
                           const active = codeAgentMode === m;
                           const label =
@@ -4501,12 +4502,15 @@ export function ProjectView({
                               title={hint}
                               onClick={() => setCodeAgentMode(m)}
                               style={{
-                                padding: '2px 12px',
-                                borderRadius: 999,
-                                border: '1px solid var(--border, #d4d4d8)',
+                                padding: '3px 10px',
+                                borderRadius: 6,
+                                border: 'none',
+                                fontSize: 12,
+                                lineHeight: 1.2,
                                 cursor: 'pointer',
+                                fontWeight: active ? 600 : 400,
                                 background: active ? 'var(--accent, #d9622b)' : 'transparent',
-                                color: active ? '#fff' : 'inherit',
+                                color: active ? '#fff' : 'var(--text-muted, inherit)',
                                 transition: 'background 200ms cubic-bezier(0.23,1,0.32,1)',
                               }}
                             >
