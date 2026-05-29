@@ -776,6 +776,11 @@ export const zhTW: Dict = {
   'routines.confirmDelete': '刪除此自動化？過往執行記錄及其專案將予以保留。',
   'routines.errorPickProject': '請選擇要重複使用的專案，或切換為「每次執行建立新專案」。',
 
+  'code.permMode.label': '智能體模式',
+  'code.permMode.plan': '規劃',
+  'code.permMode.acceptEdits': '自動編輯',
+  'code.permMode.full': '完全存取',
+  'code.permMode.planHint': '規劃模式：智能體只讀取並給出方案，不改動任何檔案。',
   'newproj.tabCode': '通用',
   'newproj.titleCode': '新建通用專案',
   'newproj.tabPrototype': '原型',

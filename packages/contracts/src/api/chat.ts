@@ -35,6 +35,14 @@ export interface ChatRequest {
   commentAttachments?: ChatCommentAttachment[];
   model?: string | null;
   reasoning?: string | null;
+  /**
+   * Claude Code native permission mode for this run. Only honored for
+   * code-mode projects (kind === 'code'); design modes ignore it and stay
+   * on the headless bypass default. `plan` = read/plan only (no edits),
+   * `acceptEdits` = auto-accept edits, `bypassPermissions` = full access.
+   * `default` (per-action approval) is reserved for a later release.
+   */
+  permissionMode?: 'plan' | 'default' | 'acceptEdits' | 'bypassPermissions' | null;
   /** UI locale selected by the client, used by prompt composition for user-visible generated UI. */
   locale?: string;
   research?: ResearchOptions;

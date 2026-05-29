@@ -152,7 +152,7 @@ const PROJECT_STRING_FLAGS = new Set([
   'daemon-url', 'name', 'skill', 'design-system', 'plugin', 'metadata-json',
   'pending-prompt', 'project', 'conversation', 'message', 'path', 'as',
   'agent', 'model', 'snapshot-id', 'inputs', 'grant-caps', 'editor',
-  'title', 'against',
+  'title', 'against', 'permission-mode',
 ]);
 const PROJECT_BOOLEAN_FLAGS = new Set(['help', 'h', 'json', 'follow']);
 // `od automation …` mirrors the Automations tab. Same surface, same
@@ -4524,7 +4524,8 @@ async function runRun(args) {
     console.log(`Usage:
   od run start --project <projectId> [--conversation <id>] [--message "<text>"]
                [--plugin <id>] [--inputs <json>] [--grant-caps a,b]
-               [--agent claude|codex|gemini] [--model <id>] [--follow] [--json]
+               [--agent claude|codex|gemini] [--model <id>]
+               [--permission-mode plan|acceptEdits|bypassPermissions] [--follow] [--json]
   od run watch  <runId>                     ND-JSON event stream on stdout.
   od run cancel <runId>                     Request cancellation.
   od run list   [--project <id>]            List recent runs.
@@ -4597,6 +4598,9 @@ Common options:
       if (flags.plugin) body.pluginId = flags.plugin;
       if (flags.agent) body.agentId = flags.agent;
       if (flags.model) body.model = flags.model;
+      // Claude-native permission mode (code-mode projects). plan | acceptEdits
+      // | bypassPermissions; the daemon ignores it for design-mode projects.
+      if (flags['permission-mode']) body.permissionMode = flags['permission-mode'];
       if (flags.inputs) {
         try { body.pluginInputs = JSON.parse(flags.inputs); } catch (err) {
           console.error(`--inputs must be valid JSON: ${err.message}`);

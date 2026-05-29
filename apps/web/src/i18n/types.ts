@@ -1457,6 +1457,12 @@ export interface Dict {
   'connectors.emptyNoMatchBody': string;
   'connectors.emptyNoMatchAction': string;
 
+  // Code-mode permission selector (Claude native modes)
+  'code.permMode.label': string;
+  'code.permMode.plan': string;
+  'code.permMode.acceptEdits': string;
+  'code.permMode.full': string;
+  'code.permMode.planHint': string;
   // New project panel
   'newproj.tabCode': string;
   'newproj.titleCode': string;

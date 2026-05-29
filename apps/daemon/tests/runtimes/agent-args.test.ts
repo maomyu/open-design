@@ -6,6 +6,23 @@ import {
 import { writeAntigravityModelSelection } from '../../src/runtimes/defs/antigravity.js';
 import type { TestAgentDef } from './helpers/test-helpers.js';
 
+test('claude defaults to bypassPermissions but honors a caller permission mode', () => {
+  const def = claude as unknown as TestAgentDef;
+  const base = def.buildArgs('', [], [], {});
+  // No option -> historical headless default.
+  const baseIdx = base.indexOf('--permission-mode');
+  assert.ok(baseIdx !== -1, 'claude must pass --permission-mode');
+  assert.equal(base[baseIdx + 1], 'bypassPermissions');
+
+  // Plan mode -> read/plan only, surfaced through code mode.
+  const plan = def.buildArgs('', [], [], { permissionMode: 'plan' });
+  const planIdx = plan.indexOf('--permission-mode');
+  assert.equal(plan[planIdx + 1], 'plan');
+
+  const accept = def.buildArgs('', [], [], { permissionMode: 'acceptEdits' });
+  assert.equal(accept[accept.indexOf('--permission-mode') + 1], 'acceptEdits');
+});
+
 test('cursor-agent args deliver prompts via stdin without passing a literal dash prompt', () => {
   const args = cursorAgent.buildArgs(
     '',

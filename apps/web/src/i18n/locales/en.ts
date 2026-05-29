@@ -1175,6 +1175,11 @@ export const en: Dict = {
   'connectors.emptyNoMatchBody': 'Try a different keyword, or clear the search to browse the full catalog.',
   'connectors.emptyNoMatchAction': 'Clear search',
 
+  'code.permMode.label': 'Agent mode',
+  'code.permMode.plan': 'Plan',
+  'code.permMode.acceptEdits': 'Auto-edit',
+  'code.permMode.full': 'Full access',
+  'code.permMode.planHint': 'Plan mode: the agent reads and proposes a plan without changing any files.',
   'newproj.tabCode': 'Code',
   'newproj.titleCode': 'New code project',
   'newproj.tabPrototype': 'Prototype',

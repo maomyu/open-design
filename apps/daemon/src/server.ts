@@ -10565,6 +10565,7 @@ export async function startServer({
       commentAttachments = [],
       model,
       reasoning,
+      permissionMode,
       locale,
       research,
       context,
@@ -10976,7 +10977,23 @@ export async function startServer({
       typeof reasoning === 'string' && Array.isArray(def.reasoningOptions)
         ? (def.reasoningOptions.find((r) => r.id === reasoning)?.id ?? null)
         : null;
-    const agentOptions = { model: safeModel, reasoning: safeReasoning };
+    // Claude-native permission mode is only honored for code-mode projects —
+    // design modes always run headless with the historical bypass default.
+    // The adapter (claude.ts) falls back to bypassPermissions when this is null.
+    const isCodeModeProject = projectRecord?.metadata?.kind === 'code';
+    const safePermissionMode =
+      isCodeModeProject &&
+      (permissionMode === 'plan' ||
+        permissionMode === 'default' ||
+        permissionMode === 'acceptEdits' ||
+        permissionMode === 'bypassPermissions')
+        ? permissionMode
+        : null;
+    const agentOptions = {
+      model: safeModel,
+      reasoning: safeReasoning,
+      permissionMode: safePermissionMode,
+    };
     const send = (event, data) => {
       persistRunEventToAssistantMessage(db, run, event, data);
       design.runs.emit(run, event, data);

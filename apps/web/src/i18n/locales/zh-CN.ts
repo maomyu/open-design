@@ -1172,6 +1172,11 @@ export const zhCN: Dict = {
   'connectors.emptyNoMatchBody': '换个关键词试试，或清除搜索以浏览完整目录。',
   'connectors.emptyNoMatchAction': '清除搜索',
 
+  'code.permMode.label': '智能体模式',
+  'code.permMode.plan': '规划',
+  'code.permMode.acceptEdits': '自动编辑',
+  'code.permMode.full': '完全访问',
+  'code.permMode.planHint': '规划模式：智能体只读取并给出方案，不改动任何文件。',
   'newproj.tabCode': '通用',
   'newproj.titleCode': '新建通用项目',
   'newproj.tabPrototype': '原型',

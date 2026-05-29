@@ -549,6 +549,12 @@ export function ProjectView({
       clearOnboardingSessionId();
     }
   }, [analytics.track, project.id]);
+  // Claude-native permission mode for code-mode projects. 'bypassPermissions'
+  // (full access) keeps the historical behavior; the composer lets code
+  // projects switch to 'plan' (read/plan only) or 'acceptEdits' (auto-accept).
+  const [codePermissionMode, setCodePermissionMode] = useState<
+    'plan' | 'acceptEdits' | 'bypassPermissions'
+  >('bypassPermissions');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(
     null,
@@ -2764,6 +2770,11 @@ export function ProjectView({
           research: meta?.research,
           model: choice?.model ?? null,
           reasoning: choice?.reasoning ?? null,
+          // Code-mode projects expose Claude's native permission modes
+          // (Plan / Accept edits / Full access). Design modes leave this null
+          // so the daemon keeps its headless bypass default.
+          permissionMode:
+            project.metadata?.kind === 'code' ? codePermissionMode : null,
           locale,
           ...(dsAnalyticsHints ? { analyticsHints: dsAnalyticsHints } : {}),
           onRunCreated: (runId) => {
@@ -4432,7 +4443,61 @@ export function ProjectView({
                 `${chatPanelWidth}px ${SPLIT_RESIZE_HANDLE_WIDTH}px ${workspacePanelTrack}`,
             }}
       >
-        <div className="split-chat-slot" hidden={workspaceFocused}>
+        <div
+          className="split-chat-slot"
+          hidden={workspaceFocused}
+          {...(project.metadata?.kind === 'code'
+            ? { style: { flexDirection: 'column' as const } }
+            : {})}
+        >
+          {project.metadata?.kind === 'code' ? (
+            <div
+              className="code-perm-bar"
+              role="radiogroup"
+              aria-label={t('code.permMode.label')}
+              style={{
+                display: 'flex',
+                gap: 6,
+                alignItems: 'center',
+                flex: '0 0 auto',
+                padding: '6px 10px',
+                fontSize: 12,
+                borderBottom: '1px solid var(--border, #e4e4e7)',
+              }}
+            >
+              <span style={{ opacity: 0.6 }}>{t('code.permMode.label')}</span>
+              {(['plan', 'acceptEdits', 'bypassPermissions'] as const).map((m) => {
+                const active = codePermissionMode === m;
+                const label =
+                  m === 'plan'
+                    ? t('code.permMode.plan')
+                    : m === 'acceptEdits'
+                      ? t('code.permMode.acceptEdits')
+                      : t('code.permMode.full');
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    title={m === 'plan' ? t('code.permMode.planHint') : label}
+                    onClick={() => setCodePermissionMode(m)}
+                    style={{
+                      padding: '2px 10px',
+                      borderRadius: 999,
+                      border: '1px solid var(--border, #d4d4d8)',
+                      cursor: 'pointer',
+                      background: active ? 'var(--accent, #d9622b)' : 'transparent',
+                      color: active ? '#fff' : 'inherit',
+                      transition: 'background 200ms cubic-bezier(0.23,1,0.32,1)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
           {commentInspectorActive ? (
             <div
               id={commentInspectorPortalId}

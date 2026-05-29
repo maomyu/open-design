@@ -221,6 +221,9 @@ export interface DaemonStreamOptions {
   // options and falls back to the CLI default when missing.
   model?: string | null;
   reasoning?: string | null;
+  // Claude-native permission mode (code-mode projects only). Forwarded to
+  // the daemon which maps it to claude's `--permission-mode`.
+  permissionMode?: 'plan' | 'default' | 'acceptEdits' | 'bypassPermissions' | null;
   research?: ResearchOptions;
   context?: RunContextSelection;
   locale?: string;
@@ -307,6 +310,7 @@ export async function streamViaDaemon({
   commentAttachments,
   model,
   reasoning,
+  permissionMode,
   research,
   context,
   locale,
@@ -339,6 +343,7 @@ export async function streamViaDaemon({
     commentAttachments: commentAttachments ?? [],
     model: model ?? null,
     reasoning: reasoning ?? null,
+    permissionMode: permissionMode ?? null,
     locale,
     ...(context ? { context } : {}),
     ...(research ? { research } : {}),
