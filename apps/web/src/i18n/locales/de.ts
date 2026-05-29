@@ -90,7 +90,7 @@ export const de: Dict = {
   'common.daysShort': '{n} T.',
   'common.untitled': 'Ohne Titel',
 
-  'app.brand': 'Open Design',
+  'app.brand': 'Open Build',
   'app.brandPill': 'Forschungsvorschau',
   'app.brandSubtitle': 'von Nexu Labs',
   'app.welcomeLoading': 'Workspace wird geladen…',

@@ -90,7 +90,7 @@ export const ar: Dict = {
   'common.daysShort': '{n} ي',
   'common.untitled': 'بدون عنوان',
 
-  'app.brand': 'Open Design',
+  'app.brand': 'Open Build',
   'app.brandPill': 'معاينة البحث',
   'app.brandSubtitle': 'بواسطة Nexu Labs',
   'app.welcomeLoading': 'جاري تحميل مساحة العمل...',
