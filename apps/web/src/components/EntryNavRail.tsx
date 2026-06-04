@@ -123,15 +123,6 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
           <Icon name="blocks" size={18} />
         </NavButton>
         <NavButton
-          active={view === 'plugins'}
-          ariaLabel={t('entry.navPlugins')}
-          tooltip={t('entry.navPlugins')}
-          onClick={() => onViewChange('plugins')}
-          testId="entry-nav-plugins"
-        >
-          <Icon name="grid" size={18} />
-        </NavButton>
-        <NavButton
           active={view === 'integrations'}
           ariaLabel={t('entry.navIntegrations')}
           tooltip={t('entry.navIntegrations')}
