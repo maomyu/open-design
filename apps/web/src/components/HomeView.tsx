@@ -1369,7 +1369,16 @@ export function HomeView({
         loading={pluginsLoading}
         activePluginId={active?.record.id ?? null}
         pendingApplyId={pendingApplyId}
-        onUse={(record, action) => requestPluginContextUse(record, action)}
+        onUse={(record) => {
+          // Apply the plugin as the active workflow (not a loose context
+          // attachment): this resolves the apply snapshot so the plugin's
+          // SKILL.md + query template actually drive the run, and renders
+          // its inputs as fillable inline slots. requestPluginContextUse
+          // only pinned a context chip, which never injected the plugin's
+          // skill body — so the agent ignored the plugin. (#short-video)
+          const inputNames = (record.manifest?.od?.inputs ?? []).map((field) => field.name);
+          void usePlugin(record, undefined, { editableInputNames: inputNames });
+        }}
         onOpenDetails={setDetailsRecord}
         onBrowseRegistry={onBrowseRegistry}
         preferDefaultFacet={false}
@@ -1380,7 +1389,10 @@ export function HomeView({
         <PluginDetailsModal
           record={detailsRecord}
           onClose={() => setDetailsRecord(null)}
-          onUse={(record) => requestPluginContextUse(record, 'use')}
+          onUse={(record) => {
+            const inputNames = (record.manifest?.od?.inputs ?? []).map((field) => field.name);
+            void usePlugin(record, undefined, { editableInputNames: inputNames });
+          }}
           isApplying={pendingApplyId === detailsRecord.id}
         />
       ) : null}

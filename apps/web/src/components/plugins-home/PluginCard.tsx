@@ -20,6 +20,8 @@ import { Icon } from '../Icon';
 import { TrustBadge } from '../TrustBadge';
 import { PreviewSurface } from './cards/PreviewSurface';
 import { localizePluginDescription, localizePluginTitle } from './localization';
+import { isProductOwned } from './usePluginFacets';
+import { PluginEditor } from '../PluginEditor';
 import { inferPluginPreview } from './preview';
 import type { PluginUseAction } from './useActions';
 
@@ -55,7 +57,15 @@ export function PluginCard({
   onSave,
   onShareAction,
 }: Props) {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
+  // Plugins you authored (tagged `open-build`) get a distinct "owned" badge
+  // instead of the generic "Official" trust badge, so your first-party
+  // plugins read apart from the bundled open-source demos.
+  const owned = isProductOwned(record);
+  const [editing, setEditing] = useState(false);
+  const ownedBadgeProps = owned
+    ? { label: t('pluginsHome.ownedBadge'), className: 'plugin-trust-badge--owned' }
+    : {};
   const [useMenuOpen, setUseMenuOpen] = useState(false);
   const preview = useMemo(() => inferPluginPreview(record), [record]);
   const title = localizePluginTitle(locale, record);
@@ -102,7 +112,7 @@ export function PluginCard({
 
       <div className="plugins-home__card-overlay">
         <div className="plugins-home__card-overlay-top">
-          <TrustBadge trust={record.trust} variant="overlay" />
+          <TrustBadge trust={record.trust} variant="overlay" {...ownedBadgeProps} />
           {isFeatured ? (
             <span className="plugins-home__overlay-featured" aria-hidden>
               <Icon name="star" size={11} />
@@ -138,6 +148,18 @@ export function PluginCard({
               <Icon name="eye" size={12} />
               <span>Details</span>
             </button>
+            {owned ? (
+              <button
+                type="button"
+                className="plugins-home__action plugins-home__action--secondary"
+                onClick={() => setEditing(true)}
+                aria-label={`Edit ${title}`}
+                data-testid={`plugins-home-edit-${record.id}`}
+              >
+                <Icon name="pencil" size={12} />
+                <span>{t('pluginEditor.openButton')}</span>
+              </button>
+            ) : null}
             <div
               className={`plugins-home__use-menu${hasQuery ? ' has-options' : ''}`}
               onBlur={(event) => {
@@ -266,8 +288,15 @@ export function PluginCard({
         <span className="plugins-home__card-title" title={title}>
           <span className="plugins-home__card-title-text">{title}</span>
         </span>
-        <TrustBadge trust={record.trust} />
+        <TrustBadge trust={record.trust} {...ownedBadgeProps} />
       </div>
+      {editing ? (
+        <PluginEditor
+          pluginId={record.id}
+          pluginTitle={title}
+          onClose={() => setEditing(false)}
+        />
+      ) : null}
     </article>
   );
 }

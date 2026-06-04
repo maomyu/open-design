@@ -896,7 +896,13 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
                   ...pluginInputValues,
                   [openInlineInputField.name]: value,
                 });
-                if (openInlineInputField.type !== 'string') {
+                // Only discrete-choice controls (select/boolean) commit on
+                // change and close. Free-text fields — string, text, number —
+                // render an <input>, so closing on the first keystroke would
+                // make them impossible to fill (the popover reopened empty on
+                // every character). Keep them open until the user dismisses.
+                const inlineType = openInlineInputField.type;
+                if (inlineType === 'select' || inlineType === 'boolean') {
                   setOpenInlineInputName(null);
                 }
               }}
@@ -1123,6 +1129,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
           pendingPluginId={pendingPluginId}
           pluginsLoading={pluginsLoading}
           onPickChip={onPickChip}
+          onSelectGeneral={onClearActiveChip}
           variant="tabs"
         >
           <ShortcutsMenu
@@ -2429,6 +2436,9 @@ interface RailGroupProps {
   pendingPluginId: string | null;
   pluginsLoading: boolean;
   onPickChip: (chip: HomeHeroChip) => void;
+  // Selecting the leading "general" tab clears any active type so the
+  // composer falls back to the default general-purpose (code) mode.
+  onSelectGeneral?: () => void;
   variant?: 'rail' | 'tabs';
   children?: ReactNode;
 }
@@ -2440,12 +2450,18 @@ function RailGroup({
   pendingPluginId,
   pluginsLoading,
   onPickChip,
+  onSelectGeneral,
   variant = 'rail',
   children,
 }: RailGroupProps) {
   const t = useT();
   const chips = useMemo(() => chipsForGroup(group), [group]);
   const isTabs = variant === 'tabs';
+  // The general/code mode is the product default (bare free-text routes
+  // to it). Surface it as the first, active-by-default tab so the home
+  // composer visibly defaults to general mode and the specialized type
+  // tabs read as opt-in.
+  const showGeneralTab = isTabs && group === 'create' && Boolean(onSelectGeneral);
   return (
     <div
       className={
@@ -2458,6 +2474,28 @@ function RailGroup({
       role={isTabs ? 'tablist' : undefined}
       aria-label={isTabs ? t('homeHero.railAria') : undefined}
     >
+      {showGeneralTab ? (
+        <button
+          type="button"
+          className={[
+            'home-hero__type-tab',
+            `home-hero__type-tab--${group}`,
+            activeChipId === null ? 'is-active' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          data-chip-id="general"
+          data-testid="home-hero-rail-general"
+          onClick={() => onSelectGeneral?.()}
+          disabled={pluginsLoading || pendingPluginId !== null}
+          role="tab"
+          aria-selected={activeChipId === null}
+          title={t('newproj.tabCode')}
+        >
+          <Icon name="sparkles" size={14} className="home-hero__type-tab-icon" />
+          <span className="home-hero__type-tab-label">{t('newproj.tabCode')}</span>
+        </button>
+      ) : null}
       {chips.map((chip) => {
         const isActive = activeChipId === chip.id;
         const isPending = pendingChipId === chip.id;

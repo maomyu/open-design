@@ -25,6 +25,26 @@ import { sortByVisualAppeal } from './visualScore';
 
 export type FilterMode = 'all' | 'saved';
 
+// Source filter: "owned" = built-in plugins YOU developed (open-build tag);
+// "official" = plugins from the upstream official repo.
+export type PluginSourceFilter = 'owned' | 'official';
+
+// Plugins authored for this product carry a marker tag so the Home
+// gallery can default to the operator's own catalog instead of the
+// upstream demo plugins bundled with the open-source project. When at
+// least one product-owned plugin is installed we hide everything else;
+// a vanilla checkout with no tagged plugins keeps the full catalog, so
+// upstream behaviour is preserved.
+export const PRODUCT_PLUGIN_TAG = 'open-build';
+
+export function isProductOwned(record: InstalledPluginRecord): boolean {
+  const tags = record.manifest?.tags;
+  return (
+    Array.isArray(tags) &&
+    tags.some((tag) => String(tag).toLowerCase() === PRODUCT_PLUGIN_TAG)
+  );
+}
+
 interface UsePluginFacetsArgs {
   plugins: InstalledPluginRecord[];
   savedPluginIds?: ReadonlySet<string>;
@@ -54,6 +74,13 @@ export interface UsePluginFacetsResult {
   query: string;
   setQuery: (next: string) => void;
   totalVisible: number;
+  // Source filter chips: "owned" (内置插件, your own) vs "official" (官方插件,
+  // upstream). Default "owned". Counts drive the chip badges; the chips only
+  // render when both sources are present.
+  sourceFilter: PluginSourceFilter;
+  setSourceFilter: (next: PluginSourceFilter) => void;
+  ownedCount: number;
+  officialCount: number;
 }
 
 const EMPTY_SELECTION: FacetSelection = {
@@ -71,6 +98,7 @@ export function usePluginFacets({
   const [mode, setMode] = useState<FilterMode>('all');
   const [selection, setSelection] = useState<FacetSelection>(EMPTY_SELECTION);
   const [query, setQuery] = useState('');
+  const [sourceFilter, setSourceFilter] = useState<PluginSourceFilter>('owned');
   // Apply the preferred default selection once, on the first render that
   // sees a non-empty catalog. Using a flag (instead of a useState lazy
   // initializer) handles the realistic case where `args.plugins` is
@@ -85,12 +113,30 @@ export function usePluginFacets({
   // cinematic decks / image / video templates rather than alphabetical
   // bundled noise. Featured plugins get a +1000 score boost inside the
   // sort so curator picks stay anchored to the front of every category view.
-  const visiblePlugins = useMemo(
-    () =>
-      sortByVisualAppeal(
-        plugins.filter((p) => p.manifest?.od?.kind !== 'atom'),
-      ),
+  const nonAtom = useMemo(
+    () => plugins.filter((p) => p.manifest?.od?.kind !== 'atom'),
     [plugins],
+  );
+  // Two sources: "owned" = built-in plugins YOU developed (open-build tag);
+  // "official" = plugins from the upstream official repo. The filter row
+  // offers both as chips; default to your own.
+  const ownedPlugins = useMemo(() => nonAtom.filter(isProductOwned), [nonAtom]);
+  const officialPlugins = useMemo(() => nonAtom.filter((p) => !isProductOwned(p)), [nonAtom]);
+  const ownedCount = ownedPlugins.length;
+  const officialCount = officialPlugins.length;
+  const visiblePlugins = useMemo(
+    () => {
+      // No owned plugins yet (vanilla checkout) → show the full catalog so the
+      // gallery isn't empty. Otherwise honor the source filter.
+      const base =
+        ownedCount === 0
+          ? nonAtom
+          : sourceFilter === 'official'
+            ? officialPlugins
+            : ownedPlugins;
+      return sortByVisualAppeal(base);
+    },
+    [sourceFilter, nonAtom, ownedPlugins, officialPlugins, ownedCount],
   );
 
   const savedList = useMemo(
@@ -187,5 +233,9 @@ export function usePluginFacets({
     query,
     setQuery,
     totalVisible: visiblePlugins.length,
+    sourceFilter,
+    setSourceFilter,
+    ownedCount,
+    officialCount,
   };
 }

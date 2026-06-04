@@ -660,6 +660,15 @@
   --trust-bg: var(--amber-bg);
   --trust-border: color-mix(in srgb, var(--amber) 28%, var(--border));
 }
+/* "Owned" — your own (open-build tagged) first-party plugins. Uses the
+   product accent so they read apart from the blue "Official" trust badge.
+   Defined before --overlay so the overlay variant still wins (white-on-blur)
+   on the card preview, while the card-meta badge picks up the accent. */
+.plugin-trust-badge--owned {
+  --trust-fg: var(--accent);
+  --trust-bg: var(--accent-tint);
+  --trust-border: color-mix(in srgb, var(--accent) 26%, var(--border));
+}
 .plugin-trust-badge--overlay {
   --trust-fg: #fff;
   --trust-bg: rgba(255, 255, 255, 0.18);

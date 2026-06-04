@@ -90,6 +90,10 @@ export function PluginsHomeSection({
     query,
     setQuery,
     totalVisible,
+    sourceFilter,
+    setSourceFilter,
+    ownedCount,
+    officialCount,
   } = usePluginFacets({
     plugins,
     savedPluginIds,
@@ -186,6 +190,10 @@ export function PluginsHomeSection({
               onToggleSaved={() =>
                 setMode(mode === 'saved' ? 'all' : 'saved')
               }
+              sourceFilter={sourceFilter}
+              ownedCount={ownedCount}
+              officialCount={officialCount}
+              onPickSource={setSourceFilter}
               query={query}
               onQueryChange={setQuery}
             />
@@ -258,6 +266,10 @@ interface CategoryRowProps {
   savedCount: number;
   savedActive: boolean;
   onToggleSaved: () => void;
+  sourceFilter: 'owned' | 'official';
+  ownedCount: number;
+  officialCount: number;
+  onPickSource: (next: 'owned' | 'official') => void;
   query: string;
   onQueryChange: (next: string) => void;
 }
@@ -275,11 +287,17 @@ function CategoryRow({
   savedCount,
   savedActive,
   onToggleSaved,
+  sourceFilter,
+  ownedCount,
+  officialCount,
+  onPickSource,
   query,
   onQueryChange,
 }: CategoryRowProps) {
   const t = useT();
   if (options.length === 0) return null;
+  // Show the source chips only when both sources are present.
+  const showSourceChips = ownedCount > 0 && officialCount > 0;
   return (
     <div
       className="plugins-home__facet-row plugins-home__facet-row--inline"
@@ -307,6 +325,45 @@ function CategoryRow({
           <span>{t('pluginsHome.featured')}</span>
           <span className="plugins-home__chip-count">{savedCount}</span>
         </button>
+        {showSourceChips ? (
+          <>
+            <button
+              type="button"
+              className={[
+                'plugins-home__chip',
+                'plugins-home__chip--source',
+                sourceFilter === 'owned' ? 'is-active' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={() => onPickSource('owned')}
+              aria-pressed={sourceFilter === 'owned'}
+              data-testid="plugins-home-chip-source-owned"
+            >
+              <Icon name="blocks" size={11} />
+              <span>{t('pluginsHome.ownedBadge')}</span>
+              <span className="plugins-home__chip-count">{ownedCount}</span>
+            </button>
+            <button
+              type="button"
+              className={[
+                'plugins-home__chip',
+                'plugins-home__chip--source',
+                sourceFilter === 'official' ? 'is-active' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={() => onPickSource('official')}
+              aria-pressed={sourceFilter === 'official'}
+              data-testid="plugins-home-chip-source-official"
+              title={t('pluginsHome.showBuiltinsHint')}
+            >
+              <Icon name="grid" size={11} />
+              <span>{t('pluginsHome.showBuiltins')}</span>
+              <span className="plugins-home__chip-count">{officialCount}</span>
+            </button>
+          </>
+        ) : null}
         <CategoryPill
           slug={null}
           label={t('common.all')}
