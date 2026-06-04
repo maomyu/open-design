@@ -190,6 +190,7 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
     connectorsResolved,
     mcpServers,
     pipeline:             appliedPipeline,
+    ...(manifest.od?.workflow ? { workflow: manifest.od.workflow } : {}),
     genuiSurfaces,
     pluginTitle,
     pluginDescription,

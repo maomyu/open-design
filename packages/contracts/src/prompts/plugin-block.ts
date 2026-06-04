@@ -40,6 +40,36 @@ export function renderPluginBlock(snapshot: AppliedPluginSnapshot): string {
     }
   }
 
+  // Workflow mode: when the plugin declares an explicit stage graph, inject
+  // the protocol so the agent drives the run stage by stage with a TodoWrite
+  // step rail and AskUserQuestion human gates. This is generic — any plugin
+  // that ships `od.workflow` inherits the behavior without repeating it in
+  // its SKILL.md.
+  const stages = snapshot.workflow?.stages ?? [];
+  if (stages.length > 0) {
+    const railTitles = stages.map((s) => s.title ?? s.id).join(' / ');
+    const gated = stages.filter((s) => (s.gate ?? 'none') === 'confirm' || (s.gate ?? 'none') === 'choice');
+    lines.push('');
+    lines.push('## Workflow protocol');
+    lines.push('');
+    lines.push(
+      'This plugin runs in **workflow mode** — drive the run one stage at a time, do not do everything in a single sweep:',
+    );
+    lines.push('');
+    lines.push(
+      `1. **Step rail = TodoWrite.** As your first action, call TodoWrite with these stages as the todo items: ${railTitles}. Mark each \`in_progress\` when you start it and \`completed\` when done — the host renders the rail from this.`,
+    );
+    lines.push(
+      '2. **Human gate = AskUserQuestion.** At the end of each gated stage you MUST call AskUserQuestion offering "confirm / continue" vs "reject / redo", then STOP and wait — the run pauses until the operator answers. On reject, redo the same stage with their feedback.',
+    );
+    if (gated.length > 0) {
+      lines.push(`   Gated stages (raise the gate after each): ${gated.map((s) => s.title ?? s.id).join(', ')}.`);
+    }
+    lines.push(
+      '3. **Shared state = board.** Keep progress on a self-contained `index.html` live-artifact board, rewritten each stage.',
+    );
+  }
+
   const atomIds = snapshot.resolvedContext?.atoms ?? [];
   if (atomIds.length > 0) {
     lines.push('');

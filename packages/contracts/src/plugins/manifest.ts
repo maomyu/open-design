@@ -136,6 +136,29 @@ export const PluginConnectorRefSchema = z.object({
 
 export type PluginConnectorRef = z.infer<typeof PluginConnectorRefSchema>;
 
+// Workflow mode (deer-flow inspired). A plugin can declare an explicit,
+// ordered list of stages so the host renders a step rail and the agent
+// drives the conversation stage by stage. `gate: 'confirm'` marks a
+// human checkpoint between stages — the agent raises AskUserQuestion and
+// the streaming run pauses until the operator confirms/rejects. The
+// shared state surfaces are TodoWrite (the step rail) and a live-artifact
+// board; this schema only carries the declaration, the runtime reuses
+// existing primitives (no new engine).
+export const WorkflowStageSchema = z.object({
+  id:         z.string().min(1),
+  title:      z.string().optional(),
+  title_i18n: LocalizedTextSchema.optional(),
+  gate:       z.enum(['confirm', 'choice', 'none']).optional(),
+}).passthrough();
+
+export type WorkflowStage = z.infer<typeof WorkflowStageSchema>;
+
+export const PluginWorkflowSchema = z.object({
+  stages: z.array(WorkflowStageSchema),
+}).passthrough();
+
+export type PluginWorkflow = z.infer<typeof PluginWorkflowSchema>;
+
 export const PluginManifestSchema = z.object({
   $schema:     z.string().optional(),
   specVersion: OpenDesignSpecVersionSchema.optional(),
@@ -202,6 +225,10 @@ export const PluginManifestSchema = z.object({
     }).passthrough().optional(),
     inputs: z.array(InputFieldSchema).optional(),
     capabilities: z.array(z.string()).optional(),
+    // Workflow-mode declaration. When present, the host renders a step
+    // rail from these stages and the agent drives the run stage by stage
+    // with human gates. See WorkflowStageSchema above.
+    workflow: PluginWorkflowSchema.optional(),
   }).passthrough().optional(),
 }).passthrough();
 

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>短视频工作流看板 · 示例</title>
+<style>
+  /* Open Build design tokens (mirrors apps/web/src/styles/tokens.css) so
+     the board reads as part of the system, not a separate dark widget. */
+  :root {
+    --bg: #faf9f7; --panel: #ffffff; --subtle: #eef1f5; --muted-bg: #e4e8ef;
+    --border: #e1e5eb; --border-soft: #edf0f4;
+    --text: #1a1916; --text-strong: #0d0c0a; --text-muted: #74716b; --text-soft: #989590;
+    --accent: #c96442; --accent-tint: #fbeee5; --accent-soft: #f5d8cb;
+    --selected: #2563eb; --selected-soft: rgba(37,99,235,.14);
+    --green: #1f7a3a; --green-bg: #e8f7ee; --green-border: #c6ead2;
+    --radius-sm: 8px; --radius: 12px; --radius-lg: 16px;
+    --serif: 'Source Serif Pro','Iowan Old Style',Georgia,'Times New Roman',serif;
+    --sans: -apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    --shadow-sm: 0 1px 2px rgba(28,27,26,.05), 0 1px 3px rgba(28,27,26,.04);
+    --shadow-md: 0 6px 24px rgba(28,27,26,.07), 0 2px 6px rgba(28,27,26,.04);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 15px; line-height: 1.6;
+    padding: 32px clamp(16px, 4vw, 48px) 64px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 6px; }
+  .eyebrow { color: var(--text-soft); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+  .title { font-family: var(--serif); font-size: clamp(23px, 3.4vw, 31px); font-weight: 600; color: var(--text-strong); margin: 6px 0 0; line-height: 1.25; }
+  .platform-pill { flex: none; padding: 6px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+    background: var(--accent-tint); border: 1px solid var(--accent-soft); color: var(--accent); }
+
+  /* Step rail — matches the in-app WorkflowRail (selected=active, green=done). */
+  .steps { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 2px; margin: 22px 0 24px;
+    padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+  .step { display: inline-flex; align-items: center; gap: 7px; padding: 2px 4px; color: var(--text-soft); font-size: 12.5px; white-space: nowrap; }
+  .step .dot { width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 50%;
+    border: 1px solid currentColor; font-size: 11px; font-weight: 700; line-height: 1; }
+  .step .lbl { font-weight: 500; }
+  .step .sep { width: 16px; height: 1px; margin: 0 6px; background: var(--border); }
+  .step.is-active { color: var(--selected); }
+  .step.is-active .dot { background: var(--selected); color: #fff; border-color: transparent; box-shadow: 0 0 0 3px var(--selected-soft); }
+  .step.is-done { color: var(--green); }
+  .step.is-done .dot { background: var(--green); color: #fff; border-color: transparent; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px 20px; margin-bottom: 14px; box-shadow: var(--shadow-sm); }
+  .card h3 { margin: 0 0 13px; font-size: 11.5px; letter-spacing: .06em; color: var(--text-muted); font-weight: 700; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
+  .card h3::before { content: ""; width: 14px; height: 2px; border-radius: 2px; background: var(--accent); }
+
+  .titles { display: grid; gap: 8px; }
+  .opt { padding: 11px 13px; border-radius: var(--radius); background: var(--subtle); border: 1px solid var(--border-soft);
+    font-size: 14.5px; display: flex; gap: 10px; align-items: baseline; color: var(--text); }
+  .opt .n { color: var(--text-soft); font-size: 12px; font-weight: 700; flex: none; }
+  .opt .note { color: var(--text-soft); font-weight: 400; font-size: 12.5px; }
+  .opt.is-pick { border-color: var(--selected); background: var(--selected-soft); }
+  .opt.is-pick .n { color: var(--selected); }
+
+  .script { display: grid; gap: 11px; }
+  .beat { display: grid; grid-template-columns: 84px 1fr; gap: 12px; align-items: start; }
+  .beat .tag { font-size: 11px; font-weight: 700; color: var(--text-muted); background: var(--subtle); border: 1px solid var(--border-soft);
+    border-radius: 7px; padding: 4px 8px; text-align: center; }
+  .beat .txt { white-space: pre-line; color: var(--text); }
+  .beat--hook .tag { color: #fff; background: var(--accent); border-color: transparent; }
+
+  .tags { color: var(--accent); font-size: 14px; font-weight: 500; word-break: break-all; }
+
+  .cover { display: grid; gap: 3px; }
+  .cover .main { font-family: var(--serif); font-size: 19px; font-weight: 600; color: var(--text-strong); }
+  .cover .sub { color: var(--text-muted); font-size: 13.5px; }
+
+  .video-panel { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); aspect-ratio: 16/9;
+    display: grid; place-items: center; background: var(--subtle); }
+  .play { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; background: var(--panel); border: 1px solid var(--border); box-shadow: var(--shadow-md); }
+  .play::after { content: ""; border-style: solid; border-width: 8px 0 8px 13px; border-color: transparent transparent transparent var(--accent); margin-left: 3px; }
+  .video-cap { position: absolute; left: 14px; bottom: 12px; font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
+  .ready-badge { position: absolute; right: 12px; top: 12px; font-size: 10.5px; font-weight: 700; color: var(--green); background: var(--green-bg); border: 1px solid var(--green-border); border-radius: 999px; padding: 3px 9px; }
+
+  .foot { color: var(--text-soft); font-size: 12px; text-align: right; margin-top: 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="head">
+      <div>
+        <div class="eyebrow">短视频工作流 · 待你确认</div>
+        <h1 class="title">通勤党如何 10 分钟搞定一周早餐</h1>
+      </div>
+      <span class="platform-pill">小红书</span>
+    </header>
+
+    <nav class="steps">
+      <div class="step is-done"><span class="dot">✓</span><span class="lbl">热点选题</span></div>
+      <span class="sep"></span>
+      <div class="step is-done"><span class="dot">✓</span><span class="lbl">文案脚本</span></div>
+      <span class="sep"></span>
+      <div class="step is-done"><span class="dot">✓</span><span class="lbl">封面分镜</span></div>
+      <span class="sep"></span>
+      <div class="step is-active"><span class="dot">4</span><span class="lbl">生成视频</span></div>
+      <span class="sep"></span>
+      <div class="step"><span class="dot">5</span><span class="lbl">成片复盘</span></div>
+    </nav>
+
+    <section class="card">
+      <h3>🔥 热点选题（已选定）</h3>
+      <div class="titles">
+        <div class="opt is-pick"><span class="n">✓</span><span>通勤党如何 10 分钟搞定一周早餐 <span class="note">· 省时痛点 · 高搜索</span></span></div>
+        <div class="opt"><span class="n">02</span><span>3 块钱早餐挑战 <span class="note">· 成本钩子</span></span></div>
+        <div class="opt"><span class="n">03</span><span>打工人减脂早餐 <span class="note">· 强需求赛道</span></span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>🎬 标题备选（3 选 1）</h3>
+      <div class="titles">
+        <div class="opt is-pick"><span class="n">01</span><span>打工人早餐自由：10 分钟备齐一周，再也不用 7 点起</span></div>
+        <div class="opt"><span class="n">02</span><span>我把早餐成本砍到 3 块钱，还天天不重样（附清单）</span></div>
+        <div class="opt"><span class="n">03</span><span>别再不吃早餐了！通勤党的一周早餐预制法</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>🎙️ 口播脚本 · 约 30s</h3>
+      <div class="script">
+        <div class="beat beat--hook"><span class="tag">钩子 0-3s</span><span class="txt">90% 的通勤党，早餐都输在「来不及」这三个字上。</span></div>
+        <div class="beat"><span class="tag">预告</span><span class="txt">今天教你一个周末花 10 分钟、整个工作日都不用愁的预制法。</span></div>
+        <div class="beat"><span class="tag">正文</span><span class="txt">· 周日把燕麦、水果、酸奶分装进 5 个小盒，进冰箱——成本一份不到 3 块。
+· 鸡蛋一次煮 5 个，冷藏放一周，早上微波 30 秒。
+· 换着加坚果、果干，5 天 5 个味，不会腻。</span></div>
+        <div class="beat"><span class="tag">收尾 CTA</span><span class="txt">想要这份分装清单的，评论区扣「早餐」，我整理好发你～</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>🏷️ 话题标签</h3>
+      <div class="tags">#打工人早餐 #通勤干货 #懒人食谱 #一周备餐 #早餐自由</div>
+    </section>
+
+    <section class="card">
+      <h3>🖼️ 封面 / 首帧文字</h3>
+      <div class="cover">
+        <div class="main">10 分钟备齐一周早餐</div>
+        <div class="sub">3 块钱 · 天天不重样 · 通勤党亲测</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>🎞️ 成片 · 文生视频</h3>
+      <div class="video-panel">
+        <span class="ready-badge">已生成</span>
+        <div class="play"></div>
+        <div class="video-cap">30s · 1080×1920 竖屏成片</div>
+      </div>
+    </section>
+
+    <div class="foot">每完成一步，看板自动刷新 · Open Build</div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,209 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "short-video-copy",
+  "title": "Short-Video Studio",
+  "title_i18n": {
+    "en": "Short-Video Studio",
+    "zh-CN": "短视频工作流",
+    "zh-TW": "短影片工作流",
+    "ja": "ショート動画ワークフロー",
+    "ko": "숏폼 워크플로우",
+    "de": "Kurzvideo-Workflow",
+    "fr": "Workflow vidéo courte",
+    "es": "Flujo de video corto",
+    "pt-BR": "Fluxo de vídeo curto",
+    "ru": "Воркфлоу коротких видео"
+  },
+  "version": "0.2.0",
+  "description": "A guided short-video master controller. It walks you through a conversation step by step — surface hot topics for your niche, pick one, rewrite it into platform-native copy (hook-first script, three titles, hashtags, cover text), then optionally generate a clip — building a visual workflow board on the right the whole time. Tuned for Xiaohongshu, Douyin, WeChat Video Account, Bilibili, or Kuaishou.",
+  "description_i18n": {
+    "en": "A guided short-video master controller. It walks you through a conversation step by step — surface hot topics for your niche, pick one, rewrite it into platform-native copy (hook-first script, three titles, hashtags, cover text), then optionally generate a clip — building a visual workflow board on the right the whole time. Tuned for Xiaohongshu, Douyin, WeChat Video Account, Bilibili, or Kuaishou.",
+    "zh-CN": "一个引导式短视频总控：用对话一步步领你走完——按你的赛道找热点选题、挑一个、改写成平台化文案（强钩子口播脚本 + 3 个标题 + 话题标签 + 封面文字），再到可选的视频生成。全程在右侧画一张可视化工作流看板。针对小红书、抖音、视频号、B 站、快手分别调性。",
+    "zh-TW": "把一個選題跑成一條可發布的短影片：右側即時工作流看板逐步填充——強鉤子口播腳本 + 3 個標題 + 話題標籤 + 封面文字，再到 AI 生成的成片。每一步都串流更新到可刷新的 Live Artifact 上。針對小紅書、抖音、影片號、B 站、快手分別調性。",
+    "ja": "選題を1本の公開可能なショート動画へ——右側のライブ・ワークフローボードが段階的に埋まる。フック重視の口述スクリプト、タイトル3案、ハッシュタグ、カバーテキスト、そしてAI生成クリップ。各ステップが更新可能なライブアーティファクトに流し込まれます。小紅書／抖音／微信ビデオ号／Bilibili／快手向けに最適化。",
+    "ko": "하나의 주제를 발행 가능한 숏폼 영상으로——오른쪽 라이브 워크플로우 보드가 단계별로 채워집니다. 훅 중심 대본, 제목 3안, 해시태그, 커버 문구, 그리고 AI 생성 클립. 각 단계가 새로고침 가능한 라이브 아티팩트로 스트리밍됩니다. 샤오훙수·더우인·위챗 비디오·빌리빌리·콰이쇼우에 맞춤.",
+    "de": "Verwandelt ein Thema in ein sendefertiges Kurzvideo über ein Live-Workflow-Board rechts — Hook-Skript, drei Titel, Hashtags, Cover-Text und dann ein KI-generierter Clip. Jeder Schritt fließt in ein aktualisierbares Live-Artefakt. Abgestimmt auf Xiaohongshu, Douyin, WeChat Video, Bilibili oder Kuaishou.",
+    "fr": "Transforme un sujet en vidéo courte prête à publier via un tableau de workflow en direct à droite — script à accroche, trois titres, hashtags, texte de couverture, puis un clip généré par IA. Chaque étape alimente un live artifact rafraîchissable. Adapté à Xiaohongshu, Douyin, WeChat Video, Bilibili ou Kuaishou.",
+    "es": "Convierte un tema en un video corto listo para publicar mediante un tablero de flujo en vivo a la derecha — guion con gancho, tres títulos, hashtags, texto de portada y un clip generado por IA. Cada paso alimenta un live artifact actualizable. Adaptado a Xiaohongshu, Douyin, WeChat Video, Bilibili o Kuaishou.",
+    "pt-BR": "Transforma um tema em um vídeo curto pronto para publicar por meio de um quadro de fluxo ao vivo à direita — roteiro com gancho, três títulos, hashtags, texto de capa e um clipe gerado por IA. Cada etapa alimenta um live artifact atualizável. Adaptado a Xiaohongshu, Douyin, WeChat Video, Bilibili ou Kuaishou.",
+    "ru": "Превращает тему в готовое к публикации короткое видео через живую доску воркфлоу справа — сценарий с крючком, три заголовка, хэштеги, текст обложки и сгенерированный ИИ клип. Каждый шаг попадает в обновляемый live-артефакт. Под Xiaohongshu, Douyin, WeChat Video, Bilibili или Kuaishou."
+  },
+  "license": "MIT",
+  "tags": [
+    "open-build",
+    "first-party",
+    "content",
+    "workflow",
+    "live-artifact",
+    "short-video",
+    "social",
+    "xiaohongshu",
+    "douyin"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "skill",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "scenario": "content",
+    "featured": true,
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    },
+    "workflow": {
+      "stages": [
+        {
+          "id": "topic",
+          "title": "热点选题",
+          "gate": "confirm"
+        },
+        {
+          "id": "copy",
+          "title": "文案脚本",
+          "gate": "confirm"
+        },
+        {
+          "id": "video",
+          "title": "视频生成",
+          "gate": "confirm"
+        },
+        {
+          "id": "review",
+          "title": "成片复盘",
+          "gate": "none"
+        }
+      ]
+    },
+    "useCase": {
+      "query": {
+        "zh-CN": "当一个引导式短视频总控，用对话一步步领我走完：热点选题 →（{{platform}}）文案改写 →（可选）视频生成。赛道：{{domain}}。语气：{{tone}}。目标时长：{{duration}}。选题方式：{{topicMode}}。生成视频：{{generateVideo}}（{{videoSource}}）。\n\n规则：每一步先问/确认再做下一步，别一口气跑完。开工先用 TodoWrite 写入步骤条：热点选题 / 文案脚本 / 视频生成 / 成片复盘，每完成一步标 completed。每个关键步骤末尾必须用确认卡（AskUserQuestion）让我「确认进入下一步 / 驳回重做」，等我拍板再继续。进度做成右侧看板——只用 Write 工具往当前项目目录写一个自包含的 `index.html`（参照插件自带 example.html），每步重写刷新；不要用 od/任何 CLI/bash 建看板，不要 cd 去别的目录。\n1. 开场问我平台和赛道（输入里有就跳过）。\n2. 热点选题：选题方式=「真抓热榜」且配了抓取类工具就抓该平台热榜筛我赛道相关的；否则（默认 AI 建议 / 没有工具）坦诚说明，按我赛道给 5–8 个潜力选题，列进看板等我选。\n3. 文案：选题定了写一版（强钩子、3 标题、口播脚本、标签、封面），重写看板，问我要不要调。\n4. 视频：先问我要不要；要且可用才生成，否则看板成片区写占位，绝不报错。",
+        "en": "Act as a guided short-video master controller. Walk me step by step through a conversation: hot topics → copy rewriting (for {{platform}}) → optional video. Niche: {{domain}}. Tone: {{tone}}. Target length: {{duration}}. Topic mode: {{topicMode}}. Generate video: {{generateVideo}} ({{videoSource}}).\n\nRules: ask/confirm before each next step — do not run everything at once. First call TodoWrite to lay out the step rail: hot topics / copy script / video / final review, marking each completed as you finish it. At the end of every key step you MUST raise a confirmation card (AskUserQuestion) asking me to confirm-next or reject-redo, and wait for my call before continuing. Build progress as a board on the right using ONLY the Write tool to write a self-contained `index.html` (model it on the bundled example.html), rewriting it each step; never use od/any CLI/bash to build the board, and never cd elsewhere.\n1. Open by asking my platform and niche (skip if already provided).\n2. Hot topics: if topic mode is 'scrape' AND a scraping tool is configured, scrape the platform's trending list filtered to my niche; otherwise (default AI suggest / no tool) say so honestly and propose 5–8 high-potential topics for my niche, listed on the board for me to pick.\n3. Copy: once a topic is picked, write one version (strong hook, 3 titles, oral script, hashtags, cover), rewrite the board, ask if I want changes.\n4. Video: ask first; only generate if I say yes and it's available, otherwise put a placeholder in the clip area — never error."
+      },
+      "exampleOutputs": [
+        {
+          "path": "./example.html",
+          "title": "短视频工作流看板示例"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "inputs": [
+      {
+        "name": "platform",
+        "label": "平台",
+        "type": "select",
+        "required": true,
+        "options": [
+          "小红书",
+          "抖音",
+          "视频号",
+          "B站",
+          "快手"
+        ],
+        "default": "小红书"
+      },
+      {
+        "name": "domain",
+        "label": "赛道 / 领域",
+        "type": "string",
+        "required": false,
+        "placeholder": "例：母婴 / 健身 / 职场 / 美食"
+      },
+      {
+        "name": "topicMode",
+        "label": "选题方式",
+        "type": "select",
+        "required": false,
+        "options": [
+          "AI 建议",
+          "真抓热榜"
+        ],
+        "default": "AI 建议"
+      },
+      {
+        "name": "topic",
+        "label": "选题（可留空，让它帮你找）",
+        "type": "text",
+        "required": false,
+        "placeholder": "留空 → 进入热点选题引导；或直接填一个你想做的选题"
+      },
+      {
+        "name": "angle",
+        "label": "切入角度 / 卖点",
+        "type": "string",
+        "required": false,
+        "placeholder": "例：省时 + 低成本 + 不重样"
+      },
+      {
+        "name": "tone",
+        "label": "语气",
+        "type": "select",
+        "required": false,
+        "options": [
+          "真诚口播",
+          "干货清单",
+          "故事化",
+          "测评对比",
+          "情绪共鸣"
+        ],
+        "default": "真诚口播"
+      },
+      {
+        "name": "duration",
+        "label": "目标时长",
+        "type": "select",
+        "required": false,
+        "options": [
+          "15s",
+          "30s",
+          "60s",
+          "1-3min"
+        ],
+        "default": "30s"
+      },
+      {
+        "name": "generateVideo",
+        "label": "生成视频",
+        "type": "select",
+        "required": false,
+        "options": [
+          "是",
+          "否"
+        ],
+        "default": "否"
+      },
+      {
+        "name": "videoSource",
+        "label": "视频来源",
+        "type": "select",
+        "required": false,
+        "options": [
+          "文生视频",
+          "图生视频"
+        ],
+        "default": "文生视频"
+      }
+    ],
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

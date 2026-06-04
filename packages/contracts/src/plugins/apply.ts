@@ -6,6 +6,7 @@ import {
   McpServerSpecSchema,
   PluginConnectorRefSchema,
   PluginPipelineSchema,
+  PluginWorkflowSchema,
   type GenUISurfaceSpec,
   type InputField,
   type McpServerSpec,
@@ -64,6 +65,10 @@ export const AppliedPluginSnapshotSchema = z.object({
   connectorsResolved:   z.array(PluginConnectorBindingSchema),
   mcpServers:           z.array(McpServerSpecSchema),
   pipeline:             PluginPipelineSchema.optional(),
+  // Workflow-mode declaration, materialized at apply time so the prompt
+  // composer can inject the workflow protocol and the web step rail can
+  // render without re-reading the live manifest.
+  workflow:             PluginWorkflowSchema.optional(),
   genuiSurfaces:        z.array(GenUISurfaceSpecSchema).optional(),
   // Plugin-supplied display metadata, materialized at apply time so prompt
   // composers can render the ## Active plugin block without re-reading the

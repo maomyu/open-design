@@ -536,6 +536,19 @@ export const MCP_TEMPLATES: McpTemplate[] = [
     ],
   },
   {
+    id: 'bb-browser',
+    label: 'bb-browser (real browser)',
+    description:
+      'Drives your real, logged-in Chrome via CDP so an agent can read public pages and trending lists using your own session — nothing leaves your machine. Optional, read-only enrichment for the short-video workflow\'s "scrape" topic mode (Xiaohongshu/Zhihu/Bilibili trending). The AI-suggest topic mode needs none of this; only enable bb-browser when you want real hot-list scraping and have Chrome running and logged in.',
+    transport: 'stdio',
+    category: 'web-capture',
+    homepage: 'https://github.com/epiral/bb-browser',
+    example:
+      'Read the Xiaohongshu trending list and pull the items related to my niche.',
+    command: 'npx',
+    args: ['-y', 'bb-browser', '--mcp'],
+  },
+  {
     id: 'allyson',
     label: 'Allyson (animated SVG)',
     description:
