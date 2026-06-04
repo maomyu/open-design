@@ -426,6 +426,8 @@ import { registerMediaRoutes } from './media-routes.js';
 import { registerProjectRoutes, registerProjectArtifactRoutes, registerProjectFileRoutes, registerProjectUploadRoutes } from './project-routes.js';
 import { registerFinalizeRoutes, registerImportRoutes, registerProjectExportRoutes } from './import-export-routes.js';
 import { registerHandoffRoutes } from './handoff-routes.js';
+import { registerLearningRoutes } from './learning-routes.js';
+import { registerPluginEditRoutes } from './plugin-edit-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
 import { TranscriptExportLockedError } from './transcript-export.js';
 import { registerChatRoutes } from './chat-routes.js';
@@ -5656,6 +5658,8 @@ export async function startServer({
     validation: validationDeps,
     handoff: handoffDeps,
   });
+  registerLearningRoutes(app, { http: httpDeps, paths: pathDeps });
+  registerPluginEditRoutes(app, { db, http: httpDeps });
   registerDeploymentCheckRoutes(app, { db, http: httpDeps, deploy: deployDeps });
   app.use('/frames', express.static(FRAMES_DIR));
   registerProjectExportRoutes(app, {

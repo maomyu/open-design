@@ -1414,6 +1414,7 @@ export const id: Dict = {
   'tool.todos': 'Todo',
   'tool.askQuestion': 'Pertanyaan',
   'tool.askQuestionSubmit': 'Kirim',
+  'tool.askQuestionNotePlaceholder': "Tambahkan catatan (opsional)…",
   'tool.askQuestionPending': 'Menunggu jawabanmu',
   'tool.askQuestionAnswered': 'Dijawab',
   'tool.todosExpand': 'Tampilkan tugas',

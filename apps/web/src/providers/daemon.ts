@@ -591,6 +591,90 @@ export async function reportChatRunFeedback(req: {
   }
 }
 
+// Direct plugin editing. Read/write a plugin's prompts (SKILL.md body + the
+// kickoff query); saving re-registers the plugin so the next run uses it.
+export async function fetchPluginSource(
+  pluginId: string,
+): Promise<{ id: string; skill: string; query: string; editable: boolean } | null> {
+  try {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/source`);
+    if (!resp.ok) return null;
+    return (await resp.json()) as { id: string; skill: string; query: string; editable: boolean };
+  } catch {
+    return null;
+  }
+}
+
+export async function savePluginSource(
+  pluginId: string,
+  body: { skill?: string; query?: string },
+): Promise<boolean> {
+  try {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/source`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Self-improving agent loop ("调教"). Turns the user's reaction to an output
+// into durable memory the daemon injects into future runs. See
+// apps/daemon/src/learning.ts.
+export async function submitLearningFeedback(req: {
+  context?: string;
+  targetText?: string;
+  reasons: string[];
+  note?: string;
+  rating: 'good' | 'bad';
+}): Promise<{ memoryId: string; preference: string } | null> {
+  try {
+    const resp = await fetch('/api/learning/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (!resp.ok) return null;
+    return (await resp.json()) as { memoryId: string; preference: string };
+  } catch {
+    return null;
+  }
+}
+
+export async function submitLearningSample(req: {
+  context?: string;
+  title?: string;
+  content: string;
+}): Promise<{ memoryId: string } | null> {
+  try {
+    const resp = await fetch('/api/learning/sample', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (!resp.ok) return null;
+    return (await resp.json()) as { memoryId: string };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchLearning(
+  context?: string,
+): Promise<{ items: Array<{ memoryId: string; kind: string; name: string }> }> {
+  try {
+    const qs = context ? `?context=${encodeURIComponent(context)}` : '';
+    const resp = await fetch(`/api/learning${qs}`);
+    if (!resp.ok) return { items: [] };
+    return (await resp.json()) as { items: Array<{ memoryId: string; kind: string; name: string }> };
+  } catch {
+    return { items: [] };
+  }
+}
+
 export async function listActiveChatRuns(
   projectId: string,
   conversationId: string,

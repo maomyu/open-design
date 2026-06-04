@@ -1264,6 +1264,7 @@ export const pl: Dict = {
   'tool.todos': 'Zadania',
   'tool.askQuestion': 'Pytanie',
   'tool.askQuestionSubmit': 'Wyślij',
+  'tool.askQuestionNotePlaceholder': "Dodaj notatkę (opcjonalnie)…",
   'tool.askQuestionPending': 'Czeka na Twoją odpowiedź',
   'tool.askQuestionAnswered': 'Udzielono odpowiedzi',
   'tool.todosExpand': 'Pokaż zadania',

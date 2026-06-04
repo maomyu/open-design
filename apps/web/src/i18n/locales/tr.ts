@@ -1251,6 +1251,7 @@ export const tr: Dict = {
   'tool.todos': 'Yapılacaklar',
   'tool.askQuestion': 'Soru',
   'tool.askQuestionSubmit': 'Gönder',
+  'tool.askQuestionNotePlaceholder': "Not ekleyin (isteğe bağlı)…",
   'tool.askQuestionPending': 'Cevabınız bekleniyor',
   'tool.askQuestionAnswered': 'Cevaplandı',
   'tool.todosExpand': 'Görevleri göster',

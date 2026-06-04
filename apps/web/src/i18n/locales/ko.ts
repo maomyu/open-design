@@ -1264,6 +1264,7 @@ export const ko: Dict = {
   'tool.todos': '할 일 (Todos)',
   'tool.askQuestion': '질문',
   'tool.askQuestionSubmit': '제출',
+  'tool.askQuestionNotePlaceholder': "메모 추가 (선택)…",
   'tool.askQuestionPending': '답변 대기 중',
   'tool.askQuestionAnswered': '답변 완료',
   'tool.todosExpand': '할 일 표시',

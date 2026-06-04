@@ -1588,6 +1588,7 @@ export const zhTW: Dict = {
   'tool.todos': '待辦',
   'tool.askQuestion': '問題',
   'tool.askQuestionSubmit': '提交',
+  'tool.askQuestionNotePlaceholder': "補充說明（可選）…",
   'tool.askQuestionPending': '等待你的回答',
   'tool.askQuestionAnswered': '已回答',
   'tool.todosExpand': '展開任務',

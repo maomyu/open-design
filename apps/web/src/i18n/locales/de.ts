@@ -1152,6 +1152,7 @@ export const de: Dict = {
   'tool.todos': 'Todos',
   'tool.askQuestion': 'Frage',
   'tool.askQuestionSubmit': 'Senden',
+  'tool.askQuestionNotePlaceholder': "Notiz hinzufügen (optional)…",
   'tool.askQuestionPending': 'Warte auf deine Antwort',
   'tool.askQuestionAnswered': 'Beantwortet',
   'tool.todosExpand': 'Aufgaben einblenden',

@@ -1306,6 +1306,7 @@ export const uk: Dict = {
   'tool.todos': 'Завдання',
   'tool.askQuestion': 'Питання',
   'tool.askQuestionSubmit': 'Надіслати',
+  'tool.askQuestionNotePlaceholder': "Додати нотатку (необов’язково)…",
   'tool.askQuestionPending': 'Очікую вашої відповіді',
   'tool.askQuestionAnswered': 'Відповідь надано',
   'tool.todosExpand': 'Показати завдання',

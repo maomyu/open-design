@@ -1264,6 +1264,7 @@ export const ar: Dict = {
   'tool.todos': 'المهام',
   'tool.askQuestion': 'سؤال',
   'tool.askQuestionSubmit': 'إرسال',
+  'tool.askQuestionNotePlaceholder': "أضف ملاحظة (اختياري)…",
   'tool.askQuestionPending': 'في انتظار إجابتك',
   'tool.askQuestionAnswered': 'تمت الإجابة',
   'tool.todosExpand': 'عرض المهام',

@@ -1153,6 +1153,7 @@ export const esES: Dict = {
   'tool.todos': 'Tareas',
   'tool.askQuestion': 'Pregunta',
   'tool.askQuestionSubmit': 'Enviar',
+  'tool.askQuestionNotePlaceholder': "Añadir una nota (opcional)…",
   'tool.askQuestionPending': 'Esperando tu respuesta',
   'tool.askQuestionAnswered': 'Respondido',
   'tool.todosExpand': 'Mostrar tareas',

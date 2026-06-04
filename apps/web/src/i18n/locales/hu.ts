@@ -1264,6 +1264,7 @@ export const hu: Dict = {
   'tool.todos': 'Feladatok',
   'tool.askQuestion': 'Kérdés',
   'tool.askQuestionSubmit': 'Beküldés',
+  'tool.askQuestionNotePlaceholder': "Megjegyzés hozzáadása (opcionális)…",
   'tool.askQuestionPending': 'Várjuk a válaszodat',
   'tool.askQuestionAnswered': 'Megválaszolva',
   'tool.todosExpand': 'Feladatok mutatása',

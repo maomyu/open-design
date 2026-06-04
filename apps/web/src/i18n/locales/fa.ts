@@ -1245,6 +1245,7 @@ export const fa: Dict = {
   'tool.todos': 'وظایف',
   'tool.askQuestion': 'پرسش',
   'tool.askQuestionSubmit': 'ارسال',
+  'tool.askQuestionNotePlaceholder': "یادداشت اضافه کنید (اختیاری)…",
   'tool.askQuestionPending': 'در انتظار پاسخ شما',
   'tool.askQuestionAnswered': 'پاسخ داده شد',
   'tool.todosExpand': 'نمایش وظایف',

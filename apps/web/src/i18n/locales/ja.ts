@@ -1151,6 +1151,7 @@ export const ja: Dict = {
   'tool.todos': 'Todos',
   'tool.askQuestion': '質問',
   'tool.askQuestionSubmit': '送信',
+  'tool.askQuestionNotePlaceholder': "メモを追加（任意）…",
   'tool.askQuestionPending': '回答をお待ちしています',
   'tool.askQuestionAnswered': '回答済み',
   'tool.todosExpand': 'タスクを表示',

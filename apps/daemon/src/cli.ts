@@ -214,6 +214,8 @@ const SUBCOMMAND_MAP = {
   mcp: runMcp,
   research: runResearch,
   plugin: runPlugin,
+  workflow: runWorkflow,
+  learning: runLearning,
   ui: runUi,
   marketplace: runMarketplace,
   project: runProject,
@@ -957,6 +959,7 @@ async function runPlugin(args) {
     case 'sources':   return runPluginSources(rest);
     case 'info':      return runPluginInfo(rest);
     case 'manifest':  return runPluginManifest(rest);
+    case 'edit':      return runPluginEdit(rest);
     case 'install':   return runPluginInstall(rest);
     case 'upgrade':   return runPluginUpgrade(rest);
     case 'uninstall': return runPluginUninstall(rest);
@@ -2158,6 +2161,52 @@ async function runPluginManifest(rest) {
     process.exit(1);
   }
   process.stdout.write(JSON.stringify(data.manifest, null, 2) + '\n');
+}
+
+// `od plugin edit <id>` — read a plugin's editable prompts; with --query /
+// --skill-file, write them back and re-register the plugin ("发布"). Mirrors
+// the web plugin editor against /api/plugins/:id/source.
+async function runPluginEdit(rest) {
+  const flags = parseFlags(rest, {
+    string: ['daemon-url', 'query', 'skill-file'],
+    boolean: ['json'],
+  });
+  const id = rest.find((a) => !a.startsWith('--') && a !== flags['daemon-url'] && a !== flags.query && a !== flags['skill-file']);
+  if (!id) {
+    console.error('Usage: od plugin edit <id> [--json] [--query "<text>"] [--skill-file <path|->]');
+    process.exit(2);
+  }
+  const base = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/source`;
+
+  // Write path.
+  if (flags.query !== undefined || flags['skill-file'] !== undefined) {
+    const body = {};
+    if (flags.query !== undefined) body.query = String(flags.query);
+    if (flags['skill-file'] !== undefined) {
+      const p = String(flags['skill-file']);
+      const fs = await import('node:fs');
+      body.skill = p === '-'
+        ? fs.readFileSync(0, 'utf8')
+        : fs.readFileSync(p, 'utf8');
+    }
+    const resp = await fetch(base, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    console.log(`published → ${data.id}`);
+    return;
+  }
+
+  // Read path.
+  const resp = await fetch(base);
+  if (resp.status === 404) { console.error(`plugin ${id} not found`); process.exit(65); }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  console.log(`# ${id} (editable: ${data.editable})\n`);
+  console.log(`## 开场指令 (query)\n${data.query}\n`);
+  console.log(`## SKILL.md\n${data.skill}`);
 }
 
 // Plan §3.MM2 — `od plugin sources`. Lists every distinct install
@@ -4517,6 +4566,164 @@ Common options:
       console.error(`unknown subcommand: od project ${sub}`);
       process.exit(2);
   }
+}
+
+// `od workflow` — discover and launch workflow-mode plugins (plugins that
+// declare `od.workflow.stages`). `stages` reads the declared step graph;
+// `run` is sugar over the normal run-start path (`POST /api/runs` with the
+// plugin applied), so workflow runs stay on the same contract as the UI.
+// `od learning` — the self-improving agent loop ("调教"). Turns a user's
+// reaction to an output into durable memory the daemon injects into future
+// runs. Mirrors the web Tune bar against /api/learning/*.
+async function runLearning(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od learning feedback --rating good|bad [--context <id>] [--reasons "a,b"] [--note "<text>"]
+                                            Record a reaction → preference memory.
+  od learning sample --content <text> [--context <id>] [--title <t>]
+                                            Remember a good output as a style sample.
+  od learning list [--context <id>] [--json] What the agent has learned.
+
+Common options:
+  --daemon-url <url>   Open Design daemon HTTP base.
+  --json               Emit raw JSON.`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  const flags = parseFlags(rest, {
+    string: ['daemon-url', 'context', 'reasons', 'note', 'rating', 'content', 'title'],
+    boolean: ['json'],
+  });
+  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+
+  if (sub === 'feedback') {
+    if (flags.rating !== 'good' && flags.rating !== 'bad') {
+      console.error('--rating must be good or bad');
+      process.exit(2);
+    }
+    const body = {
+      rating: flags.rating,
+      reasons: flags.reasons ? String(flags.reasons).split(',').map((s) => s.trim()).filter(Boolean) : [],
+    };
+    if (flags.context) body.context = flags.context;
+    if (flags.note) body.note = flags.note;
+    const resp = await fetch(`${base}/api/learning/feedback`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    console.log(`recorded → ${data.memoryId}\n${data.preference}`);
+    return;
+  }
+
+  if (sub === 'sample') {
+    if (!flags.content) {
+      console.error('--content is required');
+      process.exit(2);
+    }
+    const body = { content: flags.content };
+    if (flags.context) body.context = flags.context;
+    if (flags.title) body.title = flags.title;
+    const resp = await fetch(`${base}/api/learning/sample`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  }
+
+  if (sub === 'list') {
+    const qs = flags.context ? `?context=${encodeURIComponent(flags.context)}` : '';
+    const resp = await fetch(`${base}/api/learning${qs}`);
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    for (const it of data.items ?? []) console.log(`${it.kind}\t${it.name}`);
+    return;
+  }
+
+  console.error(`Unknown subcommand: learning ${sub}`);
+  process.exit(2);
+}
+
+async function runWorkflow(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage:
+  od workflow stages <pluginId> [--json]    List the plugin's declared workflow stages.
+  od workflow run <pluginId> --project <id> [--inputs <json>] [--message "<text>"] [--json]
+                                            Start a workflow run (plugin applied). Human
+                                            gates are answered in the UI or via
+                                            POST /api/runs/:id/tool-result.
+
+Common options:
+  --daemon-url <url>   Open Design daemon HTTP base.
+  --json               Emit raw JSON.`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  const flags = parseFlags(rest, { string: PROJECT_STRING_FLAGS, boolean: PROJECT_BOOLEAN_FLAGS });
+  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
+  const id = rest.find((a) => !a.startsWith('--') && a !== flags['daemon-url']);
+
+  if (sub === 'stages') {
+    if (!id) {
+      console.error('Usage: od workflow stages <pluginId>');
+      process.exit(2);
+    }
+    const resp = await fetch(`${base}/api/plugins/${encodeURIComponent(id)}`);
+    if (resp.status === 404) {
+      console.error(`plugin ${id} not found`);
+      process.exit(65);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    const stages = data?.manifest?.od?.workflow?.stages ?? [];
+    if (flags.json) {
+      return process.stdout.write(JSON.stringify({ pluginId: id, stages }, null, 2) + '\n');
+    }
+    if (stages.length === 0) {
+      console.log(`${id}: no workflow declared (not a workflow-mode plugin)`);
+      return;
+    }
+    for (const [i, s] of stages.entries()) {
+      console.log(`${i + 1}. ${s.title ?? s.id}\t(id=${s.id}, gate=${s.gate ?? 'none'})`);
+    }
+    return;
+  }
+
+  if (sub === 'run') {
+    if (!id) {
+      console.error('Usage: od workflow run <pluginId> --project <id> [--inputs <json>]');
+      process.exit(2);
+    }
+    if (!flags.project) {
+      console.error('--project <projectId> is required');
+      process.exit(2);
+    }
+    const body = { projectId: flags.project, pluginId: id };
+    if (flags.conversation) body.conversationId = flags.conversation;
+    if (flags.message) body.message = flags.message;
+    if (flags.inputs) {
+      try { body.pluginInputs = JSON.parse(flags.inputs); } catch (err) {
+        console.error(`--inputs must be valid JSON: ${err.message}`);
+        process.exit(2);
+      }
+    }
+    const resp = await fetch(`${base}/api/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  }
+
+  console.error(`Unknown subcommand: workflow ${sub}`);
+  process.exit(2);
 }
 
 async function runRun(args) {

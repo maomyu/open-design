@@ -1305,6 +1305,7 @@ export const ptBR: Dict = {
   'tool.todos': 'Tarefas',
   'tool.askQuestion': 'Pergunta',
   'tool.askQuestionSubmit': 'Enviar',
+  'tool.askQuestionNotePlaceholder': "Adicionar uma nota (opcional)…",
   'tool.askQuestionPending': 'Aguardando sua resposta',
   'tool.askQuestionAnswered': 'Respondido',
   'tool.todosExpand': 'Mostrar tarefas',

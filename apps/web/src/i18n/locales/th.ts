@@ -1225,6 +1225,7 @@ export const th: Dict = {
   'tool.todos': 'สิ่งที่วางแผนต้องทำ',
   'tool.askQuestion': 'คำถาม',
   'tool.askQuestionSubmit': 'ส่ง',
+  'tool.askQuestionNotePlaceholder': "เพิ่มหมายเหตุ (ไม่บังคับ)…",
   'tool.askQuestionPending': 'รอคำตอบของคุณ',
   'tool.askQuestionAnswered': 'ตอบแล้ว',
   'tool.todosExpand': 'แสดงงาน',

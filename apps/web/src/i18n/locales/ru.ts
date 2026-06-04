@@ -1305,6 +1305,7 @@ export const ru: Dict = {
   'tool.todos': 'Задачи',
   'tool.askQuestion': 'Вопрос',
   'tool.askQuestionSubmit': 'Отправить',
+  'tool.askQuestionNotePlaceholder': "Добавить заметку (необязательно)…",
   'tool.askQuestionPending': 'Ожидание вашего ответа',
   'tool.askQuestionAnswered': 'Отвечено',
   'tool.todosExpand': 'Показать задачи',
