@@ -212,6 +212,11 @@ function AskUserQuestionCard({
   // cannot rely on `result` alone because `claude-code -p` ships an auto
   // error tool_result that does not represent a real answer.
   const [submitted, setSubmitted] = useState(false);
+  // Free-text "waiting area": the operator can type a note alongside (or
+  // instead of) picking an option. On submit it is appended to the same
+  // tool_result so the agent receives selection + note together. Per the
+  // chosen design, any combination submits — option only, note only, or both.
+  const [note, setNote] = useState('');
   if (questions.length === 0) {
     return <GenericCard name="AskUserQuestion" input={input} result={result} runStreaming={runStreaming} runSucceeded={runSucceeded} />;
   }
@@ -255,10 +260,15 @@ function AskUserQuestionCard({
   // sends the answer as a fresh user message).
   const canSubmit = !!onAnswerToolUse || !!onSubmitForm;
   const locked = hasRealAnswer || !isLast || !canSubmit;
-  const ready = questions.every((q) => {
+  const noteText = note.trim();
+  const isAnswered = (q: { question: string }) => {
     const v = selections[q.question];
     return Array.isArray(v) ? v.length > 0 : typeof v === 'string' && v.trim().length > 0;
-  });
+  };
+  // Any combination submits: a free-text note alone, all options answered, or
+  // both. (A partial option-only pick with no note still needs every question
+  // answered — matching the original contract for the pure-selection path.)
+  const ready = noteText.length > 0 || questions.every(isAnswered);
   function pickSingle(question: string, label: string) {
     if (locked) return;
     setSelections((prev) => ({ ...prev, [question]: label }));
@@ -275,12 +285,17 @@ function AskUserQuestionCard({
   }
   async function handleSubmit() {
     if (locked || !ready) return;
-    const lines = questions.map((q) => {
-      const v = selections[q.question];
-      const answer = Array.isArray(v) ? v.map((s) => `- ${s}`).join('\n') : (v ?? '');
-      return `${q.question}\n${answer}`;
-    });
-    const formatted = lines.join('\n\n');
+    // Only include questions the user actually answered, then append the
+    // free-text note (if any) as its own block.
+    const blocks = questions
+      .filter(isAnswered)
+      .map((q) => {
+        const v = selections[q.question];
+        const answer = Array.isArray(v) ? v.map((s) => `- ${s}`).join('\n') : (v ?? '');
+        return `${q.question}\n${answer}`;
+      });
+    if (noteText) blocks.push(`补充说明 / Note:\n${noteText}`);
+    const formatted = blocks.join('\n\n');
     // Prefer the direct tool-result route: keeps the answer scoped to the
     // open stream-json child so claude-code's `AskUserQuestion` returns
     // without an auto error. Fall back to onSubmitForm only if no run is
@@ -366,14 +381,31 @@ function AskUserQuestionCard({
       </div>
       {!locked ? (
         <div className="op-ask-question-foot">
-          <button
-            type="button"
-            className="op-ask-question-submit"
-            disabled={!ready}
-            onClick={handleSubmit}
-          >
-            {t('tool.askQuestionSubmit')}
-          </button>
+          <textarea
+            className="op-ask-question-note"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => {
+              // Cmd/Ctrl+Enter submits, matching the composer.
+              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && ready) {
+                e.preventDefault();
+                void handleSubmit();
+              }
+            }}
+            placeholder={t('tool.askQuestionNotePlaceholder')}
+            rows={2}
+            data-testid="ask-user-question-note"
+          />
+          <div className="op-ask-question-actions">
+            <button
+              type="button"
+              className="op-ask-question-submit"
+              disabled={!ready}
+              onClick={handleSubmit}
+            >
+              {t('tool.askQuestionSubmit')}
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

@@ -67,8 +67,37 @@
 }
 .op-ask-question-foot {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 8px;
   padding: 4px 12px 12px;
+}
+/* Free-text "waiting area" — type a note alongside (or instead of) picking
+ * an option; submitted together with the selection. Mirrors the composer
+ * textarea look so the two read as the same control family. */
+.op-ask-question-note {
+  width: 100%;
+  resize: vertical;
+  min-height: 38px;
+  max-height: 160px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+}
+.op-ask-question-note::placeholder { color: var(--text-faint); }
+.op-ask-question-note:focus {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 3px var(--selected-soft);
+}
+.op-ask-question-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 /* Match the composer's Send button styling so the two actions read as
  * the same control family. The composer-send is bordered with the
