@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>公众号发布 · 第 1 步 · 选题</title>
+<style>
+  /* Open Build design tokens (mirrors apps/web/src/styles/tokens.css). */
+  :root {
+    --bg: #faf9f7; --panel: #ffffff; --subtle: #eef1f5; --muted-bg: #e4e8ef;
+    --border: #e1e5eb; --border-soft: #edf0f4; --border-strong: #c9d0da;
+    --text: #1a1916; --text-strong: #0d0c0a; --text-muted: #74716b; --text-soft: #989590; --text-faint: #b3b0a8;
+    --accent: #c96442; --accent-strong: #b45a3b; --accent-tint: #fbeee5; --accent-soft: #f5d8cb;
+    --selected: #2563eb; --selected-soft: rgba(37,99,235,.14);
+    --green: #1f7a3a; --green-bg: #e8f7ee; --green-border: #c6ead2;
+    --radius-sm: 8px; --radius: 12px; --radius-lg: 16px;
+    --serif: 'Source Serif Pro','Iowan Old Style',Georgia,'Times New Roman',serif;
+    --sans: -apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    --shadow-sm: 0 1px 2px rgba(28,27,26,.05), 0 1px 3px rgba(28,27,26,.04);
+    --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 15px; line-height: 1.6;
+    padding: 32px clamp(16px, 4vw, 48px) 64px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 6px; }
+  .eyebrow { color: var(--text-soft); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+  .title { font-family: var(--serif); font-size: clamp(22px, 3.3vw, 30px); font-weight: 600; color: var(--text-strong); margin: 6px 0 0; line-height: 1.25; }
+  .pill { flex: none; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: var(--green-bg); border: 1px solid var(--green-border); color: var(--green); white-space: nowrap; }
+
+  .steps { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 2px; margin: 22px 0 24px;
+    padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+  .step { display: inline-flex; align-items: center; gap: 7px; padding: 2px 4px; color: var(--text-soft); font-size: 12.5px; white-space: nowrap; }
+  .step .dot { width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 50%;
+    border: 1px solid currentColor; font-size: 11px; font-weight: 700; line-height: 1; }
+  .step .lbl { font-weight: 500; }
+  .step .sep { width: 14px; height: 1px; margin: 0 5px; background: var(--border); }
+  .step.is-active { color: var(--selected); }
+  .step.is-active .dot { background: var(--selected); color: #fff; border-color: transparent; box-shadow: 0 0 0 3px var(--selected-soft); }
+  .step.is-done { color: var(--green); }
+  .step.is-done .dot { background: var(--green); color: #fff; border-color: transparent; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px 20px; margin-bottom: 14px; box-shadow: var(--shadow-sm); }
+  .card h3 { margin: 0 0 4px; font-size: 11.5px; letter-spacing: .06em; color: var(--text-muted); font-weight: 700; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
+  .card h3::before { content: ""; width: 14px; height: 2px; border-radius: 2px; background: var(--accent); }
+  .card .sub { color: var(--text-soft); font-size: 12.5px; margin: 0 0 14px; }
+
+  .cand { display: flex; align-items: flex-start; gap: 12px; padding: 13px 0; border-top: 1px solid var(--border-soft); }
+  .cand:first-of-type { border-top: 0; }
+  .cand .idx { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%;
+    background: var(--accent-tint); color: var(--accent-strong); font-size: 13px; font-weight: 700; }
+  .cand .body { flex: 1; min-width: 0; }
+  .cand .t { font-weight: 600; color: var(--text-strong); font-size: 15.5px; }
+  .cand .angle { color: var(--text-muted); font-size: 13px; margin-top: 3px; }
+  .cand .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 9px; }
+  .score { font-size: 11px; font-weight: 600; color: var(--text-muted); background: var(--subtle); border: 1px solid var(--border-soft); border-radius: 6px; padding: 2px 7px; }
+  /* 来源 + 查看原文外链 —— 展示页里唯一的可交互元素,用户能点进去读原文、溯源 */
+  .src { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-soft); }
+  .src .from { color: var(--text-muted); }
+  .src a { color: var(--accent); font-weight: 600; text-decoration: none; border-bottom: 1px solid var(--accent-soft); white-space: nowrap; }
+  .src a:hover { border-bottom-color: var(--accent); }
+
+  .hint { color: var(--text-soft); font-size: 12.5px; margin-top: 18px; line-height: 1.6; padding: 12px 14px;
+    background: var(--accent-tint); border: 1px solid var(--accent-soft); border-radius: var(--radius); }
+  .hint b { color: var(--accent-strong); font-weight: 600; }
+  .foot { color: var(--text-soft); font-size: 12px; text-align: right; margin-top: 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="head">
+      <div>
+        <div class="eyebrow">公众号发布 · 第 1 步 · 选题</div>
+        <h1 class="title">公众号涨粉 · 选题候选</h1>
+      </div>
+      <span class="pill">只发草稿箱</span>
+    </header>
+
+    <nav class="steps">
+      <div class="step is-active"><span class="dot">1</span><span class="lbl">选题</span></div>
+      <span class="sep"></span>
+      <div class="step"><span class="dot">2</span><span class="lbl">写稿</span></div>
+      <span class="sep"></span>
+      <div class="step"><span class="dot">3</span><span class="lbl">配图</span></div>
+      <span class="sep"></span>
+      <div class="step"><span class="dot">4</span><span class="lbl">排版</span></div>
+      <span class="sep"></span>
+      <div class="step"><span class="dot">5</span><span class="lbl">发草稿</span></div>
+    </nav>
+
+    <section class="card">
+      <h3>热点选题候选 · 都带原文出处</h3>
+      <p class="sub">搜到的爆款列在这儿,每条标了三维评分 + 来源 +「查看原文 ↗」。点链接读原文自己判断;选哪个,在左侧对话的选项卡里点(还能写一句你的偏好)。</p>
+
+      <div class="cand">
+        <span class="idx">1</span>
+        <div class="body">
+          <div class="t">公众号阅读量总上不去?这 3 个最常见的原因先自查</div>
+          <div class="angle">角度:原因清单 + 自查,信息服务型,精准命中搜索</div>
+          <div class="meta">
+            <span class="score">热度 高</span><span class="score">相关 强</span><span class="score">差异 中</span>
+            <span class="src"><span class="from">来源:运营研究所</span> · <a href="https://mp.weixin.qq.com/s/EXAMPLE_aaa" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cand">
+        <span class="idx">2</span>
+        <div class="body">
+          <div class="t">同样写干货,为什么别人能 10万+,你只有两位数</div>
+          <div class="angle">角度:对比向决策,适合有态度的攻略体</div>
+          <div class="meta">
+            <span class="score">热度 中</span><span class="score">相关 强</span><span class="score">差异 高</span>
+            <span class="src"><span class="from">来源:新媒体笔记</span> · <a href="https://mp.weixin.qq.com/s/EXAMPLE_bbb" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cand">
+        <span class="idx">3</span>
+        <div class="body">
+          <div class="t">新号没粉丝,第一批 100 个读者我是这么找来的</div>
+          <div class="angle">角度:从 0 到 1 的真实路径,打动型叙事</div>
+          <div class="meta">
+            <span class="score">热度 中</span><span class="score">相关 中</span><span class="score">差异 高</span>
+            <span class="src"><span class="from">来源:增长黑客笔记</span> · <a href="https://mp.weixin.qq.com/s/EXAMPLE_ccc" target="_blank" rel="noopener noreferrer">查看原文 ↗</a></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <p class="hint">这是<b>只读展示页</b>——读候选、点「查看原文 ↗」溯源就好。<b>选哪个、要不要换一批、自己给一个选题</b>,都在<b>左侧对话的选项卡</b>里点(选完还能在卡片下方写一句自己的偏好一起提交)。选定后我按你设的文章类型写一版,放到第 2 步展示页,再请你提建议改。<b>不会自动正式群发,最后只发草稿箱。</b></p>
+    <div class="foot">每完成一步右侧多一张展示页,可用 上一步/下一步 翻看 · Open Build</div>
+  </div>
+</body>
+</html>

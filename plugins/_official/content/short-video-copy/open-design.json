@@ -15,7 +15,7 @@
     "pt-BR": "Fluxo de vídeo curto",
     "ru": "Воркфлоу коротких видео"
   },
-  "version": "0.2.0",
+  "version": "0.4.1",
   "description": "A guided short-video master controller. It walks you through a conversation step by step — surface hot topics for your niche, pick one, rewrite it into platform-native copy (hook-first script, three titles, hashtags, cover text), then optionally generate a clip — building a visual workflow board on the right the whole time. Tuned for Xiaohongshu, Douyin, WeChat Video Account, Bilibili, or Kuaishou.",
   "description_i18n": {
     "en": "A guided short-video master controller. It walks you through a conversation step by step — surface hot topics for your niche, pick one, rewrite it into platform-native copy (hook-first script, three titles, hashtags, cover text), then optionally generate a clip — building a visual workflow board on the right the whole time. Tuned for Xiaohongshu, Douyin, WeChat Video Account, Bilibili, or Kuaishou.",
@@ -63,29 +63,55 @@
         {
           "id": "topic",
           "title": "热点选题",
-          "gate": "confirm"
+          "gate": "confirm",
+          "prompt": "目标：给用户 5–8 个与他赛道（{{domain}}）相关的潜力选题让他挑。按输入里的「选题方式（topicMode）」决定走哪种模式（见下）。首步先 Write 整个 `board.json`(含「选题候选 / 标题备选 / 口播脚本 / 文案要素 / 成片 / 复盘」六张表的 fields + 空 rows,`steps`=[\"热点选题\",\"文案脚本\",\"视频生成\",\"成片复盘\"],`step`=1),之后只 Edit 插行/改格。把候选选题插入「选题候选」表(每条一行:标题/角度/热度(select 高·中·低)/相关(select 高·中·低)/差异(select 高·中·低)/来源/查看原文(link)),让用户在右侧读。然后用 AskUserQuestion 问「选哪个?」给候选 + 『换一批』+『我自己给一个』选项;自由文本(用户自己的选题)让他写在卡片的补充框。这一步只产出「选题候选清单 + 选定项」，不要顺手把文案也写了。 每个候选按三维打分并标注:热度(当下讨论度)× 赛道相关 × 差异化(同题内容是否已饱和),三维都说人话。每个候选/每条素材尽量填来源(原文平台/账号)+「查看原文」link 字段放原文 URL,宿主会渲成可点新标签链接,方便溯源。若环境里有 viral-research 之类的爆款研究技能,优先用它的方法筛选题,不要只凭直觉。",
+          "modes": [
+            {
+              "id": "ai-suggest",
+              "label": "AI 建议",
+              "prompt": "坦诚说明一句「当前是 AI 建议模式（没接实时抓取工具）」。然后基于用户赛道 + 你的知识，主动给至少 10 个当下有效的选题方向，每个一句话点出钩子/角度（反常识、痛点、对比、悬念等）。也欢迎用户贴几个自己刷到的选题，你帮他筛选、补充、排序。不要假装自己实时抓了热榜。"
+            },
+            {
+              "id": "scrape",
+              "label": "真抓热榜",
+              "prompt": "按用户选的「抓取方式（{{scrapeMethod}}）」抓该平台（{{platform}}）的热榜。默认 bb-browser 优先、gstack 兜底:\n- 「自动（智能探测）」:先探测可用工具(命令行有没有 bb-browser、有没有 gstack 的 browse、有没有 chrome-devtools MCP、有没有 TIKHUB_API_KEY),按下面顺序走:\n    ① 优先 bb-browser(它带现成平台 adapter,用真实浏览器+登录态,大多数平台它就搞定):\n        · 有 adapter 的平台 → site 直取:B站 `bb-browser site bilibili/ranking`/`bilibili/popular 30`/`bilibili/trending`;小红书 `bb-browser site xiaohongshu/search \"{{domain}}\" --sort likes`;跨平台热点 `bb-browser site weibo/hot`/`toutiao/hot`/`zhihu/hot`;先 `bb-browser site list`/`site info <name>` 确认;\n        · 无 adapter 的平台(抖音/视频号/快手)→ 用 bb-browser 的浏览器操作直接开热榜页抓:`bb-browser open <热榜URL>` → `snapshot` → `get text <ref>`/`eval` → 不够 `scroll down` 再 snapshot。\n    ② bb-browser 搞不定时(没装、没覆盖该平台、或被反爬拦下取不到)→ gstack browse 兜底,它默认带 Layer C 反检测、最像真人,专啃反爬严的站(通常在 `~/.claude/skills/gstack/browse/dist/browse`,或 PATH 里的 `browse`):要登录态先 `browse cookie-import-browser` 从你真实 Chrome 导 cookie;再 `browse goto <热榜URL>` → `browse snapshot` 拿 @ref → `browse text <sel>`/`browse js \"<expr>\"` 提取,不够 `browse scroll` 再 snapshot。\n    ③ 还不行 → chrome-devtools MCP 打开热榜页读,或 TikHub API;再不行就坦诚降级到「AI 建议」。\n- 「bb-browser（优先）」:只用 bb-browser,按上面 ① 的 adapter / 浏览器操作两条路抓。\n- 「gstack 反检测（兜底）」:直接用 gstack browse,按上面 ② 的步骤抓(适合明知反爬严、需要反检测的站)。\n- 「Chrome DevTools MCP」:用 chrome-devtools MCP 打开该平台热榜页直接读取。\n- 「TikHub API」:检查 TIKHUB_API_KEY,用 curl 调 https://api.tikhub.io 上对应平台（{{platform}}）的热榜端点,请求头带 Authorization: Bearer $TIKHUB_API_KEY,展示页注明数据来自 TikHub;key 缺失则提示去「集成 → API Keys」配置(密钥从 https://api.tikhub.io/ 获取)。\n选定方式当前不可用(缺工具/缺 key):坦诚说明,问要不要换一条或降级到「AI 建议」——绝不假装抓过。\n抓到后筛出与赛道（{{domain}}）相关的,列成带「为什么有潜力」的候选行插入「选题候选」表(来源填原文平台/账号、查看原文 link 放原文 URL),并把抓取时间写进 board 的 `note`。合规硬边界:只在用户自己已登录的会话 + 公开热榜页只读抓取,不规避反爬、不碰非公开数据。"
+            }
+          ]
         },
         {
           "id": "copy",
           "title": "文案脚本",
-          "gate": "confirm"
+          "gate": "confirm",
+          "prompt": "选题定了(把 board `step` 改成 2),按下面规范写一版可直接开拍的文案,写进 `board.json`:3 个标题写进「标题备选」表(标题 + 推荐 select 推荐·备选,标出推荐项)、口播脚本按段写进「口播脚本」表(段落=钩子/预告/正文/CTA + 内容 longtext)、话题标签和封面主副标写进「文案要素」表(项 + 内容)。只给一版,然后用 AskUserQuestion 问「这版怎么处理?」给 `就用这版 / 按我的建议改 / 换个角度重写`,用户把具体改法写在补充框;要改就 Edit 对应表的格、再问。\n\n通用骨架：① 前 3 秒强钩子（禁止「大家好我是…」，用反常识结论 / 扎心痛点 / 高对比承诺 / 悬念前置）→ ② 价值预告（看完得到什么）→ ③ 正文 2–4 个小点（观点 + 具体例子/数字）→ ④ 收尾 CTA（自然行动指令）。产出含：3 个标题备选（标出推荐项）、口播脚本（钩子/预告/正文/收尾 CTA）、话题标签、封面主副标题。语气按 {{tone}}，目标时长 {{duration}}。\n\n各平台调性——小红书：第一人称真诚分享、emoji 分段、3–6 个精准标签、标题带数字或「干货/避雷/亲测」；抖音：强口播节奏、钩子狠、信息密度高、标签 2–4 个蹭热点；视频号：措辞平实可信少黑话、实用 + 情绪共鸣引导转发；B 站：信息密度 + 梗并重、允许更长铺垫和人设、结尾引导三连；快手：接地气真实利他、强调实在好处和老铁信任。\n\n钩子是这一步的生死线:前 3 秒钩子按本步绑定的钩子技能的方法写,给 3 个不同打法的钩子备选(标出推荐项及理由),正文只接推荐钩子展开。",
+          "skills": [
+            {
+              "ref": "dbs-hook"
+            }
+          ]
         },
         {
           "id": "video",
           "title": "视频生成",
-          "gate": "confirm"
+          "gate": "confirm",
+          "prompt": "先用 AskUserQuestion 问用户要不要出视频(把 board `step` 改成 3),不要默认就生成。要 + 媒体生成可用（{{generateVideo}} / {{videoSource}}）：按文生/图生生成短视频素材,在「成片」表插一行,状态先=生成中、成功后把视频文件放进**当前项目目录**(如 `3-视频.mp4`)、把该行 状态=已生成(green)、成片(video 字段)填**项目内相对路径** `3-视频.mp4`(宿主渲成可播放器,视频本身出现在右侧);只拿到远端链接就把链接写进「说明」。不要 / 不可用：「成片」表 状态=未生成(amber)、说明里写降级原因(如「视频生成需在『媒体设置』接入 provider 后启用,当前先交付文案 + 封面脚本」),绝不报错、绝不假装成功。 生成前,先按本步绑定的视频 prompt 工程技能把分镜描述改写成高质量生成提示词,再调用媒体生成;把最终用的提示词也写进「成片」表的说明,方便复用。",
+          "skills": [
+            {
+              "ref": "seedance-2.0-prompter"
+            }
+          ]
         },
         {
           "id": "review",
           "title": "成片复盘",
-          "gate": "none"
+          "gate": "none",
+          "prompt": "把 board `step` 改成 4,在「复盘」表插几行复盘要点(维度 + 要点 longtext)。用 AskUserQuestion 给「继续迭代(调钩子/换标题/重出视频) / 开始下一条选题」选项。别在对话里整段复述文案——成果都在右侧 board 上。 另外提一句:上线 24–48 小时后欢迎把数据(播放/完播/互动)贴回来,我会基于数据复盘钩子和选题,作为下一条的依据——这比凭感觉迭代快得多。"
         }
       ]
     },
     "useCase": {
       "query": {
-        "zh-CN": "当一个引导式短视频总控，用对话一步步领我走完：热点选题 →（{{platform}}）文案改写 →（可选）视频生成。赛道：{{domain}}。语气：{{tone}}。目标时长：{{duration}}。选题方式：{{topicMode}}。生成视频：{{generateVideo}}（{{videoSource}}）。\n\n规则：每一步先问/确认再做下一步，别一口气跑完。开工先用 TodoWrite 写入步骤条：热点选题 / 文案脚本 / 视频生成 / 成片复盘，每完成一步标 completed。每个关键步骤末尾必须用确认卡（AskUserQuestion）让我「确认进入下一步 / 驳回重做」，等我拍板再继续。进度做成右侧看板——只用 Write 工具往当前项目目录写一个自包含的 `index.html`（参照插件自带 example.html），每步重写刷新；不要用 od/任何 CLI/bash 建看板，不要 cd 去别的目录。\n1. 开场问我平台和赛道（输入里有就跳过）。\n2. 热点选题：选题方式=「真抓热榜」且配了抓取类工具就抓该平台热榜筛我赛道相关的；否则（默认 AI 建议 / 没有工具）坦诚说明，按我赛道给 5–8 个潜力选题，列进看板等我选。\n3. 文案：选题定了写一版（强钩子、3 标题、口播脚本、标签、封面），重写看板，问我要不要调。\n4. 视频：先问我要不要；要且可用才生成，否则看板成片区写占位，绝不报错。",
-        "en": "Act as a guided short-video master controller. Walk me step by step through a conversation: hot topics → copy rewriting (for {{platform}}) → optional video. Niche: {{domain}}. Tone: {{tone}}. Target length: {{duration}}. Topic mode: {{topicMode}}. Generate video: {{generateVideo}} ({{videoSource}}).\n\nRules: ask/confirm before each next step — do not run everything at once. First call TodoWrite to lay out the step rail: hot topics / copy script / video / final review, marking each completed as you finish it. At the end of every key step you MUST raise a confirmation card (AskUserQuestion) asking me to confirm-next or reject-redo, and wait for my call before continuing. Build progress as a board on the right using ONLY the Write tool to write a self-contained `index.html` (model it on the bundled example.html), rewriting it each step; never use od/any CLI/bash to build the board, and never cd elsewhere.\n1. Open by asking my platform and niche (skip if already provided).\n2. Hot topics: if topic mode is 'scrape' AND a scraping tool is configured, scrape the platform's trending list filtered to my niche; otherwise (default AI suggest / no tool) say so honestly and propose 5–8 high-potential topics for my niche, listed on the board for me to pick.\n3. Copy: once a topic is picked, write one version (strong hook, 3 titles, oral script, hashtags, cover), rewrite the board, ask if I want changes.\n4. Video: ask first; only generate if I say yes and it's available, otherwise put a placeholder in the clip area — never error."
+        "zh-CN": "当一个引导式短视频总控，用对话一步步领我走完：热点选题 →（{{platform}}）文案改写 →（可选）视频生成。赛道：{{domain}}。语气：{{tone}}。目标时长：{{duration}}。选题方式：{{topicMode}}。生成视频：{{generateVideo}}（{{videoSource}}）。\n\n规则：每一步先问/确认再做下一步，别一口气跑完。开工先用 TodoWrite 写入步骤条：热点选题 / 文案脚本 / 视频生成 / 成片复盘，每完成一步标 completed。**所有选择/确认/修改都用左侧 AskUserQuestion 选项卡问我**(卡片自带补充建议框,我能点选项也能写一句自己的想法)——每个关键步骤做完,用 AskUserQuestion 问我「✅ 确认进入下一步 / ↩ 重做这步」,问完停下等我答。右侧是只读数据看板:维护当前项目目录里的一个 `board.json`(飞书多维表格式的结构化数据,宿主渲成只读表)。首步先 Write 整个 board.json(选题候选 / 标题备选 / 口播脚本 / 文案要素 / 成片 / 复盘 六张表 + steps),之后每完成一步只往对应表 Edit 插行/改格、并把 step 设成当前步;**别生成展示用 HTML/CSS、别用 od/任何 CLI/bash 建看板、别 cd 去别的目录**。视频成片文件存当前项目目录,在「成片」表的 video 字段填项目内相对路径(如 `3-视频.mp4`)。开场先用 AskUserQuestion 问我平台和赛道（输入里有就跳过）。每一步具体怎么产出、什么风格，严格按系统提示里「各步骤提示词」对应那一步来（热点选题还分 AI 建议 / 真抓热榜两种模式，按我选的 topicMode 走）。",
+        "en": "Act as a guided short-video master controller. Walk me step by step through a conversation: hot topics → copy rewriting (for {{platform}}) → optional video. Niche: {{domain}}. Tone: {{tone}}. Target length: {{duration}}. Topic mode: {{topicMode}}. Generate video: {{generateVideo}} ({{videoSource}}).\n\nRules: ask/confirm before each next step — do not run everything at once. First call TodoWrite to lay out the step rail: hot topics / copy script / video / final review, marking each completed as you finish it. **Every choice/confirmation/edit happens through the left-side AskUserQuestion card** (its card has a free-text note box so I can pick an option AND type my own steer). At the end of every key step, use AskUserQuestion to ask me confirm-next or redo-this-step, then stop and wait for my answer. The right side is a READ-ONLY data board: maintain ONE `board.json` (Feishu/Bitable-style structured data the host renders as read-only tables) in the current project directory. First Write the whole board.json (six tables: 选题候选 / 标题备选 / 口播脚本 / 文案要素 / 成片 / 复盘, plus steps); after each step only Edit rows/cells into the matching table and set `step` to the current one; never generate display HTML/CSS, never use od/any CLI/bash to build it, never cd elsewhere. Store the generated video in the current project directory and put its project-relative path in the 成片 table's video field (e.g. `3-视频.mp4`). Open by asking my platform and niche via AskUserQuestion (skip if already provided). For HOW each step produces its output and in what style, follow the matching step in the system prompt's '各步骤提示词 (workflow steps)' section (the topic step also has AI-suggest vs scrape modes — use whichever my topicMode selects)."
       },
       "exampleOutputs": [
         {
@@ -136,6 +162,19 @@
           "真抓热榜"
         ],
         "default": "AI 建议"
+      },
+      {
+        "name": "scrapeMethod",
+        "label": "抓取方式（选「真抓热榜」时生效）",
+        "type": "select",
+        "options": [
+          "自动（智能探测）",
+          "bb-browser（优先）",
+          "gstack 反检测（兜底）",
+          "Chrome DevTools MCP",
+          "TikHub API"
+        ],
+        "default": "自动（智能探测）"
       },
       {
         "name": "topic",

@@ -1,0 +1,194 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "wechat-mp-publish",
+  "title": "公众号发布",
+  "title_i18n": {
+    "zh-CN": "公众号发布",
+    "en": "WeChat MP Publisher"
+  },
+  "version": "0.1.0",
+  "description": "公众号长文流水线:选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发到草稿箱(公众号官方 API)。驱动本机「多媒体自动发布」工作台,Open Build 只做编排与右侧可视化看板。",
+  "description_i18n": {
+    "zh-CN": "选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发公众号草稿箱。",
+    "en": "Topic → write (6 styles) → images → AI-check → render → push to WeChat MP drafts."
+  },
+  "license": "MIT",
+  "tags": [
+    "open-build",
+    "first-party",
+    "content",
+    "workflow",
+    "wechat",
+    "official-account",
+    "mp",
+    "publish",
+    "article"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "skill",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "scenario": "content",
+    "featured": true,
+    "useCase": {
+      "query": "当一个公众号长文发布总控。选题/方向:{{topic}};文章类型:{{articleType}};排版皮肤:{{skin}};发布通道:{{channel}}。请用本机「多媒体自动发布」工作台的技能开工:先按方向定选题(或用工作台的爆文榜/搜一搜帮我找)→ 按文章类型写一版可发布长文 → 查 AI 腔 → **写完不用我确认,直接按我已选好的皮肤 {{skin}} 自动排版成公众号 HTML(排版风格我已固定,别再问我用哪个/换不换皮肤);排好版后再问我要不要配图** →(要配图就生成图后重排)→ 发到草稿箱。每一步把该步产物插入/更新到项目里的一个 `board.json`(右侧自动渲成飞书多维表格式的只读表:选题候选 / 文章 / 配图 / 发布),再用左侧 AskUserQuestion 选项卡让我确认/提建议改(卡片自带补充建议框,我能点选项也能写一句想法);上面哪项我没填,就用 AskUserQuestion 问我,别替我猜。别生成展示用的 HTML,看板只读、上面别放按钮。**只发到草稿箱,最后到公众号后台我自己确认群发,绝不自动正式发布。**",
+      "query_i18n": {
+        "en": "Act as a WeChat Official Account (公众号) long-form publishing controller. Topic: {{topic}}; article style: {{articleType}}; render skin: {{skin}}; channel: {{channel}}. Drive my local '多媒体自动发布' workbench: pick a topic (or use its trending tools to find one) → write one publishable long-form article in the chosen style → check for AI-tone → **without waiting for my confirmation, auto-render to WeChat HTML with my pre-chosen skin {{skin}} (the render style is fixed — don't ask me which skin or whether to switch); after rendering, ask me whether to add images** → (if yes, generate images and re-render) → push to the DRAFT box. After each step, insert/update that step's product into ONE `board.json` in the project (the right side auto-renders it as Feishu/Bitable-style read-only tables: 选题候选 / 文章 / 配图 / 发布); never generate display HTML — the board is read-only with no buttons. Confirm/edit each step through the left-side AskUserQuestion card (it has a free-text note box); ask me via AskUserQuestion for anything I left blank, don't guess. Push to DRAFT only — I do the final broadcast myself in the WeChat backend; never auto-publish."
+      }
+    },
+    "inputs": [
+      {
+        "name": "topic",
+        "label": "选题 / 方向",
+        "type": "string"
+      },
+      {
+        "name": "articleType",
+        "label": "文章类型",
+        "type": "select",
+        "options": [
+          "信息服务攻略",
+          "口语化科普",
+          "深度长文",
+          "情感共鸣",
+          "插画金句",
+          "硬核攻略"
+        ],
+        "default": "信息服务攻略"
+      },
+      {
+        "name": "skin",
+        "label": "排版皮肤",
+        "type": "select",
+        "options": [
+          "kaiti",
+          "purple",
+          "orangeheart",
+          "github"
+        ],
+        "default": "kaiti"
+      },
+      {
+        "name": "channel",
+        "label": "发布通道",
+        "type": "select",
+        "options": [
+          "草稿箱"
+        ],
+        "default": "草稿箱"
+      }
+    ],
+    "config": [
+      {
+        "name": "WECHAT_APPID",
+        "label": "公众号 AppID",
+        "description": "已认证服务号的 AppID(发草稿必需)。",
+        "required": true,
+        "secret": true
+      },
+      {
+        "name": "WECHAT_SECRET",
+        "label": "公众号 AppSecret",
+        "description": "公众号 AppSecret(发草稿必需;注意公众号需配置 IP 白名单)。",
+        "required": true,
+        "secret": true
+      },
+      {
+        "name": "DAJIALA_API_KEY",
+        "label": "大家来 API Key",
+        "description": "爆文榜 / 微信搜一搜选题用(找热点必需,自己给方向则可选)。",
+        "secret": true
+      },
+      {
+        "name": "QWEN_API_KEY",
+        "label": "千问 API Key",
+        "description": "默认配图(通义千问)。缺它则配图退回 Gemini 兜底或占位。",
+        "secret": true
+      },
+      {
+        "name": "GEMINI_API_KEY",
+        "label": "Gemini API Key",
+        "description": "配图兜底(千问失败时用)。可选。",
+        "secret": true
+      },
+      {
+        "name": "WECHAT_AUTHOR",
+        "label": "作者名",
+        "description": "草稿里的作者署名。可选,非密钥。",
+        "secret": false
+      }
+    ],
+    "configEnvFile": "~/.open-design/workbenches/多媒体自动发布/.claude/skills/MY-wechat-shared/.env",
+    "workflow": {
+      "stages": [
+        {
+          "id": "topic",
+          "title": "选题",
+          "gate": "confirm",
+          "prompt": "在工作台「多媒体自动发布」里做选题。用户给了选题/方向就直接用;想找热点就用工作台的选题技能(MY-wechat-trending-articles 爆文榜 / MY-wechat-realtime-search 微信搜一搜 / MY-wechat-topic-radar 雷达,脚本在 MY-wechat-shared/scripts,用工作台 .venv 跑、读它的 .env 拿 DAJIALA_API_KEY)。需要素材就用 MY-wechat-content-research 抓正文+全网素材出战情简报。把候选选题插入 `board.json` 的「选题候选」表(每条一行:标题/角度/热度/相关/差异/来源/查看原文),再用 AskUserQuestion 问「选哪个?」(候选 + 自己给一个)。**关键:每个候选/每条素材都要填来源(搜到的原文公众号名/平台)+「查看原文」link 字段放原文 URL**——宿主会渲成可点的新标签链接,让用户点进去读原文、溯源判断,别只给 AI 总结的角度。搜索/抓取拿到的原文 URL 必须保留进表里。选定+方向确认后再进下一步。这一步只定选题,别顺手把正文写了。",
+          "modes": [
+            {
+              "id": "user-topic",
+              "label": "我有方向",
+              "prompt": "用户已给方向({{topic}}),直接据此细化成 3-5 个具体选题角度插入「选题候选」表、再用 AskUserQuestion 让他挑,不必去抓热榜。"
+            },
+            {
+              "id": "find-hot",
+              "label": "帮我找热点",
+              "prompt": "用工作台 MY-wechat-trending-articles(dajiala 爆文榜)/ MY-wechat-realtime-search(搜一搜)按用户领域找当下爆款选题,筛出与方向相关的列成候选行插入「选题候选」表,注明热度与来源。缺 DAJIALA_API_KEY 就如实说、退回让用户直接给方向。"
+            }
+          ]
+        },
+        {
+          "id": "write",
+          "title": "写稿",
+          "gate": "none",
+          "prompt": "**第一步,先读工作台共享方法论 `MY-wechat-shared/references/viral-method.md`(贝拉垂直小号爆文方法论;SOP/打分/提示词细节见同目录 `viral-method-cards.md`)把策略定下来**:生存画像 → 痛点分级(搜索/倾诉/失眠)→ 把宽泛话题切成具体需求 → 60-30-10 内容角色 → 落脚点(读完要记住/相信/转发什么)→ 四步结构(痛点钩子 → 桥接 IP/产品 → 可转发的观点 → 行动)→ 标题(痛点 + 新鲜表达,先多生成再筛到 1)。**第二步,按用户选的文章类型读对应写作技能、严格照它的风格,把上面的策略落成一版可直接发布的公众号长文**:信息服务攻略→MY-wechat-writer-service(把一件事讲清楚:是什么/适合谁/怎么做/多少钱/什么时候);口语化科普→MY-wechat-writer-default;深度长文→MY-wechat-writer-deep;情感共鸣→MY-wechat-writer-emotion;插画金句→MY-wechat-illustrated-quote(纯图片叙事,走它的独立子流程);硬核攻略→MY-wechat-writer-guide(有态度、下判断的观点体)。**贝拉法管「写给谁 / 痛点 / 落脚点 / 结构 / 标题」,文章类型技能管「用什么腔调和版式落笔」,两层叠用、不冲突。**写完用 MY-wechat-ai-detector 查并清理中英文 AI 腔。正文写进 `board.json`「文章」表(一行:标题 / 正文(longtext)/ 标签 / 状态=已定稿)。正文里按写作技能约定标注配图位 `<!-- IMAGE_N: 描述 -->`(留给后面可选配图用)。**写完别停下问我确认——直接进下一步(排版)自动排版。**"
+        },
+        {
+          "id": "render",
+          "title": "排版",
+          "gate": "none",
+          "prompt": "**写完稿后立刻自动排版,不要停下问用户确认。** 排版皮肤已在插件设置里选定为 {{skin}}(kaiti 深红棕楷体 / purple / orangeheart 热点 / github 代码),**直接用它排版,绝不再用 AskUserQuestion 问用户确认或换皮肤**(用户想换风格改插件输入重跑)。用 MY-wechat-html-render 把 markdown 排成全内联 CSS 的公众号 HTML,皮肤={{skin}}——此时正文里的 `<!-- IMAGE_N -->` 只是占位、还没图,先排**纯文版**。**把排好的长文存成当前项目目录的 `4-排版-article.html`**(右侧可单独点开预览);并更新 `board.json`「文章」表那一行的 皮肤={{skin}}、状态=已排版。排好版后**进配图步问用户要不要配图**(见下一步),别在这步停下问皮肤。"
+        },
+        {
+          "id": "images",
+          "title": "配图",
+          "gate": "none",
+          "prompt": "**这步开头先用 AskUserQuestion 问用户:「排好版了(右侧 `4-排版-article.html`),要不要配图?」给『要配图 / 不用,直接发草稿』两个选项**(用户想顺便改内容就写补充框,你照着 Edit「文章」正文、重排,再问)。\n- **不用**:跳过配图,直接进发草稿步。\n- **要配图**:按正文里的 `<!-- IMAGE_N: 描述 -->` 标记逐张配图——默认用工作台 MY-wechat-shared/scripts/generate_image_qwen.py(千问),失败兜底 generate_image_gemini.py(Gemini),都用工作台 .venv 跑、读它 .env 的 QWEN_API_KEY/GEMINI_API_KEY;另出一张封面图。**图片存到当前项目目录的 `3-配图/` 子目录**(如 `3-配图/封面.jpg`、`3-配图/图1.jpg`)。每张在 `board.json`「配图」表插一行:位置(封面/图N)/ 描述 / 图片(`image` 字段填**项目内相对路径**如 `3-配图/封面.jpg`,宿主渲成缩略图)/ 状态(成功·失败)。配完图**重新用 MY-wechat-html-render 排一版**,把图插回 `4-排版-article.html`(覆盖纯文版)。配图失败优雅降级、用兜底封面,绝不假装出图。可选:再往工作台 archives 拷一份备份。"
+        },
+        {
+          "id": "publish",
+          "title": "发草稿",
+          "gate": "confirm",
+          "prompt": "用 MY-wechat-publish-draft 发到公众号草稿箱:取 access_token(/cgi-bin/token)→ 内图 uploadimg、封面 add_material → draft/add 提交。命令/脚本都用工作台 .venv,读 MY-wechat-shared/.env 的 WECHAT_APPID/WECHAT_SECRET/WECHAT_AUTHOR。**铁律:只发到草稿箱**,发完把草稿结果写进 `board.json`「发布」表(草稿状态、草稿链接(link 字段)、以及「去公众号后台二次确认群发」的提示各一行);**绝不自动正式群发、绝不谎报已发**。失败明确说卡在哪一步(token/IP 白名单/uploadimg/draft)。"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ],
+      "assets": [
+        "./example.html"
+      ]
+    },
+    "capabilities": [
+      "prompt:inject"
+    ],
+    "preview": {
+      "type": "html",
+      "entry": "./example.html"
+    }
+  }
+}

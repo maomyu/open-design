@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>短视频矩阵发布 · 第 2 步 · 内容</title>
+<style>
+  /* Open Build design tokens (mirrors apps/web/src/styles/tokens.css) so the
+     display page reads as part of the system — warm paper, terracotta accent,
+     serif headings — not a separate dark widget. */
+  :root {
+    --bg: #faf9f7; --panel: #ffffff; --subtle: #eef1f5; --muted-bg: #e4e8ef;
+    --border: #e1e5eb; --border-soft: #edf0f4; --border-strong: #c9d0da;
+    --text: #1a1916; --text-strong: #0d0c0a; --text-muted: #74716b; --text-soft: #989590; --text-faint: #b3b0a8;
+    --accent: #c96442; --accent-strong: #b45a3b; --accent-tint: #fbeee5; --accent-soft: #f5d8cb;
+    --selected: #2563eb; --selected-soft: rgba(37,99,235,.14);
+    --green: #1f7a3a; --green-bg: #e8f7ee; --green-border: #c6ead2;
+    --amber: #9a6a17; --amber-bg: #fbf2dc; --amber-border: #f0dca8;
+    --radius-sm: 8px; --radius: 12px; --radius-lg: 16px;
+    --serif: 'Source Serif Pro','Iowan Old Style',Georgia,'Times New Roman',serif;
+    --sans: -apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    --shadow-sm: 0 1px 2px rgba(28,27,26,.05), 0 1px 3px rgba(28,27,26,.04);
+    --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 15px; line-height: 1.6;
+    padding: 32px clamp(16px, 4vw, 48px) 64px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 6px; }
+  .eyebrow { color: var(--text-soft); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+  .title { font-family: var(--serif); font-size: clamp(22px, 3.3vw, 30px); font-weight: 600; color: var(--text-strong); margin: 6px 0 0; line-height: 1.25; }
+  .pill { flex: none; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: var(--accent-tint); border: 1px solid var(--accent-soft); color: var(--accent); white-space: nowrap; }
+
+  /* Step rail — matches the in-app WorkflowRail (selected=active, green=done). */
+  .steps { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 2px; margin: 22px 0 24px;
+    padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+  .step { display: inline-flex; align-items: center; gap: 7px; padding: 2px 4px; color: var(--text-soft); font-size: 12.5px; white-space: nowrap; }
+  .step .dot { width: 20px; height: 20px; flex: none; display: grid; place-items: center; border-radius: 50%;
+    border: 1px solid currentColor; font-size: 11px; font-weight: 700; line-height: 1; }
+  .step .lbl { font-weight: 500; }
+  .step .sep { width: 16px; height: 1px; margin: 0 6px; background: var(--border); }
+  .step.is-active { color: var(--selected); }
+  .step.is-active .dot { background: var(--selected); color: #fff; border-color: transparent; box-shadow: 0 0 0 3px var(--selected-soft); }
+  .step.is-done { color: var(--green); }
+  .step.is-done .dot { background: var(--green); color: #fff; border-color: transparent; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px 20px; margin-bottom: 14px; box-shadow: var(--shadow-sm); }
+  .card h3 { margin: 0 0 4px; font-size: 11.5px; letter-spacing: .06em; color: var(--text-muted); font-weight: 700; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
+  .card h3::before { content: ""; width: 14px; height: 2px; border-radius: 2px; background: var(--accent); }
+
+  /* Read-only content fields — the product, shown for the user to read. */
+  .field-title { font-family: var(--serif); font-size: 18px; font-weight: 600; color: var(--text-strong); margin-top: 8px; line-height: 1.35; }
+  .field-body { white-space: pre-line; color: var(--text); margin-top: 8px; padding: 12px 14px; background: var(--subtle);
+    border: 1px solid var(--border-soft); border-radius: var(--radius); line-height: 1.7; }
+  .field-tags { color: var(--accent); font-weight: 500; margin-top: 8px; word-break: break-all; }
+
+  .hint { color: var(--text-soft); font-size: 12.5px; margin-top: 18px; line-height: 1.6; padding: 12px 14px;
+    background: var(--accent-tint); border: 1px solid var(--accent-soft); border-radius: var(--radius); }
+  .hint b { color: var(--accent-strong); font-weight: 600; }
+  .foot { color: var(--text-soft); font-size: 12px; text-align: right; margin-top: 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="head">
+      <div>
+        <div class="eyebrow">短视频矩阵发布 · 第 2 步 · 内容</div>
+        <h1 class="title">5 个被低估但真好用的 AI 编程工具</h1>
+      </div>
+      <span class="pill">抖音 · 小红书</span>
+    </header>
+
+    <nav class="steps">
+      <div class="step is-done"><span class="dot">✓</span><span class="lbl">选题</span></div>
+      <span class="sep"></span>
+      <div class="step is-active"><span class="dot">2</span><span class="lbl">内容</span></div>
+      <span class="sep"></span>
+      <div class="step"><span class="dot">3</span><span class="lbl">发布</span></div>
+      <span class="sep"></span>
+      <div class="step"><span class="dot">4</span><span class="lbl">复盘</span></div>
+    </nav>
+
+    <section class="card">
+      <h3>标题</h3>
+      <div class="field-title">我把这 5 个 AI 编程工具用了一个月,有 3 个真回不去了</div>
+    </section>
+
+    <section class="card">
+      <h3>正文 / 口播脚本</h3>
+      <div class="field-body">钩子:90% 的人用 AI 写代码,还停在「让它补全一行」。
+
+其实这几个工具,能帮你把一整个需求拆开、自己跑、自己改:
+1. 工具 A —— 让它读完整个仓库再动手,不再瞎猜文件。
+2. 工具 B —— 边写边跑测试,红了自己回头修。
+3. 工具 C —— 把重复改动一次批量做完。
+
+收尾:想要这份清单的,评论区扣「工具」,我整理好发你。</div>
+    </section>
+
+    <section class="card">
+      <h3>话题标签</h3>
+      <div class="field-tags">#AI编程 #程序员效率 #独立开发 #AI工具测评 #提效</div>
+    </section>
+
+    <p class="hint">这是<b>只读展示页</b>——读这版内容就好。<b>就用这版去发布 / 按你的建议改 / 换个角度重写</b>,都在<b>左侧对话的选项卡</b>里点;想怎么改,把具体意见<b>写在卡片下方的补充框</b>(例:标题想要更具体的数字钩子;正文第 2 段砍一半),一起提交,我照着改、再把新版放到第 2 步展示页让你看。<b>不用你自己把终稿写出来。</b></p>
+    <div class="foot">每完成一步右侧多一张展示页 · 选择都在左侧对话里 · Open Build</div>
+  </div>
+</body>
+</html>
