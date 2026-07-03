@@ -148,7 +148,7 @@ import {
   useCritiqueTheaterEnabled,
 } from './Theater';
 import { useIframeKeepAlivePool } from './IframeKeepAlivePool';
-import { decideAutoOpenAfterWrite } from './auto-open-file';
+import { decideAutoOpenAfterWrite, pickNewlyCreatedPageFile } from './auto-open-file';
 import { buildRepoImportPrompt, designSystemNeedsRepoConnect } from './design-system-github-evidence';
 import { collectReferencedJsxNames } from '../runtime/jsx-module-refs';
 import { FileWorkspace } from './FileWorkspace';
@@ -696,6 +696,13 @@ export function ProjectView({
   // the agent's Write actually completes, without the previous synthetic
   // "live" tab that was causing flicker against manual opens.
   const pendingWritesRef = useRef<Map<string, string>>(new Map());
+  // Files created by a Bash command (e.g. a plugin's render/generate script
+  // like MY-wechat-html-render) never emit a Write/Edit tool_use, so the
+  // pendingWritesRef path above can't auto-open them. Snapshot the project's
+  // file set when a Bash tool starts; when it finishes, a newly-appeared page
+  // file (html/pdf/...) is the script's deliverable and gets auto-opened.
+  // Maps Bash tool_use id -> set of file keys (path||name) present at start.
+  const pendingBashRef = useRef<Map<string, Set<string>>>(new Map());
   // Track which conversation the current messages belong to, so we can
   // correctly gate new-conversation creation even during async loads.
   const messagesConversationIdRef = useRef<string | null>(null);
@@ -784,6 +791,7 @@ export function ProjectView({
     setArtifact(null);
     savedArtifactRef.current = null;
     pendingWritesRef.current.clear();
+    pendingBashRef.current.clear();
     (async () => {
       try {
         const list = await listConversations(project.id);
@@ -888,6 +896,7 @@ export function ProjectView({
     setStreamingConversationId(null);
     savedArtifactRef.current = null;
     pendingWritesRef.current.clear();
+    pendingBashRef.current.clear();
     if (messagesConversationIdRef.current !== activeConversationId) {
       messagesConversationIdRef.current = null;
     }
@@ -906,6 +915,7 @@ export function ProjectView({
         setError(null);
         savedArtifactRef.current = null;
         pendingWritesRef.current.clear();
+        pendingBashRef.current.clear();
         messagesConversationIdRef.current = activeConversationId;
         setMessagesConversationId(activeConversationId);
         setFailedMessagesConversationId(null);
@@ -919,6 +929,7 @@ export function ProjectView({
         setError(message);
         savedArtifactRef.current = null;
         pendingWritesRef.current.clear();
+        pendingBashRef.current.clear();
         messagesConversationIdRef.current = null;
         setMessagesConversationId(null);
         setFailedMessagesConversationId(activeConversationId);
@@ -2505,6 +2516,14 @@ export function ProjectView({
             pendingWritesRef.current.set(ev.id, filePath);
           }
         }
+        // A Bash command can create a deliverable file (e.g. a plugin's render
+        // script writing 4-排版-article.html) without any Write tool_use.
+        // Snapshot the current file set now; on tool_result we diff to find a
+        // newly-created page file to auto-open.
+        if (ev.kind === 'tool_use' && (ev.name === 'Bash' || ev.name === 'bash')) {
+          const prevKeys = new Set(projectFilesRef.current.map((f) => f.path ?? f.name));
+          pendingBashRef.current.set(ev.id, prevKeys);
+        }
         if (ev.kind === 'tool_result') {
           const filePath = pendingWritesRef.current.get(ev.toolUseId);
           if (filePath) {
@@ -2528,6 +2547,19 @@ export function ProjectView({
                 if (decision.shouldOpen && decision.fileName) {
                   requestOpenFile(decision.fileName);
                 }
+              });
+            }
+          }
+          // Bash-created deliverable (no Write tool_use): diff the file set
+          // against the snapshot taken when this Bash started and auto-open a
+          // newly-appeared page file (e.g. a render script's HTML).
+          const bashPrevKeys = pendingBashRef.current.get(ev.toolUseId);
+          if (bashPrevKeys) {
+            pendingBashRef.current.delete(ev.toolUseId);
+            if (!ev.isError) {
+              void refreshProjectFiles().then((nextFiles) => {
+                const fileName = pickNewlyCreatedPageFile(bashPrevKeys, nextFiles);
+                if (fileName) requestOpenFile(fileName);
               });
             }
           }
@@ -4553,7 +4585,13 @@ export function ProjectView({
               forceStreamingMessageIds={forceStreamingPluginMessageIds}
               initialDraft={chatInitialDraft}
               onSubmitForm={(text) => {
-                if (currentConversationActionDisabled) return;
+                // AskUserQuestion answers (and discovery-form submits) arrive
+                // here as a normal user message. Do NOT drop it while a run is
+                // active: the AskUserQuestion run can't be host-answered and
+                // ends on its own, and handleSend queues the message and sends
+                // it once the conversation is free. Dropping it here (the old
+                // `currentConversationActionDisabled` guard) is what made
+                // submitted answers silently vanish ("似乎没有真正发送").
                 void handleSend(text, [], []);
               }}
               onContinueRemainingTasks={handleContinueRemainingTasks}
@@ -4641,6 +4679,17 @@ export function ProjectView({
           onSavePreviewComment={savePreviewComment}
           onRemovePreviewComment={removePreviewComment}
           onSendBoardCommentAttachments={handleSendBoardCommentAttachments}
+          onArtifactPrompt={(text) => {
+            // A clickable live artifact asked to send `text` to the chat —
+            // treat it EXACTLY like the user typing `text` and hitting send.
+            // handleSend already queues when a run is mid-flight and sends
+            // immediately when idle, so we must NOT pre-guard on
+            // currentConversationActionDisabled here: a Claude stream-json run
+            // still reports `running` between turns (stdin held open), which is
+            // the normal state right after the agent writes the board and
+            // pauses for input — that guard silently dropped every board click.
+            void handleSend(text, [], []);
+          }}
           onPluginFolderAgentAction={handlePluginFolderAgentAction}
           activePluginActionPaths={activePluginActionPaths}
           focusMode={workspaceFocused}
@@ -4847,7 +4896,7 @@ function latestDesignSystemActivityEvents(messages: ChatMessage[]): AgentEvent[]
 }
 
 function pluginWorkflowTitle(action: PluginFolderAgentAction): string {
-  return action === 'publish' ? 'Publish repo' : 'Open Design PR';
+  return action === 'publish' ? 'Publish repo' : 'WorkBuild PR';
 }
 
 function pluginWorkflowCliCommand(action: PluginFolderAgentAction, relativePath: string): string {
@@ -4866,7 +4915,7 @@ function pluginWorkflowPlannedSteps(action: PluginFolderAgentAction): string[] {
     ];
   }
   return [
-    'Ensure the Open Design fork exists',
+    'Ensure the WorkBuild fork exists',
     'Clone the fork and prepare a branch',
     'Copy the plugin into plugins/community',
     'Push the branch and open the PR form',

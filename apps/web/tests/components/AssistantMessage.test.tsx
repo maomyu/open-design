@@ -135,6 +135,95 @@ describe('AssistantMessage feedback gate', () => {
   });
 });
 
+describe('AssistantMessage AskUserQuestion duplicate-emission dedupe', () => {
+  // claude-code stream-json can emit the SAME tool_use_id twice (streaming
+  // partial message + final assistant-message wrapper). When a text/other
+  // block splits the two emissions into separate groups, the group-local
+  // dedupe can't merge them, so the SAME AskUserQuestion rendered as two
+  // cards: the user answered one (it flipped to "answered"), then the stale
+  // twin's submit hit an already-consumed tool_use_id and silently did nothing
+  // ("同样的问题让我回答多次 / 显示已回答但实际没回答上"). buildBlocks now drops
+  // earlier twins by id, keeping the last (complete) occurrence → one card.
+  const auq = (id: string, question = '选一个颜色') =>
+    ({
+      kind: 'tool_use',
+      id,
+      name: 'AskUserQuestion',
+      input: {
+        questions: [
+          {
+            question,
+            header: '选择',
+            options: [{ label: '红' }, { label: '绿' }, { label: '蓝' }],
+          },
+        ],
+      },
+    }) as unknown as ChatMessage['events'][number];
+
+  it('renders a single card when the same tool_use_id is emitted twice across blocks', () => {
+    render(
+      <AssistantMessage
+        message={baseMessage({
+          events: [
+            auq('toolu_dup'),
+            { kind: 'text', text: '正在为你整理…' } as ChatMessage['events'][number],
+            auq('toolu_dup'),
+          ],
+        })}
+        streaming={false}
+        isLast
+        projectId="proj-1"
+        onFeedback={vi.fn()}
+      />,
+    );
+    expect(screen.queryAllByTestId('ask-user-question').length).toBe(1);
+  });
+
+  it('still renders two cards for two genuinely distinct tool_use ids', () => {
+    render(
+      <AssistantMessage
+        message={baseMessage({
+          events: [
+            auq('toolu_a', '选一个颜色'),
+            { kind: 'text', text: '下一步…' } as ChatMessage['events'][number],
+            auq('toolu_b', '选一个动物'),
+          ],
+        })}
+        streaming={false}
+        isLast
+        projectId="proj-1"
+        onFeedback={vi.fn()}
+      />,
+    );
+    expect(screen.queryAllByTestId('ask-user-question').length).toBe(2);
+  });
+
+  // The daemon echoes the user's answer as a tool_result whose content is the
+  // formatted "question\nanswer" string (and suppresses claude-code's
+  // "Answer questions?" placeholder). The card must render that as the locked
+  // selection so the submitted answer is visible in the conversation history.
+  it('renders the submitted selection from the echoed tool_result', () => {
+    render(
+      <AssistantMessage
+        message={baseMessage({
+          events: [
+            auq('toolu_ans', '选一个颜色'),
+            { kind: 'tool_result', toolUseId: 'toolu_ans', content: '选一个颜色\n红' } as ChatMessage['events'][number],
+          ],
+        })}
+        streaming={false}
+        isLast
+        projectId="proj-1"
+        onFeedback={vi.fn()}
+      />,
+    );
+    const card = screen.getByTestId('ask-user-question');
+    expect(card.className).toContain('op-ask-question-locked');
+    const chosen = screen.getByText('红').closest('button');
+    expect(chosen?.getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
 describe('AssistantMessage status badge updates (Bug A)', () => {
   // Regression coverage for the model-badge stale-detail bug. ACP agents
   // emit two `status: 'model'` events per turn:

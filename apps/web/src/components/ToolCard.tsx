@@ -254,11 +254,13 @@ function AskUserQuestionCard({
   const effectiveSelections = hasRealAnswer && answeredSelections
     ? answeredSelections
     : selections;
-  // We need at least one viable submit channel to be interactive: the live
-  // `onAnswerToolUse` (preferred — feeds the tool_result back into the
-  // open stream-json child) or the legacy `onSubmitForm` (fallback that
-  // sends the answer as a fresh user message).
-  const canSubmit = !!onAnswerToolUse || !!onSubmitForm;
+  // The answer is submitted as a normal user message via `onSubmitForm` (a new
+  // turn the model actually reads). We do NOT use the tool-result route: in
+  // headless `-p` mode claude-code auto-denies AskUserQuestion and treats a
+  // stdin tool_result as a permission denial, so the model never registers the
+  // answer and keeps re-asking. A normal user message is the only reliable path
+  // and also records the answer in the conversation history.
+  const canSubmit = !!onSubmitForm;
   const locked = hasRealAnswer || !isLast || !canSubmit;
   const noteText = note.trim();
   const isAnswered = (q: { question: string }) => {
@@ -285,37 +287,31 @@ function AskUserQuestionCard({
   }
   async function handleSubmit() {
     if (locked || !ready) return;
-    // Only include questions the user actually answered, then append the
-    // free-text note (if any) as its own block.
+    // Build the message from ONLY the answer — the selected option label(s)
+    // plus any free-text note — NOT the question text. The model already has
+    // the question in its prior turn (the AskUserQuestion tool_use), so a bare
+    // answer is unambiguous, and the chat bubble stays clean (user asked to
+    // "只显示答案,不要显示问题"). Multi-select labels join with 、; multiple
+    // questions / the note each go on their own line.
     const blocks = questions
       .filter(isAnswered)
       .map((q) => {
         const v = selections[q.question];
-        const answer = Array.isArray(v) ? v.map((s) => `- ${s}`).join('\n') : (v ?? '');
-        return `${q.question}\n${answer}`;
-      });
-    if (noteText) blocks.push(`补充说明 / Note:\n${noteText}`);
-    const formatted = blocks.join('\n\n');
-    // Prefer the direct tool-result route: keeps the answer scoped to the
-    // open stream-json child so claude-code's `AskUserQuestion` returns
-    // without an auto error. Fall back to onSubmitForm only if no run is
-    // wired up (e.g. older messages where the run already terminated).
-    if (onAnswerToolUse) {
-      setSubmitted(true);
-      try {
-        const ok = await onAnswerToolUse(toolUseId, formatted);
-        if (ok === false) {
-          // Live route failed (run gone, stdin closed). Revert the local
-          // lock and try the legacy fallback so the user is not stuck.
-          setSubmitted(false);
-          onSubmitForm?.(formatted);
-        }
-      } catch {
-        setSubmitted(false);
-        onSubmitForm?.(formatted);
-      }
-      return;
-    }
+        return Array.isArray(v) ? v.join('、') : String(v ?? '');
+      })
+      .filter((s) => s.trim().length > 0);
+    if (noteText) blocks.push(noteText);
+    const formatted = blocks.join('\n');
+    // Send the answer as a normal user message (a new turn the model actually
+    // reads). The tool-result route (`onAnswerToolUse`) is intentionally NOT
+    // used: claude-code in headless `-p` mode auto-denies AskUserQuestion and
+    // treats a stdin tool_result as a permission denial, so the model never
+    // registers the answer and keeps re-asking ("回答后让我重选"). A normal user
+    // message is the only reliable path AND records the answer in the
+    // conversation history. (`onAnswerToolUse`/`toolUseId` are kept on the props
+    // for now but deliberately unused.)
+    void toolUseId;
+    void onAnswerToolUse;
     if (onSubmitForm) {
       setSubmitted(true);
       onSubmitForm(formatted);

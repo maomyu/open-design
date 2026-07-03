@@ -68,8 +68,6 @@ type TranslateFn = (
   vars?: Record<string, string | number>
 ) => string;
 
-const DISCORD_INVITE_URL = "https://discord.gg/mHAjSMV6gz";
-
 interface ActionNotice {
   message: string;
   url?: string;
@@ -195,7 +193,7 @@ function SkillPluginCandidateCard({
         message:
           action === "publish-github"
             ? `GitHub publish task started for ${data?.path ?? "the draft"}.`
-            : `Open Design contribution task started for ${data?.path ?? "the draft"}.`,
+            : `WorkBuild contribution task started for ${data?.path ?? "the draft"}.`,
       });
     } catch (err) {
       setNotice({ message: err instanceof Error ? err.message : String(err) });
@@ -1205,29 +1203,6 @@ function AssistantFeedback({
               onChange={(event) => setCustomReason(event.target.value)}
             />
           ) : null}
-          {reasonRating === "positive" ? (
-            <p className="assistant-feedback-discord-note">
-              Share what you made with the{" "}
-              <a
-                href={DISCORD_INVITE_URL}
-                data-testid="assistant-feedback-discord-positive"
-              >
-                Discord
-              </a>{" "}
-              community, or drop a screenshot and tell us what worked well.
-            </p>
-          ) : (
-            <p className="assistant-feedback-discord-note">
-              Share more context in{" "}
-              <a
-                href={DISCORD_INVITE_URL}
-                data-testid="assistant-feedback-discord-negative"
-              >
-                Discord
-              </a>{" "}
-              so the team can understand what went wrong and follow up directly.
-            </p>
-          )}
           <div className="assistant-feedback-actions">
             <button
               type="button"
@@ -1500,7 +1475,7 @@ function PluginActionPanel({
                   <span>
                     {actionBusy && busyKey === `contribute:${folder.path}`
                       ? "Sending..."
-                      : "Open Design PR"}
+                      : "WorkBuild PR"}
                   </span>
                 </button>
                 {onRequestOpenFile ? (
@@ -1596,7 +1571,7 @@ function pathMatchesFolderFileBasename(
 }
 
 function hasPluginFinalActionHint(content: string): boolean {
-  return /\b(Add to My plugins|Open Design PR|Publish repo|plugin publish|ready to publish|ready to add)\b/i.test(
+  return /\b(Add to My plugins|WorkBuild PR|Publish repo|plugin publish|ready to publish|ready to add)\b/i.test(
     content,
   );
 }
@@ -2237,14 +2212,32 @@ function suppressAskUserQuestionFallbackText(blocks: Block[]): Block[] {
 
 function buildBlocks(events: AgentEvent[]): Block[] {
   const out: Block[] = [];
+  // A single tool_use_id is ONE tool call. claude-code's stream-json can emit
+  // the same tool_use TWICE — once from the streaming partial message and once
+  // from the final assistant-message wrapper. Rendering both yields a duplicate
+  // card: e.g. the SAME AskUserQuestion shown twice — you answer one, it flips
+  // to "answered", but the stale twin's submit hits an already-consumed id and
+  // silently does nothing ("同样的问题让我回答多次 / 显示已回答但实际没回答上").
+  // The group-local dedupe can't catch it once a text/other block splits the
+  // two emissions into separate groups. Keep only the LAST occurrence of each
+  // id (the wrapper carries the complete input); drop earlier twins here, at
+  // the source, before grouping.
+  const lastToolUseIndexById = new Map<string, number>();
+  events.forEach((ev, i) => {
+    if (ev.kind === "tool_use" && ev.id) lastToolUseIndexById.set(ev.id, i);
+  });
+  const dedupedEvents = events.filter(
+    (ev, i) =>
+      ev.kind !== "tool_use" || !ev.id || lastToolUseIndexById.get(ev.id) === i,
+  );
   const resultByToolId = new Map<
     string,
     Extract<AgentEvent, { kind: "tool_result" }>
   >();
-  for (const ev of events) {
+  for (const ev of dedupedEvents) {
     if (ev.kind === "tool_result") resultByToolId.set(ev.toolUseId, ev);
   }
-  for (const ev of events) {
+  for (const ev of dedupedEvents) {
     if (ev.kind === "text") {
       const last = out[out.length - 1];
       if (last && last.kind === "text") last.text += ev.text;

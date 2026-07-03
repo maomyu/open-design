@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { decideAutoOpenAfterWrite } from '../../src/components/auto-open-file';
+import { decideAutoOpenAfterWrite, pickNewlyCreatedPageFile } from '../../src/components/auto-open-file';
 
 describe('decideAutoOpenAfterWrite', () => {
   it('returns shouldOpen=false when filePath is empty', () => {
@@ -135,5 +135,58 @@ describe('decideAutoOpenAfterWrite', () => {
       { moduleFileNames: new Set(['icons.jsx']) },
     );
     expect(result).toEqual({ shouldOpen: true, fileName: 'landing.html' });
+  });
+});
+
+describe('pickNewlyCreatedPageFile', () => {
+  it('opens an HTML page that a Bash script created after the snapshot', () => {
+    // The wechat render script writes 4-排版-article.html via Bash (no Write
+    // tool_use). board.json already existed (kind code) in the snapshot.
+    const prev = new Set(['board.json', '2-写稿-article.md']);
+    const next = [
+      { name: 'board.json', path: 'board.json', kind: 'code', mtime: 5 },
+      { name: '2-写稿-article.md', path: '2-写稿-article.md', kind: 'document', mtime: 4 },
+      { name: '4-排版-article.html', path: '4-排版-article.html', kind: 'html', mtime: 9 },
+    ];
+    expect(pickNewlyCreatedPageFile(prev, next)).toBe('4-排版-article.html');
+  });
+
+  it('returns null when no new page file appeared (only an existing file changed)', () => {
+    // A re-render overwrites the html (mtime bumps) but it is NOT new, so we
+    // must not re-open it — the viewer re-fetches an open file on mtime change.
+    const prev = new Set(['board.json', '4-排版-article.html']);
+    const next = [
+      { name: 'board.json', path: 'board.json', kind: 'code', mtime: 7 },
+      { name: '4-排版-article.html', path: '4-排版-article.html', kind: 'html', mtime: 20 },
+    ];
+    expect(pickNewlyCreatedPageFile(prev, next)).toBeNull();
+  });
+
+  it('ignores newly-created images (board thumbnails), never stealing focus from a page', () => {
+    // During 配图, the script creates images under 3-配图/; those are board
+    // assets, not pages. With no new page file, nothing auto-opens.
+    const prev = new Set(['board.json', '4-排版-article.html']);
+    const next = [
+      { name: 'board.json', path: 'board.json', kind: 'code', mtime: 7 },
+      { name: '4-排版-article.html', path: '4-排版-article.html', kind: 'html', mtime: 8 },
+      { name: '3-配图/封面.jpg', path: '3-配图/封面.jpg', kind: 'image', mtime: 30 },
+      { name: '3-配图/图1.jpg', path: '3-配图/图1.jpg', kind: 'image', mtime: 31 },
+    ];
+    expect(pickNewlyCreatedPageFile(prev, next)).toBeNull();
+  });
+
+  it('picks the most-recently-modified page when several new pages appear', () => {
+    const prev = new Set<string>([]);
+    const next = [
+      { name: 'a.html', path: 'a.html', kind: 'html', mtime: 3 },
+      { name: 'b.html', path: 'b.html', kind: 'html', mtime: 9 },
+    ];
+    expect(pickNewlyCreatedPageFile(prev, next)).toBe('b.html');
+  });
+
+  it('falls back to name when path is omitted', () => {
+    const prev = new Set(['old.html']);
+    const next = [{ name: 'new.html', kind: 'html', mtime: 2 }];
+    expect(pickNewlyCreatedPageFile(prev, next)).toBe('new.html');
   });
 });

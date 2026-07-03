@@ -317,7 +317,8 @@ import {
   readAllTokens,
   setToken,
 } from './mcp-tokens.js';
-import { agentCliEnvForAgent, readAppConfig, readPluginEnvKnobs, writeAppConfig } from './app-config.js';
+import { agentCliEnvForAgent, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, readAppConfig, readPluginEnvKnobs, writeAppConfig } from './app-config.js';
+import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
 import {
@@ -426,8 +427,9 @@ import { registerMediaRoutes } from './media-routes.js';
 import { registerProjectRoutes, registerProjectArtifactRoutes, registerProjectFileRoutes, registerProjectUploadRoutes } from './project-routes.js';
 import { registerFinalizeRoutes, registerImportRoutes, registerProjectExportRoutes } from './import-export-routes.js';
 import { registerHandoffRoutes } from './handoff-routes.js';
-import { registerLearningRoutes } from './learning-routes.js';
 import { registerPluginEditRoutes } from './plugin-edit-routes.js';
+import { registerPluginDraftRoutes } from './plugin-draft-routes.js';
+import { registerSkillDraftRoutes } from './skill-draft-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
 import { TranscriptExportLockedError } from './transcript-export.js';
 import { registerChatRoutes } from './chat-routes.js';
@@ -1357,11 +1359,18 @@ const USER_DESIGN_TEMPLATES_DIR = path.join(RUNTIME_DATA_DIR, 'design-templates'
 // gallery; ALL_SKILL_LIKE_ROOTS spans both for chat run system-prompt
 // composition and the orbit template resolver, where stored project ids
 // can resolve to either root after the split.
-const SKILL_ROOTS = [USER_SKILLS_DIR, SKILLS_DIR];
+// The operator's Claude Code skill directory. Surfaced read-only in the
+// skill catalog (source 'claude') so everything the user already taught
+// Claude is visible and bindable to plugin workflow steps. Missing dir is
+// fine — listSkills skips unreadable roots.
+const CLAUDE_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
+const SKILL_ROOTS = [USER_SKILLS_DIR, CLAUDE_SKILLS_DIR, SKILLS_DIR];
+const SKILL_ROOT_SOURCES = ['user', 'claude', 'built-in'] as const;
 const DESIGN_TEMPLATE_ROOTS = [USER_DESIGN_TEMPLATES_DIR, DESIGN_TEMPLATES_DIR];
 const ALL_SKILL_LIKE_ROOTS = [
   USER_SKILLS_DIR,
   USER_DESIGN_TEMPLATES_DIR,
+  CLAUDE_SKILLS_DIR,
   SKILLS_DIR,
   DESIGN_TEMPLATES_DIR,
 ];
@@ -3796,7 +3805,7 @@ export async function startServer({
   // declares, and lets a user-imported entry shadow a built-in one of
   // the same id without erasing the built-in copy.
   async function listAllSkills() {
-    return listSkills(SKILL_ROOTS);
+    return listSkills(SKILL_ROOTS, SKILL_ROOT_SOURCES);
   }
 
   async function listAllDesignTemplates() {
@@ -5599,6 +5608,11 @@ export async function startServer({
     validation: validationDeps,
   });
 
+  // Skill drafting + usage. Registered BEFORE the resource catalog so the
+  // literal /api/skills/usage and /api/skills/draft paths win over the
+  // catalog's /api/skills/:id parameter route.
+  registerSkillDraftRoutes(app, { db, http: httpDeps, paths: pathDeps });
+
   // Resource catalog
   registerStaticResourceRoutes(app, {
     http: httpDeps,
@@ -5658,8 +5672,8 @@ export async function startServer({
     validation: validationDeps,
     handoff: handoffDeps,
   });
-  registerLearningRoutes(app, { http: httpDeps, paths: pathDeps });
-  registerPluginEditRoutes(app, { db, http: httpDeps });
+  registerPluginEditRoutes(app, { db, http: httpDeps, paths: pathDeps });
+  registerPluginDraftRoutes(app, { db, http: httpDeps, paths: pathDeps });
   registerDeploymentCheckRoutes(app, { db, http: httpDeps, deploy: deployDeps });
   app.use('/frames', express.static(FRAMES_DIR));
   registerProjectExportRoutes(app, {
@@ -10166,7 +10180,29 @@ export async function startServer({
             const { loadPluginLocalSkill } = await import('./plugins/local-skill.js');
             const local = await loadPluginLocalSkill(plugin);
             if (local) {
-              skillBody = local.body + composedSkillBlocks;
+              // Append the plugin's per-step prompts (od.workflow.stages[].prompt
+              // and per-mode prompts) so each step's prompt actually drives the
+              // run, not just the step rail. Empty for non-workflow plugins.
+              const { renderStagePromptsBlock } = await import('./plugins/stage-prompts.js');
+              // Resolve stage-bound skill refs against the global catalog. Load
+              // it here: the two earlier `allSkills` consts are block-scoped to
+              // their own `if` blocks and out of scope in this plugin block, and
+              // a plugin run usually skips both (no effectiveSkillId / no ad-hoc
+              // ids), so without this the resolver throws `allSkills is not
+              // defined` — which silently drops the plugin's whole SKILL.md
+              // (board/orchestration rules included) via the catch below.
+              const stageSkillCatalog = await loadAllSkills();
+              const stageBlock = renderStagePromptsBlock(
+                (plugin as { manifest?: unknown }).manifest,
+                // Stage-bound skills resolve against the global skill catalog
+                // (same listing the ad-hoc skill ids above resolve through),
+                // so a stage can scope e.g. a copywriting skill to itself.
+                (skillId) => {
+                  const skill = findSkillById(stageSkillCatalog, skillId);
+                  return skill ? { name: skill.name, body: skill.body } : null;
+                },
+              );
+              skillBody = local.body + stageBlock + composedSkillBlocks;
               skillName = local.name;
               activeSkillDir = local.dir;
               registerSkillDir(local.dir);
@@ -11153,7 +11189,34 @@ export async function startServer({
     let configuredAgentEnv = {};
     try {
       const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
-      configuredAgentEnv = agentCliEnvForAgent(appConfig.agentCliEnv, def.id);
+      // Chat-run spawn chain: this `configuredAgentEnv` feeds both the AMR
+      // model probe below and the main agent spawn (spawnEnvForAgent →
+      // applyAgentLaunchEnv → spawn). Global third-party service keys
+      // (app-config `thirdPartyApiKeys`, e.g. TIKHUB_API_KEY) ride along
+      // here with LOWER precedence than the per-agent `agentCliEnv`.
+      // Other spawn sites (memory-llm, connectionTest, AMR integration
+      // helpers) intentionally stay on agentCliEnv only — they don't run
+      // user-facing tools that need third-party service keys.
+      configuredAgentEnv = configuredEnvForAgentSpawn(appConfig, def.id);
+      // Per-plugin config: values the operator set for THIS plugin in the
+      // plugin editor (`od.config` keys → app-config `pluginConfig[id]`).
+      // Injected at HIGHEST precedence and scoped to this run only, so e.g.
+      // wechat-mp-publish gets its own WECHAT_APPID / DAJIALA_API_KEY without
+      // those leaking into other plugins' runs.
+      const boundPluginId = run?.appliedPluginSnapshotId
+        ? getSnapshot(db, run.appliedPluginSnapshotId)?.pluginId ?? null
+        : null;
+      if (boundPluginId) {
+        // Base: the plugin's declared `.env` (od.configEnvFile) so existing
+        // keys work even though many scripts don't auto-source it. Override:
+        // per-plugin `pluginConfig` values set in the editor.
+        const boundPlugin = getInstalledPlugin(db, boundPluginId) as { manifest?: unknown } | null;
+        configuredAgentEnv = {
+          ...configuredAgentEnv,
+          ...(boundPlugin ? readPluginConfigEnvFile(boundPlugin.manifest) : {}),
+          ...pluginConfigEnvForPlugin(appConfig, boundPluginId),
+        };
+      }
     } catch {
       configuredAgentEnv = {};
     }
@@ -12014,7 +12077,24 @@ export async function startServer({
       const claude = createClaudeStreamHandler((ev) => {
         lastAgentEventPhase = summarizeAgentEventForInactivity(ev);
         noteAgentActivity();
-        send('agent', ev);
+        // Suppress claude-code's OWN placeholder tool_result for an
+        // AskUserQuestion. In headless stream-json mode claude-code cannot
+        // prompt the user, so for every AskUserQuestion it emits a canned
+        // tool_result (content like "Answer questions?") that does NOT carry
+        // the user's choice. The real answer is echoed by submitToolResultToRun.
+        // Because claude-code's placeholder arrives AFTER that echo and the web's
+        // resultByToolId is last-wins, forwarding it would overwrite the real
+        // answer and the card would show no selection ("answer not in history").
+        // ids are recorded in run.askUserQuestionIds in the bookkeeping below;
+        // a tool_use always precedes its tool_result, so the id is known here.
+        const suppressAuqPlaceholder =
+          ev &&
+          typeof ev === 'object' &&
+          ev.type === 'tool_result' &&
+          typeof ev.toolUseId === 'string' &&
+          run.askUserQuestionIds instanceof Set &&
+          run.askUserQuestionIds.has(ev.toolUseId);
+        if (!suppressAuqPlaceholder) send('agent', ev);
         // Stream-json input mode keeps the child's stdin open across the
         // turn so we can answer interactive tools like `AskUserQuestion`
         // with a real `tool_result`. The child has no other way to know
@@ -12035,8 +12115,18 @@ export async function startServer({
               (ev.name === 'AskUserQuestion' || ev.name === 'ask_user_question') &&
               typeof ev.id === 'string'
             ) {
-              if (!run.pendingHostAnswers) run.pendingHostAnswers = new Set();
-              run.pendingHostAnswers.add(ev.id);
+              // Do NOT keep stdin open waiting for a host tool_result. In
+              // headless `-p` mode claude-code auto-denies AskUserQuestion and
+              // ignores a stdin tool_result (treats it as a permission denial),
+              // so the answer cannot be delivered that way — confirmed against
+              // the CLI. We let the run END normally (the model auto-continues
+              // and the next turn_end closes stdin); the web sends the user's
+              // answer as a normal user message (a new turn the model actually
+              // reads). We still record the id so the suppressAuqPlaceholder
+              // check above drops claude-code's canned "Answer questions?"
+              // placeholder tool_result for it.
+              if (!run.askUserQuestionIds) run.askUserQuestionIds = new Set();
+              run.askUserQuestionIds.add(ev.id);
             } else if (
               ev &&
               typeof ev === 'object' &&
@@ -12529,14 +12619,24 @@ export async function startServer({
     } catch (err) {
       return { ok: false, reason: 'write_failed', error: err && err.message };
     }
+    // NOTE: This endpoint (stdin tool_result) does not reliably answer
+    // AskUserQuestion in headless `-p` mode — claude-code treats the stdin
+    // tool_result as a permission denial and the model re-asks. The web no
+    // longer uses it for AskUserQuestion (answers are sent as normal user
+    // messages instead). Kept only as a generic stdin writer for any future
+    // host-answerable tool; do not route AskUserQuestion through it.
     if (run.pendingHostAnswers) {
+      // Bookkeeping only: mark this AskUserQuestion answered. Do NOT close
+      // stdin here. Answering a mid-turn interactive tool does not mean the
+      // conversation is over — the model resumes and very often asks the NEXT
+      // question (every step of a guided plugin flow is its own
+      // AskUserQuestion). The authoritative EOF is the stream handler's
+      // turn_end logic above, which closes stdin only on a real end-of-turn
+      // (stop_reason !== 'tool_use') with no pending answers. Closing here the
+      // instant the pending set empties prematurely EOFs the child, so the
+      // child winds down right after the FIRST answer and every subsequent
+      // step's answer hits a closed stdin ("first submit didn't submit").
       run.pendingHostAnswers.delete(toolUseId);
-      if (run.pendingHostAnswers.size === 0 && run.stdinOpen) {
-        if (run.child && run.child.stdin && !run.child.stdin.destroyed) {
-          try { run.child.stdin.end(); } catch {}
-        }
-        run.stdinOpen = false;
-      }
     }
     return { ok: true };
   };

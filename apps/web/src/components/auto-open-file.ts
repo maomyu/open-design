@@ -93,3 +93,43 @@ export function decideAutoOpenAfterWrite(
   }
   return { shouldOpen: false, fileName: null };
 }
+
+// Page-like file kinds whose creation by a NON-Write tool (e.g. a plugin's
+// Bash render/generate script) should auto-open in the viewer. Excludes
+// 'image'/'video' (usually board/asset thumbnails, not the primary page) and
+// data files like board.json (kind 'code'), so a render script's html surfaces
+// but generated images don't steal focus from it.
+const AUTO_OPEN_PAGE_KINDS: ReadonlySet<string> = new Set([
+  'html',
+  'pdf',
+  'presentation',
+  'document',
+  'sketch',
+]);
+
+interface NewFileCandidate {
+  readonly name: string;
+  readonly path?: string;
+  readonly kind?: string;
+  readonly mtime?: number;
+}
+
+// After a Bash command finishes, pick a newly-created page file (one whose
+// key (path||name) was not present in `prevKeys`) to auto-open — the deliverable
+// a render script produced without emitting a Write tool event. Returns the
+// most-recently-modified new page file's name, or null when none appeared.
+// Files that already existed (only their mtime bumped, e.g. a re-render) are not
+// re-opened: the viewer re-fetches an already-open file on mtime change anyway.
+export function pickNewlyCreatedPageFile(
+  prevKeys: ReadonlySet<string>,
+  nextFiles: ReadonlyArray<NewFileCandidate>,
+): string | null {
+  const fresh = nextFiles.filter((f) => {
+    const key = f.path ?? f.name;
+    if (!key || prevKeys.has(key)) return false;
+    return f.kind ? AUTO_OPEN_PAGE_KINDS.has(f.kind) : false;
+  });
+  if (fresh.length === 0) return null;
+  fresh.sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+  return fresh[0]!.name;
+}
