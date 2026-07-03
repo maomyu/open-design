@@ -130,4 +130,44 @@ describe('registerBundledPlugins', () => {
     const result = await registerBundledPlugins({ db, bundledRoot: tmpRoot });
     expect(result.registered).toEqual([]);
   });
+
+  it('prunes bundled rows whose folder disappeared, leaving user plugins alone', async () => {
+    // Boot 1: two bundled plugins ship.
+    const keptDir = path.join(tmpRoot, 'content', 'kept-plugin');
+    const removedDir = path.join(tmpRoot, 'content', 'removed-plugin');
+    for (const [dir, id] of [
+      [keptDir, 'kept-plugin'],
+      [removedDir, 'removed-plugin'],
+    ] as const) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, 'open-design.json'), SAMPLE_MANIFEST(id));
+      await writeFile(path.join(dir, 'SKILL.md'), SAMPLE_SKILL(id));
+    }
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    expect(listInstalledPlugins(db).map((r) => r.id).sort()).toEqual([
+      'kept-plugin',
+      'removed-plugin',
+    ]);
+
+    // A user-installed row must survive the prune untouched.
+    db.prepare(
+      `UPDATE installed_plugins SET source_kind = 'local-folder', trust = 'unlisted' WHERE id = 'removed-plugin'`,
+    ).run();
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    expect(listInstalledPlugins(db).map((r) => r.id).sort()).toEqual([
+      'kept-plugin',
+      'removed-plugin',
+    ]);
+    db.prepare(
+      `UPDATE installed_plugins SET source_kind = 'bundled', trust = 'bundled' WHERE id = 'removed-plugin'`,
+    ).run();
+
+    // Boot 2: the folder was deleted upstream (plugin removed/renamed/
+    // merged). The stale bundled row must be pruned, not survive as a
+    // ghost with a dead fs_path.
+    await rm(removedDir, { recursive: true, force: true });
+    const result = await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    expect(result.pruned).toEqual(['removed-plugin']);
+    expect(listInstalledPlugins(db).map((r) => r.id)).toEqual(['kept-plugin']);
+  });
 });

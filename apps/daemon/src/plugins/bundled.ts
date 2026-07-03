@@ -24,6 +24,8 @@ import path from 'node:path';
 import { promises as fsp } from 'node:fs';
 import type Database from 'better-sqlite3';
 import {
+  deleteInstalledPlugin,
+  listInstalledPlugins,
   resolvePluginFolder,
   upsertInstalledPlugin,
   type RegistryRoots,
@@ -50,6 +52,11 @@ export interface RegisterBundledPluginsInput {
 
 export interface RegisterBundledPluginsResult {
   registered: InstalledPluginRecord[];
+  // Ids of stale `source_kind='bundled'` rows removed because their folder
+  // no longer exists under the bundled root (plugin deleted/renamed/merged
+  // upstream). Without this prune a removed bundled plugin would survive as
+  // a ghost row with a dead fs_path forever.
+  pruned: string[];
   warnings: string[];
 }
 
@@ -66,7 +73,10 @@ export async function registerBundledPlugins(
     topLevel = await fsp.readdir(input.bundledRoot, { withFileTypes: true });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { registered: [], warnings: [] };
+      // Missing bundled root = running outside a dev tree/resource image.
+      // Deliberately NO pruning here: an absent root says nothing about
+      // individual plugins having been removed.
+      return { registered: [], pruned: [], warnings: [] };
     }
     throw err;
   }
@@ -102,7 +112,21 @@ export async function registerBundledPlugins(
     }
   }
 
-  return { registered: out, warnings };
+  // Mirror semantics: the installed `bundled` set must match the on-disk
+  // bundled tree in BOTH directions. Registration above covers additions
+  // and updates; this prune covers removals — a bundled row whose id was
+  // not seen in this walk points at a folder that no longer ships, so the
+  // row is a ghost (dead fs_path) and must go.
+  const seen = new Set(out.map((record) => record.id));
+  const pruned: string[] = [];
+  for (const existing of listInstalledPlugins(input.db)) {
+    if (existing.sourceKind !== 'bundled') continue;
+    if (seen.has(existing.id)) continue;
+    deleteInstalledPlugin(input.db, existing.id);
+    pruned.push(existing.id);
+  }
+
+  return { registered: out, pruned, warnings };
 }
 
 async function registerOne(args: {
