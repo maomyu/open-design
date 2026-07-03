@@ -476,12 +476,21 @@ async function openOption(name: string) {
   await waitFor(() => expect(screen.getByTestId(`home-hero-footer-option-${name}-menu`)).toBeTruthy());
 }
 
+// The tab strip below the composer is gone; creation types are picked by
+// typing a `#` token in the composer and choosing from the picker.
 async function clickHomeRailChip(id: string) {
   const activeChip = screen.queryByTestId('home-hero-active-type-chip');
   if (activeChip) {
     fireEvent.click(activeChip);
   }
-  fireEvent.click(await screen.findByTestId(`home-hero-rail-${id}`));
+  const input = (await screen.findByTestId('home-hero-input')) as HTMLTextAreaElement;
+  const base = input.value.trim();
+  fireEvent.change(input, { target: { value: base ? `${base} #` : '#' } });
+  const option = (await screen.findByTestId(
+    `home-hero-option-type-${id}`,
+  )) as HTMLButtonElement;
+  await waitFor(() => expect(option.disabled).toBe(false));
+  fireEvent.mouseDown(option);
 }
 
 function setHomePrompt(value: string) {

@@ -652,7 +652,7 @@ describe('HomeView prompt handoff', () => {
     );
 
     await clearActiveTypeChip();
-    fireEvent.click(await screen.findByTestId('home-hero-rail-prototype'));
+    await pickTypeChip('prototype');
 
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-active-type-chip').textContent).toContain('Prototype');
@@ -739,7 +739,7 @@ describe('HomeView prompt handoff', () => {
     );
 
     await clearActiveTypeChip();
-    fireEvent.click(await screen.findByTestId('home-hero-rail-prototype'));
+    await pickTypeChip('prototype');
     fireEvent.click(await screen.findByTestId('home-hero-plugin-preset'));
 
     const input = screen.getByTestId('home-hero-input') as HTMLTextAreaElement;
@@ -824,7 +824,7 @@ describe('HomeView prompt handoff', () => {
     );
 
     await clearActiveTypeChip();
-    fireEvent.click(await screen.findByTestId('home-hero-rail-live-artifact'));
+    await pickTypeChip('live-artifact');
 
     await waitFor(() => {
       expect(screen.getAllByTestId('home-hero-plugin-preset').length).toBeGreaterThan(0);
@@ -895,7 +895,7 @@ describe('HomeView prompt handoff', () => {
     );
 
     await clearActiveTypeChip();
-    fireEvent.click(await screen.findByTestId('home-hero-rail-live-artifact'));
+    await pickTypeChip('live-artifact');
 
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-active-type-chip').textContent).toContain('Live artifact');
@@ -964,7 +964,7 @@ describe('HomeView prompt handoff', () => {
     );
 
     await clearActiveTypeChip();
-    fireEvent.click(await screen.findByTestId('home-hero-rail-deck'));
+    await pickTypeChip('deck');
 
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-footer-option-speakerNotes')).toBeTruthy();
@@ -1039,7 +1039,7 @@ describe('HomeView prompt handoff', () => {
     const input = await screen.findByTestId('home-hero-input');
     fireEvent.change(input, { target: { value: 'Keep my current brief' } });
     await clearActiveTypeChip();
-    fireEvent.click(await screen.findByTestId('home-hero-rail-prototype'));
+    await pickTypeChip('prototype');
 
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-active-type-chip').textContent).toContain('Prototype');
@@ -1088,7 +1088,7 @@ describe('HomeView prompt handoff', () => {
     );
 
     await clearActiveTypeChip();
-    fireEvent.click(await screen.findByTestId('home-hero-rail-deck'));
+    await pickTypeChip('deck');
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-active-type-chip').textContent).toContain('Slide deck');
     });
@@ -1103,7 +1103,7 @@ describe('HomeView prompt handoff', () => {
     );
 
     await clearActiveTypeChip();
-    fireEvent.click(await screen.findByTestId('home-hero-rail-prototype'));
+    await pickTypeChip('prototype');
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-plugin-presets')).toBeTruthy();
     });
@@ -1345,9 +1345,18 @@ async function clearActiveTypeChip() {
   if (chip) fireEvent.click(chip);
 }
 
+// The tab strip / More menu below the composer is gone: creation types and
+// shortcuts are picked by typing a `#` token in the composer. Appends the
+// token so an existing prompt is preserved (the pick strips it back out).
+async function pickTypeChip(id: string) {
+  const input = (await screen.findByTestId('home-hero-input')) as HTMLTextAreaElement;
+  const base = input.value.trim();
+  fireEvent.change(input, { target: { value: base ? `${base} #` : '#' } });
+  const option = (await screen.findByTestId(`home-hero-option-type-${id}`)) as HTMLButtonElement;
+  await waitFor(() => expect(option.disabled).toBe(false));
+  fireEvent.mouseDown(option);
+}
+
 async function clickHomeShortcut(id: string) {
-  const trigger = await screen.findByTestId('home-hero-shortcuts-trigger');
-  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(trigger);
-  fireEvent.click(await screen.findByTestId(`home-hero-rail-${id}`));
+  await pickTypeChip(id);
 }

@@ -874,6 +874,8 @@ export interface Dict {
   'homeHero.placeholder': string;
   'homeHero.placeholderActive': string;
   'homeHero.skills': string;
+  'homeHero.typePicker': string;
+  'homeHero.typePickerGeneralHint': string;
   'homeHero.applying': string;
   'homeHero.pluginTitle': string;
   'homeHero.pluginPrefix': string;

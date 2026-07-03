@@ -576,6 +576,8 @@ export const en: Dict = {
   'homeHero.placeholder': 'Describe what you want to generate…',
   'homeHero.placeholderActive': 'Edit the example query or write your own…',
   'homeHero.skills': 'Skills',
+  'homeHero.typePicker': 'Creation type',
+  'homeHero.typePickerGeneralHint': 'Default — routes your prompt to the general assistant',
   'homeHero.applying': 'Applying…',
   'homeHero.pluginTitle': 'Plugin: {title}',
   'homeHero.pluginPrefix': 'Plugin: {title}',

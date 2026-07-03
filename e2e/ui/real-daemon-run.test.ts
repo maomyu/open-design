@@ -259,8 +259,8 @@ test('plugin authoring produces a generated-plugin scaffold with action cards', 
   await expectBrowserAgentConfig(page, 'codex');
   await dismissPrivacyDialog(page);
 
-  await page.getByTestId('home-hero-shortcuts-trigger').click();
-  await page.getByTestId('home-hero-rail-create-plugin').click();
+  await page.getByTestId('home-hero-input').fill('#');
+  await page.getByTestId('home-hero-option-type-create-plugin').click();
   await expect(page.getByTestId('home-hero-input')).toHaveValue(/Create a WorkBuild plugin for:/);
 
   const projectRequestPromise = page.waitForRequest(isCreateProjectRequest);

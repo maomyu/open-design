@@ -23,6 +23,22 @@ afterEach(() => {
   cleanup();
 });
 
+// English labels for the creation-type options surfaced by the `#` picker
+// (mirrors homeHeroChipLabel + the en locale).
+const CHIP_LABELS: Record<string, string> = {
+  prototype: 'Prototype',
+  'live-artifact': 'Live artifact',
+  deck: 'Slide deck',
+  image: 'Image',
+  video: 'Video',
+  hyperframes: 'HyperFrames',
+  audio: 'Audio',
+};
+
+function labelFor(chipId: string): string {
+  return CHIP_LABELS[chipId] ?? chipId;
+}
+
 function makePlugin(
   id: string,
   mode: string,
@@ -98,32 +114,38 @@ function renderHero(overrides: Partial<React.ComponentProps<typeof HomeHero>> = 
 }
 
 describe('HomeHero intent rail', () => {
-  it('renders creation chips as composer tabs and collapses shortcuts behind More', () => {
-    renderHero();
-    const tabs = screen.getByTestId('home-hero-type-tabs');
-    for (const chip of HOME_HERO_CHIPS) {
-      if (chip.group === 'create') {
-        const node = screen.getByTestId(`home-hero-rail-${chip.id}`);
-        expect(node).toBeTruthy();
-        expect(tabs.contains(node)).toBe(true);
-      } else {
-        expect(screen.queryByTestId(`home-hero-rail-${chip.id}`)).toBeNull();
-      }
-    }
-    fireEvent.click(screen.getByTestId('home-hero-shortcuts-trigger'));
-    const menu = screen.getByTestId('home-hero-shortcuts-menu');
-    for (const chip of HOME_HERO_CHIPS.filter((item) => item.group === 'migrate')) {
-      const node = screen.getByTestId(`home-hero-rail-${chip.id}`);
-      expect(node).toBeTruthy();
-      expect(menu.contains(node)).toBe(true);
+  it('renders no persistent tab strip; a # token opens the creation-type picker', () => {
+    renderHero({ prompt: '#' });
+    // The old tab strip below the composer is gone — general/code is the
+    // default and the specialized types are invoked with `#`.
+    expect(screen.queryByTestId('home-hero-type-tabs')).toBeNull();
+    const picker = screen.getByTestId('home-hero-plugin-picker');
+    expect(picker).toBeTruthy();
+    // General (default) option leads the list, followed by every create chip.
+    expect(screen.getByTestId('home-hero-option-type-general')).toBeTruthy();
+    for (const chip of HOME_HERO_CHIPS.filter((item) => item.group === 'create')) {
+      expect(screen.getByTestId(`home-hero-option-type-${chip.id}`)).toBeTruthy();
     }
   });
 
-  it('forwards the matching chip descriptor when clicked', () => {
-    const { onPickChip } = renderHero();
-    fireEvent.click(screen.getByTestId('home-hero-rail-image'));
+  it('forwards the matching chip descriptor when picked from the # picker', () => {
+    const onPromptChange = vi.fn();
+    const { onPickChip } = renderHero({ prompt: '#', onPromptChange });
+    fireEvent.mouseDown(screen.getByTestId('home-hero-option-type-image'));
     expect(onPickChip).toHaveBeenCalledTimes(1);
     expect(onPickChip).toHaveBeenCalledWith(findChip('image'));
+    // The # token is stripped from the prompt when a type is picked.
+    expect(onPromptChange).toHaveBeenCalledWith('');
+  });
+
+  it('filters the # picker by query and clears the type via the General option', () => {
+    const onPromptChange = vi.fn();
+    const { onPickChip, onClearActiveChip } = renderHero({ prompt: '#vid', onPromptChange });
+    expect(screen.getByTestId('home-hero-option-type-video')).toBeTruthy();
+    expect(screen.queryByTestId('home-hero-option-type-deck')).toBeNull();
+    fireEvent.mouseDown(screen.getByTestId('home-hero-option-type-general'));
+    expect(onClearActiveChip).toHaveBeenCalledTimes(1);
+    expect(onPickChip).not.toHaveBeenCalled();
   });
 
   it('moves the active creation chip into the composer and hides the tab row', () => {
@@ -381,30 +403,12 @@ describe('HomeHero intent rail', () => {
     ]);
   });
 
-  it('disables every visible chip while a plugin apply is in flight', () => {
-    renderHero({ pendingPluginId: 'od-figma-migration', pendingChipId: 'figma' });
+  it('disables the # picker type options while a plugin apply is in flight', () => {
+    renderHero({ prompt: '#', pendingPluginId: 'od-figma-migration', pendingChipId: 'figma' });
     for (const chip of HOME_HERO_CHIPS.filter((item) => item.group === 'create')) {
-      const node = screen.getByTestId(`home-hero-rail-${chip.id}`);
+      const node = screen.getByTestId(`home-hero-option-type-${chip.id}`);
       expect((node as HTMLButtonElement).disabled).toBe(true);
     }
-    const trigger = screen.getByTestId('home-hero-shortcuts-trigger') as HTMLButtonElement;
-    expect(trigger.disabled).toBe(true);
-    expect(trigger.className).toContain('is-pending');
-  });
-
-  it('shows plugin authoring with the starter shortcuts after More opens', () => {
-    renderHero();
-    fireEvent.click(screen.getByTestId('home-hero-shortcuts-trigger'));
-    const createPluginGroup = screen
-      .getByTestId('home-hero-rail-create-plugin')
-      .closest('[data-rail-group]');
-
-    expect(createPluginGroup?.getAttribute('data-rail-group')).toBe('migrate');
-    for (const id of ['figma', 'template']) {
-      expect(screen.getByTestId(`home-hero-rail-${id}`).closest('[data-rail-group]'))
-        .toBe(createPluginGroup);
-    }
-    expect(screen.queryByTestId('home-hero-rail-folder')).toBeNull();
   });
 
   it('keeps the generic fallback in the free-form prompt instead of an Other chip', () => {

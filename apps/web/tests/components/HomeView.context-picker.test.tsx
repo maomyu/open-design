@@ -36,6 +36,19 @@ const DECK_SKILL: SkillSummary = {
 
 const WEB_PROTOTYPE_PLUGIN = makePlugin('example-web-prototype', 'Web Prototype');
 
+// The tab strip below the composer is gone; creation types are picked by
+// typing a `#` token in the composer and choosing from the picker.
+async function pickTypeChip(id: string) {
+  const input = (await screen.findByTestId('home-hero-input')) as HTMLTextAreaElement;
+  const base = input.value.trim();
+  fireEvent.change(input, { target: { value: base ? `${base} #` : '#' } });
+  const option = (await screen.findByTestId(
+    `home-hero-option-type-${id}`,
+  )) as HTMLButtonElement;
+  await waitFor(() => expect(option.disabled).toBe(false));
+  fireEvent.mouseDown(option);
+}
+
 function makePlugin(id: string, title: string): InstalledPluginRecord {
   return {
     id,
@@ -57,6 +70,10 @@ function makePlugin(id: string, title: string): InstalledPluginRecord {
       od: {
         kind: 'scenario',
         taskKind: 'new-generation',
+        // The mention picker only surfaces INVOKABLE bundled plugins
+        // (featured or kind=skill); mark fixtures featured so they stay
+        // visible to these picker specs.
+        featured: true,
         useCase: {
           query: `Hydrated query from ${title}`,
         },
@@ -280,7 +297,7 @@ describe('HomeView context picker', () => {
       />,
     );
 
-    fireEvent.click(await screen.findByTestId('home-hero-rail-prototype'));
+    await pickTypeChip('prototype');
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-active-type-chip').textContent).toContain('Prototype');
     });
@@ -358,7 +375,7 @@ describe('HomeView context picker', () => {
       expect(screen.getByTestId('home-hero-active-skill')).toBeTruthy();
     });
 
-    fireEvent.click(await screen.findByTestId('home-hero-rail-prototype'));
+    await pickTypeChip('prototype');
     await waitFor(() => {
       expect(screen.getByTestId('home-hero-active-type-chip').textContent).toContain('Prototype');
       expect(screen.queryByTestId('home-hero-active-skill')).toBeNull();

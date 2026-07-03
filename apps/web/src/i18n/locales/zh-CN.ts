@@ -576,6 +576,8 @@ export const zhCN: Dict = {
   'homeHero.placeholder': '描述你想生成的内容…',
   'homeHero.placeholderActive': '编辑示例请求，或写下你自己的需求…',
   'homeHero.skills': '技能',
+  'homeHero.typePicker': '创作类型',
+  'homeHero.typePickerGeneralHint': '默认——提示词交给通用助手处理',
   'homeHero.applying': '正在应用…',
   'homeHero.pluginTitle': '插件：{title}',
   'homeHero.pluginPrefix': '插件：{title}',

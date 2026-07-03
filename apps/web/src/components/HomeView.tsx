@@ -236,6 +236,10 @@ export function HomeView({
   const [mcpLoading, setMcpLoading] = useState(true);
   const [prompt, setPrompt] = useState('');
   const [promptEditedByUser, setPromptEditedByUser] = useState(false);
+  // `#` type pick staged for the next render: the base-prompt restore must
+  // commit before pickChip runs, or its replacement-confirmation gate reads
+  // the stale `#`-bearing prompt. See onPickTypeChip below.
+  const [pendingTypePick, setPendingTypePick] = useState<HomeHeroChip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [designSystemLogoById, setDesignSystemLogoById] = useState<Record<string, string>>({});
   const [elevenLabsVoices, setElevenLabsVoices] = useState<AudioVoiceOption[]>([]);
@@ -1083,6 +1087,16 @@ export function HomeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingAuthoringChipId, pendingAuthoringPrompt, pendingAuthoringInputs, pluginsLoading, plugins]);
 
+  // Dispatch a staged `#` type pick one render after the base-prompt
+  // restore commits (see onPickTypeChip), so pickChip reads fresh state.
+  useEffect(() => {
+    if (!pendingTypePick) return;
+    const chip = pendingTypePick;
+    setPendingTypePick(null);
+    pickChip(chip);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTypePick]);
+
   // Stage B of plugin-driven-flow-plan: the chip rail dispatcher.
   // Pure UI-state mapping — the heavy lifting is delegated back to
   // existing handlers. Migration chips that don't have a bound plugin
@@ -1289,6 +1303,16 @@ export function HomeView({
         ref={inputRef}
         prompt={prompt}
         onPromptChange={handlePromptChange}
+        onPickTypeChip={(chip, basePrompt) => {
+          // Commit the pre-token prompt first (consuming the `#` token is
+          // not a user edit when nothing else was typed), then dispatch the
+          // chip on the NEXT render so pickChip's replacement-confirmation
+          // gate and starter-prompt seeding read the restored state instead
+          // of the stale `#`-bearing closure.
+          setPrompt(basePrompt);
+          setPromptEditedByUser(basePrompt.trim().length > 0);
+          setPendingTypePick(chip);
+        }}
         onSubmit={submit}
         activePluginTitle={activeBadgeTitle}
         activePluginRecord={active?.record ?? null}

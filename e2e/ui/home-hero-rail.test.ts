@@ -274,6 +274,17 @@ async function seedBrowserConfig(page: Page, config: Record<string, unknown>) {
   );
 }
 
+// The tab strip below the composer is gone; creation types are picked by
+// typing a `#` token in the composer and choosing from the picker.
+async function pickTypeChip(page: Page, id: string) {
+  const input = page.getByTestId('home-hero-input');
+  const base = ((await input.inputValue()) ?? '').trim();
+  await input.fill(base ? `${base} #` : '#');
+  const option = page.getByTestId(`home-hero-option-type-${id}`);
+  await expect(option).toBeEnabled();
+  await option.click();
+}
+
 async function gotoEntryHome(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
@@ -362,27 +373,22 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('home hero rail shows the current creation chips and More shortcuts', async ({ page }) => {
+test('the # token opens the creation-type picker with chips and shortcuts', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
-  for (const id of ['prototype', 'live-artifact', 'deck', 'image', 'video', 'hyperframes', 'audio']) {
-    await expect(page.getByTestId(`home-hero-rail-${id}`)).toBeVisible();
-  }
-  await expect(page.getByTestId('home-hero-shortcuts-trigger')).toBeVisible();
-
-  await page.getByTestId('home-hero-shortcuts-trigger').click();
-  const menu = page.getByTestId('home-hero-shortcuts-menu');
-  await expect(menu).toBeVisible();
-  for (const id of ['create-plugin', 'figma', 'template']) {
-    await expect(menu.getByTestId(`home-hero-rail-${id}`)).toBeVisible();
+  // No persistent tab strip below the composer — general/code is the default.
+  await expect(page.getByTestId('home-hero-type-tabs')).toHaveCount(0);
+  await page.getByTestId('home-hero-input').fill('#');
+  await expect(page.getByTestId('home-hero-option-type-general')).toBeVisible();
+  for (const id of ['prototype', 'live-artifact', 'deck', 'image', 'video', 'hyperframes', 'audio', 'create-plugin', 'figma', 'template']) {
+    await expect(page.getByTestId(`home-hero-option-type-${id}`)).toBeVisible();
   }
 });
 
 test('home hero rail switches non-media modes without surfacing media-only footer options', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
+  await expect(page.getByTestId('home-hero-input')).toBeVisible();
   await expect(page.getByTestId('home-hero-footer-option-duration')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-footer-option-audioType')).toHaveCount(0);
 
@@ -435,7 +441,7 @@ test('home hero example presets update the composer input for prototype and live
   const input = page.getByTestId('home-hero-input');
   await expect(input).toHaveValue('');
 
-  await page.getByTestId('home-hero-rail-prototype').click();
+  await pickTypeChip(page, 'prototype');
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
   await page
     .locator('[data-testid="home-hero-plugin-preset"][data-plugin-id="example-web-prototype"]')
@@ -445,7 +451,7 @@ test('home hero example presets update the composer input for prototype and live
   );
 
   await clearActiveChip(page);
-  await page.getByTestId('home-hero-rail-live-artifact').click();
+  await pickTypeChip(page, 'live-artifact');
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
   await page
     .locator('[data-testid="home-hero-plugin-preset"][data-plugin-id="image-template-notion-team-dashboard-live-artifact"]')
@@ -459,7 +465,7 @@ test('home hero deck example preset updates the composer input', async ({ page }
   const input = page.getByTestId('home-hero-input');
   await expect(input).toHaveValue('');
 
-  await page.getByTestId('home-hero-rail-deck').click();
+  await pickTypeChip(page, 'deck');
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
   await page
     .locator('[data-testid="home-hero-plugin-preset"][data-plugin-id="example-simple-deck"]')
@@ -472,7 +478,7 @@ test('home hero deck example preset updates the composer input', async ({ page }
 test('clearing the active hero chip restores the rail and clears preset chrome', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await page.getByTestId('home-hero-rail-prototype').click();
+  await pickTypeChip(page, 'prototype');
   await expect(page.getByTestId('home-hero-active-type-chip')).toBeVisible();
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
   await expect(page.getByTestId('home-hero-footer-option-designSystem')).toBeVisible();
@@ -483,8 +489,10 @@ test('clearing the active hero chip restores the rail and clears preset chrome',
   await expect(page.getByTestId('home-hero-footer-option-designSystem')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-footer-option-ratio')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-footer-option-duration')).toHaveCount(0);
-  await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
-  await expect(page.getByTestId('home-hero-rail-live-artifact')).toBeVisible();
+  await expect(page.getByTestId('home-hero-input')).toBeVisible();
+  await page.getByTestId('home-hero-input').fill('#');
+  await expect(page.getByTestId('home-hero-option-type-live-artifact')).toBeVisible();
+  await page.getByTestId('home-hero-input').fill('');
 });
 
 test('after clearing one mode, selecting another example updates the composer without leaking prior mode state', async ({ page }) => {
@@ -492,7 +500,7 @@ test('after clearing one mode, selecting another example updates the composer wi
 
   const input = page.getByTestId('home-hero-input');
 
-  await page.getByTestId('home-hero-rail-prototype').click();
+  await pickTypeChip(page, 'prototype');
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
   await page
     .locator('[data-testid="home-hero-plugin-preset"][data-plugin-id="example-web-prototype"]')
@@ -503,7 +511,7 @@ test('after clearing one mode, selecting another example updates the composer wi
 
   await clearActiveChip(page);
 
-  await page.getByTestId('home-hero-rail-live-artifact').click();
+  await pickTypeChip(page, 'live-artifact');
   await expect(page.getByTestId('home-hero-active-type-chip')).toBeVisible();
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
   await expect(page.getByTestId('home-hero-footer-option-designSystem')).toHaveCount(0);
@@ -518,7 +526,7 @@ test('closing the selected example chip clears the example state while preservin
 
   const input = page.getByTestId('home-hero-input');
 
-  await page.getByTestId('home-hero-rail-live-artifact').click();
+  await pickTypeChip(page, 'live-artifact');
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
   await page
     .locator('[data-testid="home-hero-plugin-preset"][data-plugin-id="image-template-notion-team-dashboard-live-artifact"]')
@@ -544,7 +552,7 @@ test('after closing one example chip, selecting another example updates the comp
 
   const input = page.getByTestId('home-hero-input');
 
-  await page.getByTestId('home-hero-rail-live-artifact').click();
+  await pickTypeChip(page, 'live-artifact');
   await expect(page.getByTestId('home-hero-plugin-presets')).toBeVisible();
   await page
     .locator('[data-testid="home-hero-plugin-preset"][data-plugin-id="image-template-notion-team-dashboard-live-artifact"]')
@@ -563,14 +571,12 @@ test('after closing one example chip, selecting another example updates the comp
 });
 
 async function expectChipSelection(page: Page, chipId: string, _label: string) {
-  const chip = page.getByTestId(`home-hero-rail-${chipId}`);
-  await expect(chip).toBeEnabled();
-  await chip.click();
+  await pickTypeChip(page, chipId);
   await expect(page.getByTestId('home-hero-active-type-chip')).toBeVisible();
 }
 
 async function clearActiveChip(page: Page) {
   await page.getByTestId('home-hero-active-type-chip').click();
   await expect(page.getByTestId('home-hero-active-type-chip')).toHaveCount(0);
-  await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
+  await expect(page.getByTestId('home-hero-input')).toBeVisible();
 }

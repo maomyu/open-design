@@ -64,6 +64,12 @@ export interface HomeHeroSubmitHandler {
 interface Props {
   prompt: string;
   onPromptChange: (value: string) => void;
+  /** `#` type pick. Receives the chip plus the prompt with the `#token`
+   *  stripped. The host must commit the base prompt (NOT as a user edit when
+   *  empty) before dispatching the chip, so replacement-confirmation gates
+   *  and starter-prompt seeding see the pre-token state. Falls back to
+   *  onPromptChange + onPickChip when absent. */
+  onPickTypeChip?: (chip: HomeHeroChip, basePrompt: string) => void;
   onSubmit: HomeHeroSubmitHandler;
   activePluginTitle: string | null;
   activePluginRecord?: InstalledPluginRecord | null;
@@ -135,7 +141,9 @@ interface HomeMentionOption {
 }
 
 interface HomeMentionSection {
-  id: Exclude<HomeMentionTab, 'all'>;
+  // Context tabs (plugins/skills/mcp/connectors) plus the `#`-triggered
+  // creation-type section, which lives outside the tab row.
+  id: Exclude<HomeMentionTab, 'all'> | 'types';
   label: string;
   options: HomeMentionOption[];
 }
@@ -149,6 +157,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
   {
     prompt,
     onPromptChange,
+    onPickTypeChip,
     onSubmit,
     activePluginTitle,
     activePluginRecord = null,
@@ -203,18 +212,19 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
   const [promptScrollTop, setPromptScrollTop] = useState(0);
   const [dragActive, setDragActive] = useState(false);
   const [openInlineInputName, setOpenInlineInputName] = useState<string | null>(null);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [selectedPromptExample, setSelectedPromptExample] = useState<SelectedPromptExample | null>(null);
   const composingRef = useRef(false);
   const inputElementRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const shortcutsMenuRef = useRef<HTMLDivElement>(null);
   const canSubmit = (prompt.trim().length > 0 || stagedFiles.length > 0) && !submitDisabled;
   const placeholder = activePluginTitle || activeSkillTitle
     ? t('homeHero.placeholderActive')
     : t('homeHero.placeholder');
   const mention = getContextMention(prompt);
-  const mentionActive = Boolean(mention);
+  const typeMention = mention?.trigger === '#';
+  // Context matches (plugins/skills/mcp/connectors) apply to `@` and `/`
+  // only; `#` opens the creation-type picker instead.
+  const mentionActive = Boolean(mention) && !typeMention;
   const mentionQuery = mention?.query ?? '';
   // The mention picker (`/` and `@`) surfaces INVOKABLE plugins only — the
   // bundled registry is dominated by design-system/template scenarios that
@@ -259,12 +269,35 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
         : [],
     [connectorOptions, mentionActive, mentionQuery],
   );
+  // `#` — creation-type picker. Replaces the old tab strip below the
+  // composer: general/code is the product default, so the specialized
+  // types (prototype / deck / image / video / audio…) are opt-in via the
+  // `#` token instead of permanent chrome.
+  const chipMatches = useMemo(() => {
+    if (!typeMention) return [];
+    const q = mentionQuery.trim().toLowerCase();
+    // Creation types first, then the migrate/authoring shortcuts (Figma /
+    // template / create-plugin) that used to hide behind the "More" menu.
+    return [...chipsForGroup('create'), ...chipsForGroup('migrate')].filter((chip) => {
+      if (!q) return true;
+      return (
+        chip.id.toLowerCase().includes(q) ||
+        homeHeroChipLabel(chip.id, t).toLowerCase().includes(q)
+      );
+    });
+  }, [typeMention, mentionQuery, t]);
+  const mentionBasePrompt = () =>
+    mention ? replaceMentionTokenWithText(prompt, mention, '') : prompt;
+  const clearMentionToken = () => {
+    if (!mention) return;
+    onPromptChange(mentionBasePrompt());
+  };
   // Compact preview per category in the "All" tab; expand the focused
   // single-category tab into a long, scrollable list so users can browse
   // all matching results (there are hundreds of skills/templates).
   const sectionLimit = (id: Exclude<HomeMentionTab, 'all'>): number =>
     mentionTab === id ? 50 : 6;
-  const pickerOpen = mentionActive;
+  const pickerOpen = mentionActive || typeMention;
   const tabs: Array<{ id: HomeMentionTab; label: string; count: number }> = [
     { id: 'all', label: t('common.all'), count: pluginMatches.length + skillMatches.length + mcpMatches.length + connectorMatches.length },
     { id: 'plugins', label: t('entry.navPlugins'), count: pluginMatches.length },
@@ -277,6 +310,45 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
   const showMcp = mentionTab === 'all' || mentionTab === 'mcp';
   const showConnectors = mentionTab === 'all' || mentionTab === 'connectors';
   const visibleSections: HomeMentionSection[] = [
+    typeMention
+      ? {
+          id: 'types' as const,
+          label: t('homeHero.typePicker'),
+          options: [
+            {
+              id: 'type-general',
+              icon: 'sparkles' as const,
+              title: t('newproj.tabCode'),
+              description: t('homeHero.typePickerGeneralHint'),
+              meta: activeChipId === null ? t('common.active') : '',
+              disabled: pluginsLoading || pendingPluginId !== null,
+              onPick: () => {
+                clearMentionToken();
+                onClearActivePlugin();
+                onClearActiveChip?.();
+              },
+            },
+            ...chipMatches.map((chip) => ({
+              id: `type-${chip.id}`,
+              icon: chip.icon,
+              title: homeHeroChipLabel(chip.id, t),
+              description: homeHeroChipTitle(chip, t),
+              meta: activeChipId === chip.id ? t('common.active') : '',
+              // Mirror the old tab-strip gating: no type picks while the
+              // plugin catalog is loading or an apply is in flight.
+              disabled: pluginsLoading || pendingPluginId !== null || pendingChipId !== null,
+              onPick: () => {
+                if (onPickTypeChip) {
+                  onPickTypeChip(chip, mentionBasePrompt());
+                  return;
+                }
+                clearMentionToken();
+                onPickChip(chip);
+              },
+            })),
+          ],
+        }
+      : null,
     showPlugins
       ? {
           id: 'plugins',
@@ -465,23 +537,6 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
     setSelectedPromptExample(null);
   }, [activeChipId]);
 
-  useEffect(() => {
-    if (!shortcutsOpen) return;
-    const closeOnPointer = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && shortcutsMenuRef.current?.contains(target)) return;
-      setShortcutsOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setShortcutsOpen(false);
-    };
-    document.addEventListener('pointerdown', closeOnPointer);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnPointer);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [shortcutsOpen]);
 
   useEffect(() => {
     setPromptScrollTop(inputElementRef.current?.scrollTop ?? 0);
@@ -973,6 +1028,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
             aria-label={t('homeHero.contextSearchResults')}
             data-testid="home-hero-plugin-picker"
           >
+            {typeMention ? null : (
             <div className="home-hero__mention-tabs" role="tablist" aria-label={t('homeHero.contextSurfaces')}>
               {tabs.map((item) => (
                 <button
@@ -992,6 +1048,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
                 </button>
               ))}
             </div>
+            )}
             {visibleLoading && visiblePickerOptions.length === 0 ? (
               <div className="home-hero__plugin-picker-empty">{t('homeHero.loadingContext')}</div>
             ) : null}
@@ -1015,6 +1072,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
                       key={item.id}
                       type="button"
                       role="option"
+                      data-testid={`home-hero-option-${item.id}`}
                       aria-selected={optionIndex === selectedIndex}
                       className={`home-hero__plugin-option${
                         optionIndex === selectedIndex ? ' is-active' : ''
@@ -1141,32 +1199,9 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
         </div>
       </div>
 
-      {activeCreateChip ? null : (
-        <RailGroup
-          group="create"
-          activeChipId={activeChipId}
-          pendingChipId={pendingChipId}
-          pendingPluginId={pendingPluginId}
-          pluginsLoading={pluginsLoading}
-          onPickChip={onPickChip}
-          onSelectGeneral={onClearActiveChip}
-          variant="tabs"
-        >
-          <ShortcutsMenu
-            activeChipId={activeChipId}
-            pendingChipId={pendingChipId}
-            pendingPluginId={pendingPluginId}
-            pluginsLoading={pluginsLoading}
-            open={shortcutsOpen}
-            refNode={shortcutsMenuRef}
-            onOpenChange={setShortcutsOpen}
-            onPickChip={(chip) => {
-              setShortcutsOpen(false);
-              onPickChip(chip);
-            }}
-          />
-        </RailGroup>
-      )}
+      {/* The creation-type tab strip that used to sit here is gone:
+          general/code is the default, and the specialized types are
+          invoked from the composer with a `#` token instead. */}
 
       {activeExamplePlugins.length > 0 && activeChipId ? (
         <PluginPromptPresets
@@ -1313,6 +1348,9 @@ interface ContextMention {
   start: number;
   end: number;
   query: string;
+  /** Which token opened the picker: @/`/` = context (plugins/skills/mcp),
+   *  `#` = creation-type picker (the former type tabs, now input-invoked). */
+  trigger: '@' | '/' | '#';
 }
 
 function assignForwardedRef<T>(forwardedRef: ForwardedRef<T>, value: T | null) {
@@ -2347,18 +2385,21 @@ function fieldPopoverNoteTone(field: InputFieldSpec): string {
 }
 
 function getContextMention(value: string): ContextMention | null {
-  // Open the plugin/skill/context picker on either `@` (mention) or `/`
-  // (slash command) at the start of a word, so the home box doubles as a
-  // slash-command palette: type `/` to invoke plugins and skills.
-  const match = /(^|\s)[@/]([^\s@/]*)$/.exec(value);
+  // Open a picker on a word-initial token: `@` (mention) and `/` (slash
+  // command) surface plugins/skills/MCP/connectors; `#` surfaces the
+  // creation-type options that used to live on the tab strip below the
+  // composer (general/code stays the default when no type is picked).
+  const match = /(^|\s)([@/#])([^\s@/#]*)$/.exec(value);
   if (!match) return null;
   const prefix = match[1] ?? '';
-  const query = match[2] ?? '';
+  const trigger = (match[2] ?? '@') as ContextMention['trigger'];
+  const query = match[3] ?? '';
   const start = match.index + prefix.length;
   return {
     start,
     end: value.length,
     query,
+    trigger,
   };
 }
 
@@ -2452,111 +2493,6 @@ function getPluginQueryPreview(plugin: InstalledPluginRecord): string {
   return trimmed.length > 96 ? `${trimmed.slice(0, 96)}…` : trimmed;
 }
 
-interface RailGroupProps {
-  group: ChipGroup;
-  activeChipId: string | null;
-  pendingChipId: string | null;
-  pendingPluginId: string | null;
-  pluginsLoading: boolean;
-  onPickChip: (chip: HomeHeroChip) => void;
-  // Selecting the leading "general" tab clears any active type so the
-  // composer falls back to the default general-purpose (code) mode.
-  onSelectGeneral?: () => void;
-  variant?: 'rail' | 'tabs';
-  children?: ReactNode;
-}
-
-function RailGroup({
-  group,
-  activeChipId,
-  pendingChipId,
-  pendingPluginId,
-  pluginsLoading,
-  onPickChip,
-  onSelectGeneral,
-  variant = 'rail',
-  children,
-}: RailGroupProps) {
-  const t = useT();
-  const chips = useMemo(() => chipsForGroup(group), [group]);
-  const isTabs = variant === 'tabs';
-  // The general/code mode is the product default (bare free-text routes
-  // to it). Surface it as the first, active-by-default tab so the home
-  // composer visibly defaults to general mode and the specialized type
-  // tabs read as opt-in.
-  const showGeneralTab = isTabs && group === 'create' && Boolean(onSelectGeneral);
-  return (
-    <div
-      className={
-        isTabs
-          ? `home-hero__type-tabs home-hero__type-tabs--${group}`
-          : `home-hero__rail-group home-hero__rail-group--${group}`
-      }
-      data-testid={isTabs ? 'home-hero-type-tabs' : undefined}
-      data-rail-group={group}
-      role={isTabs ? 'tablist' : undefined}
-      aria-label={isTabs ? t('homeHero.railAria') : undefined}
-    >
-      {showGeneralTab ? (
-        <button
-          type="button"
-          className={[
-            'home-hero__type-tab',
-            `home-hero__type-tab--${group}`,
-            activeChipId === null ? 'is-active' : '',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-          data-chip-id="general"
-          data-testid="home-hero-rail-general"
-          onClick={() => onSelectGeneral?.()}
-          disabled={pluginsLoading || pendingPluginId !== null}
-          role="tab"
-          aria-selected={activeChipId === null}
-          title={t('newproj.tabCode')}
-        >
-          <Icon name="sparkles" size={14} className="home-hero__type-tab-icon" />
-          <span className="home-hero__type-tab-label">{t('newproj.tabCode')}</span>
-        </button>
-      ) : null}
-      {chips.map((chip) => {
-        const isActive = activeChipId === chip.id;
-        const isPending = pendingChipId === chip.id;
-        const cls = isTabs
-          ? ['home-hero__type-tab', `home-hero__type-tab--${group}`]
-          : ['home-hero__rail-chip', `home-hero__rail-chip--${group}`];
-        if (isActive) cls.push('is-active');
-        if (isPending) cls.push('is-pending');
-        return (
-          <button
-            key={chip.id}
-            type="button"
-            className={cls.join(' ')}
-            data-chip-id={chip.id}
-            data-testid={`home-hero-rail-${chip.id}`}
-            onClick={() => onPickChip(chip)}
-            disabled={pluginsLoading || isPending || pendingPluginId !== null}
-            role={isTabs ? 'tab' : undefined}
-            aria-selected={isTabs ? isActive : undefined}
-            aria-pressed={isTabs ? undefined : isActive}
-            title={homeHeroChipTitle(chip, t)}
-          >
-            <Icon
-              name={chip.icon}
-              size={14}
-              className={isTabs ? 'home-hero__type-tab-icon' : 'home-hero__rail-chip-icon'}
-            />
-            <span className={isTabs ? 'home-hero__type-tab-label' : 'home-hero__rail-chip-label'}>
-              {homeHeroChipLabel(chip.id, t)}
-            </span>
-          </button>
-        );
-      })}
-      {children}
-    </div>
-  );
-}
-
 function ActiveTypeChip({ chip, onClear }: { chip: HomeHeroChip; onClear: () => void }) {
   const t = useT();
   return (
@@ -2575,94 +2511,6 @@ function ActiveTypeChip({ chip, onClear }: { chip: HomeHeroChip; onClear: () => 
       <span>{homeHeroChipLabel(chip.id, t)}</span>
       <Icon name="close" size={12} className="home-hero__active-type-chip-close" />
     </button>
-  );
-}
-
-interface ShortcutsMenuProps {
-  activeChipId: string | null;
-  pendingChipId: string | null;
-  pendingPluginId: string | null;
-  pluginsLoading: boolean;
-  open: boolean;
-  refNode: RefObject<HTMLDivElement>;
-  onOpenChange: (open: boolean) => void;
-  onPickChip: (chip: HomeHeroChip) => void;
-}
-
-function ShortcutsMenu({
-  activeChipId,
-  pendingChipId,
-  pendingPluginId,
-  pluginsLoading,
-  open,
-  refNode,
-  onOpenChange,
-  onPickChip,
-}: ShortcutsMenuProps) {
-  const t = useT();
-  const shortcuts = useMemo(() => chipsForGroup('migrate'), []);
-  const disabled = pluginsLoading || pendingPluginId !== null;
-  const hasActiveShortcut = shortcuts.some((chip) => chip.id === activeChipId);
-  const hasPendingShortcut = shortcuts.some((chip) => chip.id === pendingChipId);
-  const triggerClass = [
-    'home-hero__type-tab',
-    'home-hero__type-tab--more',
-    hasActiveShortcut ? 'is-active' : '',
-    hasPendingShortcut ? 'is-pending' : '',
-  ].filter(Boolean).join(' ');
-  return (
-    <div
-      ref={refNode}
-      className="home-hero__shortcut-menu"
-      data-testid="home-hero-shortcuts"
-      data-rail-group="migrate"
-    >
-      <button
-        type="button"
-        className={triggerClass}
-        data-testid="home-hero-shortcuts-trigger"
-        disabled={disabled}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={t('homeHero.moreShortcuts')}
-        title={t('homeHero.moreShortcuts')}
-        onClick={() => onOpenChange(!open)}
-      >
-        <Icon name="more-horizontal" size={16} className="home-hero__type-tab-icon" />
-      </button>
-      {open ? (
-        <div
-          className="home-hero__shortcut-menu-panel"
-          role="menu"
-          aria-label={t('homeHero.moreShortcuts')}
-          data-testid="home-hero-shortcuts-menu"
-        >
-          {shortcuts.map((chip) => {
-            const isActive = activeChipId === chip.id;
-            const isPending = pendingChipId === chip.id;
-            const cls = ['home-hero__shortcut-menu-item'];
-            if (isActive) cls.push('is-active');
-            if (isPending) cls.push('is-pending');
-            return (
-              <button
-                key={chip.id}
-                type="button"
-                role="menuitem"
-                className={cls.join(' ')}
-                data-chip-id={chip.id}
-                data-testid={`home-hero-rail-${chip.id}`}
-                disabled={pluginsLoading || isPending || pendingPluginId !== null}
-                title={homeHeroChipTitle(chip, t)}
-                onClick={() => onPickChip(chip)}
-              >
-                <Icon name={chip.icon} size={14} className="home-hero__shortcut-menu-icon" />
-                <span>{homeHeroChipLabel(chip.id, t)}</span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
   );
 }
 

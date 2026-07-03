@@ -85,15 +85,14 @@ test('entry chrome exposes the primary home creation surface and settings entry'
   await expect(page.getByTestId('home-hero-input')).toBeVisible();
   await expect(page.getByTestId('home-hero-attach')).toBeVisible();
   await expect(page.getByTestId('home-hero-submit')).toBeDisabled();
-  const createTabs = page.getByTestId('home-hero-type-tabs');
-  await expect(createTabs).toBeVisible();
-  await expect(page.getByTestId('home-hero-rail-prototype')).toBeVisible();
-  await expect(page.getByTestId('home-hero-rail-live-artifact')).toBeVisible();
-  await expect(page.getByTestId('home-hero-rail-deck')).toBeVisible();
-  await expect(page.getByTestId('home-hero-rail-image')).toBeVisible();
-  await expect(page.getByTestId('home-hero-rail-video')).toBeVisible();
-  await expect(page.getByTestId('home-hero-rail-hyperframes')).toBeVisible();
-  await expect(page.getByTestId('home-hero-rail-audio')).toBeVisible();
+  // The creation-type tab strip is gone: general/code is the default and
+  // the specialized types are invoked from the composer with a `#` token.
+  await expect(page.getByTestId('home-hero-type-tabs')).toHaveCount(0);
+  await page.getByTestId('home-hero-input').fill('#');
+  await expect(page.getByTestId('home-hero-option-type-general')).toBeVisible();
+  await expect(page.getByTestId('home-hero-option-type-prototype')).toBeVisible();
+  await expect(page.getByTestId('home-hero-option-type-video')).toBeVisible();
+  await page.getByTestId('home-hero-input').fill('');
 
   // The pet picker rail was removed; pet adoption now lives in
   // Settings → Pet exclusively. Make sure no rail leaks back into the
@@ -121,24 +120,21 @@ test('entry top navigation matches the current home tab structure', async ({ pag
   await expect(page.locator('.entry-nav-rail__group').getByTestId('entry-nav-integrations')).toBeVisible();
   await expect(page.locator('.entry-nav-rail__footer').getByTestId('entry-nav-plugins')).toHaveCount(0);
   await expect(page.locator('.entry-nav-rail__footer').getByTestId('entry-nav-integrations')).toHaveCount(0);
-  await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
+  await expect(page.getByTestId('home-hero-type-tabs')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-active-type-chip')).toHaveCount(0);
-  await expect(page.getByTestId('home-hero-rail-prototype')).toHaveAttribute('aria-selected', 'false');
   await expect(page.getByTestId('home-hero-footer-options')).toHaveCount(0);
   await expect(page.getByTestId('home-hero-plugin-presets')).toHaveCount(0);
-  await expect(page.getByTestId('plugins-home-pill-category-all')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByTestId('plugins-home-pill-category-prototype')).toHaveAttribute('aria-selected', 'false');
-  await expect(page.getByTestId('plugins-home-row-subcategory-prototype')).toHaveCount(0);
 });
 
 test('home view exposes the redesigned hero, recent projects, and starters', async ({ page }) => {
   await createProject(page, 'Home structure recent project');
   await gotoEntryHome(page);
 
-  await expect(page.getByTestId('recent-projects-strip')).toBeVisible();
-  await expect(page.getByTestId('recent-projects-view-all')).toBeVisible();
-  await expect(page.getByTestId('plugins-home-section')).toBeVisible();
-  await expect(page.getByTestId('plugins-home-browse-registry')).toBeVisible();
+  // Home is now just the composer; project history lives in the nav rail's
+  // Recent list and the plugin gallery moved to the Plugins view.
+  await expect(page.getByTestId('recent-projects-strip')).toHaveCount(0);
+  await expect(page.getByTestId('plugins-home-section')).toHaveCount(0);
+  await expect(page.locator('.entry-nav-rail__recent-item', { hasText: 'Home structure recent project' })).toBeVisible();
   await expect(page.getByTestId('home-hero')).toBeVisible();
   await expect(page.getByTestId('entry-nav-home')).toHaveAttribute('aria-current', 'page');
 

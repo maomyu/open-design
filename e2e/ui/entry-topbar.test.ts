@@ -157,5 +157,5 @@ test('clicking the top-left logo from another entry view returns to the home her
   await page.getByTestId('entry-nav-logo').click();
   await expect(page.getByTestId('home-hero')).toBeVisible();
   await expect(page.getByTestId('home-hero-input')).toBeVisible();
-  await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
+  await expect(page.getByTestId('home-hero-type-tabs')).toHaveCount(0);
 });
