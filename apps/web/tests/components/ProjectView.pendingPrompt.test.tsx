@@ -20,7 +20,10 @@ import {
 } from '../../src/state/projects';
 import { fetchPreviewComments } from '../../src/providers/registry';
 
-vi.mock('../../src/i18n', () => ({
+vi.mock('../../src/i18n', async (importOriginal) => ({
+  // Spread the real module so newly-added exports (useI18n, useLocale…)
+  // keep working; tests only override what they assert on.
+  ...(await importOriginal<typeof import('../../src/i18n')>()),
   useI18n: () => ({
     locale: 'en',
     setLocale: () => undefined,

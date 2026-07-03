@@ -29,7 +29,10 @@ const patchConversation = vi.fn();
 const patchProject = vi.fn();
 const saveTabs = vi.fn();
 
-vi.mock('../../src/i18n', () => ({
+vi.mock('../../src/i18n', async (importOriginal) => ({
+  // Spread the real module so newly-added exports (useI18n, useLocale…)
+  // keep working; tests only override what they assert on.
+  ...(await importOriginal<typeof import('../../src/i18n')>()),
   // ProjectView calls useI18n() (for locale/t); mock it like the other
   // ProjectView suites so the render does not throw on a missing export.
   useI18n: () => ({

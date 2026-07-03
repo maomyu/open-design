@@ -5,7 +5,10 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { SketchEditor } from '../../src/components/SketchEditor';
 
-vi.mock('../../src/i18n', () => ({
+vi.mock('../../src/i18n', async (importOriginal) => ({
+  // Spread the real module so newly-added exports (useI18n, useLocale…)
+  // keep working; tests only override what they assert on.
+  ...(await importOriginal<typeof import('../../src/i18n')>()),
   useT: () => (key: string) => key,
 }));
 

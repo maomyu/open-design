@@ -31,7 +31,10 @@ const saveTabs = vi.fn();
 // regression we want to pin).
 const chatPaneProps: { onDeleteConversation?: (id: string) => Promise<void> | void } = {};
 
-vi.mock('../../src/i18n', () => ({
+vi.mock('../../src/i18n', async (importOriginal) => ({
+  // Spread the real module so newly-added exports (useI18n, useLocale…)
+  // keep working; tests only override what they assert on.
+  ...(await importOriginal<typeof import('../../src/i18n')>()),
   useI18n: () => ({
     locale: 'en',
     setLocale: () => undefined,

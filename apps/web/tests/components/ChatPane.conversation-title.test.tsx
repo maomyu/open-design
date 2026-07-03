@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatPane } from '../../src/components/ChatPane';
 import type { ChatMessage, Conversation } from '../../src/types';
 
-vi.mock('../../src/i18n', () => ({
+vi.mock('../../src/i18n', async (importOriginal) => ({
+  // Spread the real module so newly-added exports (useI18n, useLocale…)
+  // keep working; tests only override what they assert on.
+  ...(await importOriginal<typeof import('../../src/i18n')>()),
   useT: () => (key: string, vars?: Record<string, string | number>) => {
     if (key === 'chat.renameConversationLabel') {
       return `chat.renameConversationLabel ${vars?.title ?? ''}`;
