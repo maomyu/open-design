@@ -45,7 +45,7 @@ interface Props {
   onSkillsChanged?: (affectedSkillId?: string) => void;
 }
 
-type SourceFilter = 'all' | 'user' | 'built-in';
+type SourceFilter = 'all' | 'user' | 'claude' | 'built-in';
 
 interface DraftState {
   name: string;
@@ -248,7 +248,9 @@ export function SkillsSection({ cfg, setCfg, onSkillsRefresh, onSkillsChanged }:
 
   const requestEdit = useCallback(
     (skill: SkillSummary) => {
-      if (skill.source === 'built-in') {
+      // Anything not user-owned (bundled catalog or ~/.claude/skills) edits
+      // via a shadow copy under the user root — confirm before forking.
+      if (skill.source !== 'user') {
         setConfirmBuiltInEditId(skill.id);
         setConfirmDeleteId(null);
         return;
@@ -409,7 +411,7 @@ export function SkillsSection({ cfg, setCfg, onSkillsRefresh, onSkillsChanged }:
               <option value="all">
                 {t('settings.libraryAll')} ({skills.length})
               </option>
-              {(['user', 'built-in'] as const).map((s) => {
+              {(['user', 'claude', 'built-in'] as const).map((s) => {
                 const count = skills.filter((sk) => sk.source === s).length;
                 return (
                   <option key={s} value={s}>

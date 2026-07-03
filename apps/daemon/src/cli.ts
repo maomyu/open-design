@@ -214,8 +214,8 @@ const SUBCOMMAND_MAP = {
   mcp: runMcp,
   research: runResearch,
   plugin: runPlugin,
+  skill: runSkill,
   workflow: runWorkflow,
-  learning: runLearning,
   ui: runUi,
   marketplace: runMarketplace,
   project: runProject,
@@ -319,6 +319,11 @@ function printRootHelp() {
       Create/update the author's GitHub repo for a local plugin folder.
   od plugin open-design-pr <folder>
       Push a community-catalog branch and open the Open Design PR form.
+
+  od skill <create|list> [args]
+      Draft a new skill from a natural-language description (skill-creator
+      spec: pushy description, <500-line body, evals seed) and save it to
+      the user skill library. Same /api/skills endpoints as the web UI.
 
   od automation <list|get|create|update|run|runs|pause|resume|delete> [args]
       Drive the Automations surface headlessly. Same store as the UI's
@@ -959,7 +964,10 @@ async function runPlugin(args) {
     case 'sources':   return runPluginSources(rest);
     case 'info':      return runPluginInfo(rest);
     case 'manifest':  return runPluginManifest(rest);
+    case 'config':    return runPluginConfig(rest);
+    case 'create':    return runPluginCreate(rest);
     case 'edit':      return runPluginEdit(rest);
+    case 'history':   return runPluginHistory(rest);
     case 'install':   return runPluginInstall(rest);
     case 'upgrade':   return runPluginUpgrade(rest);
     case 'uninstall': return runPluginUninstall(rest);
@@ -2163,23 +2171,250 @@ async function runPluginManifest(rest) {
   process.stdout.write(JSON.stringify(data.manifest, null, 2) + '\n');
 }
 
+// `od plugin config <id>` — view/set a plugin's third-party config (the keys it
+// declares via od.config). No --set: list declared keys + whether each is set
+// (secret values are never shown). `--set KEY=VALUE` (repeatable) saves values;
+// an empty value (`--set KEY=`) clears that key. Mirrors the plugin editor's
+// config panel; the daemon injects these as env vars into the plugin's runs.
+async function runPluginConfig(rest) {
+  const flags = parseFlags(rest, { string: ['daemon-url', 'set'], boolean: ['json', 'help', 'h'] });
+  if (flags.help || flags.h) {
+    console.log(`Usage:
+  od plugin config <id>                       # list declared keys + set/unset
+  od plugin config <id> --set KEY=VALUE ...    # save values (empty clears)
+  [--json] [--daemon-url <url>]`);
+    return;
+  }
+  // First bare token that isn't a value consumed by --daemon-url / --set.
+  let id = null;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a.startsWith('--')) {
+      if (a === '--daemon-url' || a === '--set') i++; // skip its value
+      continue;
+    }
+    id = a;
+    break;
+  }
+  if (!id) {
+    console.error('Usage: od plugin config <id> [--set KEY=VALUE ...] [--json]');
+    process.exit(2);
+  }
+  const base = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/config`;
+
+  // Collect every --set KEY=VALUE (parseFlags keeps only the last, so scan).
+  const values = {};
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '--set' && typeof rest[i + 1] === 'string') {
+      const pair = rest[i + 1];
+      const eq = pair.indexOf('=');
+      if (eq > 0) values[pair.slice(0, eq)] = pair.slice(eq + 1);
+      i++;
+    }
+  }
+
+  if (Object.keys(values).length > 0) {
+    const resp = await fetch(base, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    });
+    if (resp.status === 404) { console.error(`plugin ${id} not found`); process.exit(65); }
+    if (!resp.ok) { console.error(`PUT config failed: ${resp.status} ${await resp.text()}`); process.exit(1); }
+    if (flags.json) process.stdout.write(JSON.stringify(await resp.json(), null, 2) + '\n');
+    else console.log(`saved ${Object.keys(values).length} key(s) for ${id}`);
+    return;
+  }
+
+  const resp = await fetch(base);
+  if (resp.status === 404) { console.error(`plugin ${id} not found`); process.exit(65); }
+  if (!resp.ok) { console.error(`GET config failed: ${resp.status} ${await resp.text()}`); process.exit(1); }
+  const data = await resp.json();
+  if (flags.json) { process.stdout.write(JSON.stringify(data, null, 2) + '\n'); return; }
+  const keys = data?.keys ?? [];
+  if (keys.length === 0) { console.log(`${id}: no config keys declared.`); return; }
+  console.log(`${id} config (${keys.length} key${keys.length > 1 ? 's' : ''}):`);
+  for (const k of keys) {
+    const status = k.set ? 'set' : (k.required ? 'REQUIRED · unset' : 'unset');
+    console.log(`  ${k.name}${k.required ? ' *' : ''}  [${status}]${k.label ? '  — ' + k.label : ''}`);
+  }
+  console.log(`\nSet with: od plugin config ${id} --set KEY=VALUE`);
+}
+
+// `od plugin create` — draft a workflow plugin from a business description
+// via POST /api/plugins/draft, review it, and optionally save it as a new
+// user plugin through POST /api/plugins (sourceKind 'user', so it lands in
+// the same editor as bundled plugins). Mirrors `od skill create`.
+async function runPluginCreate(rest) {
+  const flags = parseFlags(rest, {
+    string: ['daemon-url', 'prompt', 'prompt-file', 'name'],
+    boolean: ['json', 'apply', 'overwrite', 'help', 'h'],
+  });
+  if (flags.help || flags.h) {
+    console.log(`Usage:
+  od plugin create --prompt "<业务描述>" | --prompt-file <path|->
+                   [--name <kebab-id>] [--apply [--overwrite]] [--json]
+                   [--daemon-url <url>]
+
+用自然语言描述业务,起草一个工作流插件(SKILL.md + 开场 query + workflow stages)。
+默认只预览草稿;加 --apply 保存为用户插件(可在插件编辑器里继续改)。`);
+    process.exit(0);
+  }
+  let description = typeof flags.prompt === 'string' ? flags.prompt : '';
+  if (!description && typeof flags['prompt-file'] === 'string') {
+    const p = String(flags['prompt-file']);
+    const fs = await import('node:fs');
+    description = p === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(p, 'utf8');
+  }
+  description = description.trim();
+  if (!description) {
+    console.error('--prompt or --prompt-file is required');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  let chatAgentId;
+  try {
+    const c = await (await fetch(`${base}/api/app-config`)).json();
+    if (typeof c?.config?.agentId === 'string') chatAgentId = c.config.agentId;
+  } catch { /* daemon may still resolve */ }
+  const draftResp = await fetch(`${base}/api/plugins/draft`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      description,
+      ...(typeof flags.name === 'string' && flags.name ? { name: flags.name } : {}),
+      ...(chatAgentId ? { chatAgentId } : {}),
+    }),
+  });
+  if (!draftResp.ok) return structuredHttpFailure(draftResp);
+  const draft = await draftResp.json();
+  const diagnostics = Array.isArray(draft.diagnostics) ? draft.diagnostics : [];
+  for (const d of diagnostics) {
+    console.error(`[${d.severity}] ${d.code}: ${d.message}`);
+  }
+
+  if (flags.apply) {
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    if (errors.length > 0) {
+      console.error('草稿存在 error 级问题,已阻止保存。修正后重试,或先不加 --apply 预览。');
+      process.exit(1);
+    }
+    const saveResp = await fetch(`${base}/api/plugins`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: draft.name,
+        title: draft.title,
+        description: draft.description,
+        query: draft.query,
+        skill: draft.skill,
+        stages: draft.stages ?? [],
+        ...(flags.overwrite ? { overwrite: true } : {}),
+      }),
+    });
+    if (!saveResp.ok) return structuredHttpFailure(saveResp);
+    const saved = await saveResp.json();
+    if (flags.json) return process.stdout.write(JSON.stringify(saved, null, 2) + '\n');
+    console.log(`已保存插件 → ${saved.id}(可用 od plugin edit ${saved.id} 或网页编辑器继续改)`);
+    return;
+  }
+
+  if (flags.json) return process.stdout.write(JSON.stringify(draft, null, 2) + '\n');
+  console.log(`# 插件草稿(未保存,加 --apply 保存)\n`);
+  console.log(`## name / title\n${draft.name} / ${draft.title}\n`);
+  console.log(`## description\n${draft.description}\n`);
+  console.log(`## 开场 query\n${draft.query}\n`);
+  console.log(`## workflow stages`);
+  for (const s of draft.stages ?? []) {
+    console.log(`\n### ${s.id} · ${s.title} [gate: ${s.gate}]\n${s.prompt}`);
+    for (const m of s.modes ?? []) console.log(`\n  - mode ${m.id}(${m.label}):${m.prompt}`);
+  }
+  console.log(`\n## SKILL.md 正文\n${draft.skill}`);
+}
+
+// `od plugin history <id>` — list edit-history restore points; with
+// --rollback <versionId>, restore that version (the current state is
+// snapshotted first, so a rollback is itself undoable).
+async function runPluginHistory(rest) {
+  const flags = parseFlags(rest, { string: ['daemon-url', 'rollback'], boolean: ['json'] });
+  const id = rest.find((a) => !a.startsWith('--') && a !== flags['daemon-url'] && a !== flags.rollback);
+  if (!id) {
+    console.error('Usage: od plugin history <id> [--rollback <versionId>] [--json]');
+    process.exit(2);
+  }
+  const root = (await cliDaemonBaseUrl(flags));
+  const base = `${root}/api/plugins/${encodeURIComponent(id)}/source`;
+  if (typeof flags.rollback === 'string' && flags.rollback) {
+    const resp = await fetch(`${base}/rollback`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ versionId: flags.rollback }),
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    console.log(`已回滚 ${id} → 版本 ${flags.rollback}`);
+    return;
+  }
+  const resp = await fetch(`${base}/history`);
+  if (resp.status === 404) { console.error(`plugin ${id} not found`); process.exit(65); }
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  const versions = Array.isArray(data?.versions) ? data.versions : [];
+  if (versions.length === 0) {
+    console.log('暂无历史版本(每次「保存并发布」会自动留档)。');
+    return;
+  }
+  for (const v of versions) console.log(`${v.id}\t${new Date(v.savedAt).toLocaleString()}`);
+}
+
 // `od plugin edit <id>` — read a plugin's editable prompts; with --query /
 // --skill-file, write them back and re-register the plugin ("发布"). Mirrors
 // the web plugin editor against /api/plugins/:id/source.
 async function runPluginEdit(rest) {
   const flags = parseFlags(rest, {
-    string: ['daemon-url', 'query', 'skill-file'],
-    boolean: ['json'],
+    string: ['daemon-url', 'query', 'skill-file', 'stages-file', 'assist'],
+    boolean: ['json', 'apply'],
   });
-  const id = rest.find((a) => !a.startsWith('--') && a !== flags['daemon-url'] && a !== flags.query && a !== flags['skill-file']);
+  const id = rest.find((a) => !a.startsWith('--') && a !== flags['daemon-url'] && a !== flags.query && a !== flags['skill-file'] && a !== flags['stages-file'] && a !== flags.assist);
   if (!id) {
-    console.error('Usage: od plugin edit <id> [--json] [--query "<text>"] [--skill-file <path|->]');
+    console.error('Usage: od plugin edit <id> [--json] [--query "<text>"] [--skill-file <path|->] [--stages-file <path|->] [--assist "<指令>" [--apply]]');
     process.exit(2);
   }
-  const base = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/source`;
+  const root = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
+  const base = `${root}/api/plugins/${encodeURIComponent(id)}/source`;
+
+  // AI 帮我改: a one-line instruction → model rewrites → print (or --apply to publish).
+  if (flags.assist !== undefined) {
+    const srcResp = await fetch(base);
+    if (srcResp.status === 404) { console.error(`plugin ${id} not found`); process.exit(65); }
+    if (!srcResp.ok) return structuredHttpFailure(srcResp);
+    const src = await srcResp.json();
+    let chatAgentId;
+    try {
+      const c = await (await fetch(`${root}/api/app-config`)).json();
+      if (typeof c?.config?.agentId === 'string') chatAgentId = c.config.agentId;
+    } catch { /* daemon may still resolve */ }
+    const assistResp = await fetch(`${base}/assist`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ instruction: String(flags.assist), skill: src.skill, query: src.query, stages: src.stages ?? [], ...(chatAgentId ? { chatAgentId } : {}) }),
+    });
+    if (!assistResp.ok) return structuredHttpFailure(assistResp);
+    const out = await assistResp.json();
+    if (flags.apply) {
+      const putResp = await fetch(base, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ skill: out.skill, query: out.query, ...(Array.isArray(out.stages) ? { stages: out.stages } : {}) }),
+      });
+      if (!putResp.ok) return structuredHttpFailure(putResp);
+      console.log(`AI 改写并发布 → ${id}`);
+      return;
+    }
+    if (flags.json) return process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    console.log(`# AI 改写预览（未保存，加 --apply 落盘发布）\n\n## query\n${out.query}\n\n## SKILL.md\n${out.skill}`);
+    return;
+  }
 
   // Write path.
-  if (flags.query !== undefined || flags['skill-file'] !== undefined) {
+  if (flags.query !== undefined || flags['skill-file'] !== undefined || flags['stages-file'] !== undefined) {
     const body = {};
     if (flags.query !== undefined) body.query = String(flags.query);
     if (flags['skill-file'] !== undefined) {
@@ -2188,6 +2423,17 @@ async function runPluginEdit(rest) {
       body.skill = p === '-'
         ? fs.readFileSync(0, 'utf8')
         : fs.readFileSync(p, 'utf8');
+    }
+    if (flags['stages-file'] !== undefined) {
+      const p = String(flags['stages-file']);
+      const fs = await import('node:fs');
+      const txt = p === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(p, 'utf8');
+      try {
+        body.stages = JSON.parse(txt);
+      } catch {
+        console.error('--stages-file must be JSON: [{"id","title","gate"}]');
+        process.exit(2);
+      }
     }
     const resp = await fetch(base, {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -4302,6 +4548,8 @@ function printPluginHelp() {
   od plugin info <id>                     Print a plugin's manifest + trust state as JSON.
   od plugin manifest <id>                 Print only the parsed manifest JSON (no wrapper).
   od plugin sources                       List distinct install sources + counts.
+  od plugin create --prompt "<业务描述>"   AI-draft a workflow plugin (preview; --apply saves
+                                          it as an editable user plugin).
   od plugin install --source <path>       Install a plugin from a local folder (Phase 1).
   od plugin upgrade <id>                  Re-install a plugin from its recorded source.
   od plugin uninstall <id>                Remove a plugin from the registry + on-disk staging.
@@ -4572,82 +4820,6 @@ Common options:
 // declare `od.workflow.stages`). `stages` reads the declared step graph;
 // `run` is sugar over the normal run-start path (`POST /api/runs` with the
 // plugin applied), so workflow runs stay on the same contract as the UI.
-// `od learning` — the self-improving agent loop ("调教"). Turns a user's
-// reaction to an output into durable memory the daemon injects into future
-// runs. Mirrors the web Tune bar against /api/learning/*.
-async function runLearning(args) {
-  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage:
-  od learning feedback --rating good|bad [--context <id>] [--reasons "a,b"] [--note "<text>"]
-                                            Record a reaction → preference memory.
-  od learning sample --content <text> [--context <id>] [--title <t>]
-                                            Remember a good output as a style sample.
-  od learning list [--context <id>] [--json] What the agent has learned.
-
-Common options:
-  --daemon-url <url>   Open Design daemon HTTP base.
-  --json               Emit raw JSON.`);
-    process.exit(args.length === 0 ? 2 : 0);
-  }
-  const sub = args[0];
-  const rest = args.slice(1);
-  const flags = parseFlags(rest, {
-    string: ['daemon-url', 'context', 'reasons', 'note', 'rating', 'content', 'title'],
-    boolean: ['json'],
-  });
-  const base = (await projectDaemonUrl(flags)).replace(/\/$/, '');
-
-  if (sub === 'feedback') {
-    if (flags.rating !== 'good' && flags.rating !== 'bad') {
-      console.error('--rating must be good or bad');
-      process.exit(2);
-    }
-    const body = {
-      rating: flags.rating,
-      reasons: flags.reasons ? String(flags.reasons).split(',').map((s) => s.trim()).filter(Boolean) : [],
-    };
-    if (flags.context) body.context = flags.context;
-    if (flags.note) body.note = flags.note;
-    const resp = await fetch(`${base}/api/learning/feedback`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-    });
-    if (!resp.ok) return structuredHttpFailure(resp);
-    const data = await resp.json();
-    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
-    console.log(`recorded → ${data.memoryId}\n${data.preference}`);
-    return;
-  }
-
-  if (sub === 'sample') {
-    if (!flags.content) {
-      console.error('--content is required');
-      process.exit(2);
-    }
-    const body = { content: flags.content };
-    if (flags.context) body.context = flags.context;
-    if (flags.title) body.title = flags.title;
-    const resp = await fetch(`${base}/api/learning/sample`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-    });
-    if (!resp.ok) return structuredHttpFailure(resp);
-    const data = await resp.json();
-    return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
-  }
-
-  if (sub === 'list') {
-    const qs = flags.context ? `?context=${encodeURIComponent(flags.context)}` : '';
-    const resp = await fetch(`${base}/api/learning${qs}`);
-    if (!resp.ok) return structuredHttpFailure(resp);
-    const data = await resp.json();
-    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
-    for (const it of data.items ?? []) console.log(`${it.kind}\t${it.name}`);
-    return;
-  }
-
-  console.error(`Unknown subcommand: learning ${sub}`);
-  process.exit(2);
-}
-
 async function runWorkflow(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     console.log(`Usage:
@@ -5621,6 +5793,136 @@ async function runLibraryList(name, args) {
 
 async function runSkills(args)        { return runLibraryList('skills', args); }
 async function runCraft(args)         { return runLibraryList('craft', args); }
+
+function printSkillHelp() {
+  console.log(`Usage:
+  od skill create --prompt "<描述>" | --prompt-file <path|->
+                  [--name <kebab-id>] [--no-evals] [--apply] [--json]
+                  [--daemon-url <url>]
+  od skill list [--json]
+  od skill usage [--json]
+
+create  用自然语言描述起草一个技能(SKILL.md,遵循 skill-creator 规范)。
+        默认只预览草稿;加 --apply 保存到用户技能库(下次 /api/skills 即可见)。
+        草稿包含 frontmatter(name/description/triggers)、正文、以及 2-3 个
+        evals 测试种子(--no-evals 关闭),保存时落盘为 evals/evals.json。
+list    列出技能(同 od skills)。
+usage   每个技能被哪些插件引用(含 stage 级绑定)。`);
+}
+
+// `od skill usage` — which plugins reference each skill (global context refs
+// + stage-level bindings). Mirrors GET /api/skills/usage.
+async function runSkillUsage(rest) {
+  const flags = parseFlags(rest, { string: ['daemon-url'], boolean: ['json'] });
+  const base = await cliDaemonBaseUrl(flags);
+  const resp = await fetch(`${base}/api/skills/usage`);
+  if (!resp.ok) return structuredHttpFailure(resp);
+  const data = await resp.json();
+  if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+  const usage = data?.usage ?? {};
+  const ids = Object.keys(usage).sort();
+  if (ids.length === 0) {
+    console.log('没有插件引用任何技能。');
+    return;
+  }
+  for (const id of ids) console.log(`${id}\t${usage[id].join(', ')}`);
+}
+
+// `od skill create` — draft a skill from a natural-language description via
+// POST /api/skills/draft (skill-creator authoring spec), review it, and
+// optionally save through the same POST /api/skills/import the web UI uses.
+async function runSkillCreate(rest) {
+  const flags = parseFlags(rest, {
+    string: ['daemon-url', 'prompt', 'prompt-file', 'name'],
+    boolean: ['json', 'apply', 'no-evals', 'help', 'h'],
+  });
+  if (flags.help || flags.h) { printSkillHelp(); process.exit(0); }
+  let description = typeof flags.prompt === 'string' ? flags.prompt : '';
+  if (!description && typeof flags['prompt-file'] === 'string') {
+    const p = String(flags['prompt-file']);
+    const fs = await import('node:fs');
+    description = p === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(p, 'utf8');
+  }
+  description = description.trim();
+  if (!description) {
+    console.error('--prompt or --prompt-file is required');
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  let chatAgentId;
+  try {
+    const c = await (await fetch(`${base}/api/app-config`)).json();
+    if (typeof c?.config?.agentId === 'string') chatAgentId = c.config.agentId;
+  } catch { /* daemon may still resolve */ }
+  const draftResp = await fetch(`${base}/api/skills/draft`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      description,
+      ...(typeof flags.name === 'string' && flags.name ? { name: flags.name } : {}),
+      ...(flags['no-evals'] ? { withEvals: false } : {}),
+      ...(chatAgentId ? { chatAgentId } : {}),
+    }),
+  });
+  if (!draftResp.ok) return structuredHttpFailure(draftResp);
+  const draft = await draftResp.json();
+  const diagnostics = Array.isArray(draft.diagnostics) ? draft.diagnostics : [];
+  for (const d of diagnostics) {
+    console.error(`[${d.severity}] ${d.code}: ${d.message}`);
+  }
+
+  if (flags.apply) {
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    if (errors.length > 0) {
+      console.error('草稿存在 error 级问题,已阻止保存。修正后重试,或先不加 --apply 预览。');
+      process.exit(1);
+    }
+    const saveResp = await fetch(`${base}/api/skills/import`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: draft.name,
+        description: draft.description,
+        body: draft.body,
+        triggers: draft.triggers ?? [],
+        ...(Array.isArray(draft.evals) && draft.evals.length > 0 ? { evals: draft.evals } : {}),
+      }),
+    });
+    if (!saveResp.ok) return structuredHttpFailure(saveResp);
+    const saved = await saveResp.json();
+    if (flags.json) return process.stdout.write(JSON.stringify(saved, null, 2) + '\n');
+    console.log(`已保存技能 → ${saved?.skill?.id ?? draft.name}`);
+    return;
+  }
+
+  if (flags.json) return process.stdout.write(JSON.stringify(draft, null, 2) + '\n');
+  const evals = Array.isArray(draft.evals) ? draft.evals : [];
+  console.log(`# 技能草稿(未保存,加 --apply 保存)\n`);
+  console.log(`## name\n${draft.name}\n`);
+  console.log(`## description\n${draft.description}\n`);
+  console.log(`## triggers\n${(draft.triggers ?? []).map((t) => `- ${t}`).join('\n')}\n`);
+  console.log(`## SKILL.md 正文\n${draft.body}\n`);
+  if (evals.length > 0) {
+    console.log(`## evals 测试种子`);
+    for (const e of evals) console.log(`${e.id}. ${e.prompt}\n   预期:${e.expectedOutput}`);
+  }
+}
+
+async function runSkill(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    printSkillHelp();
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  switch (sub) {
+    case 'create': return runSkillCreate(rest);
+    case 'list':   return runLibraryList('skills', rest);
+    case 'usage':  return runSkillUsage(rest);
+    default:
+      console.error(`unknown subcommand: od skill ${sub}`);
+      printSkillHelp();
+      process.exit(2);
+  }
+}
 
 async function runDesignSystems(args) {
   if (args[0] === 'rename') return runDesignSystemRename(args.slice(1));

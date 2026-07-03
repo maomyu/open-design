@@ -23,7 +23,7 @@ interface Props {
 }
 
 function displayAgentName(agent: Pick<AgentInfo, 'id' | 'name'>): string {
-  return agent.id === 'amr' ? 'Open Design AMR' : agent.name;
+  return agent.id === 'amr' ? 'WorkBuild AMR' : agent.name;
 }
 
 /**

@@ -1,0 +1,294 @@
+/* AI-draft creation studio — see CreatorView.tsx.
+   Top: describe + draft. Below: review the draft with spec diagnostics. */
+
+.creator-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* Top bar (mirrors the plugin editor's bar so create→edit feels seamless). */
+.creator-view__bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+.creator-view__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.creator-view__back:hover { color: var(--text); background: var(--bg-subtle); }
+.creator-view__heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.creator-view__eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  font-weight: 600;
+}
+.creator-view__title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.creator-view__switch {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+}
+.creator-view__switch-btn {
+  padding: 5px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.23, 1, 0.32, 1), color 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.creator-view__switch-btn--on {
+  color: var(--text-strong);
+  background: var(--bg-panel);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.creator-view__save {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--text-strong);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.creator-view__save:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Body */
+.creator-view__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+}
+.creator-view__lede {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.creator-view__description {
+  width: 100%;
+  min-height: 110px;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+.creator-view__describe-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.creator-view__draft-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--text-strong);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: opacity 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.creator-view__draft-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.creator-view__error {
+  margin-top: 10px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  color: var(--danger, #b3261e);
+  background: var(--danger-bg, rgba(179, 38, 30, 0.08));
+  border-radius: var(--radius-sm);
+}
+
+/* Review */
+.creator-view__review {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+.creator-view__diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.creator-view__diag {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  border-radius: var(--radius-sm);
+}
+.creator-view__diag--error {
+  color: var(--danger, #b3261e);
+  background: var(--danger-bg, rgba(179, 38, 30, 0.08));
+}
+.creator-view__diag--warning {
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+}
+
+.creator-view__grid {
+  display: flex;
+  gap: 12px;
+}
+.creator-view__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.creator-view__field--half { flex: 1; min-width: 0; }
+.creator-view__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.creator-view__hint {
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+.creator-view__input {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.creator-view__textarea {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+.creator-view__textarea--short { min-height: 72px; }
+.creator-view__textarea--body {
+  min-height: 220px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+}
+
+/* Stage preview cards (read-only here; the full editor owns deep edits). */
+.creator-view__stages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.creator-view__stage {
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+.creator-view__stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.creator-view__stage-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-soft);
+  background: var(--bg-subtle);
+  border-radius: 50%;
+}
+.creator-view__stage-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.creator-view__stage-gate {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+.creator-view__stage-gate--confirm { color: var(--accent, #7c5cff); }
+.creator-view__stage-prompt {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+/* Eval seeds */
+.creator-view__evals {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.creator-view__evals li {
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.creator-view__eval-prompt { color: var(--text); }
+.creator-view__eval-expected {
+  display: block;
+  color: var(--text-soft);
+}

@@ -36,7 +36,13 @@ export type Route =
       fileName: string | null;
     }
   | { kind: 'marketplace' }
-  | { kind: 'marketplace-detail'; pluginId: string };
+  | { kind: 'marketplace-detail'; pluginId: string }
+  | { kind: 'marketplace-edit'; pluginId: string }
+  // AI-draft creation studio. `target` picks what gets created: a workflow
+  // plugin (drops into the plugin editor after saving) or a skill.
+  | { kind: 'creator'; target: 'plugin' | 'skill' }
+  // Skill library — every skill with its origin and which plugins use it.
+  | { kind: 'skills-library' };
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
@@ -96,9 +102,26 @@ export function parseRoute(pathname: string): Route {
   //   /marketplace/<pluginId> → detail page (PluginDetailView)
   // Aliases to /plugins remain reserved for the public site (spec §13);
   // in-app we keep /marketplace canonical.
+  if (parts[0] === 'create') {
+    return { kind: 'creator', target: parts[1] === 'skill' ? 'skill' : 'plugin' };
+  }
+  if (parts[0] === 'skills' && !parts[1]) {
+    return { kind: 'skills-library' };
+  }
   if (parts[0] === 'marketplace' || parts[0] === 'plugins') {
     if (parts[1]) {
-      return { kind: 'marketplace-detail', pluginId: decodeURIComponent(parts[1]) };
+      const pluginId = decodeURIComponent(parts[1]);
+      // /plugins/create | /marketplace/create → creation studio (must win
+      // over the detail route — 'create' is not a plugin id).
+      if (pluginId === 'create') {
+        return { kind: 'creator', target: parts[2] === 'skill' ? 'skill' : 'plugin' };
+      }
+      // /marketplace/<pluginId>/edit → full-page prompt editor (left display,
+      // right AI-edit chat) instead of a modal.
+      if (parts[2] === 'edit') {
+        return { kind: 'marketplace-edit', pluginId };
+      }
+      return { kind: 'marketplace-detail', pluginId };
     }
     return { kind: 'marketplace' };
   }
@@ -115,8 +138,13 @@ export function buildPath(route: Route): string {
     if (route.view === 'integrations') return '/integrations';
     return '/';
   }
+  if (route.kind === 'creator') {
+    return route.target === 'skill' ? '/create/skill' : '/create/plugin';
+  }
+  if (route.kind === 'skills-library') return '/skills';
   if (route.kind === 'marketplace') return '/marketplace';
   if (route.kind === 'marketplace-detail') return `/marketplace/${encodeURIComponent(route.pluginId)}`;
+  if (route.kind === 'marketplace-edit') return `/marketplace/${encodeURIComponent(route.pluginId)}/edit`;
   if (route.kind === 'design-system-create') return '/design-systems/create';
   if (route.kind === 'design-system-detail') {
     return `/design-systems/${encodeURIComponent(route.designSystemId)}`;

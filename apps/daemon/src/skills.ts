@@ -50,11 +50,12 @@ interface SkillFrontmatter extends JsonRecord {
   };
 }
 
-// Indicates whether a skill came from a user-writable root (the first root
-// passed to listSkills) or from a built-in repo root (any later root). The
-// UI uses this to render an origin pill and to gate destructive actions:
-// only `user` skills can be deleted via /api/skills/:id.
-export type SkillSource = "user" | "built-in";
+// Indicates which root a skill came from: a user-writable root (the first
+// root passed to listSkills), the operator's Claude Code skill directory
+// (~/.claude/skills, surfaced read-only), or a built-in repo root. The UI
+// uses this to render an origin pill and to gate destructive actions: only
+// `user` skills can be deleted via /api/skills/:id.
+export type SkillSource = "user" | "built-in" | "claude";
 
 export interface SkillInfo {
   id: string;
@@ -143,6 +144,11 @@ export function findSkillById(skills: unknown, id: unknown): SkillInfo | undefin
 // UI can render an origin pill and gate the delete control.
 export async function listSkills(
   skillsRoots: string | readonly string[],
+  // Optional per-root source labels (parallel to the roots array). Without
+  // it the historical rule applies: first root is "user", the rest are
+  // "built-in". Lets the server label ~/.claude/skills entries as "claude"
+  // without changing any path-based resolver that shares the roots array.
+  rootSources?: readonly SkillSource[],
 ): Promise<SkillInfo[]> {
   const roots = Array.isArray(skillsRoots) ? skillsRoots : [skillsRoots];
   const out: SkillInfo[] = [];
@@ -150,7 +156,8 @@ export async function listSkills(
   for (let rootIdx = 0; rootIdx < roots.length; rootIdx += 1) {
     const skillsRoot = roots[rootIdx];
     if (!skillsRoot) continue;
-    const source: SkillSource = rootIdx === 0 ? "user" : "built-in";
+    const source: SkillSource =
+      rootSources?.[rootIdx] ?? (rootIdx === 0 ? "user" : "built-in");
     let entries: Dirent[] = [];
     try {
       entries = await readdir(skillsRoot, { withFileTypes: true });
@@ -772,6 +779,40 @@ export interface SkillImportInput {
   description?: unknown;
   body?: unknown;
   triggers?: unknown;
+  // Optional eval seed prompts (from the AI draft flow). Persisted as
+  // `evals/evals.json` in the skill-creator schema so the improve-loop
+  // tooling (run test prompts → review → rewrite) has cases from day one.
+  evals?: unknown;
+}
+
+// Coerce draft evals into the skill-creator `evals/evals.json` entry shape.
+// Accepts both the contract's camelCase `expectedOutput` and the on-disk
+// snake_case `expected_output`; drops entries without a prompt. Returns null
+// when nothing valid remains so callers skip writing the file entirely.
+export function coerceSkillEvals(
+  value: unknown,
+): Array<{ id: number; prompt: string; expected_output: string; files: string[] }> | null {
+  if (!Array.isArray(value)) return null;
+  const out: Array<{ id: number; prompt: string; expected_output: string; files: string[] }> = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const prompt = typeof e.prompt === "string" ? e.prompt.trim() : "";
+    if (!prompt) continue;
+    const expected =
+      typeof e.expectedOutput === "string"
+        ? e.expectedOutput
+        : typeof e.expected_output === "string"
+          ? e.expected_output
+          : "";
+    out.push({
+      id: out.length + 1,
+      prompt,
+      expected_output: expected,
+      files: [],
+    });
+  }
+  return out.length > 0 ? out : null;
 }
 
 export interface SkillImportResult {
@@ -834,6 +875,15 @@ export async function importUserSkill(
   await mkdir(dir, { recursive: true });
   const md = buildSkillMarkdown({ name, description, body, triggers });
   await writeFile(path.join(dir, "SKILL.md"), md, "utf8");
+  const evals = coerceSkillEvals(input?.evals);
+  if (evals) {
+    await mkdir(path.join(dir, "evals"), { recursive: true });
+    await writeFile(
+      path.join(dir, "evals", "evals.json"),
+      JSON.stringify({ skill_name: name, evals }, null, 2) + "\n",
+      "utf8",
+    );
+  }
   return { id: name, slug, dir };
 }
 

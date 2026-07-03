@@ -298,6 +298,15 @@ function CategoryRow({
   if (options.length === 0) return null;
   // Show the source chips only when both sources are present.
   const showSourceChips = ownedCount > 0 && officialCount > 0;
+  // The category taxonomy is a fixed curated list, so empty buckets show up
+  // as "图片 0 / 视频 0 …" noise in a single-plugin view. Only surface a
+  // category pill when it actually has plugins (or is the active selection,
+  // so the highlight never vanishes mid-interaction).
+  const catOptions = options.filter((o) => o.count > 0 || o.slug === selectedSlug);
+  // "All" only earns its place when there are 2+ non-empty categories to
+  // collapse. With a single populated category it points at the exact same
+  // set as that lone pill — a redundant duplicate — so hide it.
+  const showAllPill = catOptions.length > 1;
   return (
     <div
       className="plugins-home__facet-row plugins-home__facet-row--inline"
@@ -364,15 +373,17 @@ function CategoryRow({
             </button>
           </>
         ) : null}
-        <CategoryPill
-          slug={null}
-          label={t('common.all')}
-          count={totalVisible}
-          active={selectedSlug === null}
-          onPick={onPick}
-          variant="all"
-        />
-        {options.map((opt) => (
+        {showAllPill ? (
+          <CategoryPill
+            slug={null}
+            label={t('common.all')}
+            count={totalVisible}
+            active={selectedSlug === null}
+            onPick={onPick}
+            variant="all"
+          />
+        ) : null}
+        {catOptions.map((opt) => (
           <CategoryPill
             key={opt.slug}
             slug={opt.slug}

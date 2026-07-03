@@ -15,7 +15,9 @@ import {
 import { EntryView } from './components/EntryView';
 import type { IntegrationTab } from './components/IntegrationsView';
 import { MarketplaceView } from './components/MarketplaceView';
-import { PluginDetailView } from './components/PluginDetailView';
+import { PluginEditView } from './components/PluginEditView';
+import { CreatorView } from './components/CreatorView';
+import { SkillsLibraryView } from './components/SkillsLibraryView';
 import type { CreateInput, ImportClaudeDesignOutcome } from './components/NewProjectPanel';
 import { MemoryToast } from './components/MemoryToast';
 import { PetOverlay, type PetTaskCenter } from './components/pet/PetOverlay';
@@ -183,6 +185,16 @@ export function App() {
   );
 }
 
+// Retired-route redirect. The old /marketplace/:id detail page is gone; send
+// any deep link (or marketplace-grid click) to the clean plugins gallery,
+// rewriting the URL so it doesn't linger on the dead path.
+function RedirectToPlugins() {
+  useEffect(() => {
+    navigate({ kind: 'home', view: 'plugins' }, { replace: true });
+  }, []);
+  return null;
+}
+
 function AppInner() {
   const { t } = useI18n();
   const iframeKeepAlivePool = useIframeKeepAlivePool();
@@ -190,7 +202,7 @@ function AppInner() {
   // Observability marker. `apps/web/src/observability/white-screen.ts`
   // keys its "app actually mounted" success condition on this attribute
   // because the dynamic-import loading shell (`<div class="od-loading-shell">
-  // Loading Open Design…</div>`) is itself >MIN_VISIBLE_TEXT and would
+  // Loading WorkBuild…</div>`) is itself >MIN_VISIBLE_TEXT and would
   // otherwise be mistaken for a real mount. Survives subsequent render
   // crashes — once App has mounted at least once, it's no longer a white
   // screen (subsequent failures show up as `$exception`).
@@ -1411,7 +1423,16 @@ function AppInner() {
   if (route.kind === 'marketplace') {
     appMain = <MarketplaceView />;
   } else if (route.kind === 'marketplace-detail') {
-    appMain = <PluginDetailView pluginId={route.pluginId} />;
+    // The old unstyled per-plugin detail page is retired. The product detail
+    // surface is the styled modal opened from the gallery; redirect deep links
+    // (and the marketplace grid) to the clean gallery instead.
+    appMain = <RedirectToPlugins />;
+  } else if (route.kind === 'marketplace-edit') {
+    appMain = <PluginEditView pluginId={route.pluginId} />;
+  } else if (route.kind === 'creator') {
+    appMain = <CreatorView target={route.target} />;
+  } else if (route.kind === 'skills-library') {
+    appMain = <SkillsLibraryView />;
   } else if (route.kind === 'design-system-create') {
     appMain = (
       <DesignSystemCreationFlow

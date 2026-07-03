@@ -23,6 +23,18 @@ import type {
   ResearchOptions,
   RunContextSelection,
   SseErrorPayload,
+  PluginSourceResponse,
+  UpdatePluginSourceRequest,
+  PluginConfigResponse,
+  AssistEditRequest,
+  AssistEditResponse,
+  AssistFieldRequest,
+  CreatePluginDraftRequest,
+  CreatePluginDraftResponse,
+  SavePluginDraftRequest,
+  SavePluginDraftResponse,
+  CreateSkillDraftRequest,
+  CreateSkillDraftResponse,
 } from '@open-design/contracts';
 import type { StreamHandlers } from './anthropic';
 
@@ -60,7 +72,7 @@ export function latestUserPromptFromHistory(history: ChatMessage[]): string {
 function truncateForTranscript(content: string): string {
   if (content.length <= MAX_TRANSCRIPT_MESSAGE_CHARS) return content;
   const omitted = content.length - MAX_TRANSCRIPT_MESSAGE_CHARS;
-  return `${content.slice(0, MAX_TRANSCRIPT_MESSAGE_CHARS)}\n\n[Open Design truncated ${omitted} chars from this prior message before sending it to the agent. Full content remains in persisted history.]`;
+  return `${content.slice(0, MAX_TRANSCRIPT_MESSAGE_CHARS)}\n\n[WorkBuild truncated ${omitted} chars from this prior message before sending it to the agent. Full content remains in persisted history.]`;
 }
 
 function escapeTranscriptRoleDelimiters(content: string): string {
@@ -119,7 +131,7 @@ function buildPriorRunContextWarning(history: ChatMessage[]): string | null {
 
   return [
     '## context warning',
-    `Open Design detected ${notes.join(', ')}.`,
+    `WorkBuild detected ${notes.join(', ')}.`,
     'Keep this turn compact: summarize prior tool output, read large references from temp files, and quote only task-relevant lines.',
   ].join('\n');
 }
@@ -595,11 +607,11 @@ export async function reportChatRunFeedback(req: {
 // kickoff query); saving re-registers the plugin so the next run uses it.
 export async function fetchPluginSource(
   pluginId: string,
-): Promise<{ id: string; skill: string; query: string; editable: boolean } | null> {
+): Promise<PluginSourceResponse | null> {
   try {
     const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/source`);
     if (!resp.ok) return null;
-    return (await resp.json()) as { id: string; skill: string; query: string; editable: boolean };
+    return (await resp.json()) as PluginSourceResponse;
   } catch {
     return null;
   }
@@ -607,7 +619,7 @@ export async function fetchPluginSource(
 
 export async function savePluginSource(
   pluginId: string,
-  body: { skill?: string; query?: string },
+  body: UpdatePluginSourceRequest,
 ): Promise<boolean> {
   try {
     const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/source`, {
@@ -621,58 +633,252 @@ export async function savePluginSource(
   }
 }
 
-// Self-improving agent loop ("调教"). Turns the user's reaction to an output
-// into durable memory the daemon injects into future runs. See
-// apps/daemon/src/learning.ts.
-export async function submitLearningFeedback(req: {
-  context?: string;
-  targetText?: string;
-  reasons: string[];
-  note?: string;
-  rating: 'good' | 'bad';
-}): Promise<{ memoryId: string; preference: string } | null> {
+// Per-plugin config (API keys the plugin declares via od.config). Read the
+// declared keys + whether each is set (secret values are never returned);
+// save the operator's entered values (stored per-plugin, injected into runs).
+export async function fetchPluginConfig(
+  pluginId: string,
+): Promise<PluginConfigResponse | null> {
   try {
-    const resp = await fetch('/api/learning/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-    });
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/config`);
     if (!resp.ok) return null;
-    return (await resp.json()) as { memoryId: string; preference: string };
+    return (await resp.json()) as PluginConfigResponse;
   } catch {
     return null;
   }
 }
 
-export async function submitLearningSample(req: {
-  context?: string;
-  title?: string;
-  content: string;
-}): Promise<{ memoryId: string } | null> {
+export async function savePluginConfig(
+  pluginId: string,
+  values: Record<string, string>,
+): Promise<boolean> {
   try {
-    const resp = await fetch('/api/learning/sample', {
-      method: 'POST',
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/config`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
+      body: JSON.stringify({ values }),
     });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Reveal one key's saved plaintext (the editor's eye toggle) — only on explicit
+// click, never in the masked list. Returns null on failure.
+export async function revealPluginConfigKey(
+  pluginId: string,
+  key: string,
+): Promise<string | null> {
+  try {
+    const resp = await fetch(
+      `/api/plugins/${encodeURIComponent(pluginId)}/config/reveal/${encodeURIComponent(key)}`,
+    );
     if (!resp.ok) return null;
-    return (await resp.json()) as { memoryId: string };
+    const data = (await resp.json()) as { value?: unknown };
+    return typeof data.value === 'string' ? data.value : null;
   } catch {
     return null;
   }
 }
 
-export async function fetchLearning(
-  context?: string,
-): Promise<{ items: Array<{ memoryId: string; kind: string; name: string }> }> {
+// "AI 帮我改" — describe the change; the model rewrites the plugin prompts and
+// returns them for review (the editor then saves via savePluginSource).
+export async function assistEditPlugin(
+  pluginId: string,
+  req: Pick<AssistEditRequest, 'instruction' | 'skill' | 'query' | 'stages'>,
+): Promise<AssistEditResponse | { error: string }> {
+  // Resolve the configured chat agent so the daemon calls the same model the
+  // user runs (local CLI / BYOK).
+  let chatAgentId: string | undefined;
   try {
-    const qs = context ? `?context=${encodeURIComponent(context)}` : '';
-    const resp = await fetch(`/api/learning${qs}`);
-    if (!resp.ok) return { items: [] };
-    return (await resp.json()) as { items: Array<{ memoryId: string; kind: string; name: string }> };
+    const cfgResp = await fetch('/api/app-config');
+    if (cfgResp.ok) {
+      const cfg = (await cfgResp.json()) as { config?: { agentId?: string } };
+      if (typeof cfg?.config?.agentId === 'string') chatAgentId = cfg.config.agentId;
+    }
   } catch {
-    return { items: [] };
+    /* fall through — daemon may still resolve a provider */
   }
+  const payload: AssistEditRequest = { ...req, ...(chatAgentId ? { chatAgentId } : {}) };
+  try {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/source/assist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      let msg = '';
+      try {
+        const e = (await resp.json()) as { error?: { message?: string } };
+        msg = e?.error?.message ?? '';
+      } catch {
+        /* ignore */
+      }
+      return { error: msg || `HTTP ${resp.status}` };
+    }
+    return (await resp.json()) as AssistEditResponse;
+  } catch {
+    return { error: '请求失败' };
+  }
+}
+
+// Scoped, STREAMING single-field rewrite ("AI 改这步"). Streams the rewritten
+// text over SSE so the editor fills in live, like the main chat. Resolves once
+// the stream ends; handlers fire as it goes.
+export async function assistEditFieldStream(
+  pluginId: string,
+  req: Pick<AssistFieldRequest, 'instruction' | 'text' | 'label'>,
+  handlers: { onDelta: (chunk: string) => void; onDone: (text: string) => void; onError: (msg: string) => void },
+): Promise<void> {
+  let chatAgentId: string | undefined;
+  try {
+    const cfgResp = await fetch('/api/app-config');
+    if (cfgResp.ok) {
+      const cfg = (await cfgResp.json()) as { config?: { agentId?: string } };
+      if (typeof cfg?.config?.agentId === 'string') chatAgentId = cfg.config.agentId;
+    }
+  } catch {
+    /* daemon may still resolve a provider */
+  }
+  const payload: AssistFieldRequest = { ...req, ...(chatAgentId ? { chatAgentId } : {}) };
+  let resp: Response;
+  try {
+    resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/source/assist-field`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    handlers.onError('请求失败');
+    return;
+  }
+  if (!resp.ok || !resp.body) {
+    handlers.onError(`HTTP ${resp.status}`);
+    return;
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let done = false;
+  const dispatch = (block: string) => {
+    let event = 'message';
+    const dataLines: string[] = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+    }
+    if (dataLines.length === 0) return;
+    let data: { delta?: string; text?: string; message?: string };
+    try {
+      data = JSON.parse(dataLines.join('\n'));
+    } catch {
+      return;
+    }
+    if (event === 'delta' && typeof data.delta === 'string') handlers.onDelta(data.delta);
+    else if (event === 'done') { done = true; handlers.onDone(typeof data.text === 'string' ? data.text : ''); }
+    else if (event === 'error') { done = true; handlers.onError(data.message || 'AI 改写失败'); }
+  };
+  try {
+    for (;;) {
+      const { value, done: streamDone } = await reader.read();
+      if (streamDone) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        if (block.trim()) dispatch(block);
+      }
+    }
+  } catch {
+    if (!done) handlers.onError('连接中断');
+    return;
+  }
+  if (!done) handlers.onError('未完成');
+}
+
+// ---------------------------------------------------------------------------
+// AI-draft creation (plugins + skills). Drafts are returned for review and
+// saved through a separate call, mirroring the assist→save split above.
+// ---------------------------------------------------------------------------
+
+// Resolve the configured chat agent once per call so the daemon drafts with
+// the same model the user chats with (local CLI / BYOK).
+async function resolveChatAgentId(): Promise<string | undefined> {
+  try {
+    const resp = await fetch('/api/app-config');
+    if (!resp.ok) return undefined;
+    const cfg = (await resp.json()) as { config?: { agentId?: string } };
+    return typeof cfg?.config?.agentId === 'string' ? cfg.config.agentId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function postDraftJson<T>(url: string, payload: unknown): Promise<T | { error: string }> {
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      let msg = '';
+      try {
+        const e = (await resp.json()) as { error?: { message?: string } };
+        msg = e?.error?.message ?? '';
+      } catch {
+        /* ignore */
+      }
+      return { error: msg || `HTTP ${resp.status}` };
+    }
+    return (await resp.json()) as T;
+  } catch {
+    return { error: '请求失败' };
+  }
+}
+
+export async function draftPlugin(
+  req: Pick<CreatePluginDraftRequest, 'description' | 'name'>,
+): Promise<CreatePluginDraftResponse | { error: string }> {
+  const chatAgentId = await resolveChatAgentId();
+  return postDraftJson<CreatePluginDraftResponse>('/api/plugins/draft', {
+    ...req,
+    ...(chatAgentId ? { chatAgentId } : {}),
+  });
+}
+
+export async function savePluginDraft(
+  req: SavePluginDraftRequest,
+): Promise<SavePluginDraftResponse | { error: string }> {
+  return postDraftJson<SavePluginDraftResponse>('/api/plugins', req);
+}
+
+export async function draftSkill(
+  req: Pick<CreateSkillDraftRequest, 'description' | 'name' | 'withEvals'>,
+): Promise<CreateSkillDraftResponse | { error: string }> {
+  const chatAgentId = await resolveChatAgentId();
+  return postDraftJson<CreateSkillDraftResponse>('/api/skills/draft', {
+    ...req,
+    ...(chatAgentId ? { chatAgentId } : {}),
+  });
+}
+
+// Save a reviewed skill draft through the same import endpoint the Settings →
+// Skills import flow uses; evals seed lands as evals/evals.json server-side.
+export async function saveSkillDraft(
+  draft: Pick<CreateSkillDraftResponse, 'name' | 'description' | 'triggers' | 'body' | 'evals'>,
+): Promise<{ id: string } | { error: string }> {
+  const out = await postDraftJson<{ skill?: { id?: string } }>('/api/skills/import', {
+    name: draft.name,
+    description: draft.description,
+    body: draft.body,
+    triggers: draft.triggers,
+    ...(draft.evals.length > 0 ? { evals: draft.evals } : {}),
+  });
+  if ('error' in out) return out;
+  return { id: out.skill?.id ?? draft.name };
 }
 
 export async function listActiveChatRuns(

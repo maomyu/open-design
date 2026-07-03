@@ -80,6 +80,8 @@ interface Props {
   onSavePreviewComment?: (target: PreviewCommentTarget, note: string, attachAfterSave: boolean) => Promise<PreviewComment | null>;
   onRemovePreviewComment?: (commentId: string) => Promise<void>;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[]) => Promise<void> | void;
+  // Live-artifact → chat bridge (forwarded to FileViewer/HtmlViewer).
+  onArtifactPrompt?: (text: string) => void;
   onPluginFolderAgentAction?: (
     relativePath: string,
     action: PluginFolderAgentAction,
@@ -212,6 +214,7 @@ export function FileWorkspace({
   onSavePreviewComment,
   onRemovePreviewComment,
   onSendBoardCommentAttachments,
+  onArtifactPrompt,
   onPluginFolderAgentAction,
   activePluginActionPaths,
   hiddenPluginActionPaths,
@@ -1071,6 +1074,7 @@ export function FileWorkspace({
             onSavePreviewComment={onSavePreviewComment}
             onRemovePreviewComment={onRemovePreviewComment}
             onSendBoardCommentAttachments={onSendBoardCommentAttachments}
+            onArtifactPrompt={onArtifactPrompt}
             onFileSaved={onRefreshFiles}
             onOpenFileReplacing={openFileReplacing}
             commentPortalId={commentPortalId}
@@ -2403,7 +2407,7 @@ function designSystemSectionRunningNotice(
   activity: DesignSystemSectionActivity,
 ): string {
   if (activity.phase === 'reading') {
-    return `Open Design is reading ${section.title} context for this section.`;
+    return `WorkBuild is reading ${section.title} context for this section.`;
   }
   return `${designSystemSectionPhaseLabel(section, activity)} now.`;
 }

@@ -13,7 +13,11 @@ import {
   it,
 } from 'vitest';
 
-import { readAppConfig, writeAppConfig } from '../src/app-config.js';
+import {
+  configuredEnvForAgentSpawn,
+  readAppConfig,
+  writeAppConfig,
+} from '../src/app-config.js';
 import { isLocalSameOrigin } from '../src/origin-validation.js';
 
 // Default telemetry preference applied when an existing config has no
@@ -393,6 +397,59 @@ describe('app-config', () => {
       await writeAppConfig(dataDir, { agentCliEnv: {} });
       cfg = await readAppConfig(dataDir);
       expect(cfg.agentCliEnv).toBeUndefined();
+    });
+
+    it('persists env-shaped thirdPartyApiKeys and drops invalid entries', async () => {
+      await writeAppConfig(dataDir, {
+        thirdPartyApiKeys: {
+          TIKHUB_API_KEY: '  th-secret-123  ',
+          OTHER_SERVICE_TOKEN: 'abc',
+          'lower_case': 'dropped',
+          '1STARTS_WITH_DIGIT': 'dropped',
+          'HAS-DASH': 'dropped',
+          EMPTY_VALUE: '   ',
+          NON_STRING: 42 as unknown as string,
+        },
+      });
+
+      const cfg = await readAppConfig(dataDir);
+
+      expect(cfg.thirdPartyApiKeys).toEqual({
+        TIKHUB_API_KEY: 'th-secret-123',
+        OTHER_SERVICE_TOKEN: 'abc',
+      });
+    });
+
+    it('clears thirdPartyApiKeys when null or an empty object is sent', async () => {
+      await writeAppConfig(dataDir, {
+        thirdPartyApiKeys: { TIKHUB_API_KEY: 'th-secret-123' },
+        onboardingCompleted: true,
+      });
+      expect((await readAppConfig(dataDir)).thirdPartyApiKeys).toBeDefined();
+
+      await writeAppConfig(dataDir, { thirdPartyApiKeys: {} });
+      const cfg = await readAppConfig(dataDir);
+      expect(cfg.thirdPartyApiKeys).toBeUndefined();
+      expect(cfg.onboardingCompleted).toBe(true);
+    });
+
+    it('composes spawn env with agentCliEnv outranking thirdPartyApiKeys', () => {
+      const env = configuredEnvForAgentSpawn(
+        {
+          thirdPartyApiKeys: {
+            TIKHUB_API_KEY: 'th-secret-123',
+            ANTHROPIC_API_KEY: 'global-should-lose',
+          },
+          agentCliEnv: {
+            claude: { ANTHROPIC_API_KEY: 'per-agent-wins' },
+          },
+        },
+        'claude',
+      );
+      expect(env).toEqual({
+        TIKHUB_API_KEY: 'th-secret-123',
+        ANTHROPIC_API_KEY: 'per-agent-wins',
+      });
     });
 
     it('handles corrupted existing file gracefully on write', async () => {

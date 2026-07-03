@@ -913,19 +913,28 @@ async function callLocalCli(provider, system, user, options) {
       });
     };
 
+    const timeoutMs = Number.isFinite(options?.timeoutMs) && options.timeoutMs > 0
+      ? options.timeoutMs
+      : LOCAL_CLI_TIMEOUT_MS;
     const timeout = setTimeout(() => {
       child.kill('SIGTERM');
       setTimeout(() => {
         if (!closed) child.kill('SIGKILL');
       }, 2_000).unref?.();
-      finish(new Error(`${def.name} CLI timed out after ${Math.round(LOCAL_CLI_TIMEOUT_MS / 1000)}s`));
-    }, LOCAL_CLI_TIMEOUT_MS);
+      finish(new Error(`${def.name} CLI timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
     timeout.unref?.();
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
       stdout = `${stdout}${chunk}`.slice(-64_000);
+      // Stream the model's text out live. Only Claude runs with
+      // --output-format text (clean prose); codex/opencode emit event JSON
+      // that would be noise, so we only forward deltas for claude.
+      if (provider.agentId === 'claude' && typeof options?.onDelta === 'function') {
+        try { options.onDelta(String(chunk)); } catch { /* ignore */ }
+      }
     });
     child.stderr.on('data', (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-8_000);
@@ -1011,6 +1020,57 @@ function toMemoryDraft(candidate) {
   };
 }
 
+// Dispatch a resolved provider to the matching caller (local CLI vs the HTTP
+// providers). Shared by memory extraction and the generic callModelOnce below
+// so both honor the exact same provider routing.
+async function runProviderCall(provider, system, user, opts) {
+  if (provider.transport === 'chat-cli') {
+    return await callLocalCli(provider, system, user, {
+      dataDir: opts?.dataDir,
+      projectRoot: opts?.projectRoot,
+      localCliRunner: opts?.localCliRunner,
+      timeoutMs: opts?.timeoutMs,
+      onDelta: opts?.onDelta,
+    });
+  }
+  if (provider.kind === 'anthropic') return await callAnthropic(provider, system, user);
+  if (provider.kind === 'azure') return await callAzure(provider, system, user);
+  if (provider.kind === 'google') return await callGoogle(provider, system, user);
+  // openai or ollama — both speak the OpenAI chat-completions wire shape.
+  return await callOpenAI(provider, system, user);
+}
+
+/**
+ * Generic one-shot model call. Resolves the same provider memory extraction
+ * uses (BYOK override → local CLI agent → env key) and returns the raw model
+ * text. Works for both local-CLI agents (Claude Code) and BYOK/HTTP providers.
+ * Throws `NO_PROVIDER` when nothing is configured.
+ *
+ * Reused by the plugin editor's "AI 帮我改" so it never reinvents the
+ * multi-provider call layer.
+ */
+export async function callModelOnce(dataDir, opts) {
+  const provider = await pickProvider(
+    opts?.projectRoot ?? null,
+    dataDir,
+    opts?.chatAgentId ?? null,
+    opts?.chatProvider ?? null,
+    opts?.chatModel ?? null,
+  );
+  if (!provider) {
+    const err = new Error('no model provider is configured');
+    err.code = 'NO_PROVIDER';
+    throw err;
+  }
+  return await runProviderCall(provider, opts.system, opts.user, {
+    dataDir,
+    projectRoot: opts?.projectRoot ?? null,
+    localCliRunner: opts?.localCliRunner,
+    timeoutMs: opts?.timeoutMs,
+    onDelta: opts?.onDelta,
+  });
+}
+
 async function collectProposedEntries(dataDir, input, options) {
   const projectRoot = options?.projectRoot ?? null;
   const chatAgentId = options?.chatAgentId ?? null;
@@ -1082,24 +1142,11 @@ async function collectProposedEntries(dataDir, input, options) {
 
   let raw = '';
   try {
-    if (provider.transport === 'chat-cli') {
-      raw = await callLocalCli(provider, systemPrompt, userPayload, {
-        dataDir,
-        projectRoot,
-        localCliRunner: options?.localCliRunner,
-      });
-    } else if (provider.kind === 'anthropic') {
-      raw = await callAnthropic(provider, systemPrompt, userPayload);
-    } else if (provider.kind === 'azure') {
-      raw = await callAzure(provider, systemPrompt, userPayload);
-    } else if (provider.kind === 'google') {
-      raw = await callGoogle(provider, systemPrompt, userPayload);
-    } else {
-      // openai or ollama — both speak the OpenAI chat-completions
-      // wire shape, so callOpenAI handles them with just a different
-      // base URL.
-      raw = await callOpenAI(provider, systemPrompt, userPayload);
-    }
+    raw = await runProviderCall(provider, systemPrompt, userPayload, {
+      dataDir,
+      projectRoot,
+      localCliRunner: options?.localCliRunner,
+    });
   } catch (err) {
     // err.message is already pre-formatted by describeFetchError() when
     // the call layer caught a network error. For HTTP-level failures

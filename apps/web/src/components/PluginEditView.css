@@ -1,0 +1,1231 @@
+/* Full-page plugin prompt editor — see PluginEditView.tsx.
+   Left: node canvas (kickoff → steps(+mode children) → methodology) +
+   focused editor. Right: AI-edit chat. */
+
+.plugin-edit-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* Top bar */
+.plugin-edit-view__bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-panel);
+}
+.plugin-edit-view__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.plugin-edit-view__back:hover { color: var(--text); background: var(--bg-subtle); }
+.plugin-edit-view__heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.plugin-edit-view__eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  font-weight: 600;
+}
+.plugin-edit-view__title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugin-edit-view__bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.plugin-edit-view__unsaved {
+  font-size: 12px;
+  color: var(--amber);
+}
+.plugin-edit-view__publish {
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.plugin-edit-view__publish:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.plugin-edit-view__publish:disabled { opacity: 0.5; cursor: default; }
+
+.plugin-edit-view__loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+/* Split body */
+.plugin-edit-view__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  /* Without an explicit row constraint the implicit grid row auto-sizes to
+     its CONTENT height — both panes silently grow past the container, the
+     ancestors' overflow:hidden clips them, and no inner scroll region ever
+     engages. minmax(0, 1fr) pins the row to the body's own height so the
+     detail pane's overflow-y:auto actually scrolls. */
+  grid-template-rows: minmax(0, 1fr);
+}
+.plugin-edit-view__display,
+.plugin-edit-view__chat {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.plugin-edit-view__display {
+  padding: 16px 20px;
+  gap: 12px;
+  overflow: hidden; /* the canvas scrolls both ways, the detail vertically */
+  border-right: 1px solid var(--border-soft);
+}
+.plugin-edit-view__pane-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.plugin-edit-view__readonly {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid color-mix(in srgb, var(--amber) 28%, var(--border));
+  border-radius: var(--radius-sm);
+}
+
+.plugin-edit-view__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+/* Focused-editor panes fill the detail area's full height. */
+.plugin-edit-view__field--fill {
+  flex: 1;
+  min-height: 0;
+}
+.plugin-edit-view__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.plugin-edit-view__hint {
+  font-size: 12px;
+  color: var(--text-soft);
+  margin-bottom: 5px;
+}
+.plugin-edit-view__textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+}
+.plugin-edit-view__textarea:focus {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 3px var(--selected-soft);
+}
+.plugin-edit-view__textarea:disabled { opacity: 0.6; }
+.plugin-edit-view__textarea--fill {
+  flex: 1;
+  min-height: 160px;
+  resize: none;
+}
+
+/* ============ Node canvas — kickoff → steps(+modes) → + → methodology ====
+   A 2D auto-laid-out graph: the main chain runs horizontally (one column per
+   chain element, arrow connectors between columns); each step's modes hang
+   below it inside the same column as a vertical sub-chain. Both axes scroll. */
+.plugin-edit-view__canvas {
+  flex: none;
+  max-height: 46%;
+  overflow: auto;
+  scrollbar-width: thin;
+  /* Generous top padding so the hover action pill (absolutely positioned
+     above a node) stays inside the canvas scroll box instead of clipping. */
+  padding: 18px 2px 12px;
+}
+.plugin-edit-view__canvas-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  /* Let the row grow past the viewport so the canvas scrolls horizontally. */
+  width: max-content;
+  min-width: 100%;
+}
+/* One column per main-chain element; a step's mode children stack below it. */
+.plugin-edit-view__canvas-col {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+/* Horizontal connector between main-chain columns — height matches the
+   main-chain node row so the chevron sits on the chain's axis. */
+.plugin-edit-view__canvas-arrow {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  color: var(--text-faint);
+}
+/* Vertical connector segment in a step's mode sub-chain. */
+.plugin-edit-view__vlink {
+  flex: none;
+  align-self: center;
+  width: 1.5px;
+  height: 10px;
+  background: var(--border-strong);
+}
+
+/* Main-chain node (kickoff / step / methodology / ghost add-step). */
+.plugin-edit-view__node {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 34px;
+  max-width: 210px;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-sizing: border-box;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.plugin-edit-view__node:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  transition-duration: 200ms;
+}
+.plugin-edit-view__node:focus-visible {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 2px var(--selected-soft);
+}
+.plugin-edit-view__node--active,
+.plugin-edit-view__node--active:hover {
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* Terminal nodes (kickoff / methodology) stay single-row pills. */
+.plugin-edit-view__node--terminal {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+}
+/* Ghost node — dashed "+ add step" placeholder on the main chain. */
+.plugin-edit-view__node--ghost {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 12px;
+  background: none;
+  border-style: dashed;
+  border-color: var(--border-strong);
+  border-radius: 999px;
+}
+.plugin-edit-view__node--ghost:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.plugin-edit-view__node--ghost:disabled { opacity: 0.5; cursor: default; }
+/* First row of a step node: number + title + gate marker. */
+.plugin-edit-view__node-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.plugin-edit-view__node-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-edit-view__node-num {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-soft);
+  background: var(--bg-subtle);
+  border-radius: 50%;
+}
+.plugin-edit-view__node--active .plugin-edit-view__node-num {
+  color: #fff;
+  background: var(--accent);
+}
+/* Small gate marker — this step pauses for confirm/choice at run time. */
+.plugin-edit-view__node-gate {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  color: var(--amber);
+  background: var(--amber-bg);
+  border-radius: 50%;
+}
+/* Bound-skill badges — display-only pills inside the step node. */
+.plugin-edit-view__node-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.plugin-edit-view__node-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 92px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--text-soft);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+}
+.plugin-edit-view__node-badge > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-edit-view__node-badge--missing {
+  color: var(--danger, #b3261e);
+  border-color: var(--danger, #b3261e);
+  background: var(--danger-bg, rgba(179, 38, 30, 0.08));
+}
+/* Unresolved stage-skill binding — red attention dot on the node. */
+.plugin-edit-view__node-warn {
+  position: absolute;
+  top: -2px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  background: var(--danger, #b3261e);
+  border: 1.5px solid var(--bg);
+  border-radius: 50%;
+}
+/* Node actions (move left/right, delete) — kept mounted, revealed on
+   hover/focus so the canvas stays uncluttered. */
+.plugin-edit-view__node-actions {
+  position: absolute;
+  top: -14px;
+  right: 6px;
+  z-index: 5;
+  display: inline-flex;
+  gap: 2px;
+  padding: 1px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  opacity: 0;
+  transform: translateY(2px) scale(0.96);
+  pointer-events: none;
+  transition:
+    opacity 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.plugin-edit-view__node:hover .plugin-edit-view__node-actions,
+.plugin-edit-view__node:focus-within .plugin-edit-view__node-actions {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+  transition-duration: 200ms;
+}
+.plugin-edit-view__node-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--text-soft);
+  background: none;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.plugin-edit-view__node-action:hover:not(:disabled) { color: var(--text); background: var(--bg-subtle); }
+.plugin-edit-view__node-action:disabled { opacity: 0.35; cursor: default; }
+.plugin-edit-view__node-action--danger:hover:not(:disabled) {
+  color: var(--danger, #c0392b);
+  background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
+}
+.plugin-edit-view__node-flip { transform: rotate(180deg); }
+
+/* Mode child node — label + one-line prompt preview under its step. */
+.plugin-edit-view__mode-node {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 210px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-sizing: border-box;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    background 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.plugin-edit-view__mode-node:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  transition-duration: 200ms;
+}
+.plugin-edit-view__mode-node:focus-visible {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 2px var(--selected-soft);
+}
+.plugin-edit-view__mode-node--active,
+.plugin-edit-view__mode-node--active:hover {
+  color: var(--accent);
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.plugin-edit-view__mode-node-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.plugin-edit-view__mode-node--active .plugin-edit-view__mode-node-label { color: var(--accent); }
+.plugin-edit-view__mode-node-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+/* Hover-revealed mode delete — top-right corner of the child node. */
+.plugin-edit-view__mode-node-x {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--text-soft);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.9);
+  pointer-events: none;
+  transition:
+    opacity 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.plugin-edit-view__mode-node:hover .plugin-edit-view__mode-node-x,
+.plugin-edit-view__mode-node:focus-within .plugin-edit-view__mode-node-x {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+  transition-duration: 200ms;
+}
+.plugin-edit-view__mode-node-x:hover:not(:disabled) {
+  color: var(--danger, #c0392b);
+  border-color: color-mix(in srgb, var(--danger, #c0392b) 40%, var(--border));
+}
+.plugin-edit-view__mode-node-x:disabled { opacity: 0; }
+/* Ghost mode node — dashed "+ add mode" at the end of the sub-chain. */
+.plugin-edit-view__mode-node--ghost {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  background: none;
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+.plugin-edit-view__mode-node--ghost:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.plugin-edit-view__mode-node--ghost:disabled { opacity: 0.5; cursor: default; }
+
+/* ============ Focused editor — only the selected node, full height ======= */
+.plugin-edit-view__detail {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  animation: pev-detail-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes pev-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.plugin-edit-view__stage-pane {
+  /* No shrink: the pane keeps its natural content height. When that exceeds
+     the detail viewport the detail's overflow-y:auto scrolls — previously
+     flex shrink squashed every section to its min-height instead, so the
+     content looked crammed AND nothing ever overflowed enough to scroll. */
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* Double-class selector so this wins over the base .__step-prompt rule that
+   appears later in the file (same single-class specificity would lose). */
+.plugin-edit-view__step-prompt.plugin-edit-view__step-prompt--fill {
+  flex: 1 0 auto;
+  min-height: 260px;
+  resize: none;
+}
+/* Same trick for the focused mode editor's full-height prompt box — the base
+   .__mode-prompt rule (min-height: 66px) appears later in the file. */
+.plugin-edit-view__mode-prompt.plugin-edit-view__mode-prompt--fill {
+  flex: 1 0 auto;
+  min-height: 260px;
+  resize: none;
+}
+
+/* Breadcrumb in the focused mode editor — owning step → mode. */
+.plugin-edit-view__crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.plugin-edit-view__crumb-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.plugin-edit-view__crumb-link:hover { color: var(--text); background: var(--bg-subtle); }
+.plugin-edit-view__crumb-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-edit-view__crumb-here {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.plugin-edit-view__step-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.plugin-edit-view__step-prompt,
+.plugin-edit-view__mode-prompt {
+  width: 100%;
+  resize: vertical;
+  min-height: 88px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+}
+.plugin-edit-view__mode-prompt { min-height: 66px; }
+.plugin-edit-view__step-prompt:focus,
+.plugin-edit-view__mode-prompt:focus {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 2px var(--selected-soft);
+}
+.plugin-edit-view__step-prompt:disabled,
+.plugin-edit-view__mode-prompt:disabled { opacity: 0.6; }
+
+.plugin-edit-view__mode-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.plugin-edit-view__mode-label-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+}
+.plugin-edit-view__mode-label-input:focus {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 2px var(--selected-soft);
+}
+
+.plugin-edit-view__step-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.plugin-edit-view__step-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.plugin-edit-view__step-link:hover:not(:disabled) { color: var(--text); }
+.plugin-edit-view__step-link:disabled { opacity: 0.5; cursor: default; }
+.plugin-edit-view__step-link--ai { color: var(--accent); }
+.plugin-edit-view__step-link--ai:hover:not(:disabled) { color: var(--accent-hover); }
+.plugin-edit-view__step-num {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+  background: var(--bg-subtle);
+  border-radius: 50%;
+}
+.plugin-edit-view__step-id,
+.plugin-edit-view__step-title,
+.plugin-edit-view__step-gate {
+  height: 30px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+}
+.plugin-edit-view__step-id {
+  flex: none;
+  width: 92px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-soft);
+}
+.plugin-edit-view__step-title { flex: 1; min-width: 0; }
+.plugin-edit-view__step-gate { flex: none; width: 84px; cursor: pointer; }
+.plugin-edit-view__step-id:focus,
+.plugin-edit-view__step-title:focus,
+.plugin-edit-view__step-gate:focus {
+  outline: none;
+  border-color: var(--selected);
+  box-shadow: 0 0 0 2px var(--selected-soft);
+}
+.plugin-edit-view__step-id:disabled,
+.plugin-edit-view__step-title:disabled,
+.plugin-edit-view__step-gate:disabled { opacity: 0.6; }
+.plugin-edit-view__step-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 30px;
+  color: var(--text-soft);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.plugin-edit-view__step-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-subtle); }
+.plugin-edit-view__step-btn:disabled { opacity: 0.35; cursor: default; }
+.plugin-edit-view__step-btn--danger:hover:not(:disabled) {
+  color: var(--danger, #c0392b);
+  border-color: color-mix(in srgb, var(--danger, #c0392b) 40%, var(--border));
+  background: color-mix(in srgb, var(--danger, #c0392b) 8%, transparent);
+}
+
+/* Right — chat */
+.plugin-edit-view__chat {
+  background: var(--bg-panel);
+}
+.plugin-edit-view__chat .plugin-edit-view__pane-head {
+  padding: 14px 16px 10px;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border-soft);
+}
+.plugin-edit-view__log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.plugin-edit-view__empty {
+  margin: auto;
+  max-width: 280px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+.plugin-edit-view__msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.plugin-edit-view__msg--user { align-items: flex-end; }
+.plugin-edit-view__msg--ai { align-items: flex-start; }
+.plugin-edit-view__msg-role {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.plugin-edit-view__bubble {
+  max-width: 88%;
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.plugin-edit-view__msg--user .plugin-edit-view__bubble {
+  color: #fff;
+  background: var(--accent);
+}
+.plugin-edit-view__bubble--done {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--green);
+  background: var(--green-bg);
+  border: 1px solid var(--green-border);
+}
+.plugin-edit-view__bubble--working {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+}
+.plugin-edit-view__bubble--error {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border: 1px solid color-mix(in srgb, var(--amber) 28%, var(--border));
+}
+.plugin-edit-view__undo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.plugin-edit-view__undo:hover { color: var(--text); }
+
+.plugin-edit-view__bubble--stream {
+  color: var(--text);
+  background: var(--bg-subtle);
+  white-space: pre-wrap;
+}
+.plugin-edit-view__caret {
+  display: inline-block;
+  width: 6px;
+  height: 14px;
+  margin-left: 1px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: pev-caret-blink 1s step-end infinite;
+}
+@keyframes pev-caret-blink { 50% { opacity: 0; } }
+
+/* Composer + scope chip */
+.plugin-edit-view__composer-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.plugin-edit-view__scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 16px 0;
+  padding: 5px 9px;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius-sm);
+}
+.plugin-edit-view__scope-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.plugin-edit-view__scope-clear {
+  display: inline-flex;
+  padding: 2px;
+  color: var(--accent);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.plugin-edit-view__scope-clear:hover { background: var(--accent-soft); }
+
+/* Composer */
+.plugin-edit-view__composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+.plugin-edit-view__composer-input {
+  flex: 1;
+  resize: none;
+  min-height: 44px;
+  max-height: 160px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+}
+.plugin-edit-view__composer-input::placeholder { color: var(--text-faint); }
+.plugin-edit-view__composer-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.plugin-edit-view__send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.plugin-edit-view__send:hover:not(:disabled) { background: var(--accent-hover); }
+.plugin-edit-view__send:disabled { opacity: 0.5; cursor: default; }
+
+/* Narrow screens — stack the panes. */
+@media (max-width: 860px) {
+  .plugin-edit-view__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  .plugin-edit-view__display { border-right: none; border-bottom: 1px solid var(--border-soft); }
+}
+
+/* Stage-bound skills — chips + picker on each step card. */
+.plugin-edit-view__stage-skills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.plugin-edit-view__stage-skills-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+.plugin-edit-view__skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 8px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+}
+.plugin-edit-view__skill-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--text-soft);
+  background: none;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.plugin-edit-view__skill-chip-x:hover { color: var(--text); background: var(--bg-panel); }
+.plugin-edit-view__skill-add {
+  padding: 3px 8px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  max-width: 180px;
+}
+.plugin-edit-view__skill-chip--missing {
+  color: var(--danger, #b3261e);
+  border-color: var(--danger, #b3261e);
+  background: var(--danger-bg, rgba(179, 38, 30, 0.08));
+}
+
+/* Edit history — restore points dropdown in the top bar. */
+.plugin-edit-view__history-wrap { position: relative; }
+.plugin-edit-view__history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.plugin-edit-view__history-btn:hover { color: var(--text); background: var(--bg-subtle); }
+.plugin-edit-view__history-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 240px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.plugin-edit-view__history-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--text-soft);
+  text-align: center;
+}
+.plugin-edit-view__history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text);
+  border-radius: calc(var(--radius-sm) - 2px);
+}
+.plugin-edit-view__history-row:hover { background: var(--bg-subtle); }
+.plugin-edit-view__history-restore {
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.plugin-edit-view__history-restore:hover { background: var(--bg); }
+
+/* Per-plugin config (API keys declared via od.config). A compact form above the
+   pipeline canvas; values are stored per-plugin and injected into its runs. */
+.plugin-edit-view__config {
+  flex: none; /* don't get shrunk by the flex column — the body scrolls instead */
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  background: var(--bg-subtle, #eef1f5);
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: var(--radius, 12px);
+}
+.plugin-edit-view__config-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #74716b);
+}
+.plugin-edit-view__config-hint {
+  margin: 6px 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-soft, #989590);
+}
+.plugin-edit-view__config-list { display: grid; gap: 12px; }
+.plugin-edit-view__config-row { display: grid; gap: 5px; }
+.plugin-edit-view__config-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+.plugin-edit-view__config-label code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-strong, #0d0c0a);
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+.plugin-edit-view__config-name { color: var(--text-muted, #74716b); }
+.plugin-edit-view__config-req { color: var(--accent, #c96442); font-weight: 700; }
+.plugin-edit-view__config-set {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green, #1f7a3a);
+  background: var(--green-bg, #e8f7ee);
+  border: 1px solid var(--green-border, #c6ead2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.plugin-edit-view__config-desc { font-size: 12px; color: var(--text-soft, #989590); }
+.plugin-edit-view__config-desc a { color: var(--accent, #c96442); text-decoration: none; }
+.plugin-edit-view__config-input-wrap { display: flex; gap: 8px; align-items: center; }
+.plugin-edit-view__config-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text, #1a1916);
+  background: var(--panel, #fff);
+  border: 1px solid var(--border-strong, #c9d0da);
+  border-radius: var(--radius-sm, 8px);
+  padding: 8px 11px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.plugin-edit-view__config-input:focus {
+  outline: none;
+  border-color: var(--accent, #c96442);
+  box-shadow: 0 0 0 3px var(--accent-tint, #fbeee5);
+}
+.plugin-edit-view__config-clear,
+.plugin-edit-view__config-save {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 8px);
+  padding: 7px 13px;
+  border: 1px solid var(--border-strong, #c9d0da);
+  background: var(--panel, #fff);
+  color: var(--text, #1a1916);
+  white-space: nowrap;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.plugin-edit-view__config-clear:hover:not(:disabled) { border-color: var(--accent, #c96442); color: var(--accent, #c96442); }
+.plugin-edit-view__config-save {
+  margin-top: 14px;
+  background: var(--accent, #c96442);
+  border-color: var(--accent, #c96442);
+  color: #fff;
+}
+.plugin-edit-view__config-save:hover:not(:disabled) { background: var(--accent-strong, #b45a3b); border-color: var(--accent-strong, #b45a3b); }
+.plugin-edit-view__config-save:disabled,
+.plugin-edit-view__config-clear:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Collapsed-by-default config: a settings row you click to expand. */
+.plugin-edit-view__config-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #74716b);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+.plugin-edit-view__config-count {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-soft, #989590);
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.plugin-edit-view__config-chevron {
+  margin-left: auto;
+  color: var(--text-soft, #989590);
+  display: inline-flex;
+  transition: transform .18s cubic-bezier(.23, 1, .32, 1);
+}
+.plugin-edit-view__config-chevron.is-open { transform: rotate(180deg); }
+.plugin-edit-view__config-body {
+  margin-top: 12px;
+  /* The expanded form can be taller than its slot inside the overflow:hidden
+     left pane — give it its own scroll so every key stays reachable. */
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+/* Eye toggle on secret inputs — reveal/hide the value. */
+.plugin-edit-view__config-eye {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid var(--border-strong, #c9d0da);
+  background: var(--panel, #fff);
+  color: var(--text-soft, #989590);
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.plugin-edit-view__config-eye:hover {
+  border-color: var(--accent, #c96442);
+  color: var(--accent, #c96442);
+  background: var(--accent-tint, #fbeee5);
+}

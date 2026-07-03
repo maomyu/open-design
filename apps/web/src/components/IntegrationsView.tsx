@@ -12,6 +12,7 @@ import { ConnectorSection } from './SettingsDialog';
 import { Icon } from './Icon';
 import { McpClientSection } from './McpClientSection';
 import { SkillsSection } from './SkillsSection';
+import { ThirdPartyApiKeysSection } from './ThirdPartyApiKeysSection';
 import { UseEverywhereGuidePanel } from './UseEverywhereModal';
 import { useT } from '../i18n';
 
@@ -159,6 +160,7 @@ export function IntegrationsView({
         {activeTab === 'mcp' ? <McpClientSection /> : null}
 
         {activeTab === 'connectors' ? (
+          <>
           <ConnectorSection
             cfg={localConfig}
             setCfg={setLocalConfig}
@@ -182,6 +184,11 @@ export function IntegrationsView({
               })
             }
           />
+          {/* Global third-party service keys (e.g. TIKHUB_API_KEY). Stored
+              in the daemon's app-config and injected into agent runs as
+              env vars — see ThirdPartyApiKeysSection for details. */}
+          <ThirdPartyApiKeysSection />
+          </>
         ) : null}
 
         {activeTab === 'skills' ? (

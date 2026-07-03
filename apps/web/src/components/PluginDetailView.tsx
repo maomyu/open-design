@@ -14,21 +14,18 @@ import { navigate } from '../router';
 import { useI18n } from '../i18n';
 import { useAnalytics } from '../analytics/provider';
 import { trackPluginDetailClick } from '../analytics/events';
-import { PluginEditor } from './PluginEditor';
-import { isProductOwned } from './plugins-home/usePluginFacets';
 
 interface Props {
   pluginId: string;
 }
 
 export function PluginDetailView(props: Props) {
-  const { locale, t } = useI18n();
+  const { locale } = useI18n();
   const analytics = useAnalytics();
   const [plugin, setPlugin] = useState<InstalledPluginRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState<ApplyResult | null>(null);
-  const [editing, setEditing] = useState(false);
 
   const onBack = () => {
     trackPluginDetailClick(analytics.track, { page_name: 'plugins', area: 'plugin_detail', element: 'back', plugin_id: props.pluginId });
@@ -121,14 +118,8 @@ export function PluginDetailView(props: Props) {
         <h1>{plugin.title}</h1>
         <div className="plugin-detail__meta">
           <span>v{plugin.version}</span>
-          {isProductOwned(plugin) ? (
-            <span>{t('pluginsHome.ownedBadge')}</span>
-          ) : (
-            <>
-              <span>trust: {plugin.trust}</span>
-              <span>source: {plugin.sourceKind}</span>
-            </>
-          )}
+          <span>trust: {plugin.trust}</span>
+          <span>source: {plugin.sourceKind}</span>
           {od.taskKind ? <span>{od.taskKind}</span> : null}
         </div>
       </header>
@@ -259,14 +250,6 @@ export function PluginDetailView(props: Props) {
         >
           {applying ? 'Applying…' : 'Use this plugin'}
         </button>
-        <button
-          type="button"
-          className="plugin-detail__edit"
-          onClick={() => setEditing(true)}
-          data-testid="plugin-detail-edit"
-        >
-          {t('pluginEditor.openButton')}
-        </button>
         {applied ? (
           <div className="plugin-detail__applied">
             Applied (snapshot {applied.appliedPlugin.snapshotId.slice(0, 8)}…) —
@@ -274,13 +257,6 @@ export function PluginDetailView(props: Props) {
           </div>
         ) : null}
       </footer>
-      {editing ? (
-        <PluginEditor
-          pluginId={props.pluginId}
-          {...(plugin?.title ? { pluginTitle: plugin.title } : {})}
-          onClose={() => setEditing(false)}
-        />
-      ) : null}
     </div>
   );
 }

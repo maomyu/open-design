@@ -21,7 +21,7 @@ import { TrustBadge } from '../TrustBadge';
 import { PreviewSurface } from './cards/PreviewSurface';
 import { localizePluginDescription, localizePluginTitle } from './localization';
 import { isProductOwned } from './usePluginFacets';
-import { PluginEditor } from '../PluginEditor';
+import { navigate } from '../../router';
 import { inferPluginPreview } from './preview';
 import type { PluginUseAction } from './useActions';
 
@@ -62,7 +62,6 @@ export function PluginCard({
   // instead of the generic "Official" trust badge, so your first-party
   // plugins read apart from the bundled open-source demos.
   const owned = isProductOwned(record);
-  const [editing, setEditing] = useState(false);
   const ownedBadgeProps = owned
     ? { label: t('pluginsHome.ownedBadge'), className: 'plugin-trust-badge--owned' }
     : {};
@@ -152,7 +151,7 @@ export function PluginCard({
               <button
                 type="button"
                 className="plugins-home__action plugins-home__action--secondary"
-                onClick={() => setEditing(true)}
+                onClick={() => navigate({ kind: 'marketplace-edit', pluginId: record.id })}
                 aria-label={`Edit ${title}`}
                 data-testid={`plugins-home-edit-${record.id}`}
               >
@@ -252,8 +251,8 @@ export function PluginCard({
                 onClick={() => onShareAction(record, 'contribute-open-design')}
                 disabled={pendingAny || shareBusy}
                 aria-busy={sharePendingAction === 'contribute-open-design' ? 'true' : undefined}
-                aria-label={`Contribute ${title} to Open Design`}
-                title="Contribute plugin to Open Design with a pull request"
+                aria-label={`Contribute ${title} to WorkBuild`}
+                title="Contribute plugin to WorkBuild with a pull request"
                 data-testid={`plugins-home-contribute-open-design-${record.id}`}
               >
                 <Icon
@@ -290,13 +289,6 @@ export function PluginCard({
         </span>
         <TrustBadge trust={record.trust} {...ownedBadgeProps} />
       </div>
-      {editing ? (
-        <PluginEditor
-          pluginId={record.id}
-          pluginTitle={title}
-          onClose={() => setEditing(false)}
-        />
-      ) : null}
     </article>
   );
 }

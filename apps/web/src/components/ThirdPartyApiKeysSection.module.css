@@ -1,0 +1,74 @@
+/* Third-party API keys section (Integrations → Connectors). Component-owned
+   styles per the web CSS ownership rules; shared button/input primitives
+   come from the global stylesheets. */
+
+.section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.empty a {
+  color: var(--accent);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.keyInput {
+  flex: 0 0 240px;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.valueInput {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.removeBtn {
+  flex: 0 0 auto;
+}
+
+.error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger, #c0392b);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

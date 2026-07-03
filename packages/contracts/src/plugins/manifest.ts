@@ -40,6 +40,21 @@ export const InputFieldSchema = z.object({
 
 export type InputField = z.infer<typeof InputFieldSchema>;
 
+// A config key a plugin declares it needs (third-party API key, app id/secret,
+// etc.). Values are NOT stored in the manifest — the user fills them per-plugin
+// in the plugin editor; the daemon keeps them in app-config and injects them as
+// env vars into that plugin's runs. `name` is env-var style (UPPER_SNAKE).
+export const PluginConfigKeySchema = z.object({
+  name:        z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'Config key must be UPPER_SNAKE (env-var style).'),
+  label:       z.string().optional(),
+  description: z.string().optional(),
+  required:    z.boolean().optional(),
+  secret:      z.boolean().optional(), // default true → masked in the editor
+  link:        z.string().optional(),  // where to obtain the key
+}).passthrough();
+
+export type PluginConfigKey = z.infer<typeof PluginConfigKeySchema>;
+
 export const LocalizedTextSchema = z.record(z.string()).refine(
   (value) => Object.keys(value).length > 0,
   { message: 'Localized text must include at least one locale.' },
@@ -136,19 +151,45 @@ export const PluginConnectorRefSchema = z.object({
 
 export type PluginConnectorRef = z.infer<typeof PluginConnectorRefSchema>;
 
+// A per-mode prompt slot inside a stage. Some steps run differently depending
+// on a runtime input (e.g. the topic step: "AI suggest" vs "scrape trending
+// via bb-browser"); each mode carries its own prompt so the operator can tune
+// each path's output independently. The agent picks the matching mode from the
+// relevant input value and follows that prompt.
+export const WorkflowStageModeSchema = z.object({
+  id:          z.string().min(1),
+  label:       z.string().optional(),
+  label_i18n:  LocalizedTextSchema.optional(),
+  prompt:      z.string().optional(),
+  prompt_i18n: LocalizedTextSchema.optional(),
+}).passthrough();
+
+export type WorkflowStageMode = z.infer<typeof WorkflowStageModeSchema>;
+
 // Workflow mode (deer-flow inspired). A plugin can declare an explicit,
 // ordered list of stages so the host renders a step rail and the agent
 // drives the conversation stage by stage. `gate: 'confirm'` marks a
 // human checkpoint between stages — the agent raises AskUserQuestion and
-// the streaming run pauses until the operator confirms/rejects. The
-// shared state surfaces are TodoWrite (the step rail) and a live-artifact
-// board; this schema only carries the declaration, the runtime reuses
-// existing primitives (no new engine).
+// the streaming run pauses until the operator confirms/rejects. Each stage
+// carries its own `prompt` (the methodology that decides that step's output
+// style) and optional per-mode prompt slots; the daemon composes these into
+// the system prompt so they actually drive the run. The shared state surfaces
+// are TodoWrite (the step rail) and a live-artifact board.
 export const WorkflowStageSchema = z.object({
-  id:         z.string().min(1),
-  title:      z.string().optional(),
-  title_i18n: LocalizedTextSchema.optional(),
-  gate:       z.enum(['confirm', 'choice', 'none']).optional(),
+  id:          z.string().min(1),
+  title:       z.string().optional(),
+  title_i18n:  LocalizedTextSchema.optional(),
+  gate:        z.enum(['confirm', 'choice', 'none']).optional(),
+  prompt:      z.string().optional(),
+  prompt_i18n: LocalizedTextSchema.optional(),
+  modes:       z.array(WorkflowStageModeSchema).optional(),
+  // Stage-level skill bindings. Each reference (by global skill id via
+  // `ref`) scopes that skill's methodology to THIS step: the daemon
+  // injects the skill body under the step's prompt block, so a plugin can
+  // orchestrate different skills per stage (e.g. a scraping skill on the
+  // topic step, a copywriting skill on the script step) instead of
+  // injecting everything globally via od.context.skills.
+  skills:      z.array(ReferenceSchema).optional(),
 }).passthrough();
 
 export type WorkflowStage = z.infer<typeof WorkflowStageSchema>;
@@ -224,6 +265,15 @@ export const PluginManifestSchema = z.object({
       optional: z.array(PluginConnectorRefSchema).optional(),
     }).passthrough().optional(),
     inputs: z.array(InputFieldSchema).optional(),
+    // Config keys the plugin needs (API keys / app id+secret). The user fills
+    // values per-plugin in the plugin editor; the daemon injects them as env
+    // vars into this plugin's runs. See PluginConfigKeySchema.
+    config: z.array(PluginConfigKeySchema).optional(),
+    // Optional path to an existing `.env` the plugin already reads (e.g. a
+    // workbench's). Supports `~` and `${OD_WORKBENCH_DIR}`. The daemon reads it
+    // so the editor reflects already-configured keys AND injects them into runs
+    // (per-plugin `pluginConfig` overrides these).
+    configEnvFile: z.string().optional(),
     capabilities: z.array(z.string()).optional(),
     // Workflow-mode declaration. When present, the host renders a step
     // rail from these stages and the agent drives the run stage by stage

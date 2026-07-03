@@ -99,6 +99,19 @@ export interface AppConfigPrefs {
   privacyDecisionAt?: number | null;
   orbit?: OrbitConfigPrefs;
   customInstructions?: string | null;
+  // Locally stored third-party service API keys (e.g. TIKHUB_API_KEY for
+  // trending-topic scraping). Injected into spawned agent child processes
+  // as environment variables, with lower precedence than the per-agent
+  // `agentCliEnv` entries above. Like `agentCliEnv`, these values are
+  // local-only secrets: never log them and never return them outside
+  // this machine.
+  thirdPartyApiKeys?: Record<string, string>;
+  // Per-plugin config values: `{ [pluginId]: { [KEY]: value } }`. A plugin
+  // declares the keys it needs via `od.config`; the operator fills values in
+  // the plugin editor. The daemon injects a plugin's own map into THAT
+  // plugin's runs only, at higher precedence than global thirdPartyApiKeys.
+  // Same secret discipline: never log, never return off-machine.
+  pluginConfig?: Record<string, Record<string, string>>;
 }
 
 const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
@@ -115,6 +128,8 @@ const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
   'privacyDecisionAt',
   'orbit',
   'customInstructions',
+  'thirdPartyApiKeys',
+  'pluginConfig',
 ] as const);
 
 function configFile(dataDir: string): string {
@@ -218,6 +233,59 @@ export function validateAgentCliEnv(raw: unknown): AgentCliEnvPrefs | undefined 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+// Env-var-shaped key names only: uppercase letters, digits, underscores,
+// starting with a letter (e.g. TIKHUB_API_KEY). Anything else is dropped
+// silently — these entries are spread into child process env, so a loose
+// key shape would let arbitrary env names through.
+const THIRD_PARTY_API_KEY_NAME = /^[A-Z][A-Z0-9_]*$/;
+
+export function validateThirdPartyApiKeys(
+  raw: unknown,
+): Record<string, string> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Record<string, string> = Object.create(null);
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === '__proto__' || key === 'constructor') continue;
+    if (!THIRD_PARTY_API_KEY_NAME.test(key)) continue;
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    result[key] = trimmed;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+// Per-plugin config: a map of pluginId -> { ENV_KEY: value }. Each inner map is
+// validated with the same env-var key shape as thirdPartyApiKeys (the values
+// get spread into a child process env at run time). Plugin ids are kept loose
+// (any non-prototype string) but values must be strings; empty maps are
+// dropped so a cleared plugin disappears entirely.
+export function validatePluginConfig(
+  raw: unknown,
+): Record<string, Record<string, string>> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Record<string, Record<string, string>> = Object.create(null);
+  for (const [pluginId, inner] of Object.entries(raw as Record<string, unknown>)) {
+    if (pluginId === '__proto__' || pluginId === 'constructor') continue;
+    if (typeof pluginId !== 'string' || !pluginId.trim()) continue;
+    const validated = validateThirdPartyApiKeys(inner);
+    if (validated) result[pluginId] = validated;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+// Env map to inject for a given plugin's run (validated on the way out).
+export function pluginConfigEnvForPlugin(
+  prefs: AppConfigPrefs,
+  pluginId: string | null | undefined,
+): Record<string, string> {
+  if (!pluginId) return {};
+  const all = validatePluginConfig(prefs.pluginConfig);
+  return all?.[pluginId] ? { ...all[pluginId] } : {};
+}
+
 function isValidOrbitTime(time: string): boolean {
   const match = /^(\d{2}):(\d{2})$/.exec(time);
   if (!match) return false;
@@ -253,6 +321,24 @@ export function agentCliEnvForAgent(
   const env = prefs[agentId];
   if (!env || typeof env !== 'object' || Array.isArray(env)) return {};
   return { ...env };
+}
+
+// Compose the configured env map injected into a spawned agent child:
+// global third-party service keys first (e.g. TIKHUB_API_KEY for the
+// short-video trending scraper), then the per-agent `agentCliEnv` so an
+// agent-scoped value wins on a name collision. The stored values are
+// re-validated on the way out so a hand-edited app-config.json cannot
+// smuggle non-env-shaped keys into the child process environment.
+// Reminder: these are local-only secrets — never log them and never
+// return them outside this machine.
+export function configuredEnvForAgentSpawn(
+  prefs: AppConfigPrefs,
+  agentId: string,
+): Record<string, string> {
+  return {
+    ...(validateThirdPartyApiKeys(prefs.thirdPartyApiKeys) ?? {}),
+    ...agentCliEnvForAgent(prefs.agentCliEnv, agentId),
+  };
 }
 
 function applyConfigValue(
@@ -327,6 +413,26 @@ function applyConfigValue(
       target[key] = value.slice(0, 5000);
     } else if (value === null) {
       target[key] = value;
+    }
+    return;
+  }
+  if (key === 'thirdPartyApiKeys') {
+    const validated = validateThirdPartyApiKeys(value);
+    if (validated !== undefined) {
+      target[key] = validated;
+    } else {
+      // `null` / `{}` / all-invalid payloads clear the stored map — same
+      // deletion semantics as agentCliEnv above.
+      delete target[key];
+    }
+    return;
+  }
+  if (key === 'pluginConfig') {
+    const validated = validatePluginConfig(value);
+    if (validated !== undefined) {
+      target[key] = validated;
+    } else {
+      delete target[key];
     }
     return;
   }

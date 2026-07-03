@@ -40,6 +40,26 @@ export interface AppConfigPrefs {
   privacyDecisionAt?: number | null;
   orbit?: OrbitConfigPrefs;
   customInstructions?: string | null;
+  /**
+   * Locally stored third-party service API keys (e.g. TIKHUB_API_KEY for
+   * trending-topic scraping). Keys must look like environment variable
+   * names (`/^[A-Z][A-Z0-9_]*$/`); values are plain strings. The daemon
+   * injects them into spawned agent child processes as environment
+   * variables (with lower precedence than per-agent `agentCliEnv`).
+   * These are secrets: never log them and never send them off-machine.
+   */
+  thirdPartyApiKeys?: Record<string, string>;
+  /**
+   * Per-plugin config values: `{ [pluginId]: { [KEY]: value } }`. A plugin
+   * declares the keys it needs via `od.config` in its manifest; the operator
+   * fills the values in the plugin editor. The daemon injects a plugin's own
+   * map as environment variables into THAT plugin's runs only (highest
+   * precedence — above global thirdPartyApiKeys), so different plugins can use
+   * different credentials. Same secrecy rules as thirdPartyApiKeys: never log,
+   * never send off-machine. Key names must look like env vars
+   * (`/^[A-Z][A-Z0-9_]*$/`).
+   */
+  pluginConfig?: Record<string, Record<string, string>>;
 }
 
 export interface AppConfigResponse {
