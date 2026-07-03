@@ -117,7 +117,6 @@ export const tr: Dict = {
 
   'app.brand': 'WorkBuild',
   'app.brandPill': 'Önizleme Araştırması',
-  'app.brandSubtitle': 'Nexu Labs tarafından',
   'app.welcomeLoading': 'Çalışma alanı yükleniyor…',
 
   'settings.welcomeKicker': "",

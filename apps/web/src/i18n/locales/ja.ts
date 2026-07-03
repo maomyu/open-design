@@ -117,7 +117,6 @@ export const ja: Dict = {
 
   'app.brand': 'WorkBuild',
   'app.brandPill': 'リサーチプレビュー',
-  'app.brandSubtitle': 'by Nexu Labs',
   'app.welcomeLoading': 'ワークスペースを読み込み中…',
 
   'settings.welcomeKicker': "",

@@ -117,7 +117,6 @@ export const ptBR: Dict = {
 
   'app.brand': 'WorkBuild',
   'app.brandPill': 'Prévia de pesquisa',
-  'app.brandSubtitle': 'por Nexu Labs',
   'app.welcomeLoading': 'Carregando área de trabalho…',
 
   'settings.welcomeKicker': "",

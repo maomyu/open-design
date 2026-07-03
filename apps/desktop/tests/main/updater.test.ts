@@ -1208,7 +1208,10 @@ describe("desktop updater", () => {
       });
 
       expect(config.channel).toBe(DESKTOP_UPDATE_CHANNELS.BETA);
-      expect(config.metadataUrl).toContain("/beta/latest/metadata.json");
+      // No default upstream feed: without an explicit OD_UPDATE_METADATA_URL
+      // the updater must stay dormant (empty URL, disabled).
+      expect(config.metadataUrl).toBe("");
+      expect(config.enabled).toBe(false);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -1227,7 +1230,10 @@ describe("desktop updater", () => {
       });
 
       expect(config.channel).toBe(DESKTOP_UPDATE_CHANNELS.NIGHTLY);
-      expect(config.metadataUrl).toContain("/nightly/latest/metadata.json");
+      // No default upstream feed: without an explicit OD_UPDATE_METADATA_URL
+      // the updater must stay dormant (empty URL, disabled).
+      expect(config.metadataUrl).toBe("");
+      expect(config.enabled).toBe(false);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -1246,7 +1252,10 @@ describe("desktop updater", () => {
       });
 
       expect(config.channel).toBe(DESKTOP_UPDATE_CHANNELS.PREVIEW);
-      expect(config.metadataUrl).toContain("/preview/latest/metadata.json");
+      // No default upstream feed: without an explicit OD_UPDATE_METADATA_URL
+      // the updater must stay dormant (empty URL, disabled).
+      expect(config.metadataUrl).toBe("");
+      expect(config.enabled).toBe(false);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

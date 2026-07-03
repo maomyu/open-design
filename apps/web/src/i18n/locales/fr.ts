@@ -104,7 +104,6 @@ export const fr: Dict = {
   'plugins.availableDetails.capabilitySummary': 'Résumé des capacités',
   'app.brand': 'WorkBuild',
   'app.brandPill': 'Aperçu de recherche',
-  'app.brandSubtitle': 'par Nexu Labs',
   'app.welcomeLoading': 'Chargement de l\'espace de travail…',
   'settings.welcomeKicker': '',
   'settings.welcomeTitle': 'Bienvenue',

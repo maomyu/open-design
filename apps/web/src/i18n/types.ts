@@ -204,7 +204,6 @@ export interface Dict {
   // App / brand
   'app.brand': string;
   'app.brandPill': string;
-  'app.brandSubtitle': string;
   'app.welcomeLoading': string;
 
   // Settings dialog

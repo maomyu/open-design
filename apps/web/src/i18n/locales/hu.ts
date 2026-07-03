@@ -117,7 +117,6 @@ export const hu: Dict = {
 
   'app.brand': 'WorkBuild',
   'app.brandPill': 'Kutatási előzetes',
-  'app.brandSubtitle': 'a Nexu Labs-tól',
   'app.welcomeLoading': 'Munkaterület betöltése…',
 
   'settings.welcomeKicker': "",

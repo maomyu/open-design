@@ -143,7 +143,7 @@ interface PendingPluginUseHandoff {
 const AUTHORING_DEFAULT_SCENARIO_INPUTS = {
   artifactKind: 'WorkBuild plugin',
   audience: 'WorkBuild plugin authors',
-  topic: 'packaging a reusable workflow as an WorkBuild plugin',
+  topic: 'packaging a reusable workflow as a WorkBuild plugin',
 };
 
 type HomeDesignSystemOption = {

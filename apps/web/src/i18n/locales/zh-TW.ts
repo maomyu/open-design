@@ -122,7 +122,6 @@ export const zhTW: Dict = {
 
   'app.brand': 'WorkBuild',
   'app.brandPill': '研究預覽版',
-  'app.brandSubtitle': '由 Nexu Labs 出品',
   'app.welcomeLoading': '正在載入工作區…',
 
   'settings.welcomeKicker': "",

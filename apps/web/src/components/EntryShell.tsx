@@ -72,7 +72,6 @@ import { DesignsTab } from './DesignsTab';
 import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
 import { DesignSystemsTab } from './DesignSystemsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
-import { UpdaterPopup } from './UpdaterPopup';
 import { HomeView } from './HomeView';
 import {
   createPluginUseHandoff,
@@ -612,7 +611,6 @@ export function EntryShell({
                 </span>
               </button>
             </div>
-            <UpdaterPopup />
             {avatarMenu}
           </div>
           <div

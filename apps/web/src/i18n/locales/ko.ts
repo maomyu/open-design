@@ -117,7 +117,6 @@ export const ko: Dict = {
 
   'app.brand': 'WorkBuild',
   'app.brandPill': 'Research Preview',
-  'app.brandSubtitle': 'by Nexu Labs',
   'app.welcomeLoading': '워크스페이스를 불러오는 중…',
 
   'settings.welcomeKicker': "",

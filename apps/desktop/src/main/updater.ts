@@ -67,7 +67,6 @@ export const DESKTOP_UPDATE_ENV = Object.freeze({
   PLATFORM: "OD_UPDATE_PLATFORM",
 } as const);
 
-const DEFAULT_RELEASE_ORIGIN = "https://releases.open-design.ai";
 const OWNERSHIP_SENTINEL = ".open-design-updater-root.json";
 const STORE_METADATA_FILE = "metadata.json";
 const RELEASES_DIR = "releases";
@@ -249,10 +248,6 @@ function isDesktopUpdateChannel(value: unknown): value is DesktopUpdateChannel {
   return typeof value === "string" && DESKTOP_UPDATE_CHANNEL_VALUES.has(value);
 }
 
-function defaultMetadataUrl(channel: DesktopUpdateChannel): string {
-  return `${DEFAULT_RELEASE_ORIGIN}/${channel}/latest/metadata.json`;
-}
-
 function normalizeDownloadRoot(value: string): string {
   if (value.includes("\0")) throw new Error("update download root must not contain null bytes");
   if (!isAbsolute(value)) throw new Error(`update download root must be absolute: ${value}`);
@@ -287,7 +282,14 @@ export function resolveDesktopUpdaterConfig(input: DesktopUpdaterConfigInput): D
   const env = input.env ?? process.env;
   const mode = normalizeMode(env[DESKTOP_UPDATE_ENV.MODE], input.mode ?? DESKTOP_UPDATE_MODES.PACKAGE_LAUNCHER);
   const defaultEnabled = input.source === SIDECAR_SOURCES.PACKAGED;
-  const enabled = isTruthyEnv(env[DESKTOP_UPDATE_ENV.ENABLED]) ?? defaultEnabled;
+  // There is NO default update feed: WorkBuild ships without upstream
+  // release infrastructure, so the updater stays dormant unless an explicit
+  // OD_UPDATE_METADATA_URL is configured (packaging harnesses and future
+  // self-hosted feeds set it). This is the invariant that keeps a customer
+  // install from ever phoning an upstream release server.
+  const explicitMetadataUrl = normalizeOptionalNonEmpty(env[DESKTOP_UPDATE_ENV.METADATA_URL]);
+  const enabled =
+    (isTruthyEnv(env[DESKTOP_UPDATE_ENV.ENABLED]) ?? defaultEnabled) && explicitMetadataUrl != null;
   const runtimeBase = input.runtimeBase == null ? process.cwd() : input.runtimeBase;
   const downloadRoot = normalizeDownloadRoot(
     env[DESKTOP_UPDATE_ENV.DOWNLOAD_ROOT] ??
@@ -333,7 +335,7 @@ export function resolveDesktopUpdaterConfig(input: DesktopUpdaterConfigInput): D
     downloadRoot,
     enabled,
     ...(installerObservationRoot == null ? {} : { installerObservationRoot }),
-    metadataUrl: env[DESKTOP_UPDATE_ENV.METADATA_URL] ?? defaultMetadataUrl(channel),
+    metadataUrl: explicitMetadataUrl ?? "",
     mode,
     ...(namespace == null ? {} : { namespace }),
     openDryRun: isTruthyEnv(env[DESKTOP_UPDATE_ENV.OPEN_DRY_RUN]) ?? false,

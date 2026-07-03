@@ -46,7 +46,7 @@ function makeConfig(root: string, namespace: string): ToolPackConfig {
 describe("resolveMacInstallIdentity", () => {
   it("keeps stable builds on the canonical mac identity", () => {
     expect(resolveMacInstallIdentity(makeConfig("/work", "release-stable"))).toMatchObject({
-      appId: "io.open-design.desktop",
+      appId: "com.workbuild.desktop",
       installerTitle: "WorkBuild",
       productName: "WorkBuild",
       publicAppBundleName: "WorkBuild.app",
@@ -58,7 +58,7 @@ describe("resolveMacInstallIdentity", () => {
     const config = makeConfig("/work", "release-beta");
 
     expect(resolveMacInstallIdentity(config)).toEqual({
-      appId: "io.open-design.desktop.beta",
+      appId: "com.workbuild.desktop.beta",
       executableName: "WorkBuild Beta",
       installerTitle: "WorkBuild Beta",
       productName: "WorkBuild Beta",
@@ -72,7 +72,7 @@ describe("resolveMacInstallIdentity", () => {
     const config = makeConfig("/work", "release-preview");
 
     expect(resolveMacInstallIdentity(config)).toEqual({
-      appId: "io.open-design.desktop.preview",
+      appId: "com.workbuild.desktop.preview",
       executableName: "WorkBuild Preview",
       installerTitle: "WorkBuild Preview",
       productName: "WorkBuild Preview",
@@ -90,7 +90,7 @@ describe("resolveMacInstallIdentity", () => {
     const nightlyNamespaceConfig = makeConfig("/work", "release-nightly");
 
     expect(resolveMacInstallIdentity(nightlyVersionConfig)).toEqual({
-      appId: "io.open-design.desktop.nightly",
+      appId: "com.workbuild.desktop.nightly",
       executableName: "WorkBuild Nightly",
       installerTitle: "WorkBuild Nightly",
       productName: "WorkBuild Nightly",

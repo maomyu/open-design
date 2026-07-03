@@ -117,7 +117,6 @@ export const de: Dict = {
 
   'app.brand': 'WorkBuild',
   'app.brandPill': 'Forschungsvorschau',
-  'app.brandSubtitle': 'von Nexu Labs',
   'app.welcomeLoading': 'Workspace wird geladen…',
 
   'settings.welcomeKicker': "",

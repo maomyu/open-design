@@ -29,7 +29,7 @@ const AUTHORING_PLUGIN = {
     od: {
       kind: 'scenario',
       taskKind: 'new-generation',
-      useCase: { query: 'Create an WorkBuild plugin for {{pluginGoal}}.' },
+      useCase: { query: 'Create a WorkBuild plugin for {{pluginGoal}}.' },
       inputs: [
         {
           name: 'pluginGoal',
@@ -261,7 +261,7 @@ const LIVE_ARTIFACT_IMAGE_TEMPLATE_PLUGIN = {
 const AUTHORING_DEFAULT_SCENARIO_INPUTS = {
   artifactKind: 'WorkBuild plugin',
   audience: 'WorkBuild plugin authors',
-  topic: 'packaging a reusable workflow as an WorkBuild plugin',
+  topic: 'packaging a reusable workflow as a WorkBuild plugin',
 };
 
 const REFLY_DESIGN_SYSTEM = {
@@ -596,7 +596,7 @@ describe('HomeView prompt handoff', () => {
       inputs: {
         artifactKind: 'WorkBuild plugin',
         audience: 'WorkBuild plugin authors',
-        topic: 'packaging a reusable workflow as an WorkBuild plugin',
+        topic: 'packaging a reusable workflow as a WorkBuild plugin',
       },
     });
     await waitFor(() => {
@@ -614,7 +614,7 @@ describe('HomeView prompt handoff', () => {
       pluginInputs: {
         artifactKind: 'WorkBuild plugin',
         audience: 'WorkBuild plugin authors',
-        topic: 'packaging a reusable workflow as an WorkBuild plugin',
+        topic: 'packaging a reusable workflow as a WorkBuild plugin',
       },
       projectKind: 'other',
     }));

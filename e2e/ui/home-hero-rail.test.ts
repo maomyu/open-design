@@ -262,7 +262,7 @@ const PROMPT_TEMPLATES = [
 ];
 
 async function waitForLoadingToClear(page: Page) {
-  await expect(page.getByText('Loading Open Design…')).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByText('Loading WorkBuild…')).toHaveCount(0, { timeout: 15_000 });
 }
 
 async function seedBrowserConfig(page: Page, config: Record<string, unknown>) {
@@ -277,7 +277,7 @@ async function seedBrowserConfig(page: Page, config: Record<string, unknown>) {
 async function gotoEntryHome(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
-  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve Open Design' });
+  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve WorkBuild' });
   if (await privacyDialog.isVisible().catch(() => false)) {
     await privacyDialog.getByRole('button', { name: /not now/i }).click();
   }
@@ -290,14 +290,6 @@ test.beforeEach(async ({ page }) => {
     window.sessionStorage.clear();
     window.localStorage.setItem(key, JSON.stringify(value));
   }, { key: STORAGE_KEY, value: HOME_CONFIG });
-
-  await page.route('**/api/github/open-design', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ stargazers_count: 51600 }),
-    });
-  });
 
   await page.route('**/api/agents', async (route) => {
     await route.fulfill({
@@ -373,7 +365,6 @@ test.beforeEach(async ({ page }) => {
 test('home hero rail shows the current creation chips and More shortcuts', async ({ page }) => {
   await gotoEntryHome(page);
 
-  await expect(page.getByTestId('entry-star-badge')).toContainText('51.6K');
   await expect(page.getByTestId('home-hero-type-tabs')).toBeVisible();
   for (const id of ['prototype', 'live-artifact', 'deck', 'image', 'video', 'hyperframes', 'audio']) {
     await expect(page.getByTestId(`home-hero-rail-${id}`)).toBeVisible();

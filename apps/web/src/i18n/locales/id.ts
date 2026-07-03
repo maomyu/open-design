@@ -117,7 +117,6 @@ export const id: Dict = {
 
   'app.brand': 'WorkBuild',
   'app.brandPill': 'Pratinjau Riset',
-  'app.brandSubtitle': 'oleh Nexu Labs',
   'app.welcomeLoading': 'Memuat workspace...',
 
   'settings.welcomeKicker': "",
@@ -1055,7 +1054,7 @@ export const id: Dict = {
   'preview.closeTitle': 'Tutup pratinjau',
   'preview.loading': 'Memuat {label}...',
   'preview.errorTitle': 'Tidak dapat memuat contoh ini.',
-  'preview.errorBody': 'Pengambilan HTML contoh gagal. Pastikan WorkBuild berjalan, lalu coba lagi.',
+  'preview.errorBody': 'Pengambilan HTML contoh gagal. Pastika WorkBuild berjalan, lalu coba lagi.',
   'preview.retry': 'Coba lagi',
   'preview.unavailableTitle': 'Tidak ada pratinjau bawaan untuk {noun}.',
   'preview.unavailableBody': 'Jalankan prompt di chat untuk membuat keluaran {kind}.',
@@ -1545,7 +1544,7 @@ export const id: Dict = {
   'pet.navTitle': 'Pets',
   'pet.navHint': 'Pilih teman untuk melayang di workspace.',
   'pet.tabBuiltIn': 'Bawaan',
-  'pet.tabBuiltInHint': 'Pet pilihan yang disertakan dengan WorkBuild - pilih satu lalu adopsi.',
+  'pet.tabBuiltInHint': 'Pet pilihan yang disertakan denga WorkBuild - pilih satu lalu adopsi.',
   'pet.builtInEmpty': 'Pet bawaan belum tersedia. Coba refresh tab Komunitas setelah daemon online.',
   'pet.tabCustom': 'Kustom',
   'pet.tabCustomHint': 'Buat sendiri dengan nama, glyph, warna, atau sprite.',
@@ -1642,7 +1641,7 @@ export const id: Dict = {
   'pet.communitySyncDone': 'Tersinkron {wrote} pet baru ({total} total).',
   'pet.communitySyncFailed': 'Sinkronisasi gagal: {error}',
   'pet.codexBundled': 'Bawaan',
-  'pet.codexBundledTitle': 'Disertakan dengan WorkBuild - tidak perlu diunduh.',
+  'pet.codexBundledTitle': 'Disertakan denga WorkBuild - tidak perlu diunduh.',
 
   'settings.notifications': 'Notifikasi',
   'settings.notificationsHint': 'Atur suara dan notifikasi desktop.',
