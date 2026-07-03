@@ -32,6 +32,10 @@ function makePlugin(
       title,
       description: 'A plugin fixture',
       tags: ['fixture'],
+      // The mention picker only surfaces INVOKABLE bundled plugins
+      // (featured or kind=skill) — mark fixtures featured so bundled
+      // entries stay visible to these picker specs.
+      od: { featured: true },
     },
     fsPath: '/tmp',
     installedAt: 0,

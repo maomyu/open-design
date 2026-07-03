@@ -46,7 +46,10 @@ export interface AgentsResponse {
   agents: AgentInfo[];
 }
 
-export type SkillSource = 'built-in' | 'user';
+// 'claude' marks skills scanned read-only from the machine's global
+// ~/.claude/skills directory — personal tooling, not product content. The
+// daemon has emitted it for a while; the contract type lagged behind.
+export type SkillSource = 'built-in' | 'user' | 'claude';
 
 export interface SkillSummary {
   id: string;

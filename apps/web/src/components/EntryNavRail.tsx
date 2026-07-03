@@ -9,7 +9,6 @@
 // floating settings cog in the top-right corner of the main content.
 
 import { useMemo, type ReactNode } from 'react';
-import { EntryHelpMenu } from './EntryHelpMenu';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
 import type { Project } from '../types';
@@ -137,6 +136,15 @@ export function EntryNavRail({
           <Icon name="kanban" size={18} />
         </NavButton>
         <NavButton
+          active={view === 'plugins'}
+          ariaLabel={t('entry.navPlugins')}
+          label={t('entry.navPlugins')}
+          onClick={() => onViewChange('plugins')}
+          testId="entry-nav-plugins"
+        >
+          <Icon name="puzzle" size={18} />
+        </NavButton>
+        <NavButton
           active={view === 'design-systems'}
           ariaLabel={t('entry.navDesignSystems')}
           label={t('entry.navDesignSystems')}
@@ -175,10 +183,6 @@ export function EntryNavRail({
             ))
           )}
         </div>
-      </div>
-      <div className="entry-nav-rail__footer">
-        <div className="entry-nav-rail__divider" role="separator" />
-        <EntryHelpMenu />
       </div>
     </nav>
   );

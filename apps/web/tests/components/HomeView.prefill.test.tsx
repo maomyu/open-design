@@ -549,7 +549,9 @@ describe('HomeView prompt handoff', () => {
       pluginId: 'od-default',
       appliedPluginSnapshotId: null,
       pluginInputs: { prompt: 'Make a launch page for a robotics studio' },
-      projectKind: 'other',
+      // Free-form submits default to the general-purpose 'code' surface (the
+      // product's broadest default) rather than the legacy 'other' bucket.
+      projectKind: 'code',
     }));
   });
 

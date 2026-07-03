@@ -216,13 +216,28 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
   const mention = getContextMention(prompt);
   const mentionActive = Boolean(mention);
   const mentionQuery = mention?.query ?? '';
-  const pluginMatches = useMemo(
-    () =>
-      mentionActive
-        ? pluginOptions.filter((plugin) => pluginMatchesQuery(plugin, mentionQuery))
-        : [],
-    [mentionActive, mentionQuery, pluginOptions],
-  );
+  // The mention picker (`/` and `@`) surfaces INVOKABLE plugins only — the
+  // bundled registry is dominated by design-system/template scenarios that
+  // would bury the real workflows (公众号 / 短视频). Keep user-installed
+  // plugins, bundled skill workflows, and featured showcases; rank the real
+  // workflows first. This filter is picker-scoped on purpose: the same
+  // `pluginOptions` array also feeds the chip preset cards and the free-form
+  // fallback, which need the full list.
+  const pluginMatches = useMemo(() => {
+    if (!mentionActive) return [];
+    const invokable = (plugin: InstalledPluginRecord): boolean => {
+      if (plugin.sourceKind !== 'bundled') return true;
+      const od = plugin.manifest?.od;
+      return od?.featured === true || od?.kind === 'skill';
+    };
+    const rank = (plugin: InstalledPluginRecord): number => {
+      if (plugin.sourceKind !== 'bundled') return 0;
+      return plugin.manifest?.od?.kind === 'skill' ? 1 : 2;
+    };
+    return pluginOptions
+      .filter((plugin) => invokable(plugin) && pluginMatchesQuery(plugin, mentionQuery))
+      .sort((a, b) => rank(a) - rank(b));
+  }, [mentionActive, mentionQuery, pluginOptions]);
   const skillMatches = useMemo(
     () =>
       mentionActive

@@ -483,32 +483,19 @@ export function HomeView({
   );
 
   const selectableSkills = useMemo(
-    () => skills.filter((skill) => !skill.aggregatesExamples),
+    () =>
+      skills.filter(
+        (skill) =>
+          !skill.aggregatesExamples &&
+          // Hide machine-global ~/.claude/skills entries from the `/` picker:
+          // they are the operator's personal tooling (gstack, 求职助手…), not
+          // product content — a customer install should not see them. They
+          // stay reachable from the Skills management surfaces.
+          skill.source !== 'claude',
+      ),
     [skills],
   );
 
-  // The `/` (and `@`) picker should surface INVOKABLE plugins, not the full
-  // bundled registry. `listPlugins()` returns ~400 entries dominated by
-  // design-systems and design-templates (`kind: 'scenario'`); dumping all of
-  // them buries the real built-in workflows (公众号 / 短视频, which are
-  // `kind: 'skill'` + featured). Keep: user-installed plugins, featured
-  // plugins, and skill-kind plugins — i.e. the things a user actually runs.
-  const invokablePlugins = useMemo(() => {
-    // Rank so a bare `/` surfaces the real workflows first (the picker slices
-    // to the top results): user-installed plugins, then built-in skill
-    // workflows (公众号 / 短视频), then featured example showcases.
-    const rank = (plugin: InstalledPluginRecord): number => {
-      if (plugin.sourceKind !== 'bundled') return 0;
-      return plugin.manifest?.od?.kind === 'skill' ? 1 : 2;
-    };
-    return plugins
-      .filter((plugin) => {
-        if (plugin.sourceKind !== 'bundled') return true;
-        const od = plugin.manifest?.od;
-        return od?.featured === true || od?.kind === 'skill';
-      })
-      .sort((a, b) => rank(a) - rank(b));
-  }, [plugins]);
 
   const enabledMcpServers = useMemo(
     () => mcpServers.filter((server) => server.enabled),
@@ -1330,7 +1317,7 @@ export function HomeView({
         stagedFiles={stagedFiles}
         onAddFiles={stageFiles}
         onRemoveFile={removeStagedFile}
-        pluginOptions={invokablePlugins}
+        pluginOptions={plugins}
         pluginsLoading={pluginsLoading}
         skillOptions={selectableSkills}
         skillsLoading={skillsLoading}
