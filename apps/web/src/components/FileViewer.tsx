@@ -69,6 +69,8 @@ import {
 } from '../runtime/exports';
 import { buildReactComponentSrcdoc } from '../runtime/react-component';
 import { findHtmlEntriesReferencing } from '../runtime/jsx-module-refs';
+import { BoardView } from './BoardView';
+import { isBoardFileName } from '../runtime/board-file';
 import { buildLazySrcdocTransport, buildSrcdoc, canActivateSrcDocTransport } from '../runtime/srcdoc';
 import {
   hasUrlModeBridge,
@@ -714,6 +716,10 @@ interface Props {
   onSavePreviewComment?: (target: PreviewCommentTarget, note: string, attachAfterSave: boolean) => Promise<PreviewComment | null>;
   onRemovePreviewComment?: (commentId: string) => Promise<void>;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[]) => Promise<void> | void;
+  // Live-artifact → chat bridge: an artifact's button posts
+  // `{type:'od:send-prompt', text}` and the host sends `text` as a user
+  // message, so clickable boards can drive the conversation (no typing).
+  onArtifactPrompt?: (text: string) => void;
   onFileSaved?: () => Promise<void> | void;
   // Open `openName` as a tab (focusing it) and close `closeName` in one
   // atomic tab-state update. The React module pointer uses this to jump to the
@@ -736,6 +742,7 @@ export function FileViewer({
   onSavePreviewComment,
   onRemovePreviewComment,
   onSendBoardCommentAttachments,
+  onArtifactPrompt,
   onFileSaved,
   onOpenFileReplacing,
   commentPortalId,
@@ -761,6 +768,15 @@ export function FileViewer({
     });
   }, [projectId, projectKind, file.name, file.kind, rendererMatch?.renderer.id, analytics.track]);
 
+  // Structured board data (`board.json` / `*.board.json`) → native
+  // Bitable-style table renderer instead of an HTML/iframe preview. The agent
+  // writes/updates DATA (tables → fields → rows), not presentation, so per-step
+  // model output is tiny and the view updates fast. Native React (not a
+  // sandboxed iframe), so it reads project files through the app origin.
+  if (isBoardFileName(file.name)) {
+    return <BoardView projectId={projectId} file={file} />;
+  }
+
   if (rendererMatch?.renderer.id === 'html' || rendererMatch?.renderer.id === 'deck-html') {
     return (
       <HtmlViewer
@@ -776,6 +792,7 @@ export function FileViewer({
         onSavePreviewComment={onSavePreviewComment}
         onRemovePreviewComment={onRemovePreviewComment}
         onSendBoardCommentAttachments={onSendBoardCommentAttachments}
+        onArtifactPrompt={onArtifactPrompt}
         onFileSaved={onFileSaved}
         commentPortalId={commentPortalId}
         onCommentModeChange={onCommentModeChange}
@@ -1262,7 +1279,7 @@ export function LiveArtifactViewer({
                   ref={iframeRef}
                   data-testid="live-artifact-preview-frame"
                   title={liveArtifact.title}
-                  sandbox="allow-scripts allow-popups allow-downloads"
+                  sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
                   src={previewUrl}
                 />
               </PreviewDrawOverlay>
@@ -3673,7 +3690,7 @@ function ReactComponentViewer({
             <iframe
               data-testid="react-component-preview-frame"
               title={file.name}
-              sandbox="allow-scripts allow-downloads"
+              sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"
               srcDoc={srcDoc}
               style={{ width: '100%', height: '100%', border: 0 }}
             />
@@ -3785,6 +3802,7 @@ function HtmlViewer({
   onSavePreviewComment,
   onRemovePreviewComment,
   onSendBoardCommentAttachments,
+  onArtifactPrompt,
   onFileSaved,
   commentPortalId,
   onCommentModeChange,
@@ -3801,6 +3819,10 @@ function HtmlViewer({
   onSavePreviewComment?: (target: PreviewCommentTarget, note: string, attachAfterSave: boolean) => Promise<PreviewComment | null>;
   onRemovePreviewComment?: (commentId: string) => Promise<void>;
   onSendBoardCommentAttachments?: (attachments: ChatCommentAttachment[]) => Promise<void> | void;
+  // Live-artifact → chat bridge: an artifact's button posts
+  // `{type:'od:send-prompt', text}` and the host sends `text` as a user
+  // message, so clickable boards can drive the conversation (no typing).
+  onArtifactPrompt?: (text: string) => void;
   onFileSaved?: () => Promise<void> | void;
   commentPortalId?: string;
   onCommentModeChange?: (active: boolean) => void;
@@ -5042,6 +5064,33 @@ const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [activeCommentTarget, boardMode, boardTool, commentPortalHost, file.name, isOurPreviewIframeSource, previewComments]);
+
+  // Live-artifact → chat bridge. ALWAYS active (not gated on boardMode like the
+  // comment listener above): a clickable board posts
+  // `{type:'od:send-prompt', text}` from inside the preview iframe and we send
+  // `text` to the conversation as a user message — so a user who's too lazy to
+  // type can just click. Source is validated the same way as every other
+  // inbound bridge; the ref keeps the latest callback without re-subscribing.
+  const onArtifactPromptRef = useRef(onArtifactPrompt);
+  onArtifactPromptRef.current = onArtifactPrompt;
+  useEffect(() => {
+    function onPromptMessage(ev: MessageEvent) {
+      if (!isOurPreviewIframeSource(ev.source)) return;
+      const data = ev.data as { type?: string; text?: unknown } | null;
+      if (!data || data.type !== 'od:send-prompt') return;
+      const text = typeof data.text === 'string' ? data.text.trim().slice(0, 4000) : '';
+      if (text) onArtifactPromptRef.current?.(text);
+    }
+    window.addEventListener('message', onPromptMessage);
+    return () => window.removeEventListener('message', onPromptMessage);
+  }, [isOurPreviewIframeSource]);
+
+  // NOTE: board source links open via a plain `<a href target="_blank"
+  // rel="noopener noreferrer">` inside the iframe — the iframe sandbox now
+  // carries `allow-popups allow-popups-to-escape-sandbox`, so the user's click
+  // is a real gesture that opens a normal tab. (An earlier `od:open-url`
+  // postMessage bridge was removed: `window.open` from the host's message
+  // handler has no transient user activation and gets popup-blocked.)
 
   useEffect(() => {
     if (!manualEditMode) {
@@ -6981,7 +7030,7 @@ const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([
                         aria-hidden={useUrlLoadPreview ? undefined : true}
                         tabIndex={useUrlLoadPreview ? 0 : -1}
                         title={file.name}
-                        sandbox="allow-scripts allow-downloads"
+                        sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"
                         src={urlTransportSrc}
                         onLoad={() => {
                           const frame = urlPreviewIframeRef.current;
@@ -7004,7 +7053,7 @@ const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([
                         aria-hidden={useUrlLoadPreview ? undefined : true}
                         tabIndex={useUrlLoadPreview ? 0 : -1}
                         title={file.name}
-                        sandbox="allow-scripts allow-downloads"
+                        sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"
                         src={urlTransportSrc}
                         onLoad={() => {
                           const frame = urlPreviewIframeRef.current;
@@ -7028,7 +7077,7 @@ const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([
                       aria-hidden={useUrlLoadPreview ? true : undefined}
                       tabIndex={useUrlLoadPreview ? -1 : 0}
                       title={file.name}
-                      sandbox="allow-scripts allow-downloads"
+                      sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"
                       srcDoc={srcDocTransportContent}
                       onLoad={() => {
                         const frame = srcDocPreviewIframeRef.current;
@@ -7272,14 +7321,14 @@ const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([
           {useUrlLoadPreview ? (
             <iframe
               title="present"
-              sandbox="allow-scripts allow-downloads"
+              sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"
               data-od-render-mode="url-load"
               src={activePreviewSrcUrl}
             />
           ) : (
             <iframe
               title="present"
-              sandbox="allow-scripts allow-downloads"
+              sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"
               data-od-render-mode="srcdoc"
               srcDoc={srcDoc}
             />

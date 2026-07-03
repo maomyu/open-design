@@ -577,7 +577,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(markup).toContain('data-od-render-mode="url-load" data-od-active="true"');
     expect(markup).toContain('data-od-render-mode="srcdoc" data-od-active="false"');
     expect(markup).toContain('src="/api/projects/project-1/raw/page.html?v=1710000000&amp;r=0"');
-    expect(markup).toContain('sandbox="allow-scripts allow-downloads"');
+    expect(markup).toContain('sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"');
   });
 
   it('keeps inactive HTML preview transports mounted without booting the artifact', async () => {
@@ -792,7 +792,7 @@ describe('FileViewer SVG artifacts', () => {
 
     await waitFor(() => {
       const frame = container.querySelector('.present-overlay iframe');
-      expect(frame?.getAttribute('sandbox')).toBe('allow-scripts allow-downloads');
+      expect(frame?.getAttribute('sandbox')).toBe('allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox');
       expect(frame?.getAttribute('data-od-render-mode')).toBe('url-load');
     });
   });
@@ -823,7 +823,7 @@ describe('FileViewer SVG artifacts', () => {
     render(<FileViewer projectId="project-1" projectKind="prototype" file={file} />);
 
     const frame = await screen.findByTestId('react-component-preview-frame');
-    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-downloads');
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox');
   });
 
   it('points a .jsx module loaded by a sibling HTML to that entry, not the React error (issue #2744)', async () => {
@@ -921,7 +921,7 @@ describe('FileViewer SVG artifacts', () => {
     expect(markup).toContain('data-od-render-mode="srcdoc" data-od-active="true"');
     expect(markup).toContain('data-od-render-mode="url-load" data-od-active="false"');
     expect(markup).not.toContain('data-od-lazy-srcdoc-transport');
-    expect(markup).toContain('sandbox="allow-scripts allow-downloads"');
+    expect(markup).toContain('sandbox="allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox"');
   });
 
   it('falls back to srcDoc when the HTML body looks deck-shaped even without an isDeck hint', () => {
