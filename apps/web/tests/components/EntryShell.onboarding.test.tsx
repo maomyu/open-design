@@ -112,8 +112,8 @@ beforeEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-describe('EntryShell onboarding Open Design AMR runtime', () => {
-  it('does not auto-select Open Design AMR when the AMR runtime is unavailable', async () => {
+describe('EntryShell onboarding WorkBuild AMR runtime', () => {
+  it('does not auto-select WorkBuild AMR when the AMR runtime is unavailable', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({ loggedIn: false, profile: 'prod', user: null, configPath: '/x' }),
     ) as typeof fetch;
@@ -122,7 +122,7 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
       onRefreshAgents: vi.fn(() => [cliAgent()]),
     });
 
-    expect(screen.queryByRole('button', { name: /Open Design AMR/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /WorkBuild AMR/i })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Local coding agent/i }));
 
     await waitFor(() => {
@@ -132,13 +132,13 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     expect(screen.queryByText('Sign in to continue')).toBeNull();
   });
 
-  it('shows Open Design AMR as the recommended default when AMR is available', async () => {
+  it('shows WorkBuild AMR as the recommended default when AMR is available', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({ loggedIn: false, profile: 'prod', user: null, configPath: '/x' }),
     ) as typeof fetch;
     const props = renderOnboarding();
 
-    const amrCloud = screen.getByRole('button', { name: /Open Design AMR/i });
+    const amrCloud = screen.getByRole('button', { name: /WorkBuild AMR/i });
     expect(amrCloud.getAttribute('aria-pressed')).toBe('true');
     expect(amrCloud.textContent).toContain('Officially maintained');
     expect(amrCloud.textContent).toContain('Ready to use');
@@ -354,7 +354,7 @@ describe('EntryShell onboarding Open Design AMR runtime', () => {
     });
   });
 
-  it('continues normally when Open Design AMR is signed in', async () => {
+  it('continues normally when WorkBuild AMR is signed in', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({
         loggedIn: true,

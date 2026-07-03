@@ -369,7 +369,7 @@ describe('HomeView media composer options', () => {
     const input = screen.getByTestId('home-hero-input') as HTMLTextAreaElement;
     fireEvent.change(input, {
       target: {
-        value: "Create premium product-studio audio from Welcome to Open Design. using minimax-tts for 10 seconds: polished, restrained, clear, and brand-ready.",
+        value: "Create premium product-studio audio from Welcome to WorkBuild. using minimax-tts for 10 seconds: polished, restrained, clear, and brand-ready.",
       },
     });
 
@@ -378,8 +378,8 @@ describe('HomeView media composer options', () => {
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
         pluginInputs: expect.objectContaining({
-          subject: 'Welcome to Open Design.',
-          text: 'Welcome to Open Design.',
+          subject: 'Welcome to WorkBuild.',
+          text: 'Welcome to WorkBuild.',
         }),
       }));
     });

@@ -170,6 +170,35 @@ describe('HomeHero plugin picker', () => {
     expect(screen.getByText('Search plugins, skills, MCP servers, and connectors.')).toBeTruthy();
   });
 
+  it('opens the context picker for a bare / token (slash command for plugins/skills)', () => {
+    render(
+      <HomeHero
+        prompt="/"
+        onPromptChange={() => undefined}
+        onSubmit={() => undefined}
+        activePluginTitle={null}
+        activeChipId={null}
+        onClearActivePlugin={() => undefined}
+        pluginOptions={[]}
+        pluginsLoading={false}
+        skillOptions={[]}
+        skillsLoading={false}
+        mcpOptions={[]}
+        mcpLoading={false}
+        pendingPluginId={null}
+        pendingChipId={null}
+        onPickPlugin={() => undefined}
+        onPickChip={() => undefined}
+        contextItemCount={0}
+        error={null}
+      />,
+    );
+
+    expect(screen.getByTestId('home-hero-plugin-picker')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /plugins/i })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /skills/i })).toBeTruthy();
+  });
+
   it('can pick skills and MCP servers from the home @ picker', () => {
     const onPickSkill = vi.fn();
     const onPickMcp = vi.fn();

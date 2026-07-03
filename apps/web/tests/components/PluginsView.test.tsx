@@ -523,7 +523,7 @@ describe('PluginsView', () => {
         url: 'https://open-design.ai/marketplace/open-design-marketplace.json',
         trust: 'official',
         manifest: {
-          name: 'Open Design Official',
+          name: 'WorkBuild Official',
           version: '0.1.0',
           plugins: [{
             name: 'open-design/official-plugin',
@@ -613,14 +613,14 @@ describe('PluginsView', () => {
         'bundled',
         'bundled',
         'Publish Plugin to GitHub',
-        'Creates a public GitHub repository for a local Open Design plugin using the GitHub CLI.',
+        'Creates a public GitHub repository for a local WorkBuild plugin using the GitHub CLI.',
       ),
       makePlugin(
         'od-plugin-contribute-open-design',
         'bundled',
         'bundled',
-        'Contribute Plugin to Open Design',
-        'Opens a pull request that adds a local Open Design plugin to the Open Design community catalog.',
+        'Contribute Plugin to WorkBuild',
+        'Opens a pull request that adds a local WorkBuild plugin to the WorkBuild community catalog.',
       ),
     ]);
     const onCreatePluginShareProject = vi.fn(async (): Promise<PluginShareProjectOutcome> => ({

@@ -1,5 +1,12 @@
-<svg width="444" height="444" viewBox="0 0 444 444" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M212.059 291.897L166.327 171.549C164.847 167.654 168.651 163.836 172.52 165.333L292.925 211.915C297.88 213.832 296.514 221.229 291.205 221.229H221.322V290.177C221.322 295.523 213.957 296.891 212.059 291.897Z" fill="currentColor"/>
-<path d="M72 222C72 304.843 139.157 372 222 372H82C76.4772 372 72 367.523 72 362V222Z" fill="currentColor"/>
-<path d="M222 87C296.558 87 357 147.442 357 222C357 296.558 296.558 357 222 357C147.442 357 87 296.558 87 222C87 147.442 147.442 87 222 87Z" stroke="currentColor" stroke-width="30"/>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="wbBg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D2724E"/>
+      <stop offset="1" stop-color="#B45A3B"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#wbBg)"/>
+  <rect x="116" y="280" width="64" height="116" rx="20" fill="#ffffff" fill-opacity="0.88"/>
+  <rect x="224" y="204" width="64" height="192" rx="20" fill="#ffffff" fill-opacity="0.94"/>
+  <rect x="332" y="128" width="64" height="268" rx="20" fill="#ffffff"/>
 </svg>

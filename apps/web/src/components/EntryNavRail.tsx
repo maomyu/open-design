@@ -8,10 +8,15 @@
 // Language switching and other account-scoped controls live behind the
 // floating settings cog in the top-right corner of the main content.
 
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { EntryHelpMenu } from './EntryHelpMenu';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
+import type { Project } from '../types';
+
+// How many recent projects to surface in the rail's Recent list. The list
+// scrolls, so this is just a soft cap to keep the DOM small.
+const RECENT_LIMIT = 12;
 
 export type EntryView =
   | 'home'
@@ -26,18 +31,21 @@ interface Props {
   view: EntryView;
   onViewChange: (view: EntryView) => void;
   onNewProject: () => void;
+  /** Project history, surfaced as a scrollable "Recent" list in the rail. */
+  projects: Project[];
+  onOpenProject: (id: string) => void;
 }
 
 interface NavButtonProps {
   active?: boolean;
   ariaLabel: string;
-  tooltip: string;
+  label: string;
   onClick: () => void;
   testId?: string;
   children: ReactNode;
 }
 
-function NavButton({ active, ariaLabel, tooltip, onClick, testId, children }: NavButtonProps) {
+function NavButton({ active, ariaLabel, label, onClick, testId, children }: NavButtonProps) {
   return (
     <button
       type="button"
@@ -45,19 +53,31 @@ function NavButton({ active, ariaLabel, tooltip, onClick, testId, children }: Na
       onClick={onClick}
       aria-label={ariaLabel}
       aria-current={active ? 'page' : undefined}
-      data-tooltip={tooltip}
       {...(testId ? { 'data-testid': testId } : {})}
     >
-      {children}
+      <span className="entry-nav-rail__btn-icon" aria-hidden="true">
+        {children}
+      </span>
+      <span className="entry-nav-rail__label">{label}</span>
     </button>
   );
 }
 
-export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
+export function EntryNavRail({
+  view,
+  onViewChange,
+  onNewProject,
+  projects,
+  onOpenProject,
+}: Props) {
   const t = useT();
   const brandLabel = t('app.brand');
   const homeLabel = t('entry.navHome');
   const isHome = view === 'home';
+  const recentProjects = useMemo(
+    () => [...projects].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, RECENT_LIMIT),
+    [projects],
+  );
 
   return (
     <nav className="entry-nav-rail" aria-label="Primary">
@@ -67,7 +87,6 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
           className="entry-nav-rail__logo"
           onClick={() => onViewChange('home')}
           aria-label={brandLabel}
-          data-tooltip={brandLabel}
           data-testid="entry-nav-logo"
         >
           <img
@@ -76,11 +95,15 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
             className="entry-nav-rail__logo-img"
             draggable={false}
           />
+          <span className="entry-nav-rail__wordmark">
+            <span className="entry-nav-rail__wordmark-name">{brandLabel}</span>
+            <span className="entry-nav-rail__wordmark-sub">{t('app.brandPill')}</span>
+          </span>
         </button>
         <div className="entry-nav-rail__logo-divider" role="separator" aria-hidden="true" />
         <NavButton
           ariaLabel={t('entry.navNewProject')}
-          tooltip={t('entry.navNewProject')}
+          label={t('entry.navNewProject')}
           onClick={onNewProject}
           testId="entry-nav-new-project"
         >
@@ -89,7 +112,7 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
         <NavButton
           active={isHome}
           ariaLabel={homeLabel}
-          tooltip={homeLabel}
+          label={homeLabel}
           onClick={() => onViewChange('home')}
           testId="entry-nav-home"
         >
@@ -98,7 +121,7 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
         <NavButton
           active={view === 'projects'}
           ariaLabel={t('entry.navProjects')}
-          tooltip={t('entry.navProjects')}
+          label={t('entry.navProjects')}
           onClick={() => onViewChange('projects')}
           testId="entry-nav-projects"
         >
@@ -107,7 +130,7 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
         <NavButton
           active={view === 'tasks'}
           ariaLabel={t('entry.navTasks')}
-          tooltip={t('entry.navTasks')}
+          label={t('entry.navTasks')}
           onClick={() => onViewChange('tasks')}
           testId="entry-nav-tasks"
         >
@@ -116,7 +139,7 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
         <NavButton
           active={view === 'design-systems'}
           ariaLabel={t('entry.navDesignSystems')}
-          tooltip={t('entry.navDesignSystems')}
+          label={t('entry.navDesignSystems')}
           onClick={() => onViewChange('design-systems')}
           testId="entry-nav-design-systems"
         >
@@ -125,12 +148,33 @@ export function EntryNavRail({ view, onViewChange, onNewProject }: Props) {
         <NavButton
           active={view === 'integrations'}
           ariaLabel={t('entry.navIntegrations')}
-          tooltip={t('entry.navIntegrations')}
+          label={t('entry.navIntegrations')}
           onClick={() => onViewChange('integrations')}
           testId="entry-nav-integrations"
         >
           <Icon name="link" size={18} />
         </NavButton>
+      </div>
+      <div className="entry-nav-rail__recent" aria-label={t('entry.navRecent')}>
+        <div className="entry-nav-rail__recent-label">{t('entry.navRecent')}</div>
+        <div className="entry-nav-rail__recent-list">
+          {recentProjects.length === 0 ? (
+            <div className="entry-nav-rail__recent-empty">—</div>
+          ) : (
+            recentProjects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                className="entry-nav-rail__recent-item"
+                onClick={() => onOpenProject(project.id)}
+                title={project.name}
+                data-testid={`entry-nav-recent-${project.id}`}
+              >
+                {project.name || t('entry.navProjects')}
+              </button>
+            ))
+          )}
+        </div>
       </div>
       <div className="entry-nav-rail__footer">
         <div className="entry-nav-rail__divider" role="separator" />

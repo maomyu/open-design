@@ -73,10 +73,8 @@ import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
 import { DesignSystemsTab } from './DesignSystemsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
 import { UpdaterPopup } from './UpdaterPopup';
-import { GithubStarBadge } from './GithubStarBadge';
 import { HomeView } from './HomeView';
 import {
-  createPluginAuthoringHandoff,
   createPluginUseHandoff,
   type HomePromptHandoff,
 } from './home-hero/plugin-authoring';
@@ -415,11 +413,11 @@ export function EntryShell({
     navigate({ kind: 'home', view: next });
   }
 
-  function startPluginAuthoring(goal?: string) {
-    setHomePromptHandoff(
-      createPluginAuthoringHandoff(Date.now(), goal),
-    );
-    changeView('home');
+  function startPluginAuthoring(_goal?: string) {
+    // The structured creation studio (describe → AI draft → review → save)
+    // replaced the old chat-handoff flow: the draft lands in the plugin
+    // editor as an editable user plugin instead of an open-ended chat.
+    navigate({ kind: 'creator', target: 'plugin' });
   }
 
   function usePluginFromLibrary(
@@ -574,21 +572,12 @@ export function EntryShell({
           view={view}
           onViewChange={changeView}
           onNewProject={() => openNewProject()}
+          projects={projects}
+          onOpenProject={onOpenProject}
         />
         <main className="entry-main entry-main--scroll">
           <div className="entry-main__topbar">
             <div className="entry-main__topbar-chips">
-              <GithubStarBadge />
-              <a
-                className="entry-discord-badge"
-                href="https://discord.gg/mHAjSMV6gz"
-                aria-label="Join the Open Design Discord"
-                title="Join the Open Design Discord"
-                data-testid="entry-discord-badge"
-              >
-                <Icon name="discord" size={14} className="entry-discord-badge__icon" />
-                <span className="entry-discord-badge__label">Join Discord</span>
-              </a>
               <InlineModelSwitcher
                 config={config}
                 agents={agents}

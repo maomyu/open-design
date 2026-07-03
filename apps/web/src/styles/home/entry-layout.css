@@ -10,7 +10,7 @@
    actions, so the entry view does not render `AppChromeHeader`. */
 .entry-shell--no-header {
   grid-template-rows: 1fr;
-  --entry-rail-width: 56px;
+  --entry-rail-width: 212px;
 }
 
 .entry-shell--onboarding {
@@ -33,13 +33,13 @@
 
 /* Left rail */
 .entry-nav-rail {
-  width: var(--entry-rail-width, 64px);
+  width: var(--entry-rail-width, 212px);
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
-  padding: 8px 0 10px;
+  padding: 12px 10px 12px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 8px;
   /* The rail intentionally lets its descendants escape horizontally so
@@ -58,30 +58,30 @@
 .entry-nav-rail__group {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 5px;
+  align-items: stretch;
+  gap: 2px;
   width: 100%;
 }
 .entry-nav-rail__footer {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 5px;
+  align-items: stretch;
+  gap: 2px;
   width: 100%;
   padding-bottom: 4px;
 }
 .entry-nav-rail__divider {
-  width: 28px;
+  width: auto;
   height: 1px;
   background: var(--border);
-  margin: 3px 0;
+  margin: 4px 8px;
   flex-shrink: 0;
 }
 .entry-nav-rail__logo-divider {
-  width: 24px;
+  width: auto;
   height: 1px;
   background: var(--border);
-  margin: 5px 0 9px;
+  margin: 8px 8px 8px;
   flex-shrink: 0;
 }
 
@@ -448,69 +448,101 @@
 .entry-nav-rail__logo {
   appearance: none;
   position: relative;
-  width: 36px;
-  height: 36px;
-  padding: 0;
+  width: 100%;
+  padding: 6px 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  gap: 10px;
+  overflow: visible;
   cursor: pointer;
-  margin-bottom: 2px;
-  transition: background-color 120ms ease, border-color 120ms ease,
-    transform 120ms ease;
+  margin-bottom: 6px;
+  text-align: left;
+  transition: background-color 120ms ease, transform 120ms ease;
 }
 .entry-nav-rail__logo:hover {
-  background: transparent;
-  border-color: transparent;
+  background: var(--bg-subtle);
 }
 .entry-nav-rail__logo:active {
-  transform: scale(0.96);
+  transform: scale(0.98);
 }
 .entry-nav-rail__logo:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-/* The logo doubles as the Home destination; when the home view is
-   active it gets the same accent treatment as a primary nav button
-   so users still see "you are here" without a dedicated Home icon. */
-.entry-nav-rail__logo.is-active {
-  background: transparent;
-  border-color: transparent;
-}
 .entry-nav-rail__logo-img {
-  position: absolute;
-  inset: auto;
   width: 30px;
   height: 30px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: 9px;
   display: block;
+  flex: 0 0 30px;
   user-select: none;
   -webkit-user-drag: none;
   pointer-events: none;
 }
+.entry-nav-rail__wordmark {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.15;
+}
+.entry-nav-rail__wordmark-name {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.entry-nav-rail__wordmark-sub {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .entry-nav-rail__btn {
   appearance: none;
-  width: 38px;
-  height: 38px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 9px;
   background: transparent;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 11px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.entry-nav-rail__btn-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+  flex: 0 0 18px;
 }
-.entry-nav-rail__btn > svg {
+.entry-nav-rail__btn-icon > svg {
   width: 18px;
   height: 18px;
-  flex: 0 0 18px;
+}
+.entry-nav-rail__label {
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .entry-nav-rail__btn:not(.is-active):hover {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
@@ -529,6 +561,67 @@
 .entry-nav-rail__btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Recent project history — a scrollable list that fills the middle of the
+   rail between the primary nav and the footer. */
+.entry-nav-rail__recent {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.entry-nav-rail__recent-label {
+  padding: 0 10px 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+.entry-nav-rail__recent-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* thin, unobtrusive scrollbar */
+  scrollbar-width: thin;
+}
+.entry-nav-rail__recent-item {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.entry-nav-rail__recent-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  color: var(--accent);
+}
+.entry-nav-rail__recent-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.entry-nav-rail__recent-empty {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-faint, var(--text-muted));
 }
 
 /* Avatar / settings dropdown — language picker section.

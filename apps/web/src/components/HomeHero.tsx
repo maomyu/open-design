@@ -219,31 +219,36 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
   const pluginMatches = useMemo(
     () =>
       mentionActive
-        ? pluginOptions.filter((plugin) => pluginMatchesQuery(plugin, mentionQuery)).slice(0, 6)
+        ? pluginOptions.filter((plugin) => pluginMatchesQuery(plugin, mentionQuery))
         : [],
     [mentionActive, mentionQuery, pluginOptions],
   );
   const skillMatches = useMemo(
     () =>
       mentionActive
-        ? skillOptions.filter((skill) => skillMatchesQuery(skill, mentionQuery)).slice(0, 6)
+        ? skillOptions.filter((skill) => skillMatchesQuery(skill, mentionQuery))
         : [],
     [mentionActive, mentionQuery, skillOptions],
   );
   const mcpMatches = useMemo(
     () =>
       mentionActive
-        ? mcpOptions.filter((server) => mcpServerMatchesQuery(server, mentionQuery)).slice(0, 6)
+        ? mcpOptions.filter((server) => mcpServerMatchesQuery(server, mentionQuery))
         : [],
     [mcpOptions, mentionActive, mentionQuery],
   );
   const connectorMatches = useMemo(
     () =>
       mentionActive
-        ? connectorOptions.filter((connector) => connectorMatchesQuery(connector, mentionQuery)).slice(0, 6)
+        ? connectorOptions.filter((connector) => connectorMatchesQuery(connector, mentionQuery))
         : [],
     [connectorOptions, mentionActive, mentionQuery],
   );
+  // Compact preview per category in the "All" tab; expand the focused
+  // single-category tab into a long, scrollable list so users can browse
+  // all matching results (there are hundreds of skills/templates).
+  const sectionLimit = (id: Exclude<HomeMentionTab, 'all'>): number =>
+    mentionTab === id ? 50 : 6;
   const pickerOpen = mentionActive;
   const tabs: Array<{ id: HomeMentionTab; label: string; count: number }> = [
     { id: 'all', label: t('common.all'), count: pluginMatches.length + skillMatches.length + mcpMatches.length + connectorMatches.length },
@@ -261,7 +266,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
       ? {
           id: 'plugins',
           label: t('entry.navPlugins'),
-          options: pluginMatches.map((plugin) => ({
+          options: pluginMatches.slice(0, sectionLimit('plugins')).map((plugin) => ({
             id: `plugin-${plugin.id}`,
             icon: 'sparkles',
             title: plugin.title,
@@ -277,7 +282,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
       ? {
           id: 'skills',
           label: t('homeHero.skills'),
-          options: skillMatches.map((skill) => ({
+          options: skillMatches.slice(0, sectionLimit('skills')).map((skill) => ({
             id: `skill-${skill.id}`,
             icon: skill.id === activeSkillId ? 'check' : 'file',
             title: localizeSkillName(locale, skill),
@@ -291,7 +296,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
       ? {
           id: 'mcp',
           label: 'MCP',
-          options: mcpMatches.map((server) => ({
+          options: mcpMatches.slice(0, sectionLimit('mcp')).map((server) => ({
             id: `mcp-${server.id}`,
             icon: 'link',
             title: server.label || server.id,
@@ -305,7 +310,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
       ? {
           id: 'connectors',
           label: 'Connectors',
-          options: connectorMatches.map((connector) => ({
+          options: connectorMatches.slice(0, sectionLimit('connectors')).map((connector) => ({
             id: `connector-${connector.id}`,
             icon: 'link',
             title: connector.name,
@@ -639,7 +644,7 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
         <span className="home-hero__brand-mark">
           <img src="/app-icon.svg" alt="" draggable={false} />
         </span>
-        <span className="home-hero__brand-name">Open Build</span>
+        <span className="home-hero__brand-name">WorkBuild</span>
       </div>
       <h1 className="home-hero__title">{t('homeHero.title')}</h1>
       <p className="home-hero__subtitle">
@@ -2327,7 +2332,10 @@ function fieldPopoverNoteTone(field: InputFieldSpec): string {
 }
 
 function getContextMention(value: string): ContextMention | null {
-  const match = /(^|\s)@([^\s@]*)$/.exec(value);
+  // Open the plugin/skill/context picker on either `@` (mention) or `/`
+  // (slash command) at the start of a word, so the home box doubles as a
+  // slash-command palette: type `/` to invoke plugins and skills.
+  const match = /(^|\s)[@/]([^\s@/]*)$/.exec(value);
   if (!match) return null;
   const prefix = match[1] ?? '';
   const query = match[2] ?? '';

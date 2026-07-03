@@ -111,4 +111,23 @@ describe('parseRoute / buildPath (issue #1505)', () => {
     expect(parseRoute('/something/else')).toEqual({ kind: 'home', view: 'home' });
     expect(parseRoute('/projects')).toEqual({ kind: 'home', view: 'projects' });
   });
+
+  it('parses the creation studio routes (and wins over the plugin-detail catch-all)', () => {
+    expect(parseRoute('/create/plugin')).toEqual({ kind: 'creator', target: 'plugin' });
+    expect(parseRoute('/create/skill')).toEqual({ kind: 'creator', target: 'skill' });
+    expect(parseRoute('/create')).toEqual({ kind: 'creator', target: 'plugin' });
+    // 'create' under the gallery paths is the studio, never a plugin id.
+    expect(parseRoute('/plugins/create')).toEqual({ kind: 'creator', target: 'plugin' });
+    expect(parseRoute('/marketplace/create/skill')).toEqual({ kind: 'creator', target: 'skill' });
+  });
+
+  it('round-trips creator routes through buildPath', () => {
+    expect(buildPath({ kind: 'creator', target: 'plugin' })).toBe('/create/plugin');
+    expect(buildPath({ kind: 'creator', target: 'skill' })).toBe('/create/skill');
+  });
+
+  it('parses and round-trips the skill library route', () => {
+    expect(parseRoute('/skills')).toEqual({ kind: 'skills-library' });
+    expect(buildPath({ kind: 'skills-library' })).toBe('/skills');
+  });
 });

@@ -18,7 +18,6 @@ import type {
   AudioVoiceOption,
 } from '@open-design/contracts';
 import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
-import { projectKindToTracking } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
 import {
   trackHomeChatComposerClick,
@@ -26,7 +25,6 @@ import {
   trackPluginReplacementModalClick,
   trackPluginReplacementModalSurfaceView,
   trackPluginReplacementResult,
-  trackRecentProjectsClick,
 } from '../analytics/events';
 import {
   applyPlugin,
@@ -68,11 +66,9 @@ import {
   type HomePromptHandoff,
 } from './home-hero/plugin-authoring';
 import { PluginDetailsModal } from './PluginDetailsModal';
-import { PluginsHomeSection } from './PluginsHomeSection';
 import type { PluginLoopSubmit } from './PluginLoopHome';
 import type { FacetSelection } from './plugins-home/facets';
 import type { PluginUseAction } from './plugins-home/useActions';
-import { RecentProjectsStrip } from './RecentProjectsStrip';
 
 interface ActivePlugin {
   record: InstalledPluginRecord;
@@ -145,9 +141,9 @@ interface PendingPluginUseHandoff {
 }
 
 const AUTHORING_DEFAULT_SCENARIO_INPUTS = {
-  artifactKind: 'Open Design plugin',
-  audience: 'Open Design plugin authors',
-  topic: 'packaging a reusable workflow as an Open Design plugin',
+  artifactKind: 'WorkBuild plugin',
+  audience: 'WorkBuild plugin authors',
+  topic: 'packaging a reusable workflow as an WorkBuild plugin',
 };
 
 type HomeDesignSystemOption = {
@@ -490,6 +486,29 @@ export function HomeView({
     () => skills.filter((skill) => !skill.aggregatesExamples),
     [skills],
   );
+
+  // The `/` (and `@`) picker should surface INVOKABLE plugins, not the full
+  // bundled registry. `listPlugins()` returns ~400 entries dominated by
+  // design-systems and design-templates (`kind: 'scenario'`); dumping all of
+  // them buries the real built-in workflows (公众号 / 短视频, which are
+  // `kind: 'skill'` + featured). Keep: user-installed plugins, featured
+  // plugins, and skill-kind plugins — i.e. the things a user actually runs.
+  const invokablePlugins = useMemo(() => {
+    // Rank so a bare `/` surfaces the real workflows first (the picker slices
+    // to the top results): user-installed plugins, then built-in skill
+    // workflows (公众号 / 短视频), then featured example showcases.
+    const rank = (plugin: InstalledPluginRecord): number => {
+      if (plugin.sourceKind !== 'bundled') return 0;
+      return plugin.manifest?.od?.kind === 'skill' ? 1 : 2;
+    };
+    return plugins
+      .filter((plugin) => {
+        if (plugin.sourceKind !== 'bundled') return true;
+        const od = plugin.manifest?.od;
+        return od?.featured === true || od?.kind === 'skill';
+      })
+      .sort((a, b) => rank(a) - rank(b));
+  }, [plugins]);
 
   const enabledMcpServers = useMemo(
     () => mcpServers.filter((server) => server.enabled),
@@ -1311,7 +1330,7 @@ export function HomeView({
         stagedFiles={stagedFiles}
         onAddFiles={stageFiles}
         onRemoveFile={removeStagedFile}
-        pluginOptions={plugins}
+        pluginOptions={invokablePlugins}
         pluginsLoading={pluginsLoading}
         skillOptions={selectableSkills}
         skillsLoading={skillsLoading}
@@ -1335,55 +1354,6 @@ export function HomeView({
         error={error}
       />
 
-      <RecentProjectsStrip
-        projects={projects}
-        designSystems={designSystems}
-        {...(projectsLoading !== undefined ? { loading: projectsLoading } : {})}
-        onOpen={(id) => {
-          // P0 ui_click area=recent_projects element=project_card — emit
-          // before navigation so the event isn't lost when the host
-          // re-renders into the project view.
-          const project = projects.find((p) => p.id === id);
-          const projectKind = projectKindToTracking(project?.metadata?.kind);
-          trackRecentProjectsClick(analytics.track, {
-            page_name: 'home',
-            area: 'recent_projects',
-            element: 'project_card',
-            project_id: id,
-            ...(projectKind ? { project_kind: projectKind } : {}),
-          });
-          onOpenProject(id);
-        }}
-        onViewAll={() => {
-          trackRecentProjectsClick(analytics.track, {
-            page_name: 'home',
-            area: 'recent_projects',
-            element: 'view_all',
-          });
-          onViewAllProjects();
-        }}
-      />
-
-      <PluginsHomeSection
-        plugins={plugins}
-        loading={pluginsLoading}
-        activePluginId={active?.record.id ?? null}
-        pendingApplyId={pendingApplyId}
-        onUse={(record) => {
-          // Apply the plugin as the active workflow (not a loose context
-          // attachment): this resolves the apply snapshot so the plugin's
-          // SKILL.md + query template actually drive the run, and renders
-          // its inputs as fillable inline slots. requestPluginContextUse
-          // only pinned a context chip, which never injected the plugin's
-          // skill body — so the agent ignored the plugin. (#short-video)
-          const inputNames = (record.manifest?.od?.inputs ?? []).map((field) => field.name);
-          void usePlugin(record, undefined, { editableInputNames: inputNames });
-        }}
-        onOpenDetails={setDetailsRecord}
-        onBrowseRegistry={onBrowseRegistry}
-        preferDefaultFacet={false}
-        presetSelection={presetStartersSelection}
-      />
 
       {detailsRecord ? (
         <PluginDetailsModal

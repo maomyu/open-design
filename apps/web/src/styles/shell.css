@@ -35,7 +35,15 @@
   overflow: hidden;
 }
 .workspace-shell__body > .app,
-.workspace-shell__body > .entry-shell {
+.workspace-shell__body > .entry-shell,
+/* Full-page editor surfaces mounted directly under the shell body — the
+   plugin editor, creation studio, and skill library all size themselves
+   with internal scroll regions, so they need the same definite height the
+   .app/.entry-shell children get (otherwise overflow:hidden on the shell
+   body clips them with no way to scroll). */
+.workspace-shell__body > .plugin-edit-view,
+.workspace-shell__body > .creator-view,
+.workspace-shell__body > .skills-library {
   height: 100%;
   min-height: 0;
 }
