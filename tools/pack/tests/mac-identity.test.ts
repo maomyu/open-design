@@ -47,10 +47,10 @@ describe("resolveMacInstallIdentity", () => {
   it("keeps stable builds on the canonical mac identity", () => {
     expect(resolveMacInstallIdentity(makeConfig("/work", "release-stable"))).toMatchObject({
       appId: "io.open-design.desktop",
-      installerTitle: "Open Design",
-      productName: "Open Design",
-      publicAppBundleName: "Open Design.app",
-      systemAppBundleName: "Open Design.app",
+      installerTitle: "WorkBuild",
+      productName: "WorkBuild",
+      publicAppBundleName: "WorkBuild.app",
+      systemAppBundleName: "WorkBuild.app",
     });
   });
 
@@ -59,13 +59,13 @@ describe("resolveMacInstallIdentity", () => {
 
     expect(resolveMacInstallIdentity(config)).toEqual({
       appId: "io.open-design.desktop.beta",
-      executableName: "Open Design Beta",
-      installerTitle: "Open Design Beta",
-      productName: "Open Design Beta",
-      publicAppBundleName: "Open Design Beta.app",
-      systemAppBundleName: "Open Design Beta.app",
+      executableName: "WorkBuild Beta",
+      installerTitle: "WorkBuild Beta",
+      productName: "WorkBuild Beta",
+      publicAppBundleName: "WorkBuild Beta.app",
+      systemAppBundleName: "WorkBuild Beta.app",
     });
-    expect(resolveMacPaths(config).appPath).toMatch(/Open Design Beta\.app$/);
+    expect(resolveMacPaths(config).appPath).toMatch(/WorkBuild Beta\.app$/);
   });
 
   it("uses first-class preview app identity for preview release namespaces", () => {
@@ -73,13 +73,13 @@ describe("resolveMacInstallIdentity", () => {
 
     expect(resolveMacInstallIdentity(config)).toEqual({
       appId: "io.open-design.desktop.preview",
-      executableName: "Open Design Preview",
-      installerTitle: "Open Design Preview",
-      productName: "Open Design Preview",
-      publicAppBundleName: "Open Design Preview.app",
-      systemAppBundleName: "Open Design Preview.app",
+      executableName: "WorkBuild Preview",
+      installerTitle: "WorkBuild Preview",
+      productName: "WorkBuild Preview",
+      publicAppBundleName: "WorkBuild Preview.app",
+      systemAppBundleName: "WorkBuild Preview.app",
     });
-    expect(resolveMacPaths(config).appPath).toMatch(/Open Design Preview\.app$/);
+    expect(resolveMacPaths(config).appPath).toMatch(/WorkBuild Preview\.app$/);
   });
 
   it("uses first-class nightly app identity for nightly release versions and namespaces", () => {
@@ -91,16 +91,16 @@ describe("resolveMacInstallIdentity", () => {
 
     expect(resolveMacInstallIdentity(nightlyVersionConfig)).toEqual({
       appId: "io.open-design.desktop.nightly",
-      executableName: "Open Design Nightly",
-      installerTitle: "Open Design Nightly",
-      productName: "Open Design Nightly",
-      publicAppBundleName: "Open Design Nightly.app",
-      systemAppBundleName: "Open Design Nightly.app",
+      executableName: "WorkBuild Nightly",
+      installerTitle: "WorkBuild Nightly",
+      productName: "WorkBuild Nightly",
+      publicAppBundleName: "WorkBuild Nightly.app",
+      systemAppBundleName: "WorkBuild Nightly.app",
     });
-    expect(resolveMacPaths(nightlyVersionConfig).appPath).toMatch(/Open Design Nightly\.app$/);
+    expect(resolveMacPaths(nightlyVersionConfig).appPath).toMatch(/WorkBuild Nightly\.app$/);
     expect(resolveMacInstallIdentity(nightlyNamespaceConfig)).toMatchObject({
-      productName: "Open Design Nightly",
-      publicAppBundleName: "Open Design Nightly.app",
+      productName: "WorkBuild Nightly",
+      publicAppBundleName: "WorkBuild Nightly.app",
     });
   });
 });

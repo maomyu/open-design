@@ -16,7 +16,7 @@ function createPaths(root: string): WinPaths {
     assembledMainEntryPath: join(namespaceRoot, "assembled", "app", "main.cjs"),
     assembledPackageJsonPath: join(namespaceRoot, "assembled", "app", "package.json"),
     assembledPrebundledRoot: join(namespaceRoot, "assembled", "app", "prebundled"),
-    blockmapPath: join(namespaceRoot, "builder", "Open Design-second-setup.exe.blockmap"),
+    blockmapPath: join(namespaceRoot, "builder", "WorkBuild-second-setup.exe.blockmap"),
     builtManifestPath: join(namespaceRoot, "built-app.json"),
     daemonCliPrebundleEntrypointPath: join(namespaceRoot, "prebundle-entrypoints", "daemon-cli.js"),
     daemonCliPrebundlePath: join(namespaceRoot, "assembled", "app", "prebundled", "daemon", "daemon-cli.mjs"),
@@ -24,9 +24,9 @@ function createPaths(root: string): WinPaths {
     daemonPrebundleRoot: join(namespaceRoot, "assembled", "app", "prebundled", "daemon"),
     daemonSidecarPrebundleEntrypointPath: join(namespaceRoot, "prebundle-entrypoints", "daemon-sidecar.js"),
     daemonSidecarPrebundlePath: join(namespaceRoot, "assembled", "app", "prebundled", "daemon", "daemon-sidecar.mjs"),
-    exePath: join(namespaceRoot, "builder", "Open Design-second.exe"),
-    installDir: join(namespaceRoot, "runtime", "install", "Open Design"),
-    installedExePath: join(namespaceRoot, "runtime", "install", "Open Design", "Open Design.exe"),
+    exePath: join(namespaceRoot, "builder", "WorkBuild-second.exe"),
+    installDir: join(namespaceRoot, "runtime", "install", "WorkBuild"),
+    installedExePath: join(namespaceRoot, "runtime", "install", "WorkBuild", "WorkBuild.exe"),
     installerPayloadPath: join(namespaceRoot, "installer", "payload.7z"),
     installerScriptPath: join(namespaceRoot, "installer", "installer.nsi"),
     publicDesktopShortcutPath: join(namespaceRoot, "desktop", "public.lnk"),
@@ -39,20 +39,20 @@ function createPaths(root: string): WinPaths {
     packagedMainPrebundleMetaPath: join(namespaceRoot, "prebundle-meta", "packaged-main.meta.json"),
     packagedMainPrebundlePath: join(namespaceRoot, "assembled", "app", "prebundled", "packaged-main.mjs"),
     resourceRoot: join(namespaceRoot, "resources", "open-design"),
-    setupPath: join(namespaceRoot, "builder", "Open Design-second-setup.exe"),
-    setupZipPath: join(namespaceRoot, "builder", "Open Design-second-portable.zip"),
+    setupPath: join(namespaceRoot, "builder", "WorkBuild-second-setup.exe"),
+    setupZipPath: join(namespaceRoot, "builder", "WorkBuild-second-portable.zip"),
     startMenuShortcutPath: join(namespaceRoot, "start-menu.lnk"),
     tarballsRoot: join(namespaceRoot, "tarballs"),
     userDesktopShortcutPath: join(namespaceRoot, "desktop", "user.lnk"),
     uninstallMarkerPath: join(namespaceRoot, "logs", "uninstall.marker.json"),
     uninstallTimingPath: join(namespaceRoot, "logs", "uninstall.timing.json"),
-    uninstallerPath: join(namespaceRoot, "runtime", "install", "Open Design", "Uninstall.exe"),
+    uninstallerPath: join(namespaceRoot, "runtime", "install", "WorkBuild", "Uninstall.exe"),
     webStandaloneHookAuditPath: join(namespaceRoot, "web-standalone-after-pack-audit.json"),
     webStandaloneHookConfigPath: join(namespaceRoot, "web-standalone-after-pack-config.json"),
     webSidecarPrebundleMetaPath: join(namespaceRoot, "prebundle-meta", "web-sidecar.meta.json"),
     webSidecarPrebundlePath: join(namespaceRoot, "assembled", "app", "prebundled", "web-sidecar.mjs"),
     winIconPath: join(namespaceRoot, "resources", "win", "icon.ico"),
-    unpackedExePath: join(namespaceRoot, "builder", "win-unpacked", "Open Design.exe"),
+    unpackedExePath: join(namespaceRoot, "builder", "win-unpacked", "WorkBuild.exe"),
     unpackedRoot: join(namespaceRoot, "builder", "win-unpacked"),
   };
 }
@@ -65,7 +65,7 @@ describe("materializeCachedUnpackedForInstaller", () => {
 
     try {
       await mkdir(join(cachedUnpackedRoot, "resources"), { recursive: true });
-      await writeFile(join(cachedUnpackedRoot, "Open Design.exe"), "exe\n", "utf8");
+      await writeFile(join(cachedUnpackedRoot, "WorkBuild.exe"), "exe\n", "utf8");
       await writeFile(
         join(cachedUnpackedRoot, "resources", "open-design-config.json"),
         `${JSON.stringify({ namespace: "first", version: 1 })}\n`,
@@ -84,7 +84,7 @@ describe("materializeCachedUnpackedForInstaller", () => {
 
       expect(manifest.source).toBe("namespace");
       expect(manifest.unpackedRoot).toBe(paths.unpackedRoot);
-      await expect(readFile(join(paths.unpackedRoot, "Open Design.exe"), "utf8")).resolves.toBe("exe\n");
+      await expect(readFile(join(paths.unpackedRoot, "WorkBuild.exe"), "utf8")).resolves.toBe("exe\n");
       await expect(readFile(join(paths.unpackedRoot, "resources", "open-design-config.json"), "utf8")).resolves.toContain(
         '"namespace":"second"',
       );
