@@ -7,7 +7,7 @@
     "zh-CN": "公众号发布",
     "en": "WeChat MP Publisher"
   },
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "公众号长文流水线:选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发到草稿箱(公众号官方 API)。驱动本机「多媒体自动发布」工作台,Open Build 只做编排与右侧可视化看板。",
   "description_i18n": {
     "zh-CN": "选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发公众号草稿箱。",
@@ -213,13 +213,13 @@
           "id": "images",
           "title": "配图",
           "gate": "none",
-          "prompt": "**这步开头先用 AskUserQuestion 问用户:「排好版了(右侧 `4-排版-article.html`),要不要配图?」给『要配图 / 不用,直接发草稿』两个选项**(用户想顺便改内容就写补充框,你照着 Edit「文章」正文、重排,再问)。\n- **不用**:跳过配图,直接进发草稿步。\n- **要配图**:按正文里的 `<!-- IMAGE_N: 描述 -->` 标记逐张配图——默认用工作台 MY-wechat-shared/scripts/generate_image_qwen.py(千问),失败兜底 generate_image_gemini.py(Gemini),都用工作台 .venv 跑、读它 .env 的 QWEN_API_KEY/GEMINI_API_KEY;另出一张封面图。**图片存到当前项目目录的 `3-配图/` 子目录**(如 `3-配图/封面.jpg`、`3-配图/图1.jpg`)。每张在 `board.json`「配图」表插一行:位置(封面/图N)/ 描述 / 图片(`image` 字段填**项目内相对路径**如 `3-配图/封面.jpg`,宿主渲成缩略图)/ 状态(成功·失败)。配完图**重新用 MY-wechat-html-render 排一版**,把图插回 `4-排版-article.html`(覆盖纯文版)。配图失败优雅降级、用兜底封面,绝不假装出图。可选:再往工作台 archives 拷一份备份。"
+          "prompt": "**(询问模式)这步开头先用 AskUserQuestion 问用户:「排好版了(右侧 `4-排版-article.html`),要不要配图?」给『要配图 / 不用,直接发草稿』两个选项**(用户想顺便改内容就写补充框,你照着 Edit「文章」正文、重排,再问)。**自动模式不问**:正文有 `<!-- IMAGE_N -->` 标记就直接配,没有就直接进发草稿。\n- **不用**:跳过配图,**立刻进发草稿步**。\n- **要配图**:按正文里的 `<!-- IMAGE_N: 描述 -->` 标记逐张配图——默认用工作台 MY-wechat-shared/scripts/generate_image_qwen.py(千问),失败兜底 generate_image_gemini.py(Gemini),都用工作台 .venv 跑、读它 .env 的 QWEN_API_KEY/GEMINI_API_KEY;另出一张封面图。**图片存到当前项目目录的 `3-配图/` 子目录**(如 `3-配图/封面.jpg`、`3-配图/图1.jpg`)。每张在 `board.json`「配图」表插一行:位置(封面/图N)/ 描述 / 图片(`image` 字段填**项目内相对路径**如 `3-配图/封面.jpg`,宿主渲成缩略图)/ 状态(成功·失败)。配完图**重新用 MY-wechat-html-render 排一版**,把图以项目内相对路径插回 `4-排版-article.html`(覆盖纯文版;发布时才换 mmbiz URL)。配图失败优雅降级、用兜底封面,绝不假装出图。\n**配完图不要停下再问别的——立刻进发草稿步把草稿发出去**(草稿箱安全,发完还有确认关卡)。"
         },
         {
           "id": "publish",
           "title": "发草稿",
           "gate": "confirm",
-          "prompt": "用 MY-wechat-publish-draft 发到公众号草稿箱:取 access_token(/cgi-bin/token)→ 内图 uploadimg、封面 add_material → draft/add 提交。命令/脚本都用工作台 .venv,读 MY-wechat-shared/.env 的 WECHAT_APPID/WECHAT_SECRET/WECHAT_AUTHOR。**铁律:只发到草稿箱**,发完把草稿结果写进 `board.json`「发布」表(草稿状态、草稿链接(link 字段)、以及「去公众号后台二次确认群发」的提示各一行);**绝不自动正式群发、绝不谎报已发**。失败明确说卡在哪一步(token/IP 白名单/uploadimg/draft)。 **凭证已由系统按选定账号注入为标准环境变量(WECHAT_APPID/WECHAT_SECRET/WECHAT_AUTHOR),直接执行发布命令即可,不要手动覆盖任何凭证变量。**若脚本报某凭证缺失,如实说明缺哪个键、引导用户去插件编辑页「账号」区给该账号补上,绝不换账号重试、绝不谎报。"
+          "prompt": "用 MY-wechat-publish-draft 发到公众号草稿箱,**所见即所发**,严格四步:\n1. **content 唯一来源 = 项目里的 `4-排版-article.html`**——读文件,除图片 src 替换外一个字都不改,绝不重新排版/按记忆重写;\n2. 取 access_token(/cgi-bin/token)→ 内图逐张 `/media/uploadimg`,**每拿到一个 mmbiz URL 就把 content 里对应的本地 src(如 `3-配图/图1.jpg`)替换掉**;封面走 `/material/add_material` 拿 thumb_media_id(纯文没配图也要兜底封面,thumb_media_id 必填);\n3. **提交前自检**:content 里每个 `<img src>` 都是 mmbiz.qpic.cn(还有本地路径=那张图必丢)/ 开头没有 H1 大标题(标题只进 title 字段)/ 没有 `<ol>/<ul>/<li>`(微信剥序号,发现回排版步改手写序号)/ title ≤64 字节;\n4. `draft/add` 提交,发完把草稿结果写进 `board.json`「发布」表(草稿状态、草稿链接(link 字段)、以及「去公众号后台二次确认群发」的提示各一行)。\n**铁律:只发到草稿箱,绝不自动正式群发、绝不谎报已发。** 失败明确说卡在哪一步(token/IP 白名单/uploadimg/draft)。**凭证已由系统按选定账号注入为标准环境变量(WECHAT_APPID/WECHAT_SECRET/WECHAT_AUTHOR),直接执行发布命令即可,不要手动覆盖任何凭证变量。**若脚本报某凭证缺失,如实说明缺哪个键、引导用户去插件编辑页「账号」区给该账号补上,绝不换账号重试、绝不谎报。"
         }
       ]
     },
