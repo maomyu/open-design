@@ -160,3 +160,34 @@ describe('applyPlugin', () => {
     expect(result.result.appliedPlugin.pluginId).toBe('sample-plugin');
   });
 });
+
+describe('applyPlugin 自动模式 (runMode)', () => {
+  // 自动模式 rides on the applied query so the instructions live in the
+  // conversation for every later run, and stamps the snapshot so the daemon
+  // composes auto-advance stage notes at run time.
+  it("appends the AUTO block to query and stamps snapshot.runMode on runMode: 'auto'", () => {
+    const result = applyPlugin({
+      plugin: pluginFixture(),
+      inputs: { topic: 'design' },
+      registry: REGISTRY,
+      runMode: 'auto',
+    });
+    expect(result.result.query).toContain('【自动模式】');
+    // The one gate auto mode keeps: outward publish still confirms once.
+    expect(result.result.query).toContain('对外发布');
+    // Missing-config recovery protocol: pause, configure, reply 继续.
+    expect(result.result.query).toContain('继续');
+    expect(result.result.appliedPlugin.query).toContain('【自动模式】');
+    expect(result.result.appliedPlugin.runMode).toBe('auto');
+  });
+
+  it('default apply stays on ask semantics — no AUTO block, no runMode stamp', () => {
+    const result = applyPlugin({
+      plugin: pluginFixture(),
+      inputs: { topic: 'design' },
+      registry: REGISTRY,
+    });
+    expect(result.result.query).not.toContain('【自动模式】');
+    expect(result.result.appliedPlugin.runMode).toBeUndefined();
+  });
+});

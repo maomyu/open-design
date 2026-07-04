@@ -60,6 +60,7 @@ export interface CreateSnapshotInput {
   connectorsResolved: PluginConnectorBinding[];
   mcpServers: McpServerSpec[];
   query?: string | undefined;
+  runMode?: AppliedPluginSnapshot['runMode'] | undefined;
 }
 
 export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): AppliedPluginSnapshot {
@@ -84,10 +85,10 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
       inputs_json, resolved_context_json, pipeline_json, genui_surfaces_json,
       capabilities_granted, capabilities_required, assets_staged_json,
       connectors_required_json, connectors_resolved_json, mcp_servers_json,
-      plugin_title, plugin_description, query_text,
+      plugin_title, plugin_description, query_text, run_mode,
       status, applied_at, expires_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fresh', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fresh', ?, ?)
   `).run(
     id,
     input.projectId,
@@ -119,6 +120,7 @@ export function createSnapshot(db: SqliteDb, input: CreateSnapshotInput): Applie
     input.pluginTitle ?? null,
     input.pluginDescription ?? null,
     input.query ?? null,
+    input.runMode ?? null,
     now,
     expiresAt,
   );
@@ -365,6 +367,7 @@ function buildSnapshot(args: {
     pluginTitle:          input.pluginTitle,
     pluginDescription:    input.pluginDescription,
     query:                input.query,
+    runMode:              input.runMode,
     status,
   };
   return snapshot;
@@ -401,6 +404,7 @@ export function rowToSnapshot(row: DbRow): AppliedPluginSnapshot {
     pluginTitle:          row['plugin_title'] != null ? String(row['plugin_title']) : undefined,
     pluginDescription:    row['plugin_description'] != null ? String(row['plugin_description']) : undefined,
     query:                row['query_text'] != null ? String(row['query_text']) : undefined,
+    runMode:              row['run_mode'] === 'auto' ? 'auto' : row['run_mode'] === 'ask' ? 'ask' : undefined,
     status:               row['status'] === 'stale' ? 'stale' : 'fresh',
   };
   return snapshot;

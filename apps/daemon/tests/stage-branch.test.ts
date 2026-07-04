@@ -108,3 +108,26 @@ describe('readStages mode theme color', () => {
     expect(render.modes.find((m) => m.id === 'github')?.color).toBeUndefined();
   });
 });
+
+describe('renderStagePromptsBlock 自动模式', () => {
+  it('replaces ask gates/forks with auto-advance notes and keeps the publish exception', () => {
+    const block = renderStagePromptsBlock(NESTED_MANIFEST, undefined, { autoMode: true });
+    // Pacing header flips from "don't run straight through" to auto protocol.
+    expect(block).toContain('自动模式');
+    expect(block).not.toContain('不要一口气跑完');
+    // gate: 'confirm' no longer demands an AskUserQuestion confirmation…
+    expect(block).not.toContain('让用户确认/驳回');
+    // …and ask-forks (single AND nested multi) collapse to self-resolve.
+    expect(block).not.toContain('让用户单选一种');
+    expect(block).not.toContain('让用户多选');
+    expect(block).toContain('选默认或你判断最合适的一种');
+    // The outward-publish confirmation survives as the one kept gate.
+    expect(block).toContain('对外发布');
+  });
+
+  it('default (no options) keeps the ask semantics unchanged', () => {
+    const block = renderStagePromptsBlock(NESTED_MANIFEST);
+    expect(block).toContain('用 AskUserQuestion 让用户单选一种');
+    expect(block).toContain('不要一口气跑完');
+  });
+});

@@ -269,6 +269,14 @@ export function HomeView({
   const consumedHandoffIdRef = useRef<number | null>(null);
   const pendingPromptFocusEndRef = useRef(false);
   const activePluginApplyRequestRef = useRef(0);
+  // 询问(默认)/自动 interaction mode for the active plugin's run. Sent with
+  // the create-project body so the daemon stamps it on the applied snapshot;
+  // resets to the safe default whenever the active plugin changes.
+  const [pluginRunMode, setPluginRunMode] = useState<'ask' | 'auto'>('ask');
+  const activePluginIdForRunMode = active?.record.id ?? null;
+  useEffect(() => {
+    setPluginRunMode('ask');
+  }, [activePluginIdForRunMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1277,6 +1285,9 @@ export function HomeView({
       pluginTitle: submittedActive?.record.title ?? null,
       taskKind: submittedActive?.result?.appliedPlugin?.taskKind ?? null,
       pluginInputs: submittedPluginInputs,
+      // 自动模式 only travels with an explicit plugin pick — the free-form
+      // fallback router stays on ask semantics.
+      runMode: submittedActive && pluginRunMode === 'auto' ? 'auto' : null,
       projectKind: submittedProjectKind,
       projectMetadata: submittedProjectMetadata,
       designSystemId: submittedDesignSystemSelection?.id ?? null,
@@ -1306,6 +1317,8 @@ export function HomeView({
         onSubmit={submit}
         activePluginTitle={activeBadgeTitle}
         activePluginRecord={active?.record ?? null}
+        pluginRunMode={pluginRunMode}
+        onPluginRunModeChange={setPluginRunMode}
         activeSkillId={activeSkill?.id ?? null}
         activeSkillTitle={activeSkill ? localizeSkillName(locale, activeSkill) : null}
         activeChipId={active?.chipId ?? null}

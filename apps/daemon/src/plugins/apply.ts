@@ -81,7 +81,30 @@ export interface ApplyInput {
   // used to hydrate `od.inputs[]` fields declaring `optionsFrom: 'accounts'`
   // into concrete select options (the composer's 账号 dropdown).
   accountNames?: string[] | undefined;
+  // Interaction mode. 'ask' (default) keeps every workflow gate on
+  // AskUserQuestion; 'auto' appends the 自动模式 block to the applied query
+  // and stamps the snapshot so every later run in the same conversation
+  // (including "继续" after the user fills a missing API key) recomposes
+  // gate/branch notes as auto-advance. See AUTO_MODE_QUERY_BLOCK.
+  runMode?: 'ask' | 'auto' | undefined;
 }
+
+// Appended to the rendered query when the user picks 自动模式. Semantics:
+//   - middle gates auto-advance, branches self-resolve, blank inputs are the
+//     agent's call — no AskUserQuestion round-trips;
+//   - the ONE exception is a genuine outward publish (sau video upload):
+//     that still confirms once (合规铁律:对外动作人工确认;公众号只发草稿箱
+//     不算对外,直发);
+//   - missing API key / config is NOT a dead end: the agent names the exact
+//     key + where to configure it, ends the turn, and resumes from board.json
+//     when the user replies「继续」— the next run re-injects fresh config.
+export const AUTO_MODE_QUERY_BLOCK =
+  '\n\n【自动模式】本次运行为自动模式,全程不要停下征求确认:\n' +
+  '- 工作流各步骤间的确认/选择关卡一律跳过——完成一步直接进下一步;下方步骤说明里所有「用 AskUserQuestion 让用户确认/单选/多选」在自动模式下改为:你直接替用户做最合理的决定并继续。\n' +
+  '- 岔路/模式:有对应输入值就按输入匹配;没有就选默认或你判断最合适的一种,不要问。\n' +
+  '- 没填的输入(如选题空着)你自己定,选最有把握出效果的方向,不要停下来问。\n' +
+  '- **唯一例外:真正对外发布的动作(如 sau 视频上传到抖音/小红书/快手/B站/视频号)执行前,仍必须用 AskUserQuestion 做最后一次发布确认**——这是合规底线,自动模式不豁免。公众号只发草稿箱、不算对外,直接发,不用确认。\n' +
+  '- 缺 API Key/凭证/配置时:不要编造、不要空转重试。在对话里明确说清「缺哪个配置、到哪里配」(插件编辑页的「插件配置」或「账号」区,或左侧「账号」页),把当前进度写进 board.json 后结束本轮。用户配好后回复「继续」,你从 board.json 的进度断点接着跑,已完成的步骤不要重做。';
 
 export interface ApplyComputed {
   result: ApplyResult;
@@ -174,7 +197,12 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
     projectMetadata.craftRequires = manifest.od!.context!.craft!.slice();
   }
 
-  const queryText = resolveLocalizedText(manifest.od?.useCase?.query, input.locale);
+  const autoMode = input.runMode === 'auto';
+  const baseQueryText = resolveLocalizedText(manifest.od?.useCase?.query, input.locale);
+  // Auto mode rides ON the query text: the composer inserts it as the user
+  // message, so the instructions stay visible in the conversation history for
+  // every follow-up run ("继续" after configuring a key included).
+  const queryText = autoMode && baseQueryText ? baseQueryText + AUTO_MODE_QUERY_BLOCK : baseQueryText;
 
   const appliedAt = Date.now();
   const snapshot: AppliedPluginSnapshot = {
@@ -207,6 +235,7 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
     pluginTitle,
     pluginDescription,
     query:                queryText || undefined,
+    ...(autoMode ? { runMode: 'auto' as const } : {}),
     status:               'fresh',
   };
 

@@ -63,6 +63,9 @@ export async function createProject(input: {
   pluginId?: string;
   appliedPluginSnapshotId?: string;
   pluginInputs?: Record<string, unknown>;
+  // 'auto' stamps the applied snapshot so every run in the project skips
+  // mid-flow AskUserQuestion gates (outward publish still confirms once).
+  runMode?: 'ask' | 'auto';
 }): Promise<{ project: Project; conversationId: string; appliedPluginSnapshotId?: string } | null> {
   try {
     // `randomUUID` falls back to `crypto.getRandomValues` / `Math.random`
@@ -999,6 +1002,7 @@ export async function applyPlugin(
     projectId?: string;
     grantCaps?: string[];
     locale?: string;
+    runMode?: 'ask' | 'auto';
   } = {},
 ): Promise<ApplyResult | null> {
   try {
@@ -1012,6 +1016,7 @@ export async function applyPlugin(
           projectId: options.projectId,
           grantCaps: options.grantCaps ?? [],
           locale: options.locale,
+          ...(options.runMode === 'auto' ? { runMode: 'auto' } : {}),
         }),
       },
     );

@@ -76,6 +76,15 @@ export const AppliedPluginSnapshotSchema = z.object({
   pluginTitle:          z.string().optional(),
   pluginDescription:    z.string().optional(),
   query:                z.string().optional(),
+  // How the run interacts with the user. 'ask' (default) keeps every
+  // workflow gate / branch choice on AskUserQuestion; 'auto' runs straight
+  // through — gates auto-advance, branches self-resolve, blank inputs are
+  // decided by the agent. One hard exception survives auto mode: a genuine
+  // outward publish (e.g. sau video upload) still confirms once before
+  // executing. Persisted on the snapshot so every later run in the same
+  // conversation (including "继续" after the user fills a missing API key)
+  // recomposes with the same semantics.
+  runMode: z.enum(['ask', 'auto']).optional(),
   // Apply-pipeline status — flips to 'stale' when `od plugin doctor` detects
   // a digest drift after an upgrade. Snapshots are never rewritten in place.
   status: z.enum(['fresh', 'stale']).default('fresh'),

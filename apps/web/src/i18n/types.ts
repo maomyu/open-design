@@ -925,6 +925,10 @@ export interface Dict {
   'homeHero.removePlugin': string;
   'homeHero.removePluginAria': string;
   'homeHero.clearActivePlugin': string;
+  'homeHero.runModeAsk': string;
+  'homeHero.runModeAuto': string;
+  'homeHero.runModeAskHint': string;
+  'homeHero.runModeAutoHint': string;
   'homeHero.clearActiveSkill': string;
   'homeHero.contextItemsResolved': string;
   'homeHero.removeFile': string;

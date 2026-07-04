@@ -249,6 +249,7 @@ interface Props {
       pluginId?: string;
       appliedPluginSnapshotId?: string;
       pluginInputs?: Record<string, unknown>;
+      runMode?: 'ask' | 'auto';
       autoSendFirstMessage?: boolean;
       pendingFiles?: File[];
     },
@@ -507,6 +508,7 @@ export function EntryShell({
         ? { appliedPluginSnapshotId: payload.appliedPluginSnapshotId }
         : {}),
       ...(payload.pluginInputs ? { pluginInputs: payload.pluginInputs } : {}),
+      ...(payload.runMode === 'auto' ? { runMode: 'auto' as const } : {}),
       ...(payload.attachments && payload.attachments.length > 0
         ? { pendingFiles: payload.attachments }
         : {}),

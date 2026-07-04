@@ -49,11 +49,16 @@ interface RawStage {
 //   - pick 'ask' single → the agent asks (AskUserQuestion) and the user picks ONE.
 //   - pick 'ask' multi  → the agent asks with multiSelect; EACH option the user
 //                         picks runs its own pass, outputs merged/de-duped.
-function branchNote(branch: RawBranch | undefined, kind: '模式' | '子选项'): string {
+// In 自动模式 the 'ask' variants collapse: no AskUserQuestion — the agent
+// resolves the fork itself (input value first, else default / best judgment).
+function branchNote(branch: RawBranch | undefined, kind: '模式' | '子选项', autoMode = false): string {
   const pick = typeof branch?.pick === 'string' ? branch.pick : 'ask';
   const multi = branch?.select === 'multi';
   if (!branch || pick === 'input') {
     return `（这一步有多种${kind}，按相关输入值选匹配的那个执行：）`;
+  }
+  if (autoMode) {
+    return `（这一步有多种${kind}。自动模式：不要问用户——有对应输入值按输入匹配，没有就选默认或你判断最合适的一种直接执行：）`;
   }
   if (multi) {
     return (
@@ -74,6 +79,12 @@ const GATE_NOTE: Record<string, string> = {
   none: '',
 };
 
+// 自动模式 gate note — replaces GATE_NOTE so the per-step instructions don't
+// contradict the AUTO block in the user message. The outward-publish
+// exception is restated here because it is the one gate auto mode keeps.
+const AUTO_GATE_NOTE =
+  '（自动模式：完成本步直接进下一步，不用 AskUserQuestion 征求确认；仅当本步要执行真正对外发布的上传动作时，仍须先做一次发布确认）';
+
 /**
  * Returns the markdown block for the plugin's step prompts, or '' when the
  * plugin declares no workflow / no step prompts (so non-workflow plugins are
@@ -82,7 +93,9 @@ const GATE_NOTE: Record<string, string> = {
 export function renderStagePromptsBlock(
   manifest: unknown,
   resolveSkill?: StageSkillResolver,
+  options?: { autoMode?: boolean },
 ): string {
+  const autoMode = options?.autoMode === true;
   const stages = (manifest as { od?: { workflow?: { stages?: unknown } } })?.od?.workflow?.stages;
   if (!Array.isArray(stages) || stages.length === 0) return '';
 
@@ -96,7 +109,9 @@ export function renderStagePromptsBlock(
     const title = text(stage.title_i18n, stage.title) || id;
     const gate = typeof stage.gate === 'string' ? stage.gate : 'none';
     const prompt = text(stage.prompt_i18n, stage.prompt).trim();
-    const gateNote = GATE_NOTE[gate] ?? '';
+    const gateNote = autoMode
+      ? (gate === 'none' ? '' : AUTO_GATE_NOTE)
+      : (GATE_NOTE[gate] ?? '');
 
     const lines: string[] = [`### 步骤 ${n} · ${title} ${gateNote}`.trimEnd()];
     if (prompt) lines.push(prompt);
@@ -122,14 +137,14 @@ export function renderStagePromptsBlock(
           })
           .filter(Boolean);
         if (renderedSubs.length > 0) {
-          parts.push(branchNote(m.branch as RawBranch | undefined, '子选项'));
+          parts.push(branchNote(m.branch as RawBranch | undefined, '子选项', autoMode));
           parts.push(renderedSubs.join('\n'));
         }
         return parts.join('\n\n');
       })
       .filter(Boolean);
     if (renderedModes.length > 0) {
-      lines.push(branchNote(stage.branch as RawBranch | undefined, '模式'));
+      lines.push(branchNote(stage.branch as RawBranch | undefined, '模式', autoMode));
       lines.push(renderedModes.join('\n\n'));
     }
 
@@ -162,10 +177,17 @@ export function renderStagePromptsBlock(
   }
 
   if (sections.length === 0) return '';
+  // 自动模式 rewrites the pacing sentence — the default one ends with
+  // "不要一口气跑完", which is exactly what auto mode wants; contradicting it
+  // here would leave the model torn between the two.
+  const pacing = autoMode
+    ? '本次运行为**自动模式**：严格按步骤顺序推进，做完一步直接进下一步，**全程不要用 AskUserQuestion 停下征求确认**（除各步括注里写明的对外发布确认外）。' +
+      '没填的输入你自己定；岔路选默认或最合理的一种。缺 API Key/凭证时不要编造：说清缺哪个、到哪配（插件编辑页「插件配置」/「账号」区或左侧「账号」页），把进度写进 board.json 后结束本轮；用户配好后回复「继续」，你从 board.json 断点接着跑，已完成的步骤不重做。'
+    : '严格按步骤顺序推进，每步产出对应结果后按括注的闸门处理，不要一口气跑完。';
   return (
     '\n\n---\n\n## 各步骤提示词（workflow steps）\n\n' +
     '下面是本工作流每一步自己的提示词，**决定该步产出的效果与风格**。' +
-    '严格按步骤顺序推进，每步产出对应结果后按括注的闸门处理，不要一口气跑完。\n\n' +
+    pacing + '\n\n' +
     sections.join('\n\n')
   );
 }

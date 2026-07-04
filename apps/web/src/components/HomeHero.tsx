@@ -73,6 +73,12 @@ interface Props {
   onSubmit: HomeHeroSubmitHandler;
   activePluginTitle: string | null;
   activePluginRecord?: InstalledPluginRecord | null;
+  /** Interaction mode for the active plugin's run. 'ask' (default) keeps
+   *  workflow gates on AskUserQuestion; 'auto' runs straight through (the
+   *  one exception — a genuine outward publish — still confirms once).
+   *  Rendered as a 询问/自动 segmented toggle next to the plugin chip. */
+  pluginRunMode?: 'ask' | 'auto';
+  onPluginRunModeChange?: (mode: 'ask' | 'auto') => void;
   activeChipId: string | null;
   onClearActivePlugin: () => void;
   onClearActiveChip?: () => void;
@@ -161,6 +167,8 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
     onSubmit,
     activePluginTitle,
     activePluginRecord = null,
+    pluginRunMode = 'ask',
+    onPluginRunModeChange = () => undefined,
     activeSkillId = null,
     activeSkillTitle = null,
     activeChipId,
@@ -802,6 +810,36 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
                     ×
                   </button>
                 )}
+              </span>
+            ) : null}
+            {/* 询问/自动 run-mode toggle — only meaningful when a plugin is
+                active. Auto = no mid-run AskUserQuestion gates (outward
+                publish still confirms once); missing config pauses the run
+                until the user configures it and replies「继续」. */}
+            {showActivePluginChip && activePluginRecord ? (
+              <span
+                className="home-hero__run-mode"
+                data-testid="home-hero-run-mode"
+                title={pluginRunMode === 'auto' ? t('homeHero.runModeAutoHint') : t('homeHero.runModeAskHint')}
+              >
+                <button
+                  type="button"
+                  className={`home-hero__run-mode-btn${pluginRunMode === 'ask' ? ' is-active' : ''}`}
+                  onClick={() => onPluginRunModeChange('ask')}
+                  data-testid="home-hero-run-mode-ask"
+                  aria-pressed={pluginRunMode === 'ask'}
+                >
+                  {t('homeHero.runModeAsk')}
+                </button>
+                <button
+                  type="button"
+                  className={`home-hero__run-mode-btn${pluginRunMode === 'auto' ? ' is-active' : ''}`}
+                  onClick={() => onPluginRunModeChange('auto')}
+                  data-testid="home-hero-run-mode-auto"
+                  aria-pressed={pluginRunMode === 'auto'}
+                >
+                  {t('homeHero.runModeAuto')}
+                </button>
               </span>
             ) : null}
             {activeSkillTitle ? (

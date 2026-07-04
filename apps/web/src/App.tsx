@@ -832,6 +832,7 @@ function AppInner() {
         pluginId?: string;
         appliedPluginSnapshotId?: string;
         pluginInputs?: Record<string, unknown>;
+        runMode?: 'ask' | 'auto';
         autoSendFirstMessage?: boolean;
         requestId?: string;
         pendingFiles?: File[];
@@ -860,6 +861,7 @@ function AppInner() {
           ? { appliedPluginSnapshotId: input.appliedPluginSnapshotId }
           : {}),
         ...(input.pluginInputs ? { pluginInputs: input.pluginInputs } : {}),
+        ...(input.runMode === 'auto' ? { runMode: 'auto' as const } : {}),
       });
       if (!result) {
         trackProjectCreateResult(

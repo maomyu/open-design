@@ -132,7 +132,10 @@ function pickPluginFields(body: Record<string, unknown> | null | undefined) {
         .filter((c): c is string => typeof c === 'string')
     : [];
   const locale = typeof body.locale === 'string' ? body.locale : undefined;
-  return { pluginId, snapshotId, pluginInputs, grantCaps, locale };
+  // Interaction mode — only 'auto' is meaningful; anything else falls back
+  // to the default ask semantics.
+  const runMode = body.runMode === 'auto' ? ('auto' as const) : undefined;
+  return { pluginId, snapshotId, pluginInputs, grantCaps, locale, runMode };
 }
 
 export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnapshotResult {
@@ -218,6 +221,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
       activeProjectDesignSystem: input.activeProjectDesignSystem,
       connectorProbe: input.connectorProbe,
       locale: fields.locale,
+      runMode: fields.runMode,
     });
   } catch (err) {
     if (err instanceof MissingInputError) {
@@ -283,6 +287,7 @@ export function resolvePluginSnapshot(input: ResolveSnapshotInput): ResolveSnaps
     connectorsResolved: result.appliedPlugin.connectorsResolved,
     mcpServers: result.appliedPlugin.mcpServers,
     query: result.query,
+    runMode: result.appliedPlugin.runMode,
   });
 
   return finalizeOk({

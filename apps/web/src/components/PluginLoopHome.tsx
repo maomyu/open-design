@@ -26,6 +26,10 @@ export interface PluginLoopSubmit {
   pluginTitle: string | null;
   taskKind: string | null;
   pluginInputs?: Record<string, unknown> | null;
+  /** Interaction mode for the plugin run. 'auto' skips mid-flow
+   *  AskUserQuestion gates (a genuine outward publish still confirms once);
+   *  null/absent → default ask semantics. */
+  runMode?: 'ask' | 'auto' | null;
   contextPlugins?: Array<{ id: string; title: string; description?: string }> | null;
   contextMcpServers?: Array<{ id: string; label?: string; transport?: string; url?: string; command?: string }> | null;
   contextConnectors?: Array<{ id: string; name: string; provider?: string; category?: string; status?: string; accountLabel?: string }> | null;

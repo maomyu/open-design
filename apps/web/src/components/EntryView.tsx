@@ -91,6 +91,7 @@ interface Props {
       pluginId?: string;
       appliedPluginSnapshotId?: string;
       pluginInputs?: Record<string, unknown>;
+      runMode?: 'ask' | 'auto';
       autoSendFirstMessage?: boolean;
       pendingFiles?: File[];
     },

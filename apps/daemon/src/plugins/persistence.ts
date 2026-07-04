@@ -85,6 +85,7 @@ export function migratePlugins(db: SqliteDb): void {
       plugin_title             TEXT,
       plugin_description       TEXT,
       query_text               TEXT,
+      run_mode                 TEXT,
       status                   TEXT NOT NULL DEFAULT 'fresh',
       applied_at               INTEGER NOT NULL,
       expires_at               INTEGER,
@@ -201,6 +202,8 @@ export function migratePlugins(db: SqliteDb): void {
     ['resolved_source', `ALTER TABLE applied_plugin_snapshots ADD COLUMN resolved_source TEXT`],
     ['resolved_ref', `ALTER TABLE applied_plugin_snapshots ADD COLUMN resolved_ref TEXT`],
     ['archive_integrity', `ALTER TABLE applied_plugin_snapshots ADD COLUMN archive_integrity TEXT`],
+    // 'ask'/'auto' interaction mode the snapshot's runs compose with.
+    ['run_mode', `ALTER TABLE applied_plugin_snapshots ADD COLUMN run_mode TEXT`],
   ] as const) {
     if (!snapshotCols.some((c) => c['name'] === name)) db.exec(ddl);
   }

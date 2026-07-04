@@ -107,6 +107,9 @@ const PLUGIN_BOOLEAN_FLAGS = new Set([
   'revoke',
   'follow',
   'strict',
+  // `od plugin apply --auto` — 自动模式: the applied query carries the
+  // no-mid-questions protocol and the snapshot is stamped runMode='auto'.
+  'auto',
 ]);
 
 const UI_STRING_FLAGS = new Set([
@@ -3484,7 +3487,7 @@ async function runPluginApply(rest) {
     && a !== flags.project
     && a !== flags['grant-caps']);
   if (!id) {
-    console.error('Usage: od plugin apply <id> [--inputs <json>] [--input k=v ...] [--project <id>] [--grant-caps a,b]');
+    console.error('Usage: od plugin apply <id> [--inputs <json>] [--input k=v ...] [--project <id>] [--grant-caps a,b] [--auto]');
     process.exit(2);
   }
   // Plan §3.B2: support both --inputs <json> and repeated --input k=v
@@ -3518,7 +3521,12 @@ async function runPluginApply(rest) {
     resp = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ inputs, projectId: flags.project, grantCaps }),
+      body: JSON.stringify({
+        inputs,
+        projectId: flags.project,
+        grantCaps,
+        ...(flags.auto ? { runMode: 'auto' } : {}),
+      }),
     });
   } catch (err) {
     return exitWithStructuredError({
