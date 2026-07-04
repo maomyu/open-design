@@ -185,6 +185,70 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+export interface RegisterUserPluginsInput {
+  db: SqliteDb;
+  // Absolute path to the user plugins root (`<dataDir>/plugins`).
+  userPluginsRoot: string;
+}
+
+export interface RegisterUserPluginsResult {
+  registered: InstalledPluginRecord[];
+  warnings: string[];
+}
+
+// Boot walker for USER plugins. Creator-made plugins and bundled-plugin
+// edits are saved to `userPluginsRoot` and registered (sourceKind='user')
+// at save time — but the bundled boot walker above upserts by id on every
+// start, so a user SHADOW of a bundled id would be clobbered back to
+// `bundled` at each restart and silently vanish from "My plugins". This
+// pass runs AFTER registerBundledPlugins and re-upserts every valid user
+// folder, restoring the invariant that the on-disk user copy always wins
+// over the bundled row of the same id.
+export async function registerUserPlugins(
+  input: RegisterUserPluginsInput,
+): Promise<RegisterUserPluginsResult> {
+  const out: InstalledPluginRecord[] = [];
+  const warnings: string[] = [];
+
+  let entries;
+  try {
+    entries = await fsp.readdir(input.userPluginsRoot, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { registered: [], warnings: [] };
+    }
+    throw err;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const folderId = entry.name.toLowerCase();
+    if (!SAFE_BASENAME.test(folderId)) {
+      warnings.push(`user plugin folder ${entry.name} is not a safe id; skipped`);
+      continue;
+    }
+    const folder = path.join(input.userPluginsRoot, entry.name);
+    if (!(await pathExists(path.join(folder, 'open-design.json')))) continue;
+    const probe = await resolvePluginFolder({
+      folder,
+      folderId,
+      sourceKind: 'user',
+      // Matches the creator's save-time convention (`draft:<id>`), so a
+      // boot re-register is indistinguishable from the original save.
+      source: `draft:${folderId}`,
+      trust: 'trusted',
+    });
+    if (!probe.ok) {
+      warnings.push(`user plugin ${entry.name} failed to parse: ${probe.errors.join('; ')}`);
+      continue;
+    }
+    upsertInstalledPlugin(input.db, probe.record);
+    out.push(probe.record);
+  }
+
+  return { registered: out, warnings };
+}
+
 // Default bundled root resolution. The daemon ships its `dist/` next to
 // the repo, but the canonical bundled location is the repo root's
 // `plugins/_official/` directory. We resolve that by walking up from

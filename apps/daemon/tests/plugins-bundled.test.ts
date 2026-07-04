@@ -7,7 +7,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { migratePlugins } from '../src/plugins/persistence.js';
 import { listInstalledPlugins } from '../src/plugins/registry.js';
-import { registerBundledPlugins } from '../src/plugins/bundled.js';
+import { registerBundledPlugins, registerUserPlugins } from '../src/plugins/bundled.js';
 
 let db: Database.Database;
 let tmpRoot: string;
@@ -169,5 +169,42 @@ describe('registerBundledPlugins', () => {
     const result = await registerBundledPlugins({ db, bundledRoot: tmpRoot });
     expect(result.pruned).toEqual(['removed-plugin']);
     expect(listInstalledPlugins(db).map((r) => r.id)).toEqual(['kept-plugin']);
+  });
+
+  it('restores a user shadow of a bundled plugin after the bundled walker clobbers it', async () => {
+    // The bundled plugin ships…
+    const bundledDir = path.join(tmpRoot, 'content', 'shadowed-plugin');
+    await mkdir(bundledDir, { recursive: true });
+    await writeFile(path.join(bundledDir, 'open-design.json'), SAMPLE_MANIFEST('shadowed-plugin'));
+    await writeFile(path.join(bundledDir, 'SKILL.md'), SAMPLE_SKILL('shadowed-plugin'));
+    // …and the user saved an edited copy under the user plugins root.
+    const userRoot = path.join(tmpRoot, 'user-plugins');
+    const userDir = path.join(userRoot, 'shadowed-plugin');
+    await mkdir(userDir, { recursive: true });
+    await writeFile(path.join(userDir, 'open-design.json'), SAMPLE_MANIFEST('shadowed-plugin'));
+    await writeFile(path.join(userDir, 'SKILL.md'), SAMPLE_SKILL('shadowed-plugin'));
+
+    // Boot order: bundled walker upserts sourceKind='bundled' (this is the
+    // clobber), then the user walker re-registers the shadow — the on-disk
+    // user copy must win.
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    const clobbered = listInstalledPlugins(db).find((r) => r.id === 'shadowed-plugin');
+    expect(clobbered?.sourceKind).toBe('bundled');
+
+    const result = await registerUserPlugins({ db, userPluginsRoot: userRoot });
+    expect(result.registered.map((r) => r.id)).toEqual(['shadowed-plugin']);
+    const restored = listInstalledPlugins(db).find((r) => r.id === 'shadowed-plugin');
+    expect(restored?.sourceKind).toBe('user');
+    expect(restored?.trust).toBe('trusted');
+    expect(restored?.fsPath).toBe(userDir);
+  });
+
+  it('user walker returns empty when the user plugins root does not exist', async () => {
+    const result = await registerUserPlugins({
+      db,
+      userPluginsRoot: path.join(tmpRoot, 'no-user-root'),
+    });
+    expect(result.registered).toEqual([]);
+    expect(result.warnings).toEqual([]);
   });
 });

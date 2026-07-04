@@ -129,6 +129,7 @@ import {
   readPluginLockfile,
   registerBuiltInAtomWorkers,
   registerBundledPlugins,
+  registerUserPlugins,
   registryRootsForDataDir,
   restoreProjectSnapshotLink,
   resolvePluginSnapshot,
@@ -4079,6 +4080,23 @@ export async function startServer({
     }
   } catch (err) {
     console.warn(`[plugins] bundled registration failed: ${(err)?.message ?? err}`);
+  }
+
+  // User plugins boot pass — MUST run after the bundled walker: the bundled
+  // upsert clobbers same-id rows, so user shadows of bundled plugins (edits
+  // saved from the plugin editor) would vanish from "My plugins" on every
+  // restart without this re-register. On-disk user copy always wins.
+  try {
+    const userResult = await registerUserPlugins({
+      db,
+      userPluginsRoot: PLUGIN_REGISTRY_ROOTS.userPluginsRoot,
+    });
+    if (userResult.registered.length > 0) {
+      console.log(`[plugins] registered ${userResult.registered.length} user plugin(s)`);
+    }
+    for (const w of userResult.warnings) console.warn(`[plugins] user warn: ${w}`);
+  } catch (err) {
+    console.warn(`[plugins] user registration failed: ${(err)?.message ?? err}`);
   }
 
   try {
