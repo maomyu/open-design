@@ -352,12 +352,16 @@ export const PluginManifestSchema = z.object({
     // so the editor reflects already-configured keys AND injects them into runs
     // (per-plugin `pluginConfig` overrides these).
     configEnvFile: z.string().optional(),
-    // Account-profile support. A plugin that drives several distinct accounts
-    // (e.g. 公众号发布) declares which `od.config` keys are PER-ACCOUNT
-    // credentials here; the operator manages named account profiles (each with
-    // its own credentials + writing persona) in the editor, and the run's first
-    // step picks one. See AccountProfile in api/plugin-source.ts.
+    // Account-profile support. Accounts belong to PLATFORMS (see
+    // MEDIA_PLATFORMS in api/plugin-source.ts): `platform` names which
+    // platform's account roster this plugin drives — the composer dropdown,
+    // persona injection, and credential resolution all read the platform-level
+    // store, so the same 抖音号 serves every plugin that targets 抖音.
+    // `credentialKeys` (api-credential platforms) names which `od.config` keys
+    // are PER-ACCOUNT credentials; kept for label metadata + the exclusive
+    // injection rule.
     accounts: z.object({
+      platform:       z.string().optional(),
       credentialKeys: z.array(z.string()).optional(),
     }).passthrough().optional(),
     capabilities: z.array(z.string()).optional(),

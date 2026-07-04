@@ -84,6 +84,8 @@ import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
 import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
+import { MediaHubView } from './MediaHubView';
+import { AccountsView } from './AccountsView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
 import { TasksView } from './TasksView';
@@ -560,7 +562,6 @@ export function EntryShell({
         <EntryNavRail
           view={view}
           onViewChange={changeView}
-          onNewProject={() => openNewProject()}
           projects={projects}
           onOpenProject={onOpenProject}
         />
@@ -667,6 +668,10 @@ export function EntryShell({
                 onUsePlugin={usePluginFromLibrary}
               />
             ) : null}
+            {view === 'media' ? (
+              <MediaHubView onUsePlugin={usePluginFromLibrary} />
+            ) : null}
+            {view === 'accounts' ? <AccountsView /> : null}
             {view === 'design-systems' ? (
               designSystemsLoading ? (
                 <CenteredLoader label={t('common.loading')} />

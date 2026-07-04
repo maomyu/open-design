@@ -23,13 +23,14 @@ export type EntryView =
   | 'projects'
   | 'tasks'
   | 'plugins'
+  | 'media'
+  | 'accounts'
   | 'design-systems'
   | 'integrations';
 
 interface Props {
   view: EntryView;
   onViewChange: (view: EntryView) => void;
-  onNewProject: () => void;
   /** Project history, surfaced as a scrollable "Recent" list in the rail. */
   projects: Project[];
   onOpenProject: (id: string) => void;
@@ -65,7 +66,6 @@ function NavButton({ active, ariaLabel, label, onClick, testId, children }: NavB
 export function EntryNavRail({
   view,
   onViewChange,
-  onNewProject,
   projects,
   onOpenProject,
 }: Props) {
@@ -100,14 +100,8 @@ export function EntryNavRail({
           </span>
         </button>
         <div className="entry-nav-rail__logo-divider" role="separator" aria-hidden="true" />
-        <NavButton
-          ariaLabel={t('entry.navNewProject')}
-          label={t('entry.navNewProject')}
-          onClick={onNewProject}
-          testId="entry-nav-new-project"
-        >
-          <Icon name="plus" size={18} />
-        </NavButton>
+        {/* 「新建项目」入口对客户定制版隐藏(2026-07-04 用户要求)——客户动线
+            从自媒体/主页对话框开工,项目由运行自动创建;要恢复把 NavButton 加回。 */}
         <NavButton
           active={isHome}
           ariaLabel={homeLabel}
@@ -118,6 +112,24 @@ export function EntryNavRail({
           <Icon name="home" size={18} />
         </NavButton>
         <NavButton
+          active={view === 'media'}
+          ariaLabel={t('entry.navMedia')}
+          label={t('entry.navMedia')}
+          onClick={() => onViewChange('media')}
+          testId="entry-nav-media"
+        >
+          <Icon name="share" size={18} />
+        </NavButton>
+        <NavButton
+          active={view === 'accounts'}
+          ariaLabel={t('entry.navAccounts')}
+          label={t('entry.navAccounts')}
+          onClick={() => onViewChange('accounts')}
+          testId="entry-nav-accounts"
+        >
+          <Icon name="grid" size={18} />
+        </NavButton>
+        <NavButton
           active={view === 'projects'}
           ariaLabel={t('entry.navProjects')}
           label={t('entry.navProjects')}
@@ -126,15 +138,9 @@ export function EntryNavRail({
         >
           <Icon name="folder" size={18} />
         </NavButton>
-        <NavButton
-          active={view === 'tasks'}
-          ariaLabel={t('entry.navTasks')}
-          label={t('entry.navTasks')}
-          onClick={() => onViewChange('tasks')}
-          testId="entry-nav-tasks"
-        >
-          <Icon name="kanban" size={18} />
-        </NavButton>
+        {/* 自动化(tasks)与设计体系入口对客户定制版暂时隐藏(2026-07-04 用户
+            要求"目前用不到")。路由仍保留 —— /automations、/design-systems 直链
+            可达;要恢复入口把 NavButton 加回来即可。 */}
         <NavButton
           active={view === 'plugins'}
           ariaLabel={t('entry.navPlugins')}
@@ -143,15 +149,6 @@ export function EntryNavRail({
           testId="entry-nav-plugins"
         >
           <Icon name="puzzle" size={18} />
-        </NavButton>
-        <NavButton
-          active={view === 'design-systems'}
-          ariaLabel={t('entry.navDesignSystems')}
-          label={t('entry.navDesignSystems')}
-          onClick={() => onViewChange('design-systems')}
-          testId="entry-nav-design-systems"
-        >
-          <Icon name="blocks" size={18} />
         </NavButton>
         <NavButton
           active={view === 'integrations'}

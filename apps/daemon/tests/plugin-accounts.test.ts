@@ -11,9 +11,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   validatePluginAccounts,
-  resolvePluginAccountCredentials,
+  resolvePlatformAccountCredentials,
+  platformAccountsForPlatform,
   applyExclusiveCredentialRule,
   accountCredentialKeysFromManifest,
+  accountPlatformFromManifest,
   type AppConfigPrefs,
 } from '../src/app-config.js';
 import { renderAccountRosterBlock } from '../src/plugins/stage-prompts.js';
@@ -23,8 +25,8 @@ import { hydrateDynamicInputOptions } from '../src/plugins/apply.js';
 const CRED_KEYS = ['WECHAT_APPID', 'WECHAT_SECRET', 'WECHAT_AUTHOR'];
 
 const PREFS: AppConfigPrefs = {
-  pluginAccounts: {
-    'wechat-mp-publish': [
+  platformAccounts: {
+    'wechat-mp': [
       { id: 'bao-kao', name: '报考日记', credentials: { WECHAT_APPID: 'appid1', WECHAT_SECRET: 's1' } },
       { id: 'kao-yan', name: '考研日记', credentials: { WECHAT_APPID: 'appid2', WECHAT_SECRET: 's2', WECHAT_AUTHOR: '小王' } },
     ],
@@ -50,40 +52,40 @@ describe('validatePluginAccounts', () => {
   });
 });
 
-describe('resolvePluginAccountCredentials (deterministic chooser)', () => {
+describe('resolvePlatformAccountCredentials (deterministic chooser)', () => {
   it('spec ①: a chosen account resolves to ITS values under standard key names', () => {
-    const env = resolvePluginAccountCredentials(PREFS, 'wechat-mp-publish', '报考日记', CRED_KEYS);
+    const env = resolvePlatformAccountCredentials(PREFS, 'wechat-mp', '报考日记', CRED_KEYS);
     expect(env).toEqual({ WECHAT_APPID: 'appid1', WECHAT_SECRET: 's1' });
     // No suffixed variants exist anymore — the model has nothing to splice.
     expect(Object.keys(env).some((k) => k.includes('__'))).toBe(false);
   });
 
   it('spec ②: no account chosen + multiple configured → resolves NOTHING', () => {
-    expect(resolvePluginAccountCredentials(PREFS, 'wechat-mp-publish', null, CRED_KEYS)).toEqual({});
-    expect(resolvePluginAccountCredentials(PREFS, 'wechat-mp-publish', '', CRED_KEYS)).toEqual({});
+    expect(resolvePlatformAccountCredentials(PREFS, 'wechat-mp', null, CRED_KEYS)).toEqual({});
+    expect(resolvePlatformAccountCredentials(PREFS, 'wechat-mp', '', CRED_KEYS)).toEqual({});
   });
 
   it('single configured account is used when none was chosen (auto-default)', () => {
     const single: AppConfigPrefs = {
-      pluginAccounts: { p: [{ id: 'only', name: '唯一号', credentials: { WECHAT_APPID: 'a' } }] },
+      platformAccounts: { p: [{ id: 'only', name: '唯一号', credentials: { WECHAT_APPID: 'a' } }] },
     };
-    expect(resolvePluginAccountCredentials(single, 'p', null, CRED_KEYS)).toEqual({ WECHAT_APPID: 'a' });
+    expect(resolvePlatformAccountCredentials(single, 'p', null, CRED_KEYS)).toEqual({ WECHAT_APPID: 'a' });
   });
 
   it('spec ④: an unknown or ambiguous account name resolves NOTHING (never guess)', () => {
-    expect(resolvePluginAccountCredentials(PREFS, 'wechat-mp-publish', '不存在的号', CRED_KEYS)).toEqual({});
+    expect(resolvePlatformAccountCredentials(PREFS, 'wechat-mp', '不存在的号', CRED_KEYS)).toEqual({});
     // Legacy duplicate-name data (bypassed the save gate) is ambiguous → refuse.
     const dup: AppConfigPrefs = {
-      pluginAccounts: { p: [
+      platformAccounts: { p: [
         { id: 'a1', name: '同名', credentials: { WECHAT_APPID: '1' } },
         { id: 'a2', name: '同名', credentials: { WECHAT_APPID: '2' } },
       ] },
     };
-    expect(resolvePluginAccountCredentials(dup, 'p', '同名', CRED_KEYS)).toEqual({});
+    expect(resolvePlatformAccountCredentials(dup, 'p', '同名', CRED_KEYS)).toEqual({});
   });
 
   it('spec ⑤: an account missing a key injects only what it has — no fallback', () => {
-    const env = resolvePluginAccountCredentials(PREFS, 'wechat-mp-publish', '报考日记', CRED_KEYS);
+    const env = resolvePlatformAccountCredentials(PREFS, 'wechat-mp', '报考日记', CRED_KEYS);
     expect(env.WECHAT_AUTHOR).toBeUndefined(); // absent, not '' and not a default
   });
 });
@@ -219,7 +221,7 @@ describe('run-spawn credential composition (real wechat manifest)', () => {
     const env = applyExclusiveCredentialRule(
       merged,
       credKeys,
-      resolvePluginAccountCredentials(PREFS, 'wechat-mp-publish', '考研日记', credKeys),
+      resolvePlatformAccountCredentials(PREFS, 'wechat-mp', '考研日记', credKeys),
     );
     // The chosen account's own values — and ONLY those — win.
     expect(env.WECHAT_APPID).toBe('appid2');
@@ -231,5 +233,26 @@ describe('run-spawn credential composition (real wechat manifest)', () => {
     expect(Object.keys(env).some((k) => k.includes('__'))).toBe(false);
     expect(Object.values(env)).not.toContain('stale-env-appid');
     expect(Object.values(env)).not.toContain('plugin-level-secret');
+  });
+});
+
+describe('platformAccountsForPlatform (read-time legacy migration)', () => {
+  it('merges legacy wechat-mp-publish rows into the wechat-mp platform, platform rows winning', () => {
+    const prefs: AppConfigPrefs = {
+      pluginAccounts: {
+        'wechat-mp-publish': [
+          { id: 'legacy-1', name: '老号', credentials: { WECHAT_APPID: 'legacy' } },
+          { id: 'shared', name: '同ID旧版' },
+        ],
+      },
+      platformAccounts: {
+        'wechat-mp': [{ id: 'shared', name: '同ID新版' }],
+      },
+    };
+    const list = platformAccountsForPlatform(prefs, 'wechat-mp');
+    expect(list.map((a) => a.id).sort()).toEqual(['legacy-1', 'shared']);
+    expect(list.find((a) => a.id === 'shared')!.name).toBe('同ID新版'); // platform wins
+    // Other platforms don't inherit wechat legacy rows.
+    expect(platformAccountsForPlatform(prefs, 'douyin')).toEqual([]);
   });
 });

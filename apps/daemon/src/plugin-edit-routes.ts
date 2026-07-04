@@ -17,13 +17,18 @@ import type {
 } from '@open-design/contracts';
 import type { RouteDeps } from './server-context.js';
 import {
+  accountPlatformFromManifest,
   readAppConfig,
   writeAppConfig,
   validatePluginConfig,
-  validatePluginAccounts,
-  pluginAccountsForPlugin,
-  type PluginAccountRecord,
+  platformAccountsForPlatform,
 } from './app-config.js';
+import {
+  accountToView,
+  deletePlatformAccount,
+  platformCredentialKeys,
+  upsertPlatformAccount,
+} from './account-routes.js';
 import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import {
   getInstalledPlugin,
@@ -441,46 +446,17 @@ function readAccountCredentialKeys(manifest: unknown): string[] {
   return out;
 }
 
-// Whether the plugin supports account profiles at all.
-function pluginSupportsAccounts(manifest: unknown): boolean {
-  return readAccountCredentialKeys(manifest).length > 0
-    || Boolean((manifest as { od?: { accounts?: unknown } } | undefined)?.od?.accounts);
+// Which PLATFORM this plugin's accounts belong to. `od.accounts.platform` is
+// the declaration; the wechat plugin id is grandfathered so a stale manifest
+// keeps resolving to 公众号 during the platform pivot.
+function pluginAccountPlatform(manifest: unknown, pluginId: string): string | null {
+  return accountPlatformFromManifest(manifest)
+    ?? (pluginId === 'wechat-mp-publish' ? 'wechat-mp' : null);
 }
 
-// A stable, filesystem/id-safe account id derived from a display name (used
-// when the editor creates a profile without supplying an explicit id).
-function slugAccountId(name: string): string {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/(^[-._]+|[-._]+$)/g, '');
-  return base || 'account';
-}
-
-// Whether saving an account under `name` would collide with a DIFFERENT
-// existing profile. Names are the resolver's match key (see
-// resolvePluginAccountCredentials), so uniqueness is a hard rule — a duplicate
-// name would make credential resolution ambiguous and could publish to the
-// wrong 公众号. Updating a profile keeps its own name without conflict.
-export function accountNameConflicts(
-  list: ReadonlyArray<{ id: string; name: string }>,
-  name: string,
-  excludeId: string | null,
-): boolean {
-  return list.some((a) => a.name === name && a.id !== excludeId);
-}
-
-// Editor-facing view of one profile: credential VALUES are never returned —
-// only per-key presence flags — so secrets stay on the machine.
-function accountToView(rec: PluginAccountRecord, credentialKeys: string[]): AccountProfileView {
-  const credentials: Record<string, boolean> = {};
-  for (const key of credentialKeys) {
-    const v = rec.credentials?.[key];
-    credentials[key] = typeof v === 'string' && v.length > 0;
-  }
-  const view: AccountProfileView = { id: rec.id, name: rec.name, style: rec.style ?? {}, credentials };
-  return view;
-}
+// Re-export so existing callers/tests keep importing from this module; the
+// implementation moved to account-routes.ts with the platform pivot.
+export { accountNameConflicts } from './account-routes.js';
 
 export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRoutesDeps) {
   const { db } = ctx;
@@ -721,20 +697,23 @@ export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRo
     }
   });
 
-  // ===== Account profiles ================================================
-  // A plugin that declares `od.accounts.credentialKeys` supports several named
-  // accounts, each with its own credentials + writing persona. Credential
-  // VALUES are never returned (only presence flags). The run's first step picks
-  // one; the daemon injects the roster (names + styles) into the prompt.
+  // ===== Account profiles (platform facade) ==============================
+  // Accounts belong to PLATFORMS (see account-routes.ts). These per-plugin
+  // routes remain as a FACADE for the plugin editor: they resolve the plugin's
+  // platform (`od.accounts.platform`) and read/write the platform-level store,
+  // so the editor's 账号区 and the 账号 page always show the same roster.
 
   app.get('/api/plugins/:id/accounts', async (req, res) => {
     try {
       const id = req.params.id;
       const plugin = getInstalledPlugin(db, id) as { manifest?: unknown; sourceKind?: string } | null;
       if (!plugin) return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'plugin not found');
-      const credentialKeys = readAccountCredentialKeys(plugin.manifest);
+      const platform = pluginAccountPlatform(plugin.manifest, id);
+      const credentialKeys = platform ? platformCredentialKeys(platform) : [];
       const cfg = await readAppConfig(RUNTIME_DATA_DIR);
-      const accounts = pluginAccountsForPlugin(cfg, id).map((a) => accountToView(a, credentialKeys));
+      const accounts = platform
+        ? platformAccountsForPlatform(cfg, platform).map((a) => accountToView(a, credentialKeys))
+        : [];
       const editable = plugin.sourceKind === 'bundled' || plugin.sourceKind === 'user';
       const response: AccountProfilesResponse = { id, credentialKeys, accounts, editable };
       res.json(response);
@@ -743,80 +722,25 @@ export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRo
     }
   });
 
-  // Create (no id) or update (id) one account profile. Credentials: only the
-  // plugin's declared credential keys are honored; empty string clears a key,
-  // absent keys keep the stored value. Style persona/samples replace when
-  // provided.
   app.put('/api/plugins/:id/accounts', async (req, res) => {
     try {
       const id = req.params.id;
       const plugin = getInstalledPlugin(db, id) as { manifest?: unknown } | null;
       if (!plugin) return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'plugin not found');
-      if (!pluginSupportsAccounts(plugin.manifest)) {
+      const platform = pluginAccountPlatform(plugin.manifest, id);
+      if (!platform) {
         return sendApiError(res, 400, 'ACCOUNTS_UNSUPPORTED', 'plugin does not declare account support');
       }
-      const credentialKeys = new Set(readAccountCredentialKeys(plugin.manifest));
-      const body = (req.body ?? {}) as {
-        id?: unknown; name?: unknown;
-        style?: { persona?: unknown; samples?: unknown };
-        credentials?: unknown;
-      };
-      const name = typeof body.name === 'string' ? body.name.trim() : '';
-      if (!name) return sendApiError(res, 400, 'BAD_REQUEST', 'name is required');
-
-      const cfg = await readAppConfig(RUNTIME_DATA_DIR);
-      const all = { ...(validatePluginAccounts(cfg.pluginAccounts) ?? {}) };
-      const list = [...(all[id] ?? [])];
-
-      const wantedId = typeof body.id === 'string' && body.id.trim() ? body.id.trim() : '';
-      // Account NAMES must be unique per plugin: the composer's dropdown and
-      // the runtime credential resolver both key on the name, so a duplicate
-      // would make "which 公众号 gets published to" ambiguous.
-      if (accountNameConflicts(list, name, wantedId || null)) {
-        return sendApiError(res, 400, 'ACCOUNT_NAME_TAKEN', `an account named "${name}" already exists for this plugin`);
-      }
-      let idx = wantedId ? list.findIndex((a) => a.id === wantedId) : -1;
-      let accountId = wantedId || slugAccountId(name);
-      // De-dupe a freshly-created id against existing ones.
-      if (idx < 0) {
-        let n = 2;
-        const taken = new Set(list.map((a) => a.id));
-        const baseId = accountId;
-        while (taken.has(accountId)) accountId = `${baseId}-${n++}`;
-      }
-
-      const prev: PluginAccountRecord = idx >= 0 ? list[idx]! : { id: accountId, name };
-      const nextCreds: Record<string, string> = { ...(prev.credentials ?? {}) };
-      if (body.credentials && typeof body.credentials === 'object' && !Array.isArray(body.credentials)) {
-        for (const [k, v] of Object.entries(body.credentials as Record<string, unknown>)) {
-          if (!credentialKeys.has(k) || typeof v !== 'string') continue;
-          const trimmed = v.trim();
-          if (trimmed) nextCreds[k] = trimmed;
-          else delete nextCreds[k];
-        }
-      }
-      const style: { persona?: string; samples?: string[] } = { ...(prev.style ?? {}) };
-      if (body.style && typeof body.style === 'object') {
-        if (typeof body.style.persona === 'string') {
-          const p = body.style.persona.trim();
-          if (p) style.persona = p; else delete style.persona;
-        }
-        if (Array.isArray(body.style.samples)) {
-          const samples = body.style.samples.filter(
-            (s): s is string => typeof s === 'string' && s.trim().length > 0,
-          );
-          if (samples.length > 0) style.samples = samples; else delete style.samples;
-        }
-      }
-
-      const rec: PluginAccountRecord = { id: accountId, name };
-      if (Object.keys(style).length > 0) rec.style = style;
-      if (Object.keys(nextCreds).length > 0) rec.credentials = nextCreds;
-      if (idx >= 0) list[idx] = rec; else list.push(rec);
-      all[id] = list;
-      await writeAppConfig(RUNTIME_DATA_DIR, { pluginAccounts: all });
+      const outcome = await upsertPlatformAccount(
+        RUNTIME_DATA_DIR,
+        platform,
+        (req.body ?? {}) as Parameters<typeof upsertPlatformAccount>[2],
+      );
+      if (!outcome.ok) return sendApiError(res, outcome.status, outcome.code, outcome.message);
       const response: UpsertAccountProfileResponse = {
-        id, saved: true, account: accountToView(rec, [...credentialKeys]),
+        id,
+        saved: true,
+        account: accountToView(outcome.account, platformCredentialKeys(platform)),
       };
       res.json(response);
     } catch (err) {
@@ -827,15 +751,10 @@ export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRo
   app.delete('/api/plugins/:id/accounts/:accountId', async (req, res) => {
     try {
       const id = req.params.id;
-      const accountId = req.params.accountId;
       const plugin = getInstalledPlugin(db, id) as { manifest?: unknown } | null;
       if (!plugin) return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'plugin not found');
-      const cfg = await readAppConfig(RUNTIME_DATA_DIR);
-      const all = { ...(validatePluginAccounts(cfg.pluginAccounts) ?? {}) };
-      const list = (all[id] ?? []).filter((a) => a.id !== accountId);
-      if (list.length > 0) all[id] = list;
-      else delete all[id];
-      await writeAppConfig(RUNTIME_DATA_DIR, { pluginAccounts: all });
+      const platform = pluginAccountPlatform(plugin.manifest, id);
+      if (platform) await deletePlatformAccount(RUNTIME_DATA_DIR, platform, req.params.accountId);
       const response: DeleteAccountProfileResponse = { id, deleted: true };
       res.json(response);
     } catch (err) {

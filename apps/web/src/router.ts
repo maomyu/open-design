@@ -15,6 +15,8 @@ export type EntryHomeView =
   | 'projects'
   | 'tasks'
   | 'plugins'
+  | 'media'
+  | 'accounts'
   | 'design-systems'
   | 'integrations';
 
@@ -94,6 +96,14 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'plugins' && !parts[1]) {
     return { kind: 'home', view: 'plugins' };
   }
+  // 自媒体 hub — one entry per platform (公众号/抖音/…) plus the matrix flow.
+  if (parts[0] === 'media') {
+    return { kind: 'home', view: 'media' };
+  }
+  // 账号中心 — platform-level self-media account management.
+  if (parts[0] === 'accounts') {
+    return { kind: 'home', view: 'accounts' };
+  }
   if (parts[0] === 'integrations') {
     return { kind: 'home', view: 'integrations' };
   }
@@ -134,6 +144,8 @@ export function buildPath(route: Route): string {
     if (route.view === 'projects') return '/projects';
     if (route.view === 'tasks') return '/automations';
     if (route.view === 'plugins') return '/plugins';
+    if (route.view === 'media') return '/media';
+    if (route.view === 'accounts') return '/accounts';
     if (route.view === 'design-systems') return '/design-systems';
     if (route.view === 'integrations') return '/integrations';
     return '/';

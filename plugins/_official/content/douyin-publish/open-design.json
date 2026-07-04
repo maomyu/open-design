@@ -1,0 +1,117 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "douyin-publish",
+  "title": "抖音发布",
+  "title_i18n": {
+    "zh-CN": "抖音发布",
+    "en": "Douyin Publisher"
+  },
+  "version": "0.1.0",
+  "description": "抖音单平台傻瓜式发布:定账号 → 内容准备(视频/图文)→ 发布(本机 sau)→ 记录。账号来自「账号」页的抖音平台账号。",
+  "description_i18n": {
+    "zh-CN": "定账号 → 内容准备(视频/图文)→ sau 发布 → 记录。",
+    "en": "Pick account → prepare content → publish via local sau → record."
+  },
+  "license": "MIT",
+  "tags": [
+    "open-build",
+    "first-party",
+    "content",
+    "workflow",
+    "self-media",
+    "publish",
+    "douyin"
+  ],
+  "compat": {
+    "agentSkills": [
+      {
+        "path": "./SKILL.md"
+      }
+    ]
+  },
+  "od": {
+    "kind": "skill",
+    "taskKind": "new-generation",
+    "mode": "prototype",
+    "scenario": "content",
+    "featured": true,
+    "accounts": {
+      "platform": "douyin"
+    },
+    "useCase": {
+      "query": "当一个抖音发布助手,带我三步走完:定账号 → 内容准备 → 发布。账号:{{account}};要发的内容/主题:{{topic}};形态:{{contentType}}。\n\n规则:每步先问再做,所有选择/确认都用左侧 AskUserQuestion 问我(卡片自带补充框)。右侧维护一个 `board.json` 数据看板(内容 / 发布 两张表),每步只 Edit 插行/改格,别生成展示 HTML、别 cd 出项目目录。发布用本机 social-auto-upload(sau):先 check 登录态,没登录就替我弹扫码窗口;发不发必须经我确认,绝不擅自发布、绝不谎报成功。凭证/登录态按选定账号自动处理,不要手动设置任何环境变量。"
+    },
+    "inputs": [
+      {
+        "name": "account",
+        "label": "抖音账号",
+        "type": "select",
+        "optionsFrom": "accounts",
+        "required": false,
+        "placeholder": "先在「账号」页添加"
+      },
+      {
+        "name": "topic",
+        "label": "内容 / 主题",
+        "type": "string",
+        "required": false,
+        "placeholder": "已有成片给路径;只有想法就写主题"
+      },
+      {
+        "name": "contentType",
+        "label": "形态",
+        "type": "select",
+        "options": [
+          "视频",
+          "图文"
+        ],
+        "default": "视频"
+      }
+    ],
+    "workflow": {
+      "stages": [
+        {
+          "id": "account",
+          "title": "定账号",
+          "gate": "choice",
+          "prompt": "开场输入已带账号({{account}})就直接用、绝不复问;为空才用 AskUserQuestion 在系统提示「账号」区列出的抖音账号里让用户单选;一个都没配就提醒用户去「账号」页 → 抖音 添加(账号名=本机 sau 的 --account 档案名)。首步先 Write 整个 board.json(「内容」「发布」两张表 + steps=[\"定账号\",\"内容准备\",\"发布\",\"记录\"],step=1),把账号写进 note。"
+        },
+        {
+          "id": "content",
+          "title": "内容准备",
+          "gate": "confirm",
+          "prompt": "按形态({{contentType}})准备内容(step=2):用户给了成片/图文素材路径就核对存在并写进「内容」表;只有主题就按抖音调性(强口播节奏、钩子狠、信息密度高、标签 2-4 个蹭热点)写标题+文案(和封面/标签),写进「内容」表,用 AskUserQuestion 让用户确认或提修改。"
+        },
+        {
+          "id": "publish",
+          "title": "发布",
+          "gate": "confirm",
+          "prompt": "先 AskUserQuestion 确认「现在发 / 先不发」(step=3)。要发:先 `sau douyin check --account <账号>` 查登录态并写进「发布」表;未登录由你自动跑 `sau douyin login --account <账号> --headed` 弹独立扫码窗口(Chrome for Testing,Bash 长超时 ~300000ms),弹前说一句「请用 App 扫码」。登录 OK 后按本步技能(sau-matrix-publish)发布,结果/链接写进「发布」表;失败如实说原因,绝不谎报。sau 在工作台 ~/.open-design/workbenches/social-auto-upload(OD_WORKBENCH_DIR 可覆盖),目录缺失如实告知。",
+          "skills": [
+            {
+              "ref": "sau-matrix-publish"
+            }
+          ]
+        },
+        {
+          "id": "record",
+          "title": "记录",
+          "gate": "none",
+          "prompt": "step=4:把最终状态汇总进「发布」表(账号/形态/结果/链接),用 AskUserQuestion 给「再发一条 / 收工」。提醒:24-48 小时后欢迎把数据贴回来复盘。"
+        }
+      ]
+    },
+    "context": {
+      "skills": [
+        {
+          "path": "./SKILL.md"
+        }
+      ]
+    },
+    "capabilities": [
+      "prompt:inject",
+      "fs:write"
+    ]
+  }
+}

@@ -112,13 +112,19 @@ export interface AppConfigPrefs {
   // plugin's runs only, at higher precedence than global thirdPartyApiKeys.
   // Same secret discipline: never log, never return off-machine.
   pluginConfig?: Record<string, Record<string, string>>;
-  // Per-plugin ACCOUNT profiles: `{ [pluginId]: PluginAccountRecord[] }`. A
-  // plugin (e.g. 公众号发布) can drive several accounts, each with its own
-  // credentials AND its own writing persona. The daemon injects the account
-  // roster (names + styles, NOT secrets) into the plugin's run so the workflow
-  // can pick one up front; credentials stay local secrets. Same discipline as
-  // pluginConfig: never log, never return off-machine.
+  // LEGACY (pre-platform) per-plugin account profiles. Superseded by
+  // `platformAccounts` — accounts belong to platforms, not plugins, so the
+  // same 抖音号 serves every plugin targeting 抖音. Kept only so
+  // `platformAccountsForPlatform` can merge old wechat-mp-publish rows in at
+  // read time; new writes go to platformAccounts.
   pluginAccounts?: Record<string, PluginAccountRecord[]>;
+  // PLATFORM-level account profiles: `{ [platformId]: PluginAccountRecord[] }`
+  // keyed by MediaPlatformId (wechat-mp/douyin/…). Each account carries its own
+  // writing persona and (api-credential platforms) its own credentials; for
+  // sau-login platforms the account NAME doubles as the sau `--account` cookie
+  // profile. Same secret discipline as pluginConfig: never log, never return
+  // off-machine.
+  platformAccounts?: Record<string, PluginAccountRecord[]>;
 }
 
 // One account profile for a plugin. `credentials` holds the plugin's declared
@@ -148,6 +154,7 @@ const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
   'thirdPartyApiKeys',
   'pluginConfig',
   'pluginAccounts',
+  'platformAccounts',
 ] as const);
 
 function configFile(dataDir: string): string {
@@ -350,15 +357,42 @@ export function validatePluginAccounts(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-// The account profiles configured for a plugin (validated, secrets included —
-// callers decide what to expose vs inject).
-export function pluginAccountsForPlugin(
+// Legacy plugin-id → platform mapping for the read-time migration below. Only
+// wechat-mp-publish ever stored per-plugin accounts before the platform pivot.
+const LEGACY_PLUGIN_PLATFORM: Record<string, string> = {
+  'wechat-mp-publish': 'wechat-mp',
+};
+
+// The account profiles configured for a PLATFORM (validated, secrets included
+// — callers decide what to expose vs inject). Read-time migration: legacy
+// per-plugin rows (pluginAccounts) are merged in for their mapped platform so
+// pre-pivot 公众号 accounts keep working without a data rewrite; platform rows
+// win on id collision.
+export function platformAccountsForPlatform(
   prefs: AppConfigPrefs,
-  pluginId: string | null | undefined,
+  platformId: string | null | undefined,
 ): PluginAccountRecord[] {
-  if (!pluginId) return [];
-  const all = validatePluginAccounts(prefs.pluginAccounts);
-  return all?.[pluginId] ? all[pluginId].map((a) => ({ ...a })) : [];
+  if (!platformId) return [];
+  const platform = validatePluginAccounts(prefs.platformAccounts)?.[platformId] ?? [];
+  const out = platform.map((a) => ({ ...a }));
+  const seen = new Set(out.map((a) => a.id));
+  const legacyPluginId = Object.entries(LEGACY_PLUGIN_PLATFORM)
+    .find(([, p]) => p === platformId)?.[0];
+  if (legacyPluginId) {
+    const legacy = validatePluginAccounts(prefs.pluginAccounts)?.[legacyPluginId] ?? [];
+    for (const a of legacy) {
+      if (!seen.has(a.id)) out.push({ ...a });
+    }
+  }
+  return out;
+}
+
+// Which PLATFORM a plugin's accounts belong to (`od.accounts.platform`).
+// Null when the plugin declares no account support.
+export function accountPlatformFromManifest(manifest: unknown): string | null {
+  const od = (manifest as { od?: { accounts?: { platform?: unknown } } } | undefined)?.od;
+  const platform = od?.accounts?.platform;
+  return typeof platform === 'string' && platform.trim() ? platform.trim() : null;
 }
 
 // The credential keys a plugin declares as PER-ACCOUNT (`od.accounts.
@@ -402,14 +436,14 @@ export function applyExclusiveCredentialRule(
 //     never filled from plugin-level defaults — the publish script failing on
 //     a missing env var is the intended loud failure.
 // Secret values — never log.
-export function resolvePluginAccountCredentials(
+export function resolvePlatformAccountCredentials(
   prefs: AppConfigPrefs,
-  pluginId: string | null | undefined,
+  platformId: string | null | undefined,
   accountName: string | null | undefined,
   credentialKeys: string[],
 ): Record<string, string> {
   if (credentialKeys.length === 0) return {};
-  const accounts = pluginAccountsForPlugin(prefs, pluginId);
+  const accounts = platformAccountsForPlatform(prefs, platformId);
   let chosen: PluginAccountRecord | null = null;
   const wanted = typeof accountName === 'string' ? accountName.trim() : '';
   if (wanted) {
@@ -418,7 +452,7 @@ export function resolvePluginAccountCredentials(
       chosen = matches[0]!;
     } else {
       console.warn(
-        `[plugin-accounts] account "${wanted}" for plugin ${pluginId} resolved to ${matches.length} profiles; refusing to inject credentials`,
+        `[platform-accounts] account "${wanted}" on platform ${platformId} resolved to ${matches.length} profiles; refusing to inject credentials`,
       );
       return {};
     }
@@ -585,7 +619,7 @@ function applyConfigValue(
     }
     return;
   }
-  if (key === 'pluginAccounts') {
+  if (key === 'pluginAccounts' || key === 'platformAccounts') {
     const validated = validatePluginAccounts(value);
     if (validated !== undefined) {
       target[key] = validated;

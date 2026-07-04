@@ -27,6 +27,7 @@ import type {
   UpdatePluginSourceRequest,
   PluginConfigResponse,
   AccountProfilesResponse,
+  PlatformAccountsResponse,
   UpsertAccountProfileRequest,
   UpsertAccountProfileResponse,
   AssistEditRequest,
@@ -682,6 +683,58 @@ export async function revealPluginConfigKey(
     return typeof data.value === 'string' ? data.value : null;
   } catch {
     return null;
+  }
+}
+
+// Platform-level account center (账号中心). Accounts belong to platforms
+// (公众号/抖音/…) so every plugin targeting a platform shares its roster.
+export async function fetchPlatformAccounts(): Promise<PlatformAccountsResponse | null> {
+  try {
+    const resp = await fetch('/api/accounts');
+    if (!resp.ok) return null;
+    return (await resp.json()) as PlatformAccountsResponse;
+  } catch {
+    return null;
+  }
+}
+
+export async function savePlatformAccount(
+  platformId: string,
+  body: UpsertAccountProfileRequest,
+): Promise<UpsertAccountProfileResponse | { error: string }> {
+  try {
+    const resp = await fetch(`/api/accounts/${encodeURIComponent(platformId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      let message = `save failed (${resp.status})`;
+      try {
+        const data = (await resp.json()) as { message?: unknown; error?: unknown };
+        if (typeof data.message === 'string' && data.message) message = data.message;
+        else if (typeof data.error === 'string' && data.error) message = data.error;
+      } catch { /* keep status fallback */ }
+      return { error: message };
+    }
+    return (await resp.json()) as UpsertAccountProfileResponse;
+  } catch {
+    return { error: 'daemon unreachable' };
+  }
+}
+
+export async function deletePlatformAccountApi(
+  platformId: string,
+  accountId: string,
+): Promise<boolean> {
+  try {
+    const resp = await fetch(
+      `/api/accounts/${encodeURIComponent(platformId)}/${encodeURIComponent(accountId)}`,
+      { method: 'DELETE' },
+    );
+    return resp.ok;
+  } catch {
+    return false;
   }
 }
 

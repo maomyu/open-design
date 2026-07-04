@@ -770,6 +770,8 @@ function displayTabFor(
     projects: t('entry.navProjects'),
     tasks: t('entry.navTasks'),
     plugins: t('entry.navPlugins'),
+    media: t('entry.navMedia'),
+    accounts: t('entry.navAccounts'),
     'design-systems': t('entry.navDesignSystems'),
     integrations: t('entry.navIntegrations'),
   };
@@ -779,6 +781,8 @@ function displayTabFor(
     projects: 'folder',
     tasks: 'kanban',
     plugins: 'grid',
+    media: 'share',
+    accounts: 'grid',
     'design-systems': 'blocks',
     integrations: 'link',
   };

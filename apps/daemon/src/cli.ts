@@ -210,6 +210,8 @@ const PLUGIN_LIST_BOOLEAN_FLAGS = new Set([
 
 const SUBCOMMAND_MAP = {
   artifacts: runArtifacts,
+  account: runAccount,
+  accounts: runAccount,
   media: runMedia,
   mcp: runMcp,
   research: runResearch,
@@ -2240,6 +2242,102 @@ async function runPluginConfig(rest) {
     console.log(`  ${k.name}${k.required ? ' *' : ''}  [${status}]${k.label ? '  — ' + k.label : ''}`);
   }
   console.log(`\nSet with: od plugin config ${id} --set KEY=VALUE`);
+}
+
+// `od account` — the PLATFORM-level self-media account center (账号中心).
+// Accounts belong to platforms (公众号/抖音/小红书/快手/B站/视频号), not plugins;
+// every plugin targeting a platform shares its roster. Mirrors the 账号 page.
+//
+//   od account list [--json]
+//   od account set <platform> --name "<名称>" [--account-id x]
+//        [--persona "<写作风格>"] [--sample "<范文>" ...] [--cred KEY=VALUE ...]
+//   od account rm <platform> <accountId>
+async function runAccount(args) {
+  const flags = parseFlags(args, {
+    string: ['daemon-url', 'name', 'account-id', 'persona', 'sample', 'cred'],
+    boolean: ['json', 'help', 'h'],
+  });
+  const sub = args.find((a) => !a.startsWith('--'));
+  if (flags.help || flags.h || !sub) {
+    console.log(`Usage:
+  od account list [--json]                          # 每个平台的已配账号
+  od account set <platform> --name "<名称>" \\
+       [--account-id <id>] [--persona "<写作风格>"] \\
+       [--sample "<范文>" ...] [--cred KEY=VALUE ...] # 新建/更新
+  od account rm <platform> <accountId>              # 删除
+  platform ∈ wechat-mp | douyin | xiaohongshu | kuaishou | bilibili | shipinhao`);
+    return;
+  }
+  const base = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/accounts`;
+  const bare = [];
+  const valueFlags = new Set(['--daemon-url', '--name', '--account-id', '--persona', '--sample', '--cred']);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--')) { if (valueFlags.has(a)) i++; continue; }
+    bare.push(a);
+  }
+
+  if (sub === 'list') {
+    const resp = await fetch(base);
+    if (!resp.ok) { console.error(`GET accounts failed: ${resp.status} ${await resp.text()}`); process.exit(1); }
+    const data = await resp.json();
+    if (flags.json) { process.stdout.write(JSON.stringify(data, null, 2) + '\n'); return; }
+    for (const p of data?.platforms ?? []) {
+      console.log(`${p.id} (${p.accounts.length}):`);
+      for (const a of p.accounts) {
+        const set = Object.entries(a.credentials ?? {}).filter(([, v]) => v).length;
+        console.log(`  ${a.name}  (id: ${a.id})${set ? `  creds: ${set} set` : ''}`);
+      }
+    }
+    return;
+  }
+
+  if (sub === 'set') {
+    const platform = bare[1];
+    const name = typeof flags.name === 'string' ? flags.name.trim() : '';
+    if (!platform || !name) { console.error('Usage: od account set <platform> --name "<名称>" ...'); process.exit(2); }
+    const samples = [];
+    const credentials = {};
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--sample' && typeof args[i + 1] === 'string') { samples.push(args[i + 1]); i++; }
+      else if (args[i] === '--cred' && typeof args[i + 1] === 'string') {
+        const pair = args[i + 1]; const eq = pair.indexOf('=');
+        if (eq > 0) credentials[pair.slice(0, eq)] = pair.slice(eq + 1);
+        i++;
+      }
+    }
+    const body = {
+      name,
+      ...(typeof flags['account-id'] === 'string' && flags['account-id'] ? { id: flags['account-id'] } : {}),
+      style: {
+        ...(typeof flags.persona === 'string' ? { persona: flags.persona } : {}),
+        ...(samples.length > 0 ? { samples } : {}),
+      },
+      ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
+    };
+    const resp = await fetch(`${base}/${encodeURIComponent(platform)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) { console.error(`save failed: ${resp.status} ${await resp.text()}`); process.exit(resp.status === 400 || resp.status === 404 ? 2 : 1); }
+    const out = await resp.json();
+    if (flags.json) process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    else console.log(`saved account "${out?.account?.name ?? name}" (id: ${out?.account?.id ?? '?'}) on ${platform}`);
+    return;
+  }
+
+  if (sub === 'rm') {
+    const platform = bare[1];
+    const accountId = bare[2];
+    if (!platform || !accountId) { console.error('Usage: od account rm <platform> <accountId>'); process.exit(2); }
+    const resp = await fetch(`${base}/${encodeURIComponent(platform)}/${encodeURIComponent(accountId)}`, { method: 'DELETE' });
+    if (!resp.ok) { console.error(`delete failed: ${resp.status} ${await resp.text()}`); process.exit(1); }
+    if (flags.json) process.stdout.write(JSON.stringify(await resp.json(), null, 2) + '\n');
+    else console.log(`deleted ${accountId} from ${platform}`);
+    return;
+  }
+
+  console.error(`unknown subcommand "${sub}" — run: od account --help`);
+  process.exit(2);
 }
 
 // `od plugin account <id>` — manage a plugin's ACCOUNT profiles (plugins that

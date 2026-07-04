@@ -204,13 +204,84 @@ export interface UpdatePluginConfigResponse {
   saved: boolean;
 }
 
+// ===== Media platforms & platform-level accounts ==========================
+//
+// Accounts belong to PLATFORMS, not plugins: the same 抖音号 must be usable by
+// both the 抖音发布 entry and the 短视频工作流 matrix without configuring it
+// twice. A plugin declares which platform it needs accounts for
+// (`od.accounts.platform`); the composer's account dropdown and the runtime
+// credential/persona resolution read the platform-level store.
+
+/** The self-media platforms WorkBuild can drive. Closed enum on purpose —
+ *  extending it means adding a MEDIA_PLATFORMS entry too. */
+export type MediaPlatformId =
+  | 'wechat-mp'
+  | 'douyin'
+  | 'xiaohongshu'
+  | 'kuaishou'
+  | 'bilibili'
+  | 'shipinhao';
+
+export interface MediaPlatformCredentialKeyDef {
+  name: string;
+  label: string;
+  description?: string;
+  secret: boolean;
+}
+
+export interface MediaPlatformDef {
+  id: MediaPlatformId;
+  /** Chinese display title (the operator-facing product language). */
+  title: string;
+  /** How this platform authenticates:
+   *  - 'api-credential' — per-account API keys entered in a form (公众号).
+   *  - 'sau-login'      — cookie login profiles managed by the local sau
+   *    workbench; the account NAME doubles as the sau `--account` profile and
+   *    login happens via a QR window at run time. */
+  kind: 'api-credential' | 'sau-login';
+  /** Declared per-account credential keys ('api-credential' platforms only). */
+  credentialKeys?: MediaPlatformCredentialKeyDef[];
+  /** Content forms this platform accepts via sau. */
+  supports?: Array<'video' | 'note'>;
+}
+
+export const MEDIA_PLATFORMS: MediaPlatformDef[] = [
+  {
+    id: 'wechat-mp',
+    title: '公众号',
+    kind: 'api-credential',
+    credentialKeys: [
+      { name: 'WECHAT_APPID', label: '公众号 AppID', description: '已认证服务号的 AppID(发草稿必需)。', secret: true },
+      { name: 'WECHAT_SECRET', label: '公众号 AppSecret', description: '注意公众号后台需配置 IP 白名单。', secret: true },
+      { name: 'WECHAT_AUTHOR', label: '作者名', description: '草稿里的作者署名,可选。', secret: false },
+    ],
+  },
+  { id: 'douyin', title: '抖音', kind: 'sau-login', supports: ['video', 'note'] },
+  { id: 'xiaohongshu', title: '小红书', kind: 'sau-login', supports: ['video', 'note'] },
+  { id: 'kuaishou', title: '快手', kind: 'sau-login', supports: ['video', 'note'] },
+  { id: 'bilibili', title: 'B站', kind: 'sau-login', supports: ['video'] },
+  { id: 'shipinhao', title: '视频号', kind: 'sau-login', supports: ['video'] },
+];
+
+export function mediaPlatformDef(id: string): MediaPlatformDef | null {
+  return MEDIA_PLATFORMS.find((p) => p.id === id) ?? null;
+}
+
+/** GET /api/accounts — every platform's configured accounts (values masked). */
+export interface PlatformAccountsResponse {
+  platforms: Array<{
+    id: MediaPlatformId;
+    accounts: AccountProfileView[];
+  }>;
+}
+
 // Account profiles — a plugin (e.g. 公众号发布) can drive several distinct
 // accounts, each with its OWN credentials AND its own writing persona, because
-// different accounts read differently. The operator manages profiles in the
-// editor; at runtime the workflow's first "pick account" step selects one and
-// the daemon injects that account's persona/samples into the writing step and
-// its credentials into the publishing step. Credentials are secret and stored
-// encrypted per-plugin (like pluginConfig); they are never returned in full.
+// different accounts read differently. The operator manages profiles on the
+// 账号 page (platform-scoped); at runtime the workflow's first "pick account"
+// step selects one and the daemon injects that account's persona/samples into
+// the writing step and its credentials into the publishing step. Credentials
+// are secret and stored locally (like pluginConfig); never returned in full.
 export interface AccountStyle {
   /** Free-text persona / voice description injected into the writing step. */
   persona?: string;

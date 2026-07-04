@@ -7,7 +7,7 @@
     "zh-CN": "公众号发布",
     "en": "WeChat MP Publisher"
   },
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "公众号长文流水线:选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发到草稿箱(公众号官方 API)。驱动本机「多媒体自动发布」工作台,Open Build 只做编排与右侧可视化看板。",
   "description_i18n": {
     "zh-CN": "选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发公众号草稿箱。",
@@ -209,7 +209,8 @@
         "WECHAT_APPID",
         "WECHAT_SECRET",
         "WECHAT_AUTHOR"
-      ]
+      ],
+      "platform": "wechat-mp"
     }
   }
 }

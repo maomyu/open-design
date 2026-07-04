@@ -316,7 +316,7 @@ import {
   readAllTokens,
   setToken,
 } from './mcp-tokens.js';
-import { accountCredentialKeysFromManifest, agentCliEnvForAgent, applyExclusiveCredentialRule, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, pluginAccountsForPlugin, readAppConfig, readPluginEnvKnobs, resolvePluginAccountCredentials, writeAppConfig } from './app-config.js';
+import { accountCredentialKeysFromManifest, accountPlatformFromManifest, agentCliEnvForAgent, applyExclusiveCredentialRule, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, platformAccountsForPlatform, readAppConfig, readPluginEnvKnobs, resolvePlatformAccountCredentials, writeAppConfig } from './app-config.js';
 import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
@@ -427,6 +427,7 @@ import { registerProjectRoutes, registerProjectArtifactRoutes, registerProjectFi
 import { registerFinalizeRoutes, registerImportRoutes, registerProjectExportRoutes } from './import-export-routes.js';
 import { registerHandoffRoutes } from './handoff-routes.js';
 import { registerPluginEditRoutes } from './plugin-edit-routes.js';
+import { registerAccountRoutes } from './account-routes.js';
 import { registerPluginDraftRoutes } from './plugin-draft-routes.js';
 import { registerSkillDraftRoutes } from './skill-draft-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
@@ -5538,6 +5539,7 @@ export async function startServer({
     handoff: handoffDeps,
   });
   registerPluginEditRoutes(app, { db, http: httpDeps, paths: pathDeps });
+  registerAccountRoutes(app, { http: httpDeps, paths: pathDeps });
   registerPluginDraftRoutes(app, { db, http: httpDeps, paths: pathDeps });
   registerDeploymentCheckRoutes(app, { db, http: httpDeps, deploy: deployDeps });
   app.use('/frames', express.static(FRAMES_DIR));
@@ -6670,11 +6672,13 @@ export async function startServer({
       const registry = await loadPluginRegistryView();
       const connectorProbe = buildConnectorProbe(connectorService);
       // Account-profile names hydrate `optionsFrom: 'accounts'` inputs into a
-      // concrete select (the composer's 账号 dropdown). Names only — never
-      // credentials.
-      const accountNames = pluginAccountsForPlugin(
+      // concrete select (the composer's 账号 dropdown). Names come from the
+      // plugin's PLATFORM roster — never credentials.
+      const accountPlatform = accountPlatformFromManifest(plugin.manifest)
+        ?? (plugin.id === 'wechat-mp-publish' ? 'wechat-mp' : null);
+      const accountNames = platformAccountsForPlatform(
         await readAppConfig(RUNTIME_DATA_DIR),
-        plugin.id,
+        accountPlatform,
       ).map((a) => a.name);
       const computed = applyPlugin({ plugin, inputs, registry, locale, connectorProbe, accountNames });
       // Plan §3.B2 — apply-time grants are merged into the snapshot's
@@ -10083,7 +10087,9 @@ export async function startServer({
               const { renderAccountRosterBlock } = await import('./plugins/stage-prompts.js');
               const rosterManifest = (plugin as { manifest?: unknown }).manifest;
               const rosterPrefs = await readAppConfig(RUNTIME_DATA_DIR);
-              const rosterAccounts = pluginAccountsForPlugin(rosterPrefs, snap.pluginId).map((a) => ({
+              const rosterPlatform = accountPlatformFromManifest(rosterManifest)
+                ?? (snap.pluginId === 'wechat-mp-publish' ? 'wechat-mp' : null);
+              const rosterAccounts = platformAccountsForPlatform(rosterPrefs, rosterPlatform).map((a) => ({
                 id: a.id,
                 name: a.name,
                 ...(a.style ? { style: a.style } : {}),
@@ -11114,10 +11120,14 @@ export async function startServer({
         const credKeys = boundPlugin ? accountCredentialKeysFromManifest(boundPlugin.manifest) : [];
         const rawAccount = boundSnapshot?.inputs?.['account'];
         const accountName = typeof rawAccount === 'string' ? rawAccount : null;
+        const boundPlatform = boundPlugin
+          ? accountPlatformFromManifest(boundPlugin.manifest)
+            ?? (boundPluginId === 'wechat-mp-publish' ? 'wechat-mp' : null)
+          : null;
         configuredAgentEnv = applyExclusiveCredentialRule(
           merged,
           credKeys,
-          resolvePluginAccountCredentials(appConfig, boundPluginId, accountName, credKeys),
+          resolvePlatformAccountCredentials(appConfig, boundPlatform, accountName, credKeys),
         );
       }
     } catch {

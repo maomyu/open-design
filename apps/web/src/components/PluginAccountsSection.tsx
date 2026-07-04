@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import type { AccountProfileView, PluginConfigKeyView } from '@open-design/contracts';
 import { useI18n } from '../i18n';
+import { navigate } from '../router';
 import { Icon } from './Icon';
 import { Toast } from './Toast';
 import {
@@ -170,7 +171,19 @@ export function PluginAccountsSection({ pluginId, editable }: Props) {
       </button>
       {open ? (
         <div className="plugin-edit-view__config-body">
-          <p className="plugin-edit-view__config-hint">{t('pluginEditor.accountsHint')}</p>
+          <p className="plugin-edit-view__config-hint">
+            {t('pluginEditor.accountsHint')}{' '}
+            {/* Accounts are PLATFORM-level — this section is a facade onto the
+                central 账号 page; deep-link there for the full center. */}
+            <button
+              type="button"
+              className="plugin-edit-view__step-link plugin-edit-view__step-link--ai"
+              onClick={() => navigate({ kind: 'home', view: 'accounts' })}
+              data-testid="plugin-accounts-manage-link"
+            >
+              {t('mediaHub.manageAccounts')} →
+            </button>
+          </p>
 
           <div className="plugin-edit-view__accounts-list">
             {accounts.length === 0 ? (
