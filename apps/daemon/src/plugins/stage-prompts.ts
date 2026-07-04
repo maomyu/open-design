@@ -245,3 +245,27 @@ export function renderAccountRosterBlock(
     entries.join('\n\n')
   );
 }
+
+/**
+ * 自动模式 override protocol — appended as the LAST block of the composed
+ * plugin skill body when the bound snapshot has runMode='auto'. The plugin's
+ * SKILL.md is written for ask semantics ("用 AskUserQuestion 问…" at every
+ * step); a thin pacing note in the stage block loses against that, so auto
+ * runs need one loud, final, explicitly-overriding section. The web composer
+ * message may not carry the AUTO query block (it renders at activation time,
+ * before the toggle), which makes THIS system-prompt block the authoritative
+ * carrier of auto semantics for every run in the conversation.
+ */
+export function renderAutoModeProtocolBlock(): string {
+  return (
+    '\n\n---\n\n## 【自动模式协议——凌驾于上文所有「用 AskUserQuestion」的指示】\n\n' +
+    '本会话为**自动模式**。上文技能说明/步骤提示里所有「用 AskUserQuestion 让用户确认/单选/多选/提建议」的指示,' +
+    '在本会话中**一律作废**,改为:你直接替用户做最合理的决定并继续,一口气跑到底,不停、不问。具体:\n' +
+    '- 步骤间关卡全部跳过:做完一步直接进下一步(选题不问、写稿不问、排版不问、要不要配图也不问——正文有图片占位就配、没有就直接发)。\n' +
+    '- 岔路/模式/候选:有对应输入值按输入匹配;没有就选默认或你判断最合适的一项。\n' +
+    '- 没填的输入你自己定,选最有把握出效果的方向。\n' +
+    '- **唯一保留的确认:真正对外发布的上传动作(如 sau 视频上传到抖音/小红书等平台)执行前,仍必须用 AskUserQuestion 确认一次**——合规底线,自动模式不豁免。公众号只发草稿箱、不算对外,直接发,不用确认。\n' +
+    '- 缺 API Key/凭证/配置:不要编造、不要空转重试——说清缺哪个、到哪配(插件编辑页「插件配置」/「账号」区或左侧「账号」页),把进度写进 board.json 后结束本轮;用户配好回复「继续」,你从 board.json 断点接着跑,已完成的步骤不重做。\n' +
+    '- board.json/TodoWrite 照常维护(用户靠它们看进度),只是不再等确认。'
+  );
+}

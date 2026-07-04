@@ -10101,7 +10101,12 @@ export async function startServer({
                 ...(a.style ? { style: a.style } : {}),
               }));
               const accountBlock = renderAccountRosterBlock(rosterManifest, rosterAccounts);
-              skillBody = local.body + stageBlock + accountBlock + composedSkillBlocks;
+              // 自动模式 override — LAST block on purpose: the SKILL.md above
+              // is written for ask semantics, so auto runs end with one loud
+              // protocol section that explicitly supersedes those instructions.
+              const { renderAutoModeProtocolBlock } = await import('./plugins/stage-prompts.js');
+              const autoBlock = snap.runMode === 'auto' ? renderAutoModeProtocolBlock() : '';
+              skillBody = local.body + stageBlock + accountBlock + composedSkillBlocks + autoBlock;
               skillName = local.name;
               activeSkillDir = local.dir;
               registerSkillDir(local.dir);

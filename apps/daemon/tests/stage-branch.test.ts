@@ -131,3 +131,18 @@ describe('renderStagePromptsBlock 自动模式', () => {
     expect(block).toContain('不要一口气跑完');
   });
 });
+
+describe('renderAutoModeProtocolBlock', () => {
+  it('explicitly supersedes the SKILL.md ask instructions and keeps the two exceptions', async () => {
+    const { renderAutoModeProtocolBlock } = await import('../src/plugins/stage-prompts.js');
+    const block = renderAutoModeProtocolBlock();
+    // Must read as an OVERRIDE of everything above it, not one more note.
+    expect(block).toContain('凌驾于上文');
+    expect(block).toContain('一律作废');
+    // The two survivors: outward-publish confirm + missing-config recovery.
+    expect(block).toContain('对外发布');
+    expect(block).toContain('继续');
+    // 公众号草稿箱 stays fully automatic.
+    expect(block).toContain('草稿箱');
+  });
+});
