@@ -205,6 +205,41 @@ describe('registerBundledPlugins', () => {
       userPluginsRoot: path.join(tmpRoot, 'no-user-root'),
     });
     expect(result.registered).toEqual([]);
+    expect(result.pruned).toEqual([]);
     expect(result.warnings).toEqual([]);
+  });
+
+  it('prunes a user row whose folder was deleted, leaving bundled + other user rows', async () => {
+    const userRoot = path.join(tmpRoot, 'user-plugins');
+    // A bundled plugin ships…
+    const bundledDir = path.join(tmpRoot, 'content', 'bundled-keeper');
+    await mkdir(bundledDir, { recursive: true });
+    await writeFile(path.join(bundledDir, 'open-design.json'), SAMPLE_MANIFEST('bundled-keeper'));
+    await writeFile(path.join(bundledDir, 'SKILL.md'), SAMPLE_SKILL('bundled-keeper'));
+    // …and the user has two self-authored plugins.
+    for (const id of ['user-keep', 'user-drop']) {
+      const dir = path.join(userRoot, id);
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, 'open-design.json'), SAMPLE_MANIFEST(id));
+      await writeFile(path.join(dir, 'SKILL.md'), SAMPLE_SKILL(id));
+    }
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    await registerUserPlugins({ db, userPluginsRoot: userRoot });
+    expect(listInstalledPlugins(db).map((r) => r.id).sort()).toEqual([
+      'bundled-keeper',
+      'user-drop',
+      'user-keep',
+    ]);
+
+    // The user deletes 'user-drop' from the editor (folder removed).
+    await rm(path.join(userRoot, 'user-drop'), { recursive: true, force: true });
+    await registerBundledPlugins({ db, bundledRoot: tmpRoot });
+    const result = await registerUserPlugins({ db, userPluginsRoot: userRoot });
+    expect(result.pruned).toEqual(['user-drop']);
+    // bundled plugin and the surviving user plugin are untouched.
+    expect(listInstalledPlugins(db).map((r) => r.id).sort()).toEqual([
+      'bundled-keeper',
+      'user-keep',
+    ]);
   });
 });

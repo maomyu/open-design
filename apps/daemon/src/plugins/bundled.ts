@@ -193,6 +193,13 @@ export interface RegisterUserPluginsInput {
 
 export interface RegisterUserPluginsResult {
   registered: InstalledPluginRecord[];
+  // Ids of `source_kind='user'` rows removed because their folder no longer
+  // exists under the user root (plugin deleted from the editor, or an
+  // outdated shadow archived away). Note: a `user` row whose id ALSO ships
+  // as a bundled plugin is NOT pruned here — the earlier bundled walker
+  // already upserted it back to `source_kind='bundled'`, so it is no longer
+  // a `user` row by the time this prune runs.
+  pruned: string[];
   warnings: string[];
 }
 
@@ -215,7 +222,9 @@ export async function registerUserPlugins(
     entries = await fsp.readdir(input.userPluginsRoot, { withFileTypes: true });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { registered: [], warnings: [] };
+      // Missing user root = the operator never saved a user plugin. Prune
+      // any leftover `user` rows so a deleted-root install self-heals.
+      return { registered: [], pruned: pruneUserRows(input.db, new Set()), warnings: [] };
     }
     throw err;
   }
@@ -246,7 +255,23 @@ export async function registerUserPlugins(
     out.push(probe.record);
   }
 
-  return { registered: out, warnings };
+  const pruned = pruneUserRows(input.db, new Set(out.map((r) => r.id)));
+  return { registered: out, pruned, warnings };
+}
+
+// Remove every `source_kind='user'` row whose id is not backed by a folder
+// seen in this walk (`seen`). Mirror semantics with the bundled prune: the
+// DB user set must match the on-disk user tree, so a deleted/archived user
+// plugin does not linger as a ghost row with a dead fs_path.
+function pruneUserRows(db: SqliteDb, seen: Set<string>): string[] {
+  const pruned: string[] = [];
+  for (const existing of listInstalledPlugins(db)) {
+    if (existing.sourceKind !== 'user') continue;
+    if (seen.has(existing.id)) continue;
+    deleteInstalledPlugin(db, existing.id);
+    pruned.push(existing.id);
+  }
+  return pruned;
 }
 
 // Default bundled root resolution. The daemon ships its `dist/` next to
