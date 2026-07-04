@@ -35,10 +35,6 @@ import {
   fetchConnectors,
   fetchConnectorStatuses,
 } from '../providers/registry';
-import type {
-  PluginShareAction,
-  PluginShareProjectOutcome,
-} from '../state/projects';
 
 interface Props {
   // Union of functional skills + design templates — used for id-based
@@ -99,11 +95,6 @@ interface Props {
       pendingFiles?: File[];
     },
   ) => Promise<boolean> | boolean | void;
-  onCreatePluginShareProject: (
-    pluginId: string,
-    action: PluginShareAction,
-    locale?: string,
-  ) => Promise<PluginShareProjectOutcome>;
   onImportClaudeDesign: (
     file: File,
   ) => Promise<ImportClaudeDesignOutcome | void> | ImportClaudeDesignOutcome | void;
@@ -276,7 +267,6 @@ export function EntryView({
   projectsLoading = false,
   promptTemplatesLoading: _promptTemplatesLoading = false,
   onCreateProject,
-  onCreatePluginShareProject,
   onImportClaudeDesign,
   onImportFolder,
   onImportFolderResponse,
@@ -373,7 +363,6 @@ export function EntryView({
       onRefreshAgents={onRefreshAgents}
       onThemeChange={onThemeChange}
       onCreateProject={onCreateProject}
-      onCreatePluginShareProject={onCreatePluginShareProject}
       onImportClaudeDesign={onImportClaudeDesign}
       {...(onImportFolder ? { onImportFolder } : {})}
       {...(onImportFolderResponse ? { onImportFolderResponse } : {})}

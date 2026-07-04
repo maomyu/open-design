@@ -26,6 +26,9 @@ import type {
   PluginSourceResponse,
   UpdatePluginSourceRequest,
   PluginConfigResponse,
+  AccountProfilesResponse,
+  UpsertAccountProfileRequest,
+  UpsertAccountProfileResponse,
   AssistEditRequest,
   AssistEditResponse,
   AssistFieldRequest,
@@ -679,6 +682,63 @@ export async function revealPluginConfigKey(
     return typeof data.value === 'string' ? data.value : null;
   } catch {
     return null;
+  }
+}
+
+// Account profiles (plugins that declare od.accounts, e.g. 公众号发布). Read
+// the configured accounts + which credential keys each carries (secret values
+// never returned); upsert one profile; delete one.
+export async function fetchPluginAccounts(
+  pluginId: string,
+): Promise<AccountProfilesResponse | null> {
+  try {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/accounts`);
+    if (!resp.ok) return null;
+    return (await resp.json()) as AccountProfilesResponse;
+  } catch {
+    return null;
+  }
+}
+
+export async function savePluginAccount(
+  pluginId: string,
+  body: UpsertAccountProfileRequest,
+): Promise<UpsertAccountProfileResponse | { error: string }> {
+  try {
+    const resp = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/accounts`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      // Surface the daemon's reason (e.g. duplicate account name) so the form
+      // can SHOW why the save was rejected — a silent no-op reads as "保存没生效".
+      let message = `save failed (${resp.status})`;
+      try {
+        const data = (await resp.json()) as { message?: unknown; error?: unknown };
+        if (typeof data.message === 'string' && data.message) message = data.message;
+        else if (typeof data.error === 'string' && data.error) message = data.error;
+      } catch { /* keep status fallback */ }
+      return { error: message };
+    }
+    return (await resp.json()) as UpsertAccountProfileResponse;
+  } catch {
+    return { error: 'daemon unreachable' };
+  }
+}
+
+export async function deletePluginAccount(
+  pluginId: string,
+  accountId: string,
+): Promise<boolean> {
+  try {
+    const resp = await fetch(
+      `/api/plugins/${encodeURIComponent(pluginId)}/accounts/${encodeURIComponent(accountId)}`,
+      { method: 'DELETE' },
+    );
+    return resp.ok;
+  } catch {
+    return false;
   }
 }
 

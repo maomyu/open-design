@@ -112,6 +112,23 @@ export interface AppConfigPrefs {
   // plugin's runs only, at higher precedence than global thirdPartyApiKeys.
   // Same secret discipline: never log, never return off-machine.
   pluginConfig?: Record<string, Record<string, string>>;
+  // Per-plugin ACCOUNT profiles: `{ [pluginId]: PluginAccountRecord[] }`. A
+  // plugin (e.g. 公众号发布) can drive several accounts, each with its own
+  // credentials AND its own writing persona. The daemon injects the account
+  // roster (names + styles, NOT secrets) into the plugin's run so the workflow
+  // can pick one up front; credentials stay local secrets. Same discipline as
+  // pluginConfig: never log, never return off-machine.
+  pluginAccounts?: Record<string, PluginAccountRecord[]>;
+}
+
+// One account profile for a plugin. `credentials` holds the plugin's declared
+// per-account secret keys (e.g. WECHAT_APPID/SECRET). `style` is the writing
+// persona injected into the run (persona text + optional reference samples).
+export interface PluginAccountRecord {
+  id: string;
+  name: string;
+  style?: { persona?: string; samples?: string[] };
+  credentials?: Record<string, string>;
 }
 
 const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
@@ -130,6 +147,7 @@ const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
   'customInstructions',
   'thirdPartyApiKeys',
   'pluginConfig',
+  'pluginAccounts',
 ] as const);
 
 function configFile(dataDir: string): string {
@@ -286,6 +304,137 @@ export function pluginConfigEnvForPlugin(
   return all?.[pluginId] ? { ...all[pluginId] } : {};
 }
 
+const ACCOUNT_ID = /^[a-z0-9][a-z0-9._-]*$/i;
+
+// Validate the stored account map `{ [pluginId]: PluginAccountRecord[] }`,
+// dropping malformed profiles. Credentials/persona/samples are coerced to safe
+// shapes; unnamed or bad-id profiles are skipped.
+export function validatePluginAccounts(
+  raw: unknown,
+): Record<string, PluginAccountRecord[]> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Record<string, PluginAccountRecord[]> = Object.create(null);
+  for (const [pluginId, list] of Object.entries(raw as Record<string, unknown>)) {
+    if (pluginId === '__proto__' || pluginId === 'constructor') continue;
+    if (typeof pluginId !== 'string' || !pluginId.trim() || !Array.isArray(list)) continue;
+    const accounts: PluginAccountRecord[] = [];
+    const seen = new Set<string>();
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const o = item as Record<string, unknown>;
+      const id = typeof o.id === 'string' ? o.id.trim() : '';
+      const name = typeof o.name === 'string' ? o.name.trim() : '';
+      if (!ACCOUNT_ID.test(id) || !name || seen.has(id)) continue;
+      seen.add(id);
+      const rec: PluginAccountRecord = { id, name };
+      const style = o.style && typeof o.style === 'object' && !Array.isArray(o.style)
+        ? (o.style as Record<string, unknown>)
+        : null;
+      if (style) {
+        const persona = typeof style.persona === 'string' ? style.persona : undefined;
+        const samples = Array.isArray(style.samples)
+          ? style.samples.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+          : undefined;
+        const s: { persona?: string; samples?: string[] } = {};
+        if (persona && persona.trim()) s.persona = persona;
+        if (samples && samples.length > 0) s.samples = samples;
+        if (Object.keys(s).length > 0) rec.style = s;
+      }
+      const creds = validateThirdPartyApiKeys(o.credentials);
+      if (creds) rec.credentials = creds;
+      accounts.push(rec);
+    }
+    if (accounts.length > 0) result[pluginId] = accounts;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+// The account profiles configured for a plugin (validated, secrets included —
+// callers decide what to expose vs inject).
+export function pluginAccountsForPlugin(
+  prefs: AppConfigPrefs,
+  pluginId: string | null | undefined,
+): PluginAccountRecord[] {
+  if (!pluginId) return [];
+  const all = validatePluginAccounts(prefs.pluginAccounts);
+  return all?.[pluginId] ? all[pluginId].map((a) => ({ ...a })) : [];
+}
+
+// The credential keys a plugin declares as PER-ACCOUNT (`od.accounts.
+// credentialKeys`). These keys obey the exclusive-injection rule below: their
+// ONLY legitimate source is the chosen account profile — plugin-level config
+// values and the workbench `.env` fallback are stripped for them.
+export function accountCredentialKeysFromManifest(manifest: unknown): string[] {
+  const raw = (manifest as { od?: { accounts?: { credentialKeys?: unknown } } } | undefined)
+    ?.od?.accounts?.credentialKeys;
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const k of raw) {
+    if (typeof k === 'string' && k.trim() && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+// Enforce the EXCLUSIVE source rule for per-account credential keys on a run's
+// merged env: every declared credential key is first stripped (whatever
+// plugin-level config or the workbench `.env` contributed), then ONLY the
+// chosen account's values are laid back in. Returns a new object.
+export function applyExclusiveCredentialRule(
+  merged: Record<string, string>,
+  credentialKeys: string[],
+  accountEnv: Record<string, string>,
+): Record<string, string> {
+  if (credentialKeys.length === 0) return { ...merged };
+  const out = { ...merged };
+  for (const key of credentialKeys) delete out[key];
+  return { ...out, ...accountEnv };
+}
+
+// Resolve the CHOSEN account's credentials for a run — the deterministic core
+// of the multi-account safety invariant ("发错号物理不可能"). Semantics:
+//   - `accountName` set → exact-name match. Zero or 2+ matches (legacy
+//     duplicate-name data) → resolve NOTHING and log loudly; we never guess
+//     which 公众号 to publish to.
+//   - `accountName` empty → exactly one configured account uses it; otherwise
+//     resolve nothing (the composer/apply gate should have forced a pick).
+//   - Only keys present on the account are returned; a missing key is ABSENT,
+//     never filled from plugin-level defaults — the publish script failing on
+//     a missing env var is the intended loud failure.
+// Secret values — never log.
+export function resolvePluginAccountCredentials(
+  prefs: AppConfigPrefs,
+  pluginId: string | null | undefined,
+  accountName: string | null | undefined,
+  credentialKeys: string[],
+): Record<string, string> {
+  if (credentialKeys.length === 0) return {};
+  const accounts = pluginAccountsForPlugin(prefs, pluginId);
+  let chosen: PluginAccountRecord | null = null;
+  const wanted = typeof accountName === 'string' ? accountName.trim() : '';
+  if (wanted) {
+    const matches = accounts.filter((a) => a.name === wanted);
+    if (matches.length === 1) {
+      chosen = matches[0]!;
+    } else {
+      console.warn(
+        `[plugin-accounts] account "${wanted}" for plugin ${pluginId} resolved to ${matches.length} profiles; refusing to inject credentials`,
+      );
+      return {};
+    }
+  } else if (accounts.length === 1) {
+    chosen = accounts[0]!;
+  } else {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const key of credentialKeys) {
+    const value = chosen.credentials?.[key];
+    if (typeof value === 'string' && value.length > 0) out[key] = value;
+  }
+  return out;
+}
+
 function isValidOrbitTime(time: string): boolean {
   const match = /^(\d{2}):(\d{2})$/.exec(time);
   if (!match) return false;
@@ -429,6 +578,15 @@ function applyConfigValue(
   }
   if (key === 'pluginConfig') {
     const validated = validatePluginConfig(value);
+    if (validated !== undefined) {
+      target[key] = validated;
+    } else {
+      delete target[key];
+    }
+    return;
+  }
+  if (key === 'pluginAccounts') {
+    const validated = validatePluginAccounts(value);
     if (validated !== undefined) {
       target[key] = validated;
     } else {

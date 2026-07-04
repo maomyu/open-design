@@ -868,16 +868,6 @@ export function HomeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPluginUseHandoff, pluginsLoading, plugins]);
 
-  function addPluginContext(record: InstalledPluginRecord, nextPrompt: string | null) {
-    setSelectedPluginContexts((prev) => {
-      if (prev.some((item) => item.record.id === record.id)) return prev;
-      return [...prev, { record }];
-    });
-    if (nextPrompt !== null) setPrompt(nextPrompt);
-    setError(null);
-    focusPromptAtEnd();
-  }
-
   function useExamplePlugin(_record: InstalledPluginRecord, _chipId: string, promptText: string) {
     setError(null);
     setPrompt(promptText);
@@ -1355,7 +1345,17 @@ export function HomeView({
           Boolean(pendingAuthoringChipId) ||
           Boolean(active && !active.inputsValid)
         }
-        onPickPlugin={(record, nextPrompt) => addPluginContext(record, nextPrompt)}
+        onPickPlugin={(record) => {
+          // @-selecting a plugin ACTIVATES it like the "Use" button: the
+          // composer is replaced with the rendered kickoff brief and the
+          // plugin's declared inputs become fillable placeholders. No
+          // replacement confirmation — the @-mention IS the intent to invoke.
+          const inputNames = (record.manifest?.od?.inputs ?? []).map((field) => field.name);
+          requestActivePlugin(record, undefined, {
+            editableInputNames: inputNames,
+            replaceWithoutConfirmation: true,
+          });
+        }}
         onPickExamplePlugin={useExamplePlugin}
         onPickSkill={useSkill}
         onPickMcp={useMcpServer}

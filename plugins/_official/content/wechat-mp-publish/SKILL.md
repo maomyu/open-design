@@ -22,7 +22,7 @@ od:
 - **本插件的工作台 = `$WB/多媒体自动发布`**(下文叫「工作台」)。它的 `.claude/skills/MY-wechat-*` 是各环节方法论、`.venv` 跑脚本、`MY-wechat-shared/.env` 放凭据、`MY-wechat-shared/scripts/` 放脚本、`archives/{date}/` 收产物。(若该目录不存在,如实告诉用户把工作台拷一份到 `$WB/多媒体自动发布`,别去别处乱找。)
 - **每个环节先读工作台对应的 `MY-wechat-*/SKILL.md` 再照它做**(写作风格、API 调法、配图脚本参数都在里面,别自己另发明)。
 - **Python 一律用工作台的 `.venv`**:`WB="${OD_WORKBENCH_DIR:-$HOME/.open-design/workbenches}"; cd "$WB/多媒体自动发布" && ./.venv/bin/python3 .claude/skills/MY-wechat-shared/scripts/<脚本>.py ...`(系统 Python 有 SSL 偶发问题)。
-- **凭据(WECHAT_APPID/SECRET、DAJIALA_API_KEY、QWEN_API_KEY 等)由 Open Build 从「插件配置」注入到环境变量**(`os.environ`),脚本直接读即可,**不用、也别去改工作台的 `.env` 文件**。**缺哪个 key 就如实告诉用户去「编辑插件 → 插件配置 / API Key」里填那一项**(`od plugin config wechat-mp-publish` 也行),别瞎找、别假装有。
+- **凭据由 WorkBuild 注入到环境变量**(`os.environ`),脚本直接读即可,**不用、也别去改工作台的 `.env` 文件,更不要手动设置/覆盖任何凭证变量**。分两类:**公众号凭证(WECHAT_APPID/SECRET/AUTHOR)按「选定账号」自动注入**——它们只来自账号档案,插件级配置和工作台 .env 对这几个键一律无效;缺了就如实告诉用户去「编辑插件 → 账号」给该账号补,**绝不换账号重试**。其它 API key(DAJIALA/QWEN/GEMINI)仍来自「插件配置」,缺哪个就引导去「编辑插件 → 插件配置」填(`od plugin config wechat-mp-publish` 也行),别瞎找、别假装有。
 - **产物落当前 Open Build 项目目录**:配图存项目里的 `3-配图/`(board 的「配图」表用项目内相对路径引,宿主渲成缩略图);排好的公众号 HTML 存 `4-排版-article.html`(可在右侧当成单独文件预览);草稿正文等也留项目里。工作台 `archives/{date}/` 只是可选备份,**别写 /tmp**。
 
 ## 右侧看板 = 一个 `board.json`(结构化数据,不是 HTML)
@@ -31,7 +31,7 @@ od:
 
 **维护项目目录下的一个 `board.json`,固定下面这套表。** JSON 形状(严格照这个,顶层用 `tables`、不是 `bases`):
 ```json
-{ "title": "公众号发布", "steps": ["选题","写稿","排版","配图","发草稿"], "step": 1,
+{ "title": "公众号发布", "steps": ["选账号","选题","写稿","排版","配图","发草稿"], "step": 1,
   "tables": [ { "name": "选题候选",
     "fields": [ {"key":"标题","name":"标题","type":"text"},
                 {"key":"热度","name":"热度","type":"select","options":[{"value":"高","color":"green"}]},
@@ -40,7 +40,7 @@ od:
 ```
 `field.type` ∈ text/longtext/number/select/link/image/checkbox/progress/date;`select` 的 `options` 用 `[{value,color}]`(color: green/amber/red/blue/grey);`rows` 每行用**字段名**当 key。**每步往对应表插行 / 改单元格——优先用 Edit 改一格、加一行(极小、极快);把 `step` 设成当前步(从 1 开始),步骤条会高亮。**
 
-- `title`: `公众号发布`;`steps`: `["选题","写稿","排版","配图","发草稿"]`(注意:**排版在配图之前**——写完稿先排版,再问要不要配图);`step`: 当前第几步。
+- `title`: `公众号发布`;`steps`: `["选账号","选题","写稿","排版","配图","发草稿"]`(注意:**排版在配图之前**——写完稿先排版,再问要不要配图);`step`: 当前第几步。
 - 表 **选题候选**:字段 `标题`(text)/`角度`(text)/`热度`(select 高·中·低)/`相关`(select)/`差异`(select)/`来源`(text)/`查看原文`(link)。选题步插入候选行,每条都填来源 + 查看原文(原文 URL)。
 - 表 **文章**:字段 `标题`(text)/`正文`(longtext)/`标签`(text)/`皮肤`(select)/`状态`(select 草稿·已定稿)。写稿步写这一行,排版步更新皮肤/状态。**正文放 longtext,别往对话里整段复述。**
 - 表 **配图**:字段 `位置`(text,如 封面/图1)/`描述`(text)/`图片`(image,项目内相对路径如 `3-配图/封面.jpg`)/`状态`(select 成功·失败)。配图步每张一行。
@@ -58,8 +58,9 @@ od:
 - **来源 / 查看原文**:放「选题候选」表的 `查看原文`(link)字段(原文 URL),宿主自动渲成可点的新标签链接——**选题这一步每个候选都要带来源 + 原文链接**,让用户点进去自己判断溯源。只放 http/https。
 
 ## 开场 + 步骤条
+- **第 0 步先定账号(前置)**:本插件按「账号」区分写作风格。**开场输入里已带账号(对话框的「公众号账号」下拉,选项来自插件编辑页「账号」区)就直接用它,绝不复问**;只有账号为空,才用 AskUserQuestion 在系统提示「账号（前置）」列出的已配置账号里让用户单选。选定后写稿严格按该账号的风格;**发布凭证由系统按选定账号自动注入,你无需(也不要)做任何凭证设置**。一个账号都没配就提醒用户去插件编辑页「账号」区先建一个再开工。
 - **开场消息已带用户填的设置**(选题方向 / 文章类型 / 排版皮肤 / 发布通道):先读它,已给的别再从零问;只有某项空着 / 还是 `{{...}}` 占位符,才用 AskUserQuestion 补问那一项。
-- **步骤条 = TodoWrite**:开工先写 5 步 `选题 / 写稿 / 排版 / 配图 / 发草稿`(排版在配图之前),每步 in_progress→completed(与 board 的 `step` 同步)。
+- **步骤条 = TodoWrite**:开工先写 6 步 `选账号 / 选题 / 写稿 / 排版 / 配图 / 发草稿`(账号在最前、排版在配图之前),每步 in_progress→completed(与 board 的 `step` 同步)。
 
 ## 全局铁律
 - **写完稿直接自动排版(不停下确认),排版后才问配图**:顺序是 **写稿 → 排版 →(可选)配图 → 发草稿**。

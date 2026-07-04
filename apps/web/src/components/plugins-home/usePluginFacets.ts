@@ -38,6 +38,12 @@ export type PluginSourceFilter = 'owned' | 'official';
 export const PRODUCT_PLUGIN_TAG = 'open-build';
 
 export function isProductOwned(record: InstalledPluginRecord): boolean {
+  // Plugins the operator AUTHORED locally are theirs by definition — a plugin
+  // created in the editor (sourceKind 'user') or scoped to a project ('project')
+  // carries no marker tag, so without this it would fall into the "official"
+  // (upstream) bucket and vanish behind the default "owned" source filter. Only
+  // externally-sourced installs (github/url/marketplace/local) stay "official".
+  if (record.sourceKind === 'user' || record.sourceKind === 'project') return true;
   const tags = record.manifest?.tags;
   return (
     Array.isArray(tags) &&

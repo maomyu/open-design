@@ -11,6 +11,7 @@ import {
   validatePluginDraft,
 } from '../src/plugin-draft-routes.js';
 import { resolvePluginFolder } from '../src/plugins/registry.js';
+import { deriveInputsFromQuery } from '../src/plugin-edit-routes.js';
 
 const STAGES = [
   {
@@ -106,6 +107,33 @@ describe('validatePluginDraft', () => {
     });
     const empty = diags.find((d) => d.code === 'STAGE_PROMPT_EMPTY');
     expect(empty?.severity).toBe('warning');
+  });
+});
+
+describe('deriveInputsFromQuery / buildDraftManifest inputs', () => {
+  it('derives one string input per unique {{placeholder}}, skipping declared ones', () => {
+    expect(deriveInputsFromQuery('写{{topic}}，语气{{tone}}，再谈{{topic}}')).toEqual([
+      { name: 'topic', label: 'topic', type: 'string' },
+      { name: 'tone', label: 'tone', type: 'string' },
+    ]);
+    expect(deriveInputsFromQuery('写{{topic}}', [{ name: 'topic' }])).toEqual([]);
+    expect(deriveInputsFromQuery('no placeholders here')).toEqual([]);
+  });
+
+  it('gives a created user plugin od.inputs for its query placeholders (fillable slots)', () => {
+    const m = buildDraftManifest({
+      ...VALID_DRAFT,
+      query: '写一段关于{{topic}}的文案，风格{{tone}}',
+    }) as { od?: { inputs?: unknown } };
+    expect(m.od?.inputs).toEqual([
+      { name: 'topic', label: 'topic', type: 'string' },
+      { name: 'tone', label: 'tone', type: 'string' },
+    ]);
+  });
+
+  it('omits od.inputs when the query has no placeholders', () => {
+    const m = buildDraftManifest(VALID_DRAFT) as { od?: { inputs?: unknown } };
+    expect(m.od?.inputs).toBeUndefined();
   });
 });
 

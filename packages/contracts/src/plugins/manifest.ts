@@ -34,6 +34,13 @@ export const InputFieldSchema = z.object({
   type:        z.enum(['string', 'text', 'select', 'number', 'boolean', 'file']).optional(),
   required:    z.boolean().optional(),
   options:     z.array(z.string()).optional(),
+  // Dynamic option source. Static `options` live in the manifest; some selects
+  // are per-installation data instead — `optionsFrom: 'accounts'` means "the
+  // options are this plugin's configured account-profile names". The manifest
+  // stays declarative; the daemon hydrates `options` at APPLY time (the only
+  // resolution point), so the composer and CLI both see the resolved list.
+  // Closed enum on purpose — future dynamic sources extend it here.
+  optionsFrom: z.enum(['accounts']).optional(),
   placeholder: z.string().optional(),
   default:     z.unknown().optional(),
 }).passthrough();
@@ -151,20 +158,77 @@ export const PluginConnectorRefSchema = z.object({
 
 export type PluginConnectorRef = z.infer<typeof PluginConnectorRefSchema>;
 
+// How a node's parallel child options are chosen. A "branch" turns a flat
+// mode list into an explicit fork:
+//   - select 'single' → the options are mutually-exclusive alternatives (pick
+//     exactly one); 'multi' → the operator/user may pick several and EACH
+//     picked branch runs one pass, its outputs merged.
+//   - pick 'ask' → the running agent surfaces the choice at that step via
+//     AskUserQuestion (multiSelect for 'multi'); 'input' → the choice is
+//     resolved implicitly from an input value (legacy behavior, no extra
+//     prompt). When `branch` is ABSENT the modes stay legacy: the daemon
+//     composes every mode prompt and the agent matches one by input value.
+// `select`/`pick` are OPTIONAL at the manifest layer — the daemon resolves the
+// defaults (single / ask) when it flattens stages for the editor and the run.
+// Keeping them optional here also keeps the schema's input type equal to its
+// output type, which lets the node schemas below carry explicit `z.ZodType<T>`
+// annotations (needed so the deeper nesting doesn't blow past tsc's
+// declaration-emit size limit — TS7056).
+export interface WorkflowBranch {
+  select?: 'single' | 'multi';
+  pick?: 'ask' | 'input';
+  [k: string]: unknown;
+}
+export const WorkflowBranchSchema = z.object({
+  select: z.enum(['single', 'multi']).optional(),
+  pick:   z.enum(['ask', 'input']).optional(),
+}).passthrough() as unknown as z.ZodType<WorkflowBranch>;
+
+// A level-2 leaf option nested under a mode (e.g. the "真抓热榜" mode's
+// individual scrape methods: bb-browser / gstack / TikHub …). Nesting is
+// capped at two levels — a submode carries no further children — to keep the
+// editor and the runtime picker bounded.
+export interface WorkflowStageSubMode {
+  id: string;
+  label?: string;
+  label_i18n?: LocalizedText;
+  prompt?: string;
+  prompt_i18n?: LocalizedText;
+  [k: string]: unknown;
+}
+export const WorkflowStageSubModeSchema = z.object({
+  id:          z.string().min(1),
+  label:       z.string().optional(),
+  label_i18n:  LocalizedTextSchema.optional(),
+  prompt:      z.string().optional(),
+  prompt_i18n: LocalizedTextSchema.optional(),
+}).passthrough() as unknown as z.ZodType<WorkflowStageSubMode>;
+
 // A per-mode prompt slot inside a stage. Some steps run differently depending
 // on a runtime input (e.g. the topic step: "AI suggest" vs "scrape trending
 // via bb-browser"); each mode carries its own prompt so the operator can tune
-// each path's output independently. The agent picks the matching mode from the
-// relevant input value and follows that prompt.
+// each path's output independently. A mode may itself declare a `branch` +
+// nested `modes` (level-2 submodes) — e.g. "真抓热榜" fans out into several
+// scrape methods the user can multi-select.
+export interface WorkflowStageMode {
+  id: string;
+  label?: string;
+  label_i18n?: LocalizedText;
+  prompt?: string;
+  prompt_i18n?: LocalizedText;
+  branch?: WorkflowBranch;
+  modes?: WorkflowStageSubMode[];
+  [k: string]: unknown;
+}
 export const WorkflowStageModeSchema = z.object({
   id:          z.string().min(1),
   label:       z.string().optional(),
   label_i18n:  LocalizedTextSchema.optional(),
   prompt:      z.string().optional(),
   prompt_i18n: LocalizedTextSchema.optional(),
-}).passthrough();
-
-export type WorkflowStageMode = z.infer<typeof WorkflowStageModeSchema>;
+  branch:      WorkflowBranchSchema.optional(),
+  modes:       z.array(WorkflowStageSubModeSchema).optional(),
+}).passthrough() as unknown as z.ZodType<WorkflowStageMode>;
 
 // Workflow mode (deer-flow inspired). A plugin can declare an explicit,
 // ordered list of stages so the host renders a step rail and the agent
@@ -175,6 +239,18 @@ export type WorkflowStageMode = z.infer<typeof WorkflowStageModeSchema>;
 // style) and optional per-mode prompt slots; the daemon composes these into
 // the system prompt so they actually drive the run. The shared state surfaces
 // are TodoWrite (the step rail) and a live-artifact board.
+export interface WorkflowStage {
+  id: string;
+  title?: string;
+  title_i18n?: LocalizedText;
+  gate?: 'confirm' | 'choice' | 'none';
+  prompt?: string;
+  prompt_i18n?: LocalizedText;
+  branch?: WorkflowBranch;
+  modes?: WorkflowStageMode[];
+  skills?: Array<{ ref?: string; path?: string; [k: string]: unknown }>;
+  [k: string]: unknown;
+}
 export const WorkflowStageSchema = z.object({
   id:          z.string().min(1),
   title:       z.string().optional(),
@@ -182,6 +258,10 @@ export const WorkflowStageSchema = z.object({
   gate:        z.enum(['confirm', 'choice', 'none']).optional(),
   prompt:      z.string().optional(),
   prompt_i18n: LocalizedTextSchema.optional(),
+  // How this stage's `modes` are chosen. Absent → legacy (compose all, agent
+  // matches by input). Present → an explicit single/multi fork the runtime
+  // surfaces (see WorkflowBranchSchema).
+  branch:      WorkflowBranchSchema.optional(),
   modes:       z.array(WorkflowStageModeSchema).optional(),
   // Stage-level skill bindings. Each reference (by global skill id via
   // `ref`) scopes that skill's methodology to THIS step: the daemon
@@ -190,9 +270,7 @@ export const WorkflowStageSchema = z.object({
   // topic step, a copywriting skill on the script step) instead of
   // injecting everything globally via od.context.skills.
   skills:      z.array(ReferenceSchema).optional(),
-}).passthrough();
-
-export type WorkflowStage = z.infer<typeof WorkflowStageSchema>;
+}).passthrough() as unknown as z.ZodType<WorkflowStage>;
 
 export const PluginWorkflowSchema = z.object({
   stages: z.array(WorkflowStageSchema),
@@ -274,6 +352,14 @@ export const PluginManifestSchema = z.object({
     // so the editor reflects already-configured keys AND injects them into runs
     // (per-plugin `pluginConfig` overrides these).
     configEnvFile: z.string().optional(),
+    // Account-profile support. A plugin that drives several distinct accounts
+    // (e.g. 公众号发布) declares which `od.config` keys are PER-ACCOUNT
+    // credentials here; the operator manages named account profiles (each with
+    // its own credentials + writing persona) in the editor, and the run's first
+    // step picks one. See AccountProfile in api/plugin-source.ts.
+    accounts: z.object({
+      credentialKeys: z.array(z.string()).optional(),
+    }).passthrough().optional(),
     capabilities: z.array(z.string()).optional(),
     // Workflow-mode declaration. When present, the host renders a step
     // rail from these stages and the agent drives the run stage by stage

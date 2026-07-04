@@ -13,7 +13,6 @@ import {
   refreshPluginMarketplace,
   removePluginMarketplace,
   setPluginMarketplaceTrust,
-  type PluginShareProjectOutcome,
   uploadPluginFolder,
   uploadPluginZip,
 } from '../../src/state/projects';
@@ -604,74 +603,15 @@ describe('PluginsView', () => {
     expect(await screen.findByText('Installed Folder Plugin.')).toBeTruthy();
   });
 
-  it('confirms a plugin share action before starting the GitHub repo task', async () => {
+  it('does not surface publish/contribute share actions on installed plugin cards', async () => {
     mockedListPlugins.mockResolvedValue([
-      makePlugin('official-plugin', 'bundled', 'bundled'),
       makePlugin('user-plugin', 'github', 'restricted'),
-      makePlugin(
-        'od-plugin-publish-github',
-        'bundled',
-        'bundled',
-        'Publish Plugin to GitHub',
-        'Creates a public GitHub repository for a local WorkBuild plugin using the GitHub CLI.',
-      ),
-      makePlugin(
-        'od-plugin-contribute-open-design',
-        'bundled',
-        'bundled',
-        'Contribute Plugin to WorkBuild',
-        'Opens a pull request that adds a local WorkBuild plugin to the WorkBuild community catalog.',
-      ),
     ]);
-    const onCreatePluginShareProject = vi.fn(async (): Promise<PluginShareProjectOutcome> => ({
-      ok: true as const,
-      project: {
-        id: 'share-project',
-        name: 'Publish to GitHub: User Plugin',
-        skillId: null,
-        designSystemId: null,
-        createdAt: 1,
-        updatedAt: 1,
-        pendingPrompt: 'Publish it',
-        metadata: { kind: 'prototype' },
-      },
-      conversationId: 'conversation-1',
-      appliedPluginSnapshotId: 'snapshot-1',
-      actionPluginId: 'od-plugin-publish-github',
-      sourcePluginId: 'user-plugin',
-      stagedPath: 'plugin-source/user-plugin',
-      prompt: 'Publish it',
-      message: 'Created a Publish to GitHub task.',
-    }));
 
-    render(
-      <PluginsView
-        onCreatePluginShareProject={onCreatePluginShareProject}
-      />,
-    );
+    render(<PluginsView />);
 
-    const publish = await screen.findByTestId('plugins-home-publish-github-user-plugin');
-    expect(publish.textContent).toContain('Publish');
-    fireEvent.click(publish);
-
-    const dialog = await screen.findByRole('dialog', {
-      name: /Publish Plugin to GitHub for User Plugin/i,
-    });
-    expect(dialog.textContent).toContain('Creates a public GitHub repository');
-    expect(dialog.textContent).toContain('plugin-source/user-plugin');
-    expect(onCreatePluginShareProject).not.toHaveBeenCalled();
-
-    fireEvent.click(within(dialog).getByTestId('plugin-share-confirm-start'));
-
-    await waitFor(() =>
-      expect(onCreatePluginShareProject).toHaveBeenCalledWith(
-        'user-plugin',
-        'publish-github',
-        'en',
-      ),
-    );
-    await waitFor(() =>
-      expect(screen.queryByTestId('plugin-share-confirm-modal')).toBeNull(),
-    );
+    await screen.findByTestId('plugins-home-details-user-plugin');
+    expect(screen.queryByTestId('plugins-home-publish-github-user-plugin')).toBeNull();
+    expect(screen.queryByTestId('plugins-home-contribute-open-design-user-plugin')).toBeNull();
   });
 });

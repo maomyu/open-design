@@ -144,22 +144,53 @@ describe('HomeView context picker', () => {
     }));
   });
 
-  it('adds multiple @ plugins as context without applying or hydrating their query', async () => {
-    const plugins = [
-      makePlugin('chart-plugin', 'Chart Plugin'),
-      makePlugin('deck-plugin', 'Deck Plugin'),
-    ];
+  it('activates the @-picked plugin like "Use": renders its brief with fillable input placeholders', async () => {
+    // A plugin whose kickoff query has editable input placeholders — the whole
+    // point of "回显": {{tone}} fills from its default, {{topic}} stays a
+    // fillable slot the operator can type into.
+    const writer: InstalledPluginRecord = {
+      id: 'writer-plugin',
+      title: 'Writer Plugin',
+      version: '1.0.0',
+      sourceKind: 'user',
+      source: '/tmp/writer',
+      trust: 'trusted',
+      capabilitiesGranted: ['prompt:inject'],
+      fsPath: '/tmp/writer',
+      installedAt: 0,
+      updatedAt: 0,
+      manifest: {
+        name: 'writer-plugin',
+        title: 'Writer Plugin',
+        version: '1.0.0',
+        od: {
+          kind: 'skill',
+          taskKind: 'new-generation',
+          featured: true,
+          useCase: { query: 'Write about {{topic}} in a {{tone}} tone.' },
+          inputs: [
+            { name: 'topic', label: 'Topic', type: 'string' },
+            { name: 'tone', label: 'Tone', type: 'string', default: 'friendly' },
+          ],
+        },
+      },
+    };
+    const applied = { query: 'Write about {{topic}} in a {{tone}} tone.', inputs: writer.manifest!.od!.inputs };
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
-      if (typeof url === 'string' && url === '/api/plugins') {
-        return new Response(JSON.stringify({ plugins }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
+      const u = String(url);
+      if (u === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [writer] }), {
+          status: 200, headers: { 'content-type': 'application/json' },
         });
       }
-      if (typeof url === 'string' && url === '/api/mcp/servers') {
+      if (u === '/api/mcp/servers') {
         return new Response(JSON.stringify({ servers: [], templates: [] }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u.includes('/apply')) {
+        return new Response(JSON.stringify(applied), {
+          status: 200, headers: { 'content-type': 'application/json' },
         });
       }
       throw new Error(`unexpected fetch ${url}`);
@@ -181,35 +212,20 @@ describe('HomeView context picker', () => {
     );
 
     const input = await screen.findByTestId('home-hero-input');
-    fireEvent.change(input, { target: { value: 'Build @chart' } });
-    fireEvent.mouseDown(await screen.findByRole('option', { name: /chart plugin/i }));
+    fireEvent.change(input, { target: { value: '@writer' } });
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /writer plugin/i }));
 
+    // The composer is replaced with the rendered brief: {{tone}} filled from its
+    // default, {{topic}} left as a fillable placeholder. The @token is gone.
     await waitFor(() => {
-      expect((input as HTMLTextAreaElement).value).toBe('Build @Chart Plugin');
-      expect(screen.getByTestId('home-hero-context-plugin-chart-plugin')).toBeTruthy();
+      expect((input as HTMLTextAreaElement).value).toBe('Write about {{topic}} in a friendly tone.');
     });
-
-    fireEvent.change(input, { target: { value: `${(input as HTMLTextAreaElement).value} @deck` } });
-    fireEvent.mouseDown(await screen.findByRole('option', { name: /deck plugin/i }));
-
+    expect((input as HTMLTextAreaElement).value).not.toContain('@writer');
+    // The plugin is now ACTIVE (its query template drives the editable overlay),
+    // so it applied through the daemon rather than being a silent context chip.
     await waitFor(() => {
-      expect((input as HTMLTextAreaElement).value).toBe('Build @Chart Plugin @Deck Plugin');
-      expect(screen.getByTestId('home-hero-context-plugin-chart-plugin')).toBeTruthy();
-      expect(screen.getByTestId('home-hero-context-plugin-deck-plugin')).toBeTruthy();
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply'))).toBe(true);
     });
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/apply'))).toBe(false);
-    expect((input as HTMLTextAreaElement).value).not.toContain('Hydrated query');
-
-    fireEvent.click(screen.getByTestId('home-hero-submit'));
-
-    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: 'Build @Chart Plugin @Deck Plugin',
-      pluginId: DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID,
-      contextPlugins: [
-        expect.objectContaining({ id: 'chart-plugin', title: 'Chart Plugin' }),
-        expect.objectContaining({ id: 'deck-plugin', title: 'Deck Plugin' }),
-      ],
-    }));
   });
 
   it('binds a selected home skill to the created project payload', async () => {

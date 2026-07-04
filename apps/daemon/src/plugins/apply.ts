@@ -24,6 +24,7 @@ import {
   resolveLocalizedText,
   type AppliedPluginSnapshot,
   type ApplyResult,
+  type InputField,
   type InstalledPluginRecord,
   type McpServerSpec,
   type PluginAssetRef,
@@ -75,6 +76,11 @@ export interface ApplyInput {
   // tests), the connector bindings stay in `pending` status and no
   // auto-prompt is derived.
   connectorProbe?: ConnectorProbe | undefined;
+  // Names of this plugin's configured account profiles (app-config
+  // `pluginAccounts`). Injected by the HTTP route so applyPlugin stays pure;
+  // used to hydrate `od.inputs[]` fields declaring `optionsFrom: 'accounts'`
+  // into concrete select options (the composer's 账号 dropdown).
+  accountNames?: string[] | undefined;
 }
 
 export interface ApplyComputed {
@@ -91,7 +97,13 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
   const rawTrust: TrustTier = input.trust ?? input.plugin.trust;
   const trust: ApplyTrust = rawTrust === 'restricted' ? 'restricted' : 'trusted';
 
-  const validated = validateInputs(manifest, input.inputs);
+  // Hydrate BEFORE validation so dynamically-required fields are enforced
+  // server-side too: with 2+ account profiles the `account` select becomes
+  // required, and a CLI/direct-API apply without it gets the same
+  // MissingInputError (→ 422) the composer enforces visually. UI-only
+  // enforcement would leave a wrong-credentials hole on non-UI paths.
+  const inputFields = hydrateDynamicInputOptions(manifest.od?.inputs ?? [], input.accountNames);
+  const validated = validateInputs(inputFields, input.inputs);
   if (validated.missing.length > 0) {
     throw new MissingInputError(validated.missing);
   }
@@ -201,7 +213,7 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
   const result: ApplyResult = {
     query:               queryText,
     contextItems:        resolved.context.items,
-    inputs:              manifest.od?.inputs ?? [],
+    inputs:              inputFields,
     assets,
     mcpServers,
     pipeline:            appliedPipeline,
@@ -216,13 +228,36 @@ export function applyPlugin(input: ApplyInput): ApplyComputed {
   return { result, manifestSourceDigest: digest, warnings: resolved.warnings };
 }
 
+// Resolve `optionsFrom` fields into concrete select options. The manifest
+// stays declarative ("options come from this plugin's account profiles"); this
+// is the ONLY hydration point, so the composer's input form, the server-side
+// validation, the CLI's apply output, and snapshots all see the same resolved
+// list. Cardinality rules:
+//   - exactly one account → it becomes the default (nothing to choose);
+//   - two or more → the field turns REQUIRED, so a run can never start with
+//     an ambiguous account (validateInputs enforces this on every path);
+//   - none → options stay empty and the field stays optional — the runtime
+//     roster block directs the operator to the editor's 账号 section.
+export function hydrateDynamicInputOptions(
+  fields: InputField[],
+  accountNames: string[] | undefined,
+): InputField[] {
+  return fields.map((field) => {
+    if (field.optionsFrom !== 'accounts') return field;
+    const options = (accountNames ?? []).filter((n) => typeof n === 'string' && n.trim().length > 0);
+    const hydrated: InputField = { ...field, options };
+    if (options.length === 1 && hydrated.default === undefined) hydrated.default = options[0];
+    if (options.length >= 2) hydrated.required = true;
+    return hydrated;
+  });
+}
+
 interface ValidationResult {
   coerced: Record<string, string | number | boolean>;
   missing: string[];
 }
 
-function validateInputs(manifest: PluginManifest, raw: Record<string, unknown>): ValidationResult {
-  const fields = manifest.od?.inputs ?? [];
+function validateInputs(fields: InputField[], raw: Record<string, unknown>): ValidationResult {
   const coerced: Record<string, string | number | boolean> = {};
   const missing: string[] = [];
 

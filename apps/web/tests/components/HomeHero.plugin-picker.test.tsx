@@ -105,9 +105,11 @@ describe('HomeHero plugin picker', () => {
     expect(screen.getByText('My plugin')).toBeTruthy();
     fireEvent.mouseDown(screen.getByRole('option', { name: /sample user plugin/i }));
 
+    // Picking a plugin activates it (host applies + renders the editable brief);
+    // the @token is cleared, leaving only the surrounding text the host receives.
     expect(onPickPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'sample-user-plugin' }),
-      'Make @Sample User Plugin',
+      'Make',
     );
   });
 

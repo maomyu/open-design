@@ -71,6 +71,40 @@ describe('applyPlugin', () => {
     expect(() => applyPlugin({ plugin: pluginFixture(), inputs: {}, registry: REGISTRY })).toThrow(MissingInputError);
   });
 
+  // Design doc 2026-07-04 (公众号多账号凭证) spec ⑥ — with 2+ account profiles
+  // the hydrated `account` select turns required SERVER-SIDE, so a CLI/direct
+  // API apply without a pick gets the same 422 the composer enforces visually.
+  it('requires the account input when 2+ account profiles exist (dynamic required)', () => {
+    const base = pluginFixture();
+    const plugin: InstalledPluginRecord = {
+      ...base,
+      manifest: {
+        ...base.manifest,
+        od: {
+          ...base.manifest.od,
+          accounts: { credentialKeys: ['WECHAT_APPID'] },
+          inputs: [
+            { name: 'topic', type: 'string', required: true },
+            { name: 'account', type: 'select', optionsFrom: 'accounts' },
+          ],
+        },
+      },
+    };
+    const two = ['报考日记', '考研日记'];
+    expect(() =>
+      applyPlugin({ plugin, inputs: { topic: 'design' }, registry: REGISTRY, accountNames: two }),
+    ).toThrow(MissingInputError);
+    // Picking one satisfies it; a single configured account auto-defaults.
+    const picked = applyPlugin({
+      plugin, inputs: { topic: 'design', account: '报考日记' }, registry: REGISTRY, accountNames: two,
+    });
+    expect(picked.result.appliedPlugin.inputs.account).toBe('报考日记');
+    const single = applyPlugin({
+      plugin, inputs: { topic: 'design' }, registry: REGISTRY, accountNames: ['唯一号'],
+    });
+    expect(single.result.appliedPlugin.inputs.account).toBe('唯一号');
+  });
+
   it('coerces optional inputs by defaulting when blank', () => {
     const result = applyPlugin({ plugin: pluginFixture(), inputs: { topic: 'design' }, registry: REGISTRY });
     expect(result.result.appliedPlugin.inputs.audience).toBe('general');

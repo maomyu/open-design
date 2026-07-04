@@ -16,7 +16,7 @@ import {
   resolvePluginFolder,
   upsertInstalledPlugin,
 } from './plugins/registry.js';
-import { coerceStages } from './plugin-edit-routes.js';
+import { coerceStages, deriveInputsFromQuery } from './plugin-edit-routes.js';
 import { callModelOnce } from './memory-llm.js';
 
 export interface RegisterPluginDraftRoutesDeps extends RouteDeps<'db' | 'http' | 'paths'> {}
@@ -189,6 +189,13 @@ export function buildDraftManifest(input: {
       kind: 'skill',
       taskKind: 'new-generation',
       useCase: { query: input.query },
+      // Fillable placeholders: `{{topic}}` in the kickoff query becomes a
+      // string input so the composer renders it as an editable slot when the
+      // plugin is picked/used — same echo as bundled plugins.
+      ...(() => {
+        const inputs = deriveInputsFromQuery(input.query);
+        return inputs.length > 0 ? { inputs } : {};
+      })(),
       ...(input.stages.length > 0
         ? {
             workflow: {

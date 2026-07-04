@@ -80,7 +80,6 @@ function renderOnboarding(
     onRefreshAgents: vi.fn(() => [amrAgent(), cliAgent()]),
     onThemeChange: vi.fn(),
     onCreateProject: vi.fn(),
-    onCreatePluginShareProject: vi.fn(),
     onImportClaudeDesign: vi.fn(),
     onOpenProject: vi.fn(),
     onOpenLiveArtifact: vi.fn(),

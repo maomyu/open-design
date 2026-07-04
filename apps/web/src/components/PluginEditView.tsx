@@ -12,12 +12,15 @@ import type {
   InstalledPluginRecord,
   PluginSourceStage,
   PluginSourceStageMode,
+  PluginSourceStageSubMode,
+  PluginSourceStageBranch,
   PluginConfigKeyView,
 } from '@open-design/contracts';
 import { useI18n } from '../i18n';
 import { navigate } from '../router';
 import { Icon } from './Icon';
 import { Toast } from './Toast';
+import { PluginAccountsSection } from './PluginAccountsSection';
 import {
   fetchPluginSource,
   savePluginSource,
@@ -49,16 +52,69 @@ type Scope = { stageIdx: number; modeIdx: number | null };
 
 // Which canvas node the focused editor below is showing.
 // 'query' = kickoff brief, 'skill' = SKILL.md methodology, stage = one step,
-// mode = one per-step prompt slot (a step's child node on the canvas).
+// mode = one per-step prompt slot (a step's child node on the canvas),
+// submode = a level-2 option nested under a mode (e.g. a scrape method).
 type Selection =
   | { kind: 'query' }
   | { kind: 'stage'; idx: number }
   | { kind: 'mode'; stageIdx: number; modeIdx: number }
+  | { kind: 'submode'; stageIdx: number; modeIdx: number; subIdx: number }
   | { kind: 'skill' };
+
+// Default fork for a freshly-created option group — single-select, asked at
+// runtime. The operator flips it to multi (each pick runs) as needed.
+const DEFAULT_BRANCH: PluginSourceStageBranch = { select: 'single', pick: 'ask' };
 
 // First non-empty line of a prompt — the mode node's one-line preview.
 function firstLine(text: string): string {
   return (text.split('\n').find((l) => l.trim()) ?? '').trim();
+}
+
+// Fork editor — how a node's parallel child options are chosen. `select`
+// single/multi (multi = each picked child runs a pass); `pick` ask (surfaced at
+// runtime via AskUserQuestion) / input (matched from an input value, legacy).
+// Editing either always writes a concrete branch object so the fork is explicit.
+function BranchControl({
+  branch,
+  onChange,
+  t,
+}: {
+  branch: PluginSourceStageBranch | undefined;
+  onChange: (b: PluginSourceStageBranch) => void;
+  t: ReturnType<typeof useI18n>['t'];
+}) {
+  const select = branch?.select ?? 'single';
+  const pick = branch?.pick ?? 'ask';
+  return (
+    <div className="plugin-edit-view__branch" data-testid="plugin-edit-branch">
+      <span className="plugin-edit-view__branch-title">{t('pluginEditor.branchLabel')}</span>
+      <span className="plugin-edit-view__branch-hint">{t('pluginEditor.branchHint')}</span>
+      <div className="plugin-edit-view__branch-row">
+        <label className="plugin-edit-view__branch-field">
+          <span>{t('pluginEditor.branchSelectLabel')}</span>
+          <select
+            className="plugin-edit-view__branch-select"
+            value={select}
+            onChange={(e) => onChange({ select: e.target.value as 'single' | 'multi', pick })}
+          >
+            <option value="single">{t('pluginEditor.branchSingle')}</option>
+            <option value="multi">{t('pluginEditor.branchMulti')}</option>
+          </select>
+        </label>
+        <label className="plugin-edit-view__branch-field">
+          <span>{t('pluginEditor.branchPickLabel')}</span>
+          <select
+            className="plugin-edit-view__branch-select"
+            value={pick}
+            onChange={(e) => onChange({ select, pick: e.target.value as 'ask' | 'input' })}
+          >
+            <option value="ask">{t('pluginEditor.branchPickAsk')}</option>
+            <option value="input">{t('pluginEditor.branchPickInput')}</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  );
 }
 
 export function PluginEditView({ pluginId }: Props) {
@@ -77,6 +133,12 @@ export function PluginEditView({ pluginId }: Props) {
   // typed into each input. Secret inputs start empty (the stored value is never
   // returned) — saving sends only non-empty inputs, so leaving one blank keeps it.
   const [configKeys, setConfigKeys] = useState<PluginConfigKeyView[]>([]);
+  // Keys claimed by od.accounts.credentialKeys live in the 账号 section (each
+  // account carries its own values) — they are EXCLUDED from the plugin-level
+  // config panel entirely so the same credential never has two entry points.
+  // The declarations stay in od.config as metadata (labels/descriptions for
+  // the account form), which is why we filter here instead of daemon-side.
+  const pluginLevelConfigKeys = configKeys.filter((k) => !k.perAccount);
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [configSaving, setConfigSaving] = useState(false);
   // Collapsed by default — the panel is a "settings" entry the operator opens.
@@ -100,6 +162,16 @@ export function PluginEditView({ pluginId }: Props) {
         const stage = nextStages[prev.stageIdx];
         if (!stage) return { kind: 'query' };
         if (prev.modeIdx >= stage.modes.length) return { kind: 'stage', idx: prev.stageIdx };
+        return prev;
+      }
+      if (prev.kind === 'submode') {
+        const stage = nextStages[prev.stageIdx];
+        if (!stage) return { kind: 'query' };
+        const mode = stage.modes[prev.modeIdx];
+        if (!mode) return { kind: 'stage', idx: prev.stageIdx };
+        if (prev.subIdx >= (mode.modes?.length ?? 0)) {
+          return { kind: 'mode', stageIdx: prev.stageIdx, modeIdx: prev.modeIdx };
+        }
         return prev;
       }
       return prev;
@@ -141,6 +213,15 @@ export function PluginEditView({ pluginId }: Props) {
 
   function skillName(id: string): string {
     return catalog.find((s) => s.id === id)?.name ?? id;
+  }
+
+  // Short pill text for a fork on the canvas: 多选 / 单选 / 按输入 (legacy).
+  function branchBadgeLabel(branch: PluginSourceStageBranch | undefined): string {
+    if (!branch) return t('pluginEditor.branchGroupInput');
+    if (branch.pick === 'input') return t('pluginEditor.branchGroupInput');
+    return branch.select === 'multi'
+      ? t('pluginEditor.branchGroupMulti')
+      : t('pluginEditor.branchGroupSingle');
   }
 
   // Edit history — restore points recorded on every save (hand or AI).
@@ -336,16 +417,21 @@ export function PluginEditView({ pluginId }: Props) {
     // A pending scoped AI edit indexes into the old order — drop it.
     setScope(null);
     setSelected((prev) => {
-      // A selected mode follows its owning step's fate.
-      const sIdx = prev.kind === 'stage' ? prev.idx : prev.kind === 'mode' ? prev.stageIdx : null;
+      // A selected mode/submode follows its owning step's fate.
+      const sIdx =
+        prev.kind === 'stage'
+          ? prev.idx
+          : prev.kind === 'mode' || prev.kind === 'submode'
+            ? prev.stageIdx
+            : null;
       if (sIdx == null) return prev;
       if (sIdx === i) {
-        // Deleted the selected step (or the selected mode's step): keep focus
+        // Deleted the selected step (or its mode/submode's step): keep focus
         // on the nearest surviving step, or fall back to the kickoff node.
         return lastIdx < 0 ? { kind: 'query' } : { kind: 'stage', idx: Math.min(i, lastIdx) };
       }
       if (sIdx > i) {
-        return prev.kind === 'mode'
+        return prev.kind === 'mode' || prev.kind === 'submode'
           ? { ...prev, stageIdx: sIdx - 1 }
           : { kind: 'stage', idx: sIdx - 1 };
       }
@@ -373,7 +459,7 @@ export function PluginEditView({ pluginId }: Props) {
         if (prev.idx === j) return { kind: 'stage', idx: i };
         return prev;
       }
-      if (prev.kind === 'mode') {
+      if (prev.kind === 'mode' || prev.kind === 'submode') {
         if (prev.stageIdx === i) return { ...prev, stageIdx: j };
         if (prev.stageIdx === j) return { ...prev, stageIdx: i };
         return prev;
@@ -421,10 +507,90 @@ export function PluginEditView({ pluginId }: Props) {
     // A pending scoped AI edit into this step's modes indexes the old order.
     setScope((prev) => (prev && prev.stageIdx === i && prev.modeIdx != null ? null : prev));
     setSelected((prev) => {
-      if (prev.kind !== 'mode' || prev.stageIdx !== i) return prev;
-      // Deleted the selected mode: fall back to its owning step.
+      if ((prev.kind !== 'mode' && prev.kind !== 'submode') || prev.stageIdx !== i) return prev;
+      // Deleted the selected mode (or a submode under it): fall back to the step.
       if (prev.modeIdx === mi) return { kind: 'stage', idx: i };
       return prev.modeIdx > mi ? { ...prev, modeIdx: prev.modeIdx - 1 } : prev;
+    });
+    setDirty(true);
+  }
+
+  // Fork controls — set/clear how a stage's modes (or a mode's submodes) are
+  // chosen. Clearing (branch=undefined) reverts to legacy flat modes.
+  function setStageBranch(i: number, branch: PluginSourceStageBranch | undefined) {
+    updateStage(i, { branch });
+  }
+  function setModeBranch(i: number, mi: number, branch: PluginSourceStageBranch | undefined) {
+    updateMode(i, mi, { branch });
+  }
+
+  // Level-2 submode mutators (a mode's nested option group).
+  function updateSubMode(i: number, mi: number, si: number, patch: Partial<PluginSourceStageSubMode>) {
+    setStages((prev) =>
+      prev.map((s, idx) =>
+        idx === i
+          ? {
+              ...s,
+              modes: s.modes.map((m, j) =>
+                j === mi
+                  ? { ...m, modes: (m.modes ?? []).map((sm, k) => (k === si ? { ...sm, ...patch } : sm)) }
+                  : m,
+              ),
+            }
+          : s,
+      ),
+    );
+    setDirty(true);
+  }
+  function addSubMode(i: number, mi: number) {
+    const newIdx = stages[i]?.modes[mi]?.modes?.length ?? 0;
+    setStages((prev) =>
+      prev.map((s, idx) =>
+        idx === i
+          ? {
+              ...s,
+              modes: s.modes.map((m, j) => {
+                if (j !== mi) return m;
+                const subs = m.modes ?? [];
+                return {
+                  ...m,
+                  // First submode turns the mode into an option group.
+                  branch: m.branch ?? DEFAULT_BRANCH,
+                  modes: [...subs, { id: `opt-${subs.length + 1}`, label: '', prompt: '' }],
+                };
+              }),
+            }
+          : s,
+      ),
+    );
+    setSelected({ kind: 'submode', stageIdx: i, modeIdx: mi, subIdx: newIdx });
+    setDirty(true);
+  }
+  function removeSubMode(i: number, mi: number, si: number) {
+    setStages((prev) =>
+      prev.map((s, idx) =>
+        idx === i
+          ? {
+              ...s,
+              modes: s.modes.map((m, j) => {
+                if (j !== mi) return m;
+                const subs = (m.modes ?? []).filter((_, k) => k !== si);
+                // Last submode removed → drop the fork so the mode reverts to a
+                // plain prompt slot (no dangling branch).
+                if (subs.length === 0) {
+                  const { modes: _drop, branch: _b, ...rest } = m;
+                  return rest;
+                }
+                return { ...m, modes: subs };
+              }),
+            }
+          : s,
+      ),
+    );
+    setSelected((prev) => {
+      if (prev.kind !== 'submode' || prev.stageIdx !== i || prev.modeIdx !== mi) return prev;
+      if (prev.subIdx === si) return { kind: 'mode', stageIdx: i, modeIdx: mi };
+      return prev.subIdx > si ? { ...prev, subIdx: prev.subIdx - 1 } : prev;
     });
     setDirty(true);
   }
@@ -598,7 +764,13 @@ export function PluginEditView({ pluginId }: Props) {
               <div className="plugin-edit-view__readonly">{t('pluginEditor.readOnly')}</div>
             ) : null}
 
-            {configKeys.length > 0 ? (
+            {/* Account profiles — for plugins that declare od.accounts (e.g.
+                公众号发布): named accounts each with their own credentials +
+                writing persona; the run's first step picks one. Renders nothing
+                for plugins without account support. */}
+            <PluginAccountsSection pluginId={pluginId} editable={editable} />
+
+            {pluginLevelConfigKeys.length > 0 ? (
               <section className="plugin-edit-view__config" data-testid="plugin-edit-config">
                 <button
                   type="button"
@@ -609,7 +781,7 @@ export function PluginEditView({ pluginId }: Props) {
                   <Icon name="sliders" size={13} />
                   <span>{t('pluginEditor.configHeading')}</span>
                   <span className="plugin-edit-view__config-count">
-                    {configKeys.filter((k) => k.set).length}/{configKeys.length}
+                    {pluginLevelConfigKeys.filter((k) => k.set).length}/{pluginLevelConfigKeys.length}
                   </span>
                   <span
                     className={`plugin-edit-view__config-chevron${configOpen ? ' is-open' : ''}`}
@@ -622,7 +794,7 @@ export function PluginEditView({ pluginId }: Props) {
                   <div className="plugin-edit-view__config-body">
                 <p className="plugin-edit-view__config-hint">{t('pluginEditor.configHint')}</p>
                 <div className="plugin-edit-view__config-list">
-                  {configKeys.map((k) => (
+                  {pluginLevelConfigKeys.map((k) => (
                     <label className="plugin-edit-view__config-row" key={k.name}>
                       <span className="plugin-edit-view__config-label">
                         <code>{k.name}</code>
@@ -831,12 +1003,33 @@ export function PluginEditView({ pluginId }: Props) {
                           </span>
                         </span>
 
-                        {/* Mode child nodes — vertical sub-chain under the step. */}
+                        {/* Fork badge — the modes below are PARALLEL options
+                            (a choose-one / choose-several branch), not sequential
+                            steps. This is the "岔路" cue that distinguishes them
+                            from the递进 main chain. Click to edit the fork on the
+                            step. */}
+                        {stage.modes.length > 0 ? (
+                          <>
+                            <span className="plugin-edit-view__vlink plugin-edit-view__vlink--fork" aria-hidden="true" />
+                            <button
+                              type="button"
+                              className="plugin-edit-view__branch-badge"
+                              onClick={() => setSelected({ kind: 'stage', idx: i })}
+                              title={t('pluginEditor.branchHint')}
+                            >
+                              {branchBadgeLabel(stage.branch)}
+                            </button>
+                          </>
+                        ) : null}
+
+                        {/* Mode child nodes — parallel options under the step,
+                            each optionally fanning out into its own submodes. */}
                         {stage.modes.map((mode, mi) => {
                           const modeActive =
                             selected.kind === 'mode' &&
                             selected.stageIdx === i &&
                             selected.modeIdx === mi;
+                          const subs = mode.modes ?? [];
                           return (
                             <Fragment key={mi}>
                               <span className="plugin-edit-view__vlink" aria-hidden="true" />
@@ -875,6 +1068,69 @@ export function PluginEditView({ pluginId }: Props) {
                                   <Icon name="trash" size={10} />
                                 </button>
                               </span>
+
+                              {/* Level-2 submodes — a nested fork under this mode
+                                  (e.g. "真抓热榜" → each scrape method). */}
+                              {subs.length > 0 ? (
+                                <div className="plugin-edit-view__submodes">
+                                  <span className="plugin-edit-view__branch-badge plugin-edit-view__branch-badge--sub">
+                                    {branchBadgeLabel(mode.branch)}
+                                  </span>
+                                  {subs.map((sub, si) => {
+                                    const subActive =
+                                      selected.kind === 'submode' &&
+                                      selected.stageIdx === i &&
+                                      selected.modeIdx === mi &&
+                                      selected.subIdx === si;
+                                    return (
+                                      <span
+                                        key={si}
+                                        role="button"
+                                        tabIndex={0}
+                                        className={`plugin-edit-view__submode-node${
+                                          subActive ? ' plugin-edit-view__submode-node--active' : ''
+                                        }`}
+                                        aria-pressed={subActive}
+                                        onClick={() =>
+                                          setSelected({ kind: 'submode', stageIdx: i, modeIdx: mi, subIdx: si })
+                                        }
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            setSelected({ kind: 'submode', stageIdx: i, modeIdx: mi, subIdx: si });
+                                          }
+                                        }}
+                                      >
+                                        <span className="plugin-edit-view__submode-node-label">
+                                          {sub.label || t('pluginEditor.submodeUntitled')}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className="plugin-edit-view__mode-node-x"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeSubMode(i, mi, si);
+                                          }}
+                                          disabled={!editable}
+                                          aria-label={t('pluginEditor.submodeRemove')}
+                                          title={t('pluginEditor.submodeRemove')}
+                                        >
+                                          <Icon name="trash" size={9} />
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
+                                  <button
+                                    type="button"
+                                    className="plugin-edit-view__submode-node plugin-edit-view__submode-node--ghost"
+                                    onClick={() => addSubMode(i, mi)}
+                                    disabled={!editable}
+                                  >
+                                    <Icon name="plus" size={10} />
+                                    <span>{t('pluginEditor.submodeAdd')}</span>
+                                  </button>
+                                </div>
+                              ) : null}
                             </Fragment>
                           );
                         })}
@@ -940,7 +1196,9 @@ export function PluginEditView({ pluginId }: Props) {
                   ? `stage-${selected.idx}`
                   : selected.kind === 'mode'
                     ? `mode-${selected.stageIdx}-${selected.modeIdx}`
-                    : selected.kind
+                    : selected.kind === 'submode'
+                      ? `submode-${selected.stageIdx}-${selected.modeIdx}-${selected.subIdx}`
+                      : selected.kind
               }
             >
               {selected.kind === 'query' ? (
@@ -1029,7 +1287,26 @@ export function PluginEditView({ pluginId }: Props) {
                         onChange={(e) => updateMode(stageIdx, modeIdx, { prompt: e.target.value })}
                       />
 
+                      {/* Nested submodes — this mode can fan out into its own
+                          parallel option group (e.g. 真抓热榜 → scrape methods). */}
+                      {(mode.modes?.length ?? 0) > 0 ? (
+                        <BranchControl
+                          branch={mode.branch}
+                          onChange={(b) => setModeBranch(stageIdx, modeIdx, b)}
+                          t={t}
+                        />
+                      ) : null}
+
                       <div className="plugin-edit-view__step-foot">
+                        <button
+                          type="button"
+                          className="plugin-edit-view__step-link"
+                          onClick={() => addSubMode(stageIdx, modeIdx)}
+                          disabled={!editable}
+                        >
+                          <Icon name="plus" size={12} />
+                          <span>{t('pluginEditor.submodeAdd')}</span>
+                        </button>
                         <button
                           type="button"
                           className="plugin-edit-view__step-link plugin-edit-view__step-link--ai"
@@ -1040,6 +1317,74 @@ export function PluginEditView({ pluginId }: Props) {
                           <span>{t('pluginEditor.modeAiEdit')}</span>
                         </button>
                       </div>
+                    </div>
+                  );
+                })()
+              ) : selected.kind === 'submode' ? (
+                (() => {
+                  const { stageIdx, modeIdx, subIdx } = selected;
+                  const stage = stages[stageIdx];
+                  const mode = stage?.modes[modeIdx];
+                  const sub = mode?.modes?.[subIdx];
+                  if (!stage || !mode || !sub) return null;
+                  return (
+                    <div className="plugin-edit-view__stage-pane">
+                      {/* Breadcrumb — step → mode → this submode. */}
+                      <div className="plugin-edit-view__crumb">
+                        <button
+                          type="button"
+                          className="plugin-edit-view__crumb-link"
+                          onClick={() => setSelected({ kind: 'stage', idx: stageIdx })}
+                        >
+                          <span className="plugin-edit-view__step-num">{stageIdx + 1}</span>
+                          <span className="plugin-edit-view__crumb-text">
+                            {stage.title || stage.id || t('pluginEditor.stepTitlePlaceholder')}
+                          </span>
+                        </button>
+                        <Icon name="chevron-right" size={12} />
+                        <button
+                          type="button"
+                          className="plugin-edit-view__crumb-link"
+                          onClick={() => setSelected({ kind: 'mode', stageIdx, modeIdx })}
+                        >
+                          <span className="plugin-edit-view__crumb-text">
+                            {mode.label || t('pluginEditor.modeUntitled')}
+                          </span>
+                        </button>
+                        <Icon name="chevron-right" size={12} />
+                        <span className="plugin-edit-view__crumb-here">
+                          {sub.label || t('pluginEditor.submodeUntitled')}
+                        </span>
+                      </div>
+
+                      <div className="plugin-edit-view__mode-head">
+                        <input
+                          className="plugin-edit-view__mode-label-input"
+                          value={sub.label}
+                          disabled={!editable}
+                          placeholder={t('pluginEditor.submodeLabelPlaceholder')}
+                          onChange={(e) => updateSubMode(stageIdx, modeIdx, subIdx, { label: e.target.value })}
+                        />
+                        <button
+                          type="button"
+                          className="plugin-edit-view__step-btn plugin-edit-view__step-btn--danger"
+                          onClick={() => removeSubMode(stageIdx, modeIdx, subIdx)}
+                          disabled={!editable}
+                          aria-label={t('pluginEditor.submodeRemove')}
+                          title={t('pluginEditor.submodeRemove')}
+                        >
+                          <Icon name="trash" size={12} />
+                        </button>
+                      </div>
+
+                      <textarea
+                        className="plugin-edit-view__mode-prompt plugin-edit-view__mode-prompt--fill"
+                        value={sub.prompt}
+                        disabled={!editable}
+                        spellCheck={false}
+                        placeholder={t('pluginEditor.submodePromptPlaceholder')}
+                        onChange={(e) => updateSubMode(stageIdx, modeIdx, subIdx, { prompt: e.target.value })}
+                      />
                     </div>
                   );
                 })()
@@ -1146,6 +1491,17 @@ export function PluginEditView({ pluginId }: Props) {
                             ))}
                         </select>
                       </div>
+
+                      {/* Fork — when this step has parallel modes, how the user
+                          picks among them (single/multi, ask/input). Modes
+                          themselves are added/edited on the canvas. */}
+                      {stage.modes.length > 0 ? (
+                        <BranchControl
+                          branch={stage.branch}
+                          onChange={(b) => setStageBranch(i, b)}
+                          t={t}
+                        />
+                      ) : null}
 
                       {/* Modes moved to the canvas — this pane stays focused
                           on the step's own prompt. */}

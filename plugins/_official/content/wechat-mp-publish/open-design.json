@@ -7,7 +7,7 @@
     "zh-CN": "公众号发布",
     "en": "WeChat MP Publisher"
   },
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "公众号长文流水线:选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发到草稿箱(公众号官方 API)。驱动本机「多媒体自动发布」工作台,Open Build 只做编排与右侧可视化看板。",
   "description_i18n": {
     "zh-CN": "选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发公众号草稿箱。",
@@ -39,12 +39,20 @@
     "scenario": "content",
     "featured": true,
     "useCase": {
-      "query": "当一个公众号长文发布总控。选题/方向:{{topic}};文章类型:{{articleType}};排版皮肤:{{skin}};发布通道:{{channel}}。请用本机「多媒体自动发布」工作台的技能开工:先按方向定选题(或用工作台的爆文榜/搜一搜帮我找)→ 按文章类型写一版可发布长文 → 查 AI 腔 → **写完不用我确认,直接按我已选好的皮肤 {{skin}} 自动排版成公众号 HTML(排版风格我已固定,别再问我用哪个/换不换皮肤);排好版后再问我要不要配图** →(要配图就生成图后重排)→ 发到草稿箱。每一步把该步产物插入/更新到项目里的一个 `board.json`(右侧自动渲成飞书多维表格式的只读表:选题候选 / 文章 / 配图 / 发布),再用左侧 AskUserQuestion 选项卡让我确认/提建议改(卡片自带补充建议框,我能点选项也能写一句想法);上面哪项我没填,就用 AskUserQuestion 问我,别替我猜。别生成展示用的 HTML,看板只读、上面别放按钮。**只发到草稿箱,最后到公众号后台我自己确认群发,绝不自动正式发布。**",
+      "query": "当一个公众号长文发布总控。公众号账号:{{account}}(已选就直接用它的写作风格和凭证,不再问我;为空才在第 0 步用 AskUserQuestion 让我单选)。选题/方向:{{topic}};文章类型:{{articleType}};排版皮肤:{{skin}};发布通道:{{channel}}。请用本机「多媒体自动发布」工作台的技能开工:先按方向定选题(或用工作台的爆文榜/搜一搜帮我找)→ 按文章类型写一版可发布长文 → 查 AI 腔 → **写完不用我确认,直接按我已选好的皮肤 {{skin}} 自动排版成公众号 HTML(排版风格我已固定,别再问我用哪个/换不换皮肤);排好版后再问我要不要配图** →(要配图就生成图后重排)→ 发到草稿箱。每一步把该步产物插入/更新到项目里的一个 `board.json`(右侧自动渲成飞书多维表格式的只读表:选题候选 / 文章 / 配图 / 发布),再用左侧 AskUserQuestion 选项卡让我确认/提建议改(卡片自带补充建议框,我能点选项也能写一句想法);上面哪项我没填,就用 AskUserQuestion 问我,别替我猜。别生成展示用的 HTML,看板只读、上面别放按钮。**只发到草稿箱,最后到公众号后台我自己确认群发,绝不自动正式发布。**",
       "query_i18n": {
         "en": "Act as a WeChat Official Account (公众号) long-form publishing controller. Topic: {{topic}}; article style: {{articleType}}; render skin: {{skin}}; channel: {{channel}}. Drive my local '多媒体自动发布' workbench: pick a topic (or use its trending tools to find one) → write one publishable long-form article in the chosen style → check for AI-tone → **without waiting for my confirmation, auto-render to WeChat HTML with my pre-chosen skin {{skin}} (the render style is fixed — don't ask me which skin or whether to switch); after rendering, ask me whether to add images** → (if yes, generate images and re-render) → push to the DRAFT box. After each step, insert/update that step's product into ONE `board.json` in the project (the right side auto-renders it as Feishu/Bitable-style read-only tables: 选题候选 / 文章 / 配图 / 发布); never generate display HTML — the board is read-only with no buttons. Confirm/edit each step through the left-side AskUserQuestion card (it has a free-text note box); ask me via AskUserQuestion for anything I left blank, don't guess. Push to DRAFT only — I do the final broadcast myself in the WeChat backend; never auto-publish."
       }
     },
     "inputs": [
+      {
+        "name": "account",
+        "label": "公众号账号",
+        "type": "select",
+        "optionsFrom": "accounts",
+        "required": false,
+        "placeholder": "先在插件编辑页「账号」区添加"
+      },
       {
         "name": "topic",
         "label": "选题 / 方向",
@@ -90,15 +98,15 @@
       {
         "name": "WECHAT_APPID",
         "label": "公众号 AppID",
-        "description": "已认证服务号的 AppID(发草稿必需)。",
-        "required": true,
+        "description": "已认证服务号的 AppID(发草稿必需)。按账号配置:在插件编辑页「账号」区为每个公众号分别填写。",
+        "required": false,
         "secret": true
       },
       {
         "name": "WECHAT_SECRET",
         "label": "公众号 AppSecret",
-        "description": "公众号 AppSecret(发草稿必需;注意公众号需配置 IP 白名单)。",
-        "required": true,
+        "description": "公众号 AppSecret(发草稿必需;注意公众号需配置 IP 白名单)。按账号配置:在插件编辑页「账号」区为每个公众号分别填写。",
+        "required": false,
         "secret": true
       },
       {
@@ -130,6 +138,12 @@
     "workflow": {
       "stages": [
         {
+          "id": "account",
+          "title": "选账号",
+          "gate": "choice",
+          "prompt": "**第 0 步:定账号。** 开场输入里已带公众号账号({{account}})就**直接用它**——把账号名记进 `board.json` 的 `note`,后面写稿严格按该账号的「写作风格 / 人设」(见系统提示「账号」区)。**发布凭证已由系统按该账号自动注入,你不需要也不要手动设置任何凭证环境变量。**只有账号为空时才用 AskUserQuestion 在「账号（前置）」列出的已配置账号里让用户单选;一个账号都没配就提醒用户去插件编辑页 → 账号,先建一个(名称+写作风格/人设+公众号 AppID/Secret)再开工,别用空账号硬跑。"
+        },
+        {
           "id": "topic",
           "title": "选题",
           "gate": "confirm",
@@ -151,7 +165,7 @@
           "id": "write",
           "title": "写稿",
           "gate": "none",
-          "prompt": "**第一步,先读工作台共享方法论 `MY-wechat-shared/references/viral-method.md`(贝拉垂直小号爆文方法论;SOP/打分/提示词细节见同目录 `viral-method-cards.md`)把策略定下来**:生存画像 → 痛点分级(搜索/倾诉/失眠)→ 把宽泛话题切成具体需求 → 60-30-10 内容角色 → 落脚点(读完要记住/相信/转发什么)→ 四步结构(痛点钩子 → 桥接 IP/产品 → 可转发的观点 → 行动)→ 标题(痛点 + 新鲜表达,先多生成再筛到 1)。**第二步,按用户选的文章类型读对应写作技能、严格照它的风格,把上面的策略落成一版可直接发布的公众号长文**:信息服务攻略→MY-wechat-writer-service(把一件事讲清楚:是什么/适合谁/怎么做/多少钱/什么时候);口语化科普→MY-wechat-writer-default;深度长文→MY-wechat-writer-deep;情感共鸣→MY-wechat-writer-emotion;插画金句→MY-wechat-illustrated-quote(纯图片叙事,走它的独立子流程);硬核攻略→MY-wechat-writer-guide(有态度、下判断的观点体)。**贝拉法管「写给谁 / 痛点 / 落脚点 / 结构 / 标题」,文章类型技能管「用什么腔调和版式落笔」,两层叠用、不冲突。**写完用 MY-wechat-ai-detector 查并清理中英文 AI 腔。正文写进 `board.json`「文章」表(一行:标题 / 正文(longtext)/ 标签 / 状态=已定稿)。正文里按写作技能约定标注配图位 `<!-- IMAGE_N: 描述 -->`(留给后面可选配图用)。**写完别停下问我确认——直接进下一步(排版)自动排版。**"
+          "prompt": "**第一步,先读工作台共享方法论 `MY-wechat-shared/references/viral-method.md`(贝拉垂直小号爆文方法论;SOP/打分/提示词细节见同目录 `viral-method-cards.md`)把策略定下来**:生存画像 → 痛点分级(搜索/倾诉/失眠)→ 把宽泛话题切成具体需求 → 60-30-10 内容角色 → 落脚点(读完要记住/相信/转发什么)→ 四步结构(痛点钩子 → 桥接 IP/产品 → 可转发的观点 → 行动)→ 标题(痛点 + 新鲜表达,先多生成再筛到 1)。**第二步,按用户选的文章类型读对应写作技能、严格照它的风格,把上面的策略落成一版可直接发布的公众号长文**:信息服务攻略→MY-wechat-writer-service(把一件事讲清楚:是什么/适合谁/怎么做/多少钱/什么时候);口语化科普→MY-wechat-writer-default;深度长文→MY-wechat-writer-deep;情感共鸣→MY-wechat-writer-emotion;插画金句→MY-wechat-illustrated-quote(纯图片叙事,走它的独立子流程);硬核攻略→MY-wechat-writer-guide(有态度、下判断的观点体)。**贝拉法管「写给谁 / 痛点 / 落脚点 / 结构 / 标题」,文章类型技能管「用什么腔调和版式落笔」,两层叠用、不冲突。**写完用 MY-wechat-ai-detector 查并清理中英文 AI 腔。正文写进 `board.json`「文章」表(一行:标题 / 正文(longtext)/ 标签 / 状态=已定稿)。正文里按写作技能约定标注配图位 `<!-- IMAGE_N: 描述 -->`(留给后面可选配图用)。**写完别停下问我确认——直接进下一步(排版)自动排版。**\n\n**账号风格(高于文章类型):严格按第 0 步选定账号的「写作风格 / 人设」和范文样本来写**(系统提示「账号」区有该账号的人设与范文);不同号腔调不同,账号风格决定基调,文章类型只决定版式细节,别用千篇一律的通用腔。"
         },
         {
           "id": "render",
@@ -169,7 +183,7 @@
           "id": "publish",
           "title": "发草稿",
           "gate": "confirm",
-          "prompt": "用 MY-wechat-publish-draft 发到公众号草稿箱:取 access_token(/cgi-bin/token)→ 内图 uploadimg、封面 add_material → draft/add 提交。命令/脚本都用工作台 .venv,读 MY-wechat-shared/.env 的 WECHAT_APPID/WECHAT_SECRET/WECHAT_AUTHOR。**铁律:只发到草稿箱**,发完把草稿结果写进 `board.json`「发布」表(草稿状态、草稿链接(link 字段)、以及「去公众号后台二次确认群发」的提示各一行);**绝不自动正式群发、绝不谎报已发**。失败明确说卡在哪一步(token/IP 白名单/uploadimg/draft)。"
+          "prompt": "用 MY-wechat-publish-draft 发到公众号草稿箱:取 access_token(/cgi-bin/token)→ 内图 uploadimg、封面 add_material → draft/add 提交。命令/脚本都用工作台 .venv,读 MY-wechat-shared/.env 的 WECHAT_APPID/WECHAT_SECRET/WECHAT_AUTHOR。**铁律:只发到草稿箱**,发完把草稿结果写进 `board.json`「发布」表(草稿状态、草稿链接(link 字段)、以及「去公众号后台二次确认群发」的提示各一行);**绝不自动正式群发、绝不谎报已发**。失败明确说卡在哪一步(token/IP 白名单/uploadimg/draft)。 **凭证已由系统按选定账号注入为标准环境变量(WECHAT_APPID/WECHAT_SECRET/WECHAT_AUTHOR),直接执行发布命令即可,不要手动覆盖任何凭证变量。**若脚本报某凭证缺失,如实说明缺哪个键、引导用户去插件编辑页「账号」区给该账号补上,绝不换账号重试、绝不谎报。"
         }
       ]
     },
@@ -189,6 +203,13 @@
     "preview": {
       "type": "html",
       "entry": "./example.html"
+    },
+    "accounts": {
+      "credentialKeys": [
+        "WECHAT_APPID",
+        "WECHAT_SECRET",
+        "WECHAT_AUTHOR"
+      ]
     }
   }
 }

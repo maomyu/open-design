@@ -86,10 +86,6 @@ import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
-import type {
-  PluginShareAction,
-  PluginShareProjectOutcome,
-} from '../state/projects';
 import { TasksView } from './TasksView';
 import {
   API_KEY_PLACEHOLDERS,
@@ -256,11 +252,6 @@ interface Props {
       pendingFiles?: File[];
     },
   ) => Promise<boolean> | boolean | void;
-  onCreatePluginShareProject: (
-    pluginId: string,
-    action: PluginShareAction,
-    locale?: string,
-  ) => Promise<PluginShareProjectOutcome>;
   onImportClaudeDesign: (
     file: File,
   ) => Promise<ImportClaudeDesignOutcome | void> | ImportClaudeDesignOutcome | void;
@@ -369,7 +360,6 @@ export function EntryShell({
   onRefreshAgents,
   onThemeChange,
   onCreateProject,
-  onCreatePluginShareProject,
   onImportClaudeDesign,
   onImportFolder,
   onImportFolderResponse,
@@ -675,7 +665,6 @@ export function EntryShell({
               <PluginsView
                 onCreatePlugin={startPluginAuthoring}
                 onUsePlugin={usePluginFromLibrary}
-                onCreatePluginShareProject={onCreatePluginShareProject}
               />
             ) : null}
             {view === 'design-systems' ? (

@@ -965,6 +965,7 @@ async function runPlugin(args) {
     case 'info':      return runPluginInfo(rest);
     case 'manifest':  return runPluginManifest(rest);
     case 'config':    return runPluginConfig(rest);
+    case 'account':   return runPluginAccount(rest);
     case 'create':    return runPluginCreate(rest);
     case 'edit':      return runPluginEdit(rest);
     case 'history':   return runPluginHistory(rest);
@@ -2239,6 +2240,109 @@ async function runPluginConfig(rest) {
     console.log(`  ${k.name}${k.required ? ' *' : ''}  [${status}]${k.label ? '  — ' + k.label : ''}`);
   }
   console.log(`\nSet with: od plugin config ${id} --set KEY=VALUE`);
+}
+
+// `od plugin account <id>` — manage a plugin's ACCOUNT profiles (plugins that
+// declare od.accounts, e.g. 公众号发布). Each account has its own credentials +
+// writing persona; the run's first step picks one. Mirrors the editor's 账号
+// section. Secret values are never shown (only per-key presence).
+//
+//   od plugin account <id>                        # list accounts
+//   od plugin account <id> --set --name "报考日记" [--account-id x]
+//        [--persona "口语化…"] [--sample "范文" ...] [--cred KEY=VALUE ...]
+//   od plugin account <id> --rm <accountId>
+//   [--json] [--daemon-url <url>]
+async function runPluginAccount(rest) {
+  const flags = parseFlags(rest, {
+    string: ['daemon-url', 'name', 'account-id', 'persona', 'sample', 'cred', 'rm'],
+    boolean: ['json', 'set', 'list', 'help', 'h'],
+  });
+  if (flags.help || flags.h) {
+    console.log(`Usage:
+  od plugin account <id>                                  # list accounts
+  od plugin account <id> --set --name "<名称>" \\
+       [--account-id <id>] [--persona "<写作风格>"] \\
+       [--sample "<范文>" ...] [--cred KEY=VALUE ...]      # create/update
+  od plugin account <id> --rm <accountId>                 # delete
+  [--json] [--daemon-url <url>]`);
+    return;
+  }
+  // First bare token not consumed by a string flag's value.
+  const stringFlagNames = new Set(['--daemon-url', '--name', '--account-id', '--persona', '--sample', '--cred', '--rm']);
+  let id = null;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a.startsWith('--')) { if (stringFlagNames.has(a)) i++; continue; }
+    id = a; break;
+  }
+  if (!id) { console.error('Usage: od plugin account <id> [--set ...] [--rm <accountId>] [--json]'); process.exit(2); }
+  const base = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/plugins/${encodeURIComponent(id)}/accounts`;
+
+  // Delete.
+  if (typeof flags.rm === 'string' && flags.rm) {
+    const resp = await fetch(`${base}/${encodeURIComponent(flags.rm)}`, { method: 'DELETE' });
+    if (resp.status === 404) { console.error(`plugin ${id} not found`); process.exit(65); }
+    if (!resp.ok) { console.error(`delete failed: ${resp.status} ${await resp.text()}`); process.exit(1); }
+    if (flags.json) process.stdout.write(JSON.stringify(await resp.json(), null, 2) + '\n');
+    else console.log(`deleted account ${flags.rm} from ${id}`);
+    return;
+  }
+
+  // Create / update.
+  if (flags.set) {
+    const name = typeof flags.name === 'string' ? flags.name.trim() : '';
+    if (!name) { console.error('--set requires --name "<名称>"'); process.exit(2); }
+    // Collect repeatable --sample and --cred (parseFlags keeps only the last).
+    const samples = [];
+    const credentials = {};
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i] === '--sample' && typeof rest[i + 1] === 'string') { samples.push(rest[i + 1]); i++; }
+      else if (rest[i] === '--cred' && typeof rest[i + 1] === 'string') {
+        const pair = rest[i + 1]; const eq = pair.indexOf('=');
+        if (eq > 0) credentials[pair.slice(0, eq)] = pair.slice(eq + 1);
+        i++;
+      }
+    }
+    const body = {
+      name,
+      ...(typeof flags['account-id'] === 'string' && flags['account-id'] ? { id: flags['account-id'] } : {}),
+      style: {
+        ...(typeof flags.persona === 'string' ? { persona: flags.persona } : {}),
+        ...(samples.length > 0 ? { samples } : {}),
+      },
+      ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
+    };
+    const resp = await fetch(base, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (resp.status === 404) { console.error(`plugin ${id} not found`); process.exit(65); }
+    if (resp.status === 400) { console.error(`bad request: ${await resp.text()}`); process.exit(2); }
+    if (!resp.ok) { console.error(`save failed: ${resp.status} ${await resp.text()}`); process.exit(1); }
+    const out = await resp.json();
+    if (flags.json) process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    else console.log(`saved account "${out?.account?.name ?? name}" (id: ${out?.account?.id ?? '?'}) for ${id}`);
+    return;
+  }
+
+  // List.
+  const resp = await fetch(base);
+  if (resp.status === 404) { console.error(`plugin ${id} not found`); process.exit(65); }
+  if (!resp.ok) { console.error(`GET accounts failed: ${resp.status} ${await resp.text()}`); process.exit(1); }
+  const data = await resp.json();
+  if (flags.json) { process.stdout.write(JSON.stringify(data, null, 2) + '\n'); return; }
+  const accounts = data?.accounts ?? [];
+  const credKeys = data?.credentialKeys ?? [];
+  if (credKeys.length === 0) { console.log(`${id}: this plugin does not support account profiles.`); return; }
+  if (accounts.length === 0) {
+    console.log(`${id}: no accounts yet.\nAdd one: od plugin account ${id} --set --name "<名称>" --persona "<风格>" --cred ${credKeys[0]}=<value>`);
+    return;
+  }
+  console.log(`${id} accounts (${accounts.length}):`);
+  for (const a of accounts) {
+    const set = credKeys.filter((k) => a.credentials?.[k]);
+    console.log(`  ${a.name}  (id: ${a.id})  creds: ${set.length}/${credKeys.length} set`);
+    if (a.style?.persona) console.log(`    风格: ${a.style.persona}`);
+  }
 }
 
 // `od plugin create` — draft a workflow plugin from a business description
@@ -4548,6 +4652,9 @@ function printPluginHelp() {
   od plugin info <id>                     Print a plugin's manifest + trust state as JSON.
   od plugin manifest <id>                 Print only the parsed manifest JSON (no wrapper).
   od plugin sources                       List distinct install sources + counts.
+  od plugin config <id> [--set K=V ...]   View/set a plugin's declared config keys (secrets).
+  od plugin account <id> [--set ...|--rm] Manage a plugin's account profiles (name + persona
+                                          + per-account credentials; e.g. 公众号发布).
   od plugin create --prompt "<业务描述>"   AI-draft a workflow plugin (preview; --apply saves
                                           it as an editable user plugin).
   od plugin install --source <path>       Install a plugin from a local folder (Phase 1).

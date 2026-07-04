@@ -316,7 +316,7 @@ import {
   readAllTokens,
   setToken,
 } from './mcp-tokens.js';
-import { agentCliEnvForAgent, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, readAppConfig, readPluginEnvKnobs, writeAppConfig } from './app-config.js';
+import { accountCredentialKeysFromManifest, agentCliEnvForAgent, applyExclusiveCredentialRule, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, pluginAccountsForPlugin, readAppConfig, readPluginEnvKnobs, resolvePluginAccountCredentials, writeAppConfig } from './app-config.js';
 import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
@@ -6669,7 +6669,14 @@ export async function startServer({
 
       const registry = await loadPluginRegistryView();
       const connectorProbe = buildConnectorProbe(connectorService);
-      const computed = applyPlugin({ plugin, inputs, registry, locale, connectorProbe });
+      // Account-profile names hydrate `optionsFrom: 'accounts'` inputs into a
+      // concrete select (the composer's 账号 dropdown). Names only — never
+      // credentials.
+      const accountNames = pluginAccountsForPlugin(
+        await readAppConfig(RUNTIME_DATA_DIR),
+        plugin.id,
+      ).map((a) => a.name);
+      const computed = applyPlugin({ plugin, inputs, registry, locale, connectorProbe, accountNames });
       // Plan §3.B2 — apply-time grants are merged into the snapshot's
       // capabilitiesGranted so the §9 capability gate sees them, but
       // they are NOT written back to installed_plugins.capabilities_granted.
@@ -10067,7 +10074,22 @@ export async function startServer({
                   return skill ? { name: skill.name, body: skill.body } : null;
                 },
               );
-              skillBody = local.body + stageBlock + composedSkillBlocks;
+              // Account roster — for plugins that declare account profiles
+              // (od.accounts), inject the configured accounts (names + writing
+              // personas + samples; NEVER credential values) so the run's first
+              // step picks one and the writing step imitates that voice.
+              // Credential delivery is NOT the model's job: the daemon injects
+              // the chosen account's keys at spawn time (exclusive rule).
+              const { renderAccountRosterBlock } = await import('./plugins/stage-prompts.js');
+              const rosterManifest = (plugin as { manifest?: unknown }).manifest;
+              const rosterPrefs = await readAppConfig(RUNTIME_DATA_DIR);
+              const rosterAccounts = pluginAccountsForPlugin(rosterPrefs, snap.pluginId).map((a) => ({
+                id: a.id,
+                name: a.name,
+                ...(a.style ? { style: a.style } : {}),
+              }));
+              const accountBlock = renderAccountRosterBlock(rosterManifest, rosterAccounts);
+              skillBody = local.body + stageBlock + accountBlock + composedSkillBlocks;
               skillName = local.name;
               activeSkillDir = local.dir;
               registerSkillDir(local.dir);
@@ -11068,19 +11090,35 @@ export async function startServer({
       // Injected at HIGHEST precedence and scoped to this run only, so e.g.
       // wechat-mp-publish gets its own WECHAT_APPID / DAJIALA_API_KEY without
       // those leaking into other plugins' runs.
-      const boundPluginId = run?.appliedPluginSnapshotId
-        ? getSnapshot(db, run.appliedPluginSnapshotId)?.pluginId ?? null
+      const boundSnapshot = run?.appliedPluginSnapshotId
+        ? getSnapshot(db, run.appliedPluginSnapshotId)
         : null;
+      const boundPluginId = boundSnapshot?.pluginId ?? null;
       if (boundPluginId) {
         // Base: the plugin's declared `.env` (od.configEnvFile) so existing
         // keys work even though many scripts don't auto-source it. Override:
         // per-plugin `pluginConfig` values set in the editor.
         const boundPlugin = getInstalledPlugin(db, boundPluginId) as { manifest?: unknown } | null;
-        configuredAgentEnv = {
+        const merged: Record<string, string> = {
           ...configuredAgentEnv,
           ...(boundPlugin ? readPluginConfigEnvFile(boundPlugin.manifest) : {}),
           ...pluginConfigEnvForPlugin(appConfig, boundPluginId),
         };
+        // Exclusive rule for PER-ACCOUNT credential keys (od.accounts.
+        // credentialKeys): their only legitimate source is the account the
+        // operator picked for THIS run (snapshot inputs.account). Strip every
+        // other source first — plugin-level config and the workbench `.env`
+        // both — then inject the chosen account's values. No account resolved
+        // → the keys are ABSENT from the env (loud script failure beats
+        // publishing to the wrong 公众号).
+        const credKeys = boundPlugin ? accountCredentialKeysFromManifest(boundPlugin.manifest) : [];
+        const rawAccount = boundSnapshot?.inputs?.['account'];
+        const accountName = typeof rawAccount === 'string' ? rawAccount : null;
+        configuredAgentEnv = applyExclusiveCredentialRule(
+          merged,
+          credKeys,
+          resolvePluginAccountCredentials(appConfig, boundPluginId, accountName, credKeys),
+        );
       }
     } catch {
       configuredAgentEnv = {};

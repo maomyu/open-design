@@ -10,9 +10,20 @@ import type {
   PluginConfigResponse,
   PluginConfigKeyView,
   UpdatePluginConfigResponse,
+  AccountProfilesResponse,
+  AccountProfileView,
+  UpsertAccountProfileResponse,
+  DeleteAccountProfileResponse,
 } from '@open-design/contracts';
 import type { RouteDeps } from './server-context.js';
-import { readAppConfig, writeAppConfig, validatePluginConfig } from './app-config.js';
+import {
+  readAppConfig,
+  writeAppConfig,
+  validatePluginConfig,
+  validatePluginAccounts,
+  pluginAccountsForPlugin,
+  type PluginAccountRecord,
+} from './app-config.js';
 import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import {
   getInstalledPlugin,
@@ -59,12 +70,28 @@ function parseAssistJson(
 
 const STAGE_LOCALE = 'zh-CN';
 const GATES = new Set(['confirm', 'choice', 'none']);
+const SELECTS = new Set(['single', 'multi']);
+const PICKS = new Set(['ask', 'input']);
 
 type StageMode = PluginSourceStage['modes'][number];
+type StageSubMode = NonNullable<StageMode['modes']>[number];
+type StageBranch = NonNullable<PluginSourceStage['branch']>;
 
-function readModes(raw: unknown): StageMode[] {
+// A branch object present on a stage/mode marks it as an explicit fork. Resolve
+// its select/pick to the editor's required shape (defaults single / ask).
+// Absent → no fork (legacy flat modes), returns undefined.
+function readBranch(raw: unknown): StageBranch | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const b = raw as { select?: unknown; pick?: unknown };
+  const select = typeof b.select === 'string' && SELECTS.has(b.select) ? (b.select as StageBranch['select']) : 'single';
+  const pick = typeof b.pick === 'string' && PICKS.has(b.pick) ? (b.pick as StageBranch['pick']) : 'ask';
+  return { select, pick };
+}
+
+// Level-2 leaf options nested under a mode (e.g. "真抓热榜" → scrape methods).
+function readSubModes(raw: unknown): StageSubMode[] {
   if (!Array.isArray(raw)) return [];
-  const out: StageMode[] = [];
+  const out: StageSubMode[] = [];
   for (const m of raw) {
     const mode = (m ?? {}) as { id?: unknown; label?: unknown; label_i18n?: unknown; prompt?: unknown; prompt_i18n?: unknown };
     const id = typeof mode.id === 'string' ? mode.id : '';
@@ -77,6 +104,30 @@ function readModes(raw: unknown): StageMode[] {
       resolveLocalizedText(mode.prompt_i18n as never, STAGE_LOCALE) ||
       (typeof mode.prompt === 'string' ? mode.prompt : '');
     out.push({ id, label, prompt });
+  }
+  return out;
+}
+
+function readModes(raw: unknown): StageMode[] {
+  if (!Array.isArray(raw)) return [];
+  const out: StageMode[] = [];
+  for (const m of raw) {
+    const mode = (m ?? {}) as { id?: unknown; label?: unknown; label_i18n?: unknown; prompt?: unknown; prompt_i18n?: unknown; branch?: unknown; modes?: unknown };
+    const id = typeof mode.id === 'string' ? mode.id : '';
+    if (!id) continue;
+    const label =
+      resolveLocalizedText(mode.label_i18n as never, STAGE_LOCALE) ||
+      (typeof mode.label === 'string' ? mode.label : '') ||
+      id;
+    const prompt =
+      resolveLocalizedText(mode.prompt_i18n as never, STAGE_LOCALE) ||
+      (typeof mode.prompt === 'string' ? mode.prompt : '');
+    const entry: StageMode = { id, label, prompt };
+    const branch = readBranch(mode.branch);
+    if (branch) entry.branch = branch;
+    const sub = readSubModes(mode.modes);
+    if (sub.length > 0) entry.modes = sub;
+    out.push(entry);
   }
   return out;
 }
@@ -105,7 +156,7 @@ function readStages(manifest: unknown): PluginSourceStage[] {
   if (!Array.isArray(raw)) return [];
   const out: PluginSourceStage[] = [];
   for (const s of raw) {
-    const stage = (s ?? {}) as { id?: unknown; title?: unknown; title_i18n?: unknown; gate?: unknown; prompt?: unknown; prompt_i18n?: unknown; modes?: unknown; skills?: unknown };
+    const stage = (s ?? {}) as { id?: unknown; title?: unknown; title_i18n?: unknown; gate?: unknown; prompt?: unknown; prompt_i18n?: unknown; branch?: unknown; modes?: unknown; skills?: unknown };
     const id = typeof stage.id === 'string' ? stage.id : '';
     if (!id) continue;
     const title =
@@ -119,14 +170,15 @@ function readStages(manifest: unknown): PluginSourceStage[] {
     const prompt =
       resolveLocalizedText(stage.prompt_i18n as never, STAGE_LOCALE) ||
       (typeof stage.prompt === 'string' ? stage.prompt : '');
-    out.push({ id, title, gate, prompt, modes: readModes(stage.modes), skills: readStageSkills(stage.skills) });
+    const branch = readBranch(stage.branch);
+    out.push({ id, title, gate, prompt, ...(branch ? { branch } : {}), modes: readModes(stage.modes), skills: readStageSkills(stage.skills) });
   }
   return out;
 }
 
-function coerceModes(input: unknown): StageMode[] {
+function coerceSubModes(input: unknown): StageSubMode[] {
   if (!Array.isArray(input)) return [];
-  const out: StageMode[] = [];
+  const out: StageSubMode[] = [];
   for (const m of input) {
     const mode = (m ?? {}) as { id?: unknown; label?: unknown; prompt?: unknown };
     const id = typeof mode.id === 'string' ? mode.id.trim() : '';
@@ -138,13 +190,66 @@ function coerceModes(input: unknown): StageMode[] {
   return out;
 }
 
+function coerceModes(input: unknown): StageMode[] {
+  if (!Array.isArray(input)) return [];
+  const out: StageMode[] = [];
+  for (const m of input) {
+    const mode = (m ?? {}) as { id?: unknown; label?: unknown; prompt?: unknown; branch?: unknown; modes?: unknown };
+    const id = typeof mode.id === 'string' ? mode.id.trim() : '';
+    if (!id) continue;
+    const label = typeof mode.label === 'string' && mode.label.trim() ? mode.label : id;
+    const prompt = typeof mode.prompt === 'string' ? mode.prompt : '';
+    const entry: StageMode = { id, label, prompt };
+    const branch = readBranch(mode.branch);
+    if (branch) entry.branch = branch;
+    const sub = coerceSubModes(mode.modes);
+    if (sub.length > 0) entry.modes = sub;
+    out.push(entry);
+  }
+  return out;
+}
+
+export interface DerivedInputField {
+  name: string;
+  label: string;
+  type: 'string';
+}
+
+// Derive fillable input fields from a query's `{{placeholders}}`. A plugin
+// authored via the editor / AI draft carries `{{topic}}` etc. in its kickoff
+// query but no `od.inputs`, so the composer can't render those placeholders as
+// fillable slots (no field to bind). This returns a string field for every
+// placeholder NOT already declared, so callers can append them and the picker's
+// "Use"-style echo lights up. Order follows first appearance in the query.
+export function deriveInputsFromQuery(
+  query: string,
+  existing?: ReadonlyArray<{ name?: unknown }> | null,
+): DerivedInputField[] {
+  const declared = new Set(
+    (Array.isArray(existing) ? existing : [])
+      .map((f) => (typeof f?.name === 'string' ? f.name : ''))
+      .filter(Boolean),
+  );
+  const re = /\{\{\s*([a-zA-Z_][\w-]*)\s*\}\}/g;
+  const out: DerivedInputField[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(query)) !== null) {
+    const name = m[1];
+    if (!name || declared.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, label: name, type: 'string' });
+  }
+  return out;
+}
+
 // Coerce an incoming editor stages array to clean entries. Shared with the
 // plugin draft routes (create flow), which accept the same editor shape.
 export function coerceStages(input: unknown): PluginSourceStage[] | null {
   if (!Array.isArray(input)) return null;
   const out: PluginSourceStage[] = [];
   for (const s of input) {
-    const stage = (s ?? {}) as { id?: unknown; title?: unknown; gate?: unknown; prompt?: unknown; modes?: unknown; skills?: unknown };
+    const stage = (s ?? {}) as { id?: unknown; title?: unknown; gate?: unknown; prompt?: unknown; branch?: unknown; modes?: unknown; skills?: unknown };
     const id = typeof stage.id === 'string' ? stage.id.trim() : '';
     if (!id) continue;
     const title = typeof stage.title === 'string' && stage.title.trim() ? stage.title : id;
@@ -153,7 +258,8 @@ export function coerceStages(input: unknown): PluginSourceStage[] | null {
         ? (stage.gate as PluginSourceStage['gate'])
         : 'none';
     const prompt = typeof stage.prompt === 'string' ? stage.prompt : '';
-    out.push({ id, title, gate, prompt, modes: coerceModes(stage.modes), skills: readStageSkills(stage.skills) });
+    const branch = readBranch(stage.branch);
+    out.push({ id, title, gate, prompt, ...(branch ? { branch } : {}), modes: coerceModes(stage.modes), skills: readStageSkills(stage.skills) });
   }
   return out;
 }
@@ -167,6 +273,21 @@ function writeLocalized(obj: Record<string, unknown>, key: string, value: string
   } else {
     obj[key] = value;
   }
+}
+
+// Write (or clear) a node's `branch` fork, preserving any passthrough keys on
+// an existing branch object. Absent branch → delete, so a node reverts to
+// legacy flat modes.
+function writeBranch(obj: Record<string, unknown>, branch: StageBranch | undefined): void {
+  if (!branch) {
+    delete obj.branch;
+    return;
+  }
+  const prev =
+    obj.branch && typeof obj.branch === 'object' && !Array.isArray(obj.branch)
+      ? (obj.branch as Record<string, unknown>)
+      : {};
+  obj.branch = { ...prev, select: branch.select, pick: branch.pick };
 }
 
 // Merge edited stages back into the manifest, preserving each stage's (and
@@ -186,6 +307,7 @@ function mergeStagesIntoManifest(
     writeLocalized(base, 'title', stage.title);
     base.gate = stage.gate;
     writeLocalized(base, 'prompt', stage.prompt);
+    writeBranch(base, stage.branch);
     if (stage.modes.length > 0) {
       const prevModes = Array.isArray(base.modes) ? (base.modes as Array<Record<string, unknown>>) : [];
       const prevModeById = new Map(prevModes.map((m) => [String(m.id ?? ''), m] as const));
@@ -194,6 +316,22 @@ function mergeStagesIntoManifest(
         mbase.id = mode.id;
         writeLocalized(mbase, 'label', mode.label);
         writeLocalized(mbase, 'prompt', mode.prompt);
+        writeBranch(mbase, mode.branch);
+        // Level-2 submodes (e.g. "真抓热榜" → scrape methods). Preserve each
+        // submode's passthrough fields by id; absent → clear.
+        if (mode.modes && mode.modes.length > 0) {
+          const prevSub = Array.isArray(mbase.modes) ? (mbase.modes as Array<Record<string, unknown>>) : [];
+          const prevSubById = new Map(prevSub.map((m) => [String(m.id ?? ''), m] as const));
+          mbase.modes = mode.modes.map((sub) => {
+            const sbase = { ...(prevSubById.get(sub.id) ?? {}) };
+            sbase.id = sub.id;
+            writeLocalized(sbase, 'label', sub.label);
+            writeLocalized(sbase, 'prompt', sub.prompt);
+            return sbase;
+          });
+        } else {
+          delete mbase.modes;
+        }
         return mbase;
       });
     } else {
@@ -216,10 +354,11 @@ function mergeStagesIntoManifest(
 const ASSIST_SYSTEM_PROMPT =
   '你在帮用户编辑一个 AI 插件的提示词。根据用户的「修改指令」，改写下面的内容。\n' +
   '- `skill` 是插件的全局方法论（SKILL.md，markdown：开场、看板规则、通用规范），`query` 是用户选用插件时填进对话框的开场指令。\n' +
-  '- `stages` 是工作流步骤，每个步骤有：id（稳定标识，英文小写短横线）、title（显示名）、gate（"confirm" 需人工确认 / "choice" 让用户选 / "none" 不卡）、**prompt（这一步自己的提示词——决定该步产出的效果和风格，是最重要的字段）**、modes（可选，按运行时模式分的独立提示词槽，每个有 id/label/prompt，比如选题步分「AI 建议」和「真抓热榜（bb-browser）」两种）。\n' +
-  '- 关键：用户说「改某一步」时，重点改那一步的 `prompt`（或对应 mode 的 prompt）。增删/改名/重排步骤时让 stages 与 skill、query 保持一致。没提到的步骤、字段一律原样返回，别动。\n' +
+  '- `stages` 是工作流步骤，每个步骤有：id（稳定标识，英文小写短横线）、title（显示名）、gate（"confirm" 需人工确认 / "choice" 让用户选 / "none" 不卡）、**prompt（这一步自己的提示词——决定该步产出的效果和风格，是最重要的字段）**、modes（可选，按运行时模式分的独立提示词槽，每个有 id/label/prompt，比如选题步分「AI 建议」和「真抓热榜」两种）。\n' +
+  '- 步骤或某个 mode 可选带 `branch`={"select":"single|multi","pick":"ask|input"}，表示它下面的 modes 是「并列可选项」：select=single 单选一种、multi 可多选（多选时每种各跑一遍合并）；pick=ask 运行时用 AskUserQuestion 问用户、input 按输入值自动选。带 branch 的 mode 还能有自己的嵌套 `modes`（第二层子选项，最多两层），比如「真抓热榜」下再挂 bb-browser / gstack / TikHub 等抓取方式。\n' +
+  '- 关键：用户说「改某一步」时，重点改那一步的 `prompt`（或对应 mode 的 prompt）。增删/改名/重排步骤时让 stages 与 skill、query 保持一致。**已有的 branch、嵌套 modes、skills 等字段没被要求改就原样保留、别丢**。\n' +
   '- query 里形如 {{platform}} 的占位必须原样保留。\n' +
-  '- 严格只返回一个 JSON 对象：{"skill":"<完整 SKILL.md>","query":"<完整 query>","stages":[{"id":"...","title":"...","gate":"confirm|choice|none","prompt":"<该步提示词>","modes":[{"id":"...","label":"...","prompt":"<该模式提示词>"}]}]}。不要任何解释、不要代码围栏以外的文字。';
+  '- 严格只返回一个 JSON 对象：{"skill":"<完整 SKILL.md>","query":"<完整 query>","stages":[{"id":"...","title":"...","gate":"confirm|choice|none","prompt":"<该步提示词>","branch":{"select":"single|multi","pick":"ask|input"},"modes":[{"id":"...","label":"...","prompt":"<该模式提示词>","branch":{...},"modes":[{"id":"...","label":"...","prompt":"..."}]}]}]}。branch 与嵌套 modes 可省略；不要任何解释、不要代码围栏以外的文字。';
 
 /**
  * Direct plugin editing. The plugin IS the asset: its prompts are files
@@ -285,6 +424,62 @@ function readDeclaredConfigKeys(manifest: unknown): DeclaredConfigKey[] {
     });
   }
   return out;
+}
+
+// Which of a plugin's declared config keys are PER-ACCOUNT credentials
+// (`od.accounts.credentialKeys`). Only keys the plugin actually declares in
+// `od.config` are honored, so a typo can't invent a phantom credential.
+function readAccountCredentialKeys(manifest: unknown): string[] {
+  const raw = (manifest as { od?: { accounts?: { credentialKeys?: unknown } } } | undefined)
+    ?.od?.accounts?.credentialKeys;
+  if (!Array.isArray(raw)) return [];
+  const declared = new Set(readDeclaredConfigKeys(manifest).map((k) => k.name));
+  const out: string[] = [];
+  for (const k of raw) {
+    if (typeof k === 'string' && declared.has(k) && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+// Whether the plugin supports account profiles at all.
+function pluginSupportsAccounts(manifest: unknown): boolean {
+  return readAccountCredentialKeys(manifest).length > 0
+    || Boolean((manifest as { od?: { accounts?: unknown } } | undefined)?.od?.accounts);
+}
+
+// A stable, filesystem/id-safe account id derived from a display name (used
+// when the editor creates a profile without supplying an explicit id).
+function slugAccountId(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/(^[-._]+|[-._]+$)/g, '');
+  return base || 'account';
+}
+
+// Whether saving an account under `name` would collide with a DIFFERENT
+// existing profile. Names are the resolver's match key (see
+// resolvePluginAccountCredentials), so uniqueness is a hard rule — a duplicate
+// name would make credential resolution ambiguous and could publish to the
+// wrong 公众号. Updating a profile keeps its own name without conflict.
+export function accountNameConflicts(
+  list: ReadonlyArray<{ id: string; name: string }>,
+  name: string,
+  excludeId: string | null,
+): boolean {
+  return list.some((a) => a.name === name && a.id !== excludeId);
+}
+
+// Editor-facing view of one profile: credential VALUES are never returned —
+// only per-key presence flags — so secrets stay on the machine.
+function accountToView(rec: PluginAccountRecord, credentialKeys: string[]): AccountProfileView {
+  const credentials: Record<string, boolean> = {};
+  for (const key of credentialKeys) {
+    const v = rec.credentials?.[key];
+    credentials[key] = typeof v === 'string' && v.length > 0;
+  }
+  const view: AccountProfileView = { id: rec.id, name: rec.name, style: rec.style ?? {}, credentials };
+  return view;
 }
 
 export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRoutesDeps) {
@@ -460,6 +655,11 @@ export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRo
       // Existing values from the plugin's declared `.env` (if any) — so already-
       // configured keys show as set. pluginConfig (editor) takes precedence.
       const envVals = readPluginConfigEnvFile(plugin.manifest);
+      // Keys claimed by od.accounts.credentialKeys are configured PER ACCOUNT
+      // — the plugin-level panel shows a "per-account" badge instead of a
+      // value input, and run-time injection strips plugin-level/.env values
+      // for them (exclusive account rule).
+      const perAccountKeys = new Set(readAccountCredentialKeys(plugin.manifest));
       const keys: PluginConfigKeyView[] = declared.map((k) => {
         const cfgVal = stored[k.name];
         const envVal = envVals[k.name];
@@ -470,6 +670,7 @@ export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRo
         if (k.description) view.description = k.description;
         if (k.required) view.required = k.required;
         if (k.link) view.link = k.link;
+        if (perAccountKeys.has(k.name)) view.perAccount = true;
         if (fromConfig) view.source = 'config';
         else if (fromEnv) view.source = 'env';
         // Non-secret values are safe to echo; prefer the editor override.
@@ -517,6 +718,128 @@ export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRo
       res.json(response);
     } catch (err) {
       sendApiError(res, 500, 'PLUGIN_CONFIG_SAVE_FAILED', String((err as Error)?.message ?? err));
+    }
+  });
+
+  // ===== Account profiles ================================================
+  // A plugin that declares `od.accounts.credentialKeys` supports several named
+  // accounts, each with its own credentials + writing persona. Credential
+  // VALUES are never returned (only presence flags). The run's first step picks
+  // one; the daemon injects the roster (names + styles) into the prompt.
+
+  app.get('/api/plugins/:id/accounts', async (req, res) => {
+    try {
+      const id = req.params.id;
+      const plugin = getInstalledPlugin(db, id) as { manifest?: unknown; sourceKind?: string } | null;
+      if (!plugin) return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'plugin not found');
+      const credentialKeys = readAccountCredentialKeys(plugin.manifest);
+      const cfg = await readAppConfig(RUNTIME_DATA_DIR);
+      const accounts = pluginAccountsForPlugin(cfg, id).map((a) => accountToView(a, credentialKeys));
+      const editable = plugin.sourceKind === 'bundled' || plugin.sourceKind === 'user';
+      const response: AccountProfilesResponse = { id, credentialKeys, accounts, editable };
+      res.json(response);
+    } catch (err) {
+      sendApiError(res, 500, 'PLUGIN_ACCOUNTS_FAILED', String((err as Error)?.message ?? err));
+    }
+  });
+
+  // Create (no id) or update (id) one account profile. Credentials: only the
+  // plugin's declared credential keys are honored; empty string clears a key,
+  // absent keys keep the stored value. Style persona/samples replace when
+  // provided.
+  app.put('/api/plugins/:id/accounts', async (req, res) => {
+    try {
+      const id = req.params.id;
+      const plugin = getInstalledPlugin(db, id) as { manifest?: unknown } | null;
+      if (!plugin) return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'plugin not found');
+      if (!pluginSupportsAccounts(plugin.manifest)) {
+        return sendApiError(res, 400, 'ACCOUNTS_UNSUPPORTED', 'plugin does not declare account support');
+      }
+      const credentialKeys = new Set(readAccountCredentialKeys(plugin.manifest));
+      const body = (req.body ?? {}) as {
+        id?: unknown; name?: unknown;
+        style?: { persona?: unknown; samples?: unknown };
+        credentials?: unknown;
+      };
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!name) return sendApiError(res, 400, 'BAD_REQUEST', 'name is required');
+
+      const cfg = await readAppConfig(RUNTIME_DATA_DIR);
+      const all = { ...(validatePluginAccounts(cfg.pluginAccounts) ?? {}) };
+      const list = [...(all[id] ?? [])];
+
+      const wantedId = typeof body.id === 'string' && body.id.trim() ? body.id.trim() : '';
+      // Account NAMES must be unique per plugin: the composer's dropdown and
+      // the runtime credential resolver both key on the name, so a duplicate
+      // would make "which 公众号 gets published to" ambiguous.
+      if (accountNameConflicts(list, name, wantedId || null)) {
+        return sendApiError(res, 400, 'ACCOUNT_NAME_TAKEN', `an account named "${name}" already exists for this plugin`);
+      }
+      let idx = wantedId ? list.findIndex((a) => a.id === wantedId) : -1;
+      let accountId = wantedId || slugAccountId(name);
+      // De-dupe a freshly-created id against existing ones.
+      if (idx < 0) {
+        let n = 2;
+        const taken = new Set(list.map((a) => a.id));
+        const baseId = accountId;
+        while (taken.has(accountId)) accountId = `${baseId}-${n++}`;
+      }
+
+      const prev: PluginAccountRecord = idx >= 0 ? list[idx]! : { id: accountId, name };
+      const nextCreds: Record<string, string> = { ...(prev.credentials ?? {}) };
+      if (body.credentials && typeof body.credentials === 'object' && !Array.isArray(body.credentials)) {
+        for (const [k, v] of Object.entries(body.credentials as Record<string, unknown>)) {
+          if (!credentialKeys.has(k) || typeof v !== 'string') continue;
+          const trimmed = v.trim();
+          if (trimmed) nextCreds[k] = trimmed;
+          else delete nextCreds[k];
+        }
+      }
+      const style: { persona?: string; samples?: string[] } = { ...(prev.style ?? {}) };
+      if (body.style && typeof body.style === 'object') {
+        if (typeof body.style.persona === 'string') {
+          const p = body.style.persona.trim();
+          if (p) style.persona = p; else delete style.persona;
+        }
+        if (Array.isArray(body.style.samples)) {
+          const samples = body.style.samples.filter(
+            (s): s is string => typeof s === 'string' && s.trim().length > 0,
+          );
+          if (samples.length > 0) style.samples = samples; else delete style.samples;
+        }
+      }
+
+      const rec: PluginAccountRecord = { id: accountId, name };
+      if (Object.keys(style).length > 0) rec.style = style;
+      if (Object.keys(nextCreds).length > 0) rec.credentials = nextCreds;
+      if (idx >= 0) list[idx] = rec; else list.push(rec);
+      all[id] = list;
+      await writeAppConfig(RUNTIME_DATA_DIR, { pluginAccounts: all });
+      const response: UpsertAccountProfileResponse = {
+        id, saved: true, account: accountToView(rec, [...credentialKeys]),
+      };
+      res.json(response);
+    } catch (err) {
+      sendApiError(res, 500, 'PLUGIN_ACCOUNT_SAVE_FAILED', String((err as Error)?.message ?? err));
+    }
+  });
+
+  app.delete('/api/plugins/:id/accounts/:accountId', async (req, res) => {
+    try {
+      const id = req.params.id;
+      const accountId = req.params.accountId;
+      const plugin = getInstalledPlugin(db, id) as { manifest?: unknown } | null;
+      if (!plugin) return sendApiError(res, 404, 'PLUGIN_NOT_FOUND', 'plugin not found');
+      const cfg = await readAppConfig(RUNTIME_DATA_DIR);
+      const all = { ...(validatePluginAccounts(cfg.pluginAccounts) ?? {}) };
+      const list = (all[id] ?? []).filter((a) => a.id !== accountId);
+      if (list.length > 0) all[id] = list;
+      else delete all[id];
+      await writeAppConfig(RUNTIME_DATA_DIR, { pluginAccounts: all });
+      const response: DeleteAccountProfileResponse = { id, deleted: true };
+      res.json(response);
+    } catch (err) {
+      sendApiError(res, 500, 'PLUGIN_ACCOUNT_DELETE_FAILED', String((err as Error)?.message ?? err));
     }
   });
 
@@ -641,7 +964,7 @@ export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRo
         const manifestPath = path.join(fsPath, 'open-design.json');
         const raw = await fsp.readFile(manifestPath, 'utf8');
         const json = JSON.parse(raw) as {
-          od?: { useCase?: { query?: unknown }; workflow?: { stages?: unknown } };
+          od?: { useCase?: { query?: unknown }; workflow?: { stages?: unknown }; inputs?: unknown };
         };
         json.od = json.od ?? {};
         if (typeof body.query === 'string') {
@@ -652,6 +975,16 @@ export function registerPluginEditRoutes(app: Express, ctx: RegisterPluginEditRo
             (existing as Record<string, string>)['zh-CN'] = body.query;
           } else {
             json.od.useCase.query = body.query;
+          }
+          // Grow `od.inputs` to cover any NEW `{{placeholder}}` the edited query
+          // introduced, so the composer keeps rendering them as fillable slots.
+          // Existing declared inputs (with their richer specs) are preserved.
+          const declaredInputs = Array.isArray(json.od.inputs)
+            ? (json.od.inputs as Array<{ name?: unknown }>)
+            : [];
+          const derived = deriveInputsFromQuery(body.query, declaredInputs);
+          if (derived.length > 0) {
+            json.od.inputs = [...declaredInputs, ...derived];
           }
         }
         if (editStages) {

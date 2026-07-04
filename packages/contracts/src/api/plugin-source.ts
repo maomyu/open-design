@@ -4,12 +4,34 @@
 // kickoff query in open-design.json), so editing is transparent, portable,
 // and version-controllable — no hidden preference layer.
 
+// How a node's parallel child options are chosen (mirror of the manifest
+// WorkflowBranch). `select`: 'single' = pick exactly one; 'multi' = pick
+// one-or-more and EACH picked branch runs a pass, outputs merged. `pick`:
+// 'ask' = the running agent asks via AskUserQuestion; 'input' = resolved from
+// an input value (legacy). Absent on a stage/mode → legacy flat modes.
+export interface PluginSourceStageBranch {
+  select: 'single' | 'multi';
+  pick: 'ask' | 'input';
+}
+
+// A level-2 leaf option nested under a mode (e.g. "真抓热榜" → each scrape
+// method). Nesting is capped at two levels; a submode has no further children.
+export interface PluginSourceStageSubMode {
+  id: string;
+  label: string;
+  prompt: string;
+}
+
 // A per-mode prompt slot inside a step (e.g. the topic step's "AI suggest" vs
-// "scrape via bb-browser" paths). Each mode's prompt is tuned independently.
+// "scrape via bb-browser" paths). Each mode's prompt is tuned independently. A
+// mode may itself fork: `branch` + nested `modes` (level-2 submodes) let e.g.
+// "真抓热榜" fan out into several user-selectable scrape methods.
 export interface PluginSourceStageMode {
   id: string;
   label: string;
   prompt: string;
+  branch?: PluginSourceStageBranch;
+  modes?: PluginSourceStageSubMode[];
 }
 
 // A workflow step as edited in the plugin editor. The full manifest stage
@@ -25,6 +47,9 @@ export interface PluginSourceStage {
   title: string;
   gate: 'confirm' | 'choice' | 'none';
   prompt: string;
+  /** How this stage's modes are chosen (single/multi fork). Absent → legacy
+   *  flat modes composed together. */
+  branch?: PluginSourceStageBranch;
   modes: PluginSourceStageMode[];
   /** Global skill ids bound to this step (`od.workflow.stages[].skills[].ref`).
    *  The daemon injects each bound skill's body under this step's prompt
@@ -154,6 +179,11 @@ export interface PluginConfigKeyView {
   source?: 'config' | 'env';
   /** Present only for non-secret keys; secret keys omit this. */
   value?: string;
+  /** True when this key is claimed by `od.accounts.credentialKeys`: its value
+   *  is configured PER ACCOUNT (账号区), and the plugin-level config panel
+   *  must not offer a value input for it — plugin-level/`.env` values for
+   *  these keys are stripped at run time (exclusive account injection). */
+  perAccount?: boolean;
 }
 
 export interface PluginConfigResponse {
@@ -172,4 +202,59 @@ export interface UpdatePluginConfigRequest {
 export interface UpdatePluginConfigResponse {
   id: string;
   saved: boolean;
+}
+
+// Account profiles — a plugin (e.g. 公众号发布) can drive several distinct
+// accounts, each with its OWN credentials AND its own writing persona, because
+// different accounts read differently. The operator manages profiles in the
+// editor; at runtime the workflow's first "pick account" step selects one and
+// the daemon injects that account's persona/samples into the writing step and
+// its credentials into the publishing step. Credentials are secret and stored
+// encrypted per-plugin (like pluginConfig); they are never returned in full.
+export interface AccountStyle {
+  /** Free-text persona / voice description injected into the writing step. */
+  persona?: string;
+  /** Optional reference sample article bodies the agent studies before
+   *  writing, so the output imitates this account's established voice. */
+  samples?: string[];
+}
+
+export interface AccountProfileView {
+  id: string;
+  /** Human-facing account name shown in the picker (e.g. 「报考日记」). */
+  name: string;
+  style: AccountStyle;
+  /** Per-credential-key presence flags (secret values never returned). The
+   *  key set is the plugin's declared credential keys (see od.config). */
+  credentials: Record<string, boolean>;
+}
+
+export interface AccountProfilesResponse {
+  id: string;
+  /** Which credential keys each account carries (plugin's declared secrets). */
+  credentialKeys: string[];
+  accounts: AccountProfileView[];
+  /** Whether accounts can be written (false for read-only plugins). */
+  editable: boolean;
+}
+
+export interface UpsertAccountProfileRequest {
+  /** Omit to create a new profile; provide to update an existing one. */
+  id?: string;
+  name: string;
+  style?: AccountStyle;
+  /** KEY -> secret value to set. Empty string clears that credential. Keys
+   *  absent from the map are left unchanged. */
+  credentials?: Record<string, string>;
+}
+
+export interface UpsertAccountProfileResponse {
+  id: string;
+  saved: boolean;
+  account: AccountProfileView;
+}
+
+export interface DeleteAccountProfileResponse {
+  id: string;
+  deleted: boolean;
 }

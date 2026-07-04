@@ -569,10 +569,12 @@ export const HomeHero = forwardRef<HTMLTextAreaElement, Props>(function HomeHero
   );
 
   function pickPlugin(record: InstalledPluginRecord) {
-    const nextPrompt = mention
-      ? replaceMentionTokenWithText(prompt, mention, pluginMentionText(record))
-      : prompt;
-    onPickPlugin(record, nextPrompt);
+    // Selecting a plugin ACTIVATES it (like the "Use" button): the composer is
+    // replaced with the plugin's rendered kickoff brief and its declared inputs
+    // become fillable placeholders. We hand the mention-cleared text up; the
+    // host applies the plugin and renders the editable brief.
+    const cleared = mention ? replaceMentionTokenWithText(prompt, mention, '') : prompt;
+    onPickPlugin(record, cleared.trim() ? cleared : null);
   }
 
   function pickSkill(skill: SkillSummary) {

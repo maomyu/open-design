@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  PLUGIN_SHARE_ACTION_PLUGIN_IDS,
   type ApplyResult,
   type InstalledPluginRecord,
   type PluginSourceKind,
@@ -24,8 +23,6 @@ import {
   removePluginMarketplace,
   setPluginMarketplaceTrust,
   type PluginInstallOutcome,
-  type PluginShareAction,
-  type PluginShareProjectOutcome,
   type PluginMarketplaceEntry,
   type PluginMarketplace,
   type PluginMarketplaceMutationOutcome,
@@ -53,6 +50,18 @@ const USER_SOURCE_KINDS = new Set<PluginSourceKind>([
   'local',
 ]);
 
+// The "Installed" tab lists plugins the user manages: everything they imported
+// or authored (USER_SOURCE_KINDS), plus the bundled *content workflow* plugins
+// that ship in the runtime image (e.g. 短视频工作流, 公众号发布). Those are
+// `sourceKind='bundled'` with `od.kind='skill'` — invokable end-user tools, not
+// the bundled design-systems/templates/examples (`kind='scenario'|'atom'|
+// 'bundle'`) which stay out of this surface and are reached from their own
+// galleries. Filtering on `kind==='skill'` is what keeps that line clean.
+function isManagedInstalledPlugin(plugin: InstalledPluginRecord): boolean {
+  if (USER_SOURCE_KINDS.has(plugin.sourceKind)) return true;
+  return plugin.sourceKind === 'bundled' && plugin.manifest?.od?.kind === 'skill';
+}
+
 const PLUGINS_TABS: ReadonlyArray<{
   id: PluginsTab;
 }> = [
@@ -62,53 +71,14 @@ const PLUGINS_TABS: ReadonlyArray<{
   { id: 'team' },
 ];
 
-const PLUGIN_SHARE_DETAILS: Record<PluginShareAction, {
-  eyebrow: string;
-  fallbackTitle: string;
-  fallbackDescription: string;
-  confirmLabel: string;
-  steps: string[];
-}> = {
-  'publish-github': {
-    eyebrow: 'GitHub repository',
-    fallbackTitle: 'Publish Plugin to GitHub',
-    fallbackDescription:
-      'Creates a public GitHub repository for this local WorkBuild plugin.',
-    confirmLabel: 'Start publishing',
-    steps: [
-      'Create a new WorkBuild project for the publish workflow.',
-      'Copy this plugin into that project as isolated source context.',
-      'Run the official publish action plugin against the local daemon.',
-    ],
-  },
-  'contribute-open-design': {
-    eyebrow: 'WorkBuild pull request',
-    fallbackTitle: 'Contribute Plugin to WorkBuild',
-    fallbackDescription:
-      'Opens a pull request that adds this plugin to the WorkBuild community catalog.',
-    confirmLabel: 'Start contribution',
-    steps: [
-      'Create a new WorkBuild project for the contribution workflow.',
-      'Copy this plugin into that project as isolated source context.',
-      'Run the official contribution action plugin against the local daemon.',
-    ],
-  },
-};
-
 interface PluginsViewProps {
   onCreatePlugin?: (goal?: string) => void;
   onUsePlugin?: (record: InstalledPluginRecord, action: PluginUseAction) => void;
-  onCreatePluginShareProject?: (
-    pluginId: string,
-    action: PluginShareAction,
-    locale?: string,
-  ) => Promise<PluginShareProjectOutcome>;
 }
 
 export function PluginsView({
   onCreatePlugin,
   onUsePlugin,
-  onCreatePluginShareProject,
 }: PluginsViewProps) {
   const { locale, t } = useI18n();
   const analytics = useAnalytics();
@@ -127,21 +97,12 @@ export function PluginsView({
   const [pendingApplyId, setPendingApplyId] = useState<string | null>(null);
   const [pendingInstallEntry, setPendingInstallEntry] = useState<string | null>(null);
   const [pendingSourceAction, setPendingSourceAction] = useState<string | null>(null);
-  const [pendingShareAction, setPendingShareAction] = useState<{
-    pluginId: string;
-    action: PluginShareAction;
-  } | null>(null);
   const [activePlugin, setActivePlugin] = useState<{
     record: InstalledPluginRecord;
     result: ApplyResult;
   } | null>(null);
   const [detailsRecord, setDetailsRecord] = useState<InstalledPluginRecord | null>(null);
   const [availableDetails, setAvailableDetails] = useState<AvailableMarketplacePlugin | null>(null);
-  const [shareConfirm, setShareConfirm] = useState<{
-    sourceRecord: InstalledPluginRecord;
-    action: PluginShareAction;
-    actionRecord: InstalledPluginRecord | null;
-  } | null>(null);
   const [notice, setNotice] = useState<PluginInstallOutcome | { ok: boolean; message: string } | null>(null);
 
   async function refresh() {
@@ -164,7 +125,7 @@ export function PluginsView({
   }, []);
 
   const userPlugins = useMemo(
-    () => plugins.filter((plugin) => USER_SOURCE_KINDS.has(plugin.sourceKind)),
+    () => plugins.filter((plugin) => isManagedInstalledPlugin(plugin)),
     [plugins],
   );
   const availablePlugins = useMemo(
@@ -213,40 +174,6 @@ export function PluginsView({
       ok: true,
       message: `${record.title} is ready. Use it from Home with @ search or pick it from the gallery.`,
     });
-  }
-
-  async function handleCreatePluginShareTask(
-    record: InstalledPluginRecord,
-    action: PluginShareAction,
-  ) {
-    if (!onCreatePluginShareProject) {
-      setNotice({
-        ok: false,
-        message: 'Plugin sharing is not available in this shell.',
-      });
-      setShareConfirm(null);
-      return;
-    }
-    setPendingShareAction({ pluginId: record.id, action });
-    setNotice(null);
-    const outcome = await onCreatePluginShareProject(record.id, action, locale);
-    setPendingShareAction(null);
-    setShareConfirm(null);
-    if (!outcome.ok) {
-      setNotice({
-        ok: false,
-        message: outcome.message,
-      });
-    }
-  }
-
-  function requestPluginShareTask(
-    record: InstalledPluginRecord,
-    action: PluginShareAction,
-  ) {
-    const actionRecord =
-      plugins.find((plugin) => plugin.id === PLUGIN_SHARE_ACTION_PLUGIN_IDS[action]) ?? null;
-    setShareConfirm({ sourceRecord: record, action, actionRecord });
   }
 
   async function handleInstallAvailable(plugin: AvailableMarketplacePlugin) {
@@ -385,7 +312,6 @@ export function PluginsView({
             loading={false}
             activePluginId={activePlugin?.record.id ?? null}
             pendingApplyId={pendingApplyId}
-            pendingShareAction={pendingShareAction}
             onUse={(record, action) => {
               trackPluginsInstalledTabClick(analytics.track, {
                 page_name: 'plugins',
@@ -422,16 +348,6 @@ export function PluginsView({
                 template_type: record.sourceKind,
               });
               setDetailsRecord(record);
-            }}
-            onPluginShareAction={(record, action) => {
-              trackPluginsInstalledTabClick(analytics.track, {
-                page_name: 'plugins',
-                area: 'installed_tab',
-                element: action === 'publish-github' ? 'templates_publish' : 'templates_contribute',
-                template_id: record.id,
-                template_type: record.sourceKind,
-              });
-              requestPluginShareTask(record, action);
             }}
             preferDefaultFacet={false}
             title={t('pluginsView.installedTitle')}
@@ -551,26 +467,6 @@ export function PluginsView({
           onInstall={(plugin) => void handleInstallAvailable(plugin)}
         />
       ) : null}
-      {shareConfirm ? (
-        <PluginShareConfirmModal
-          sourceRecord={shareConfirm.sourceRecord}
-          action={shareConfirm.action}
-          actionRecord={shareConfirm.actionRecord}
-          pending={
-            pendingShareAction?.pluginId === shareConfirm.sourceRecord.id &&
-            pendingShareAction.action === shareConfirm.action
-          }
-          onClose={() => {
-            if (!pendingShareAction) setShareConfirm(null);
-          }}
-          onConfirm={() =>
-            void handleCreatePluginShareTask(
-              shareConfirm.sourceRecord,
-              shareConfirm.action,
-            )
-          }
-        />
-      ) : null}
       {importOpen ? (
         <PluginImportModal
           onClose={() => setImportOpen(false)}
@@ -580,168 +476,6 @@ export function PluginsView({
         />
       ) : null}
     </section>
-  );
-}
-
-function PluginShareConfirmModal({
-  sourceRecord,
-  action,
-  actionRecord,
-  pending,
-  onClose,
-  onConfirm,
-}: {
-  sourceRecord: InstalledPluginRecord;
-  action: PluginShareAction;
-  actionRecord: InstalledPluginRecord | null;
-  pending: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  const details = PLUGIN_SHARE_DETAILS[action];
-  const actionTitle = actionRecord?.title ?? details.fallbackTitle;
-  const actionDescription =
-    actionRecord?.manifest?.description ?? details.fallbackDescription;
-  const actionQuery = readLocalizedUseCaseQuery(actionRecord);
-  const stagedPath = `plugin-source/${pluginShareSlug(sourceRecord.id)}`;
-
-  return (
-    <div
-      className="plugin-details-modal-backdrop plugin-share-confirm"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${actionTitle} for ${sourceRecord.title}`}
-      onClick={(event) => {
-        if (!pending && event.target === event.currentTarget) onClose();
-      }}
-      data-testid="plugin-share-confirm-modal"
-    >
-      <div className="plugin-details-modal plugin-share-confirm__panel">
-        <header className="plugin-details-modal__head">
-          <div className="plugin-details-modal__head-titles">
-            <div className="plugin-details-modal__head-row">
-              <h2 className="plugin-details-modal__title">{actionTitle}</h2>
-              <TrustBadge trust="official" label="Action plugin" />
-            </div>
-            <div className="plugin-details-modal__meta">
-              <span>{details.eyebrow}</span>
-              <span>· for {sourceRecord.title}</span>
-              {actionRecord ? <span>· v{actionRecord.version}</span> : null}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="plugin-details-modal__close"
-            onClick={onClose}
-            disabled={pending}
-            aria-label="Close share confirmation"
-            title="Close"
-          >
-            <Icon name="close" size={18} />
-          </button>
-        </header>
-
-        <div className="plugin-details-modal__body">
-          <section className="plugin-details-modal__section">
-            <div className="plugin-details-modal__section-head">
-              <h3 className="plugin-details-modal__section-title">
-                What this starts
-              </h3>
-            </div>
-            <p className="plugin-details-modal__description">
-              {actionDescription}
-            </p>
-            <ol className="plugin-share-confirm__steps">
-              {details.steps.map((step) => (
-                <li key={step}>{step}</li>
-              ))}
-            </ol>
-          </section>
-
-          <section className="plugin-details-modal__section">
-            <div className="plugin-details-modal__section-head">
-              <h3 className="plugin-details-modal__section-title">
-                Source plugin
-              </h3>
-            </div>
-            <dl className="plugin-share-confirm__facts">
-              <div>
-                <dt>Plugin</dt>
-                <dd>{sourceRecord.title}</dd>
-              </div>
-              <div>
-                <dt>ID</dt>
-                <dd>
-                  <code>{sourceRecord.id}</code>
-                </dd>
-              </div>
-              <div>
-                <dt>Copied to</dt>
-                <dd>
-                  <code>{stagedPath}</code>
-                </dd>
-              </div>
-              <div>
-                <dt>Trust</dt>
-                <dd>
-                  <TrustBadge trust={sourceRecord.trust} />
-                </dd>
-              </div>
-            </dl>
-          </section>
-
-          {actionQuery ? (
-            <section className="plugin-details-modal__section">
-              <div className="plugin-details-modal__section-head">
-                <h3 className="plugin-details-modal__section-title">
-                  Action prompt
-                </h3>
-              </div>
-              <pre className="plugin-details-modal__query">{actionQuery}</pre>
-            </section>
-          ) : null}
-        </div>
-
-        <footer className="plugin-details-modal__foot">
-          <button
-            type="button"
-            className="plugin-details-modal__secondary"
-            onClick={onClose}
-            disabled={pending}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="plugin-details-modal__primary"
-            onClick={onConfirm}
-            disabled={pending}
-            aria-busy={pending ? 'true' : undefined}
-            data-testid="plugin-share-confirm-start"
-          >
-            {pending ? 'Starting…' : details.confirmLabel}
-          </button>
-        </footer>
-      </div>
-    </div>
-  );
-}
-
-function readLocalizedUseCaseQuery(record: InstalledPluginRecord | null): string | null {
-  const query = record?.manifest?.od?.useCase?.query;
-  if (typeof query === 'string' && query.trim()) return query.trim();
-  if (!query || typeof query !== 'object') return null;
-  const dict = query as Record<string, unknown>;
-  const preferred = dict.en ?? Object.values(dict).find((value) => typeof value === 'string');
-  return typeof preferred === 'string' && preferred.trim() ? preferred.trim() : null;
-}
-
-function pluginShareSlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, '-')
-      .replace(/(^[-._]+|[-._]+$)/g, '') || 'open-design-plugin'
   );
 }
 

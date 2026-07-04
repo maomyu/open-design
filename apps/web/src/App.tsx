@@ -72,7 +72,6 @@ import { applyAppearanceToDocument } from './state/appearance';
 import { isMacPlatform } from './utils/platform';
 import {
   createProject,
-  createPluginShareProject,
   deleteProject as deleteProjectApi,
   getProject,
   importClaudeDesignZip,
@@ -81,10 +80,6 @@ import {
   listTemplates,
   deleteTemplate,
   patchProject,
-} from './state/projects';
-import type {
-  PluginShareAction,
-  PluginShareProjectOutcome,
 } from './state/projects';
 import type { OpenDesignHostProjectImportSuccess } from '@open-design/host';
 import { useI18n } from './i18n';
@@ -977,43 +972,6 @@ function AppInner() {
     [analytics.track],
   );
 
-  const handleCreatePluginShareProject = useCallback(
-    async (
-      pluginId: string,
-      action: PluginShareAction,
-      locale?: string,
-    ): Promise<PluginShareProjectOutcome> => {
-      const outcome = await createPluginShareProject(pluginId, action, locale);
-      if (!outcome.ok) return outcome;
-      try {
-        window.sessionStorage.setItem(
-          `od:auto-send-first:${outcome.project.id}`,
-          '1',
-        );
-      } catch {
-        // If sessionStorage is unavailable, the project still opens with
-        // the prepared prompt in the composer.
-      }
-      const project = outcome.appliedPluginSnapshotId
-        ? {
-            ...outcome.project,
-            appliedPluginSnapshotId: outcome.appliedPluginSnapshotId,
-          }
-        : outcome.project;
-      setProjects((curr) => [
-        project,
-        ...curr.filter((p) => p.id !== project.id),
-      ]);
-      navigate({
-        kind: 'project',
-        projectId: project.id,
-        fileName: null,
-      });
-      return outcome;
-    },
-    [],
-  );
-
   const handleImportClaudeDesign = useCallback(async (
     file: File,
   ): Promise<ImportClaudeDesignOutcome> => {
@@ -1534,7 +1492,6 @@ function AppInner() {
         projectsLoading={projectsLoading}
         promptTemplatesLoading={promptTemplatesLoading}
         onCreateProject={handleCreateProject}
-        onCreatePluginShareProject={handleCreatePluginShareProject}
         onImportClaudeDesign={handleImportClaudeDesign}
         onImportFolder={handleImportFolder}
         onImportFolderResponse={handleImportFolderResponse}

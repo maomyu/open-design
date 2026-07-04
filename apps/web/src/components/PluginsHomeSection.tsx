@@ -17,7 +17,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InstalledPluginRecord } from '@open-design/contracts';
 import { useI18n, useT } from '../i18n';
-import type { PluginShareAction } from '../state/projects';
 import { Icon } from './Icon';
 import { PluginCard } from './plugins-home/PluginCard';
 import { isFeaturedPlugin, type FacetOption, type FacetSelection } from './plugins-home/facets';
@@ -35,13 +34,8 @@ interface Props {
   loading: boolean;
   activePluginId: string | null;
   pendingApplyId: string | null;
-  pendingShareAction?: { pluginId: string; action: PluginShareAction } | null;
   onUse: (record: InstalledPluginRecord, action: PluginUseAction) => void;
   onOpenDetails: (record: InstalledPluginRecord) => void;
-  onPluginShareAction?: (
-    record: InstalledPluginRecord,
-    action: PluginShareAction,
-  ) => void;
   onBrowseRegistry?: () => void;
   preferDefaultFacet?: boolean;
   // Optional external selection. When the Home chip rail picks
@@ -60,10 +54,8 @@ export function PluginsHomeSection({
   loading,
   activePluginId,
   pendingApplyId,
-  pendingShareAction = null,
   onUse,
   onOpenDetails,
-  onPluginShareAction,
   onBrowseRegistry,
   preferDefaultFacet = true,
   presetSelection = null,
@@ -227,13 +219,11 @@ export function PluginsHomeSection({
                   isActive={activePluginId === p.id}
                   isPending={pendingApplyId === p.id}
                   pendingAny={pendingApplyId !== null}
-                  pendingShareAction={pendingShareAction}
                   isFeatured={isFeaturedPlugin(p)}
                   isSaved={savedPluginIds.has(p.id)}
                   onUse={onUse}
                   onOpenDetails={onOpenDetails}
                   onSave={handleSavePlugin}
-                  onShareAction={onPluginShareAction}
                 />
               ))}
               {hasMorePlugins ? (
