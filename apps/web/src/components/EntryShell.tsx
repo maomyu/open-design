@@ -84,7 +84,6 @@ import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
 import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
-import { MediaHubView } from './MediaHubView';
 import { AccountsView } from './AccountsView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
@@ -667,9 +666,6 @@ export function EntryShell({
                 onCreatePlugin={startPluginAuthoring}
                 onUsePlugin={usePluginFromLibrary}
               />
-            ) : null}
-            {view === 'media' ? (
-              <MediaHubView onUsePlugin={usePluginFromLibrary} />
             ) : null}
             {view === 'accounts' ? <AccountsView /> : null}
             {view === 'design-systems' ? (

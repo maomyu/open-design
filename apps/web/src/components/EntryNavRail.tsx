@@ -23,7 +23,6 @@ export type EntryView =
   | 'projects'
   | 'tasks'
   | 'plugins'
-  | 'media'
   | 'accounts'
   | 'design-systems'
   | 'integrations';
@@ -110,15 +109,6 @@ export function EntryNavRail({
           testId="entry-nav-home"
         >
           <Icon name="home" size={18} />
-        </NavButton>
-        <NavButton
-          active={view === 'media'}
-          ariaLabel={t('entry.navMedia')}
-          label={t('entry.navMedia')}
-          onClick={() => onViewChange('media')}
-          testId="entry-nav-media"
-        >
-          <Icon name="share" size={18} />
         </NavButton>
         <NavButton
           active={view === 'accounts'}

@@ -897,17 +897,9 @@ export interface Dict {
   'entry.navPlugins': string;
   'entry.navDesignSystems': string;
   'entry.navIntegrations': string;
-  'entry.navMedia': string;
   'entry.navAccounts': string;
-  'mediaHub.title': string;
-  'mediaHub.lede': string;
-  'mediaHub.manageAccounts': string;
-  'mediaHub.publishSuffix': string;
-  'mediaHub.start': string;
-  'mediaHub.matrixTitle': string;
-  'mediaHub.matrixFallback': string;
-  'mediaHub.entryMissing': string;
   'accountsView.title': string;
+  'accountsView.manageLink': string;
   'accountsView.lede': string;
   'accountsView.kindApi': string;
   'accountsView.kindSau': string;

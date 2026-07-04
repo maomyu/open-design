@@ -181,7 +181,7 @@ export function PluginAccountsSection({ pluginId, editable }: Props) {
               onClick={() => navigate({ kind: 'home', view: 'accounts' })}
               data-testid="plugin-accounts-manage-link"
             >
-              {t('mediaHub.manageAccounts')} →
+              {t('accountsView.manageLink')} →
             </button>
           </p>
 

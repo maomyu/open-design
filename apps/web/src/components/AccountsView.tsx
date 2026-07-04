@@ -23,7 +23,7 @@ import {
   savePlatformAccount,
   deletePlatformAccountApi,
 } from '../providers/daemon';
-import './MediaHubView.css';
+import './AccountsView.css';
 import './PluginEditView.css';
 
 interface Draft {
