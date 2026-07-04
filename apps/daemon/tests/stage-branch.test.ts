@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { renderStagePromptsBlock } from '../src/plugins/stage-prompts.js';
-import { coerceStages } from '../src/plugin-edit-routes.js';
+import { coerceStages, readStages } from '../src/plugin-edit-routes.js';
 
 const NESTED_MANIFEST = {
   od: {
@@ -82,5 +82,29 @@ describe('coerceStages branch/nested round-trip', () => {
     const ai = topic.modes.find((m) => m.id === 'ai-suggest')!;
     expect(ai.branch).toBeUndefined();
     expect(ai.modes).toBeUndefined();
+  });
+});
+
+describe('readStages mode theme color', () => {
+  // Visual options (e.g. 排版皮肤) carry a theme color the editor renders as a
+  // swatch. Hex only — the value lands in an inline style, so anything else
+  // must be dropped, not passed through.
+  it('surfaces a hex mode color to the editor view and drops non-hex values', () => {
+    const manifest = {
+      od: { workflow: { stages: [{
+        id: 'render', title: '排版', gate: 'none', prompt: '排版。',
+        branch: { select: 'single', pick: 'input' },
+        modes: [
+          { id: 'kaiti', label: 'kaiti · 深红棕楷体', color: '#8B1E22', prompt: '楷体皮肤。' },
+          { id: 'purple', label: 'purple', color: 'url(javascript:x)', prompt: '紫。' },
+          { id: 'github', label: 'github', prompt: '灰。' },
+        ],
+      }] } },
+    };
+    const stages = readStages(manifest);
+    const render = stages.find((s) => s.id === 'render')!;
+    expect(render.modes.find((m) => m.id === 'kaiti')?.color).toBe('#8B1E22');
+    expect(render.modes.find((m) => m.id === 'purple')?.color).toBeUndefined();
+    expect(render.modes.find((m) => m.id === 'github')?.color).toBeUndefined();
   });
 });

@@ -1049,6 +1049,14 @@ export function PluginEditView({ pluginId }: Props) {
                                 }}
                               >
                                 <span className="plugin-edit-view__mode-node-label">
+                                  {mode.color ? (
+                                    <span
+                                      className="plugin-edit-view__mode-swatch"
+                                      style={{ background: mode.color }}
+                                      title={mode.color}
+                                      aria-hidden="true"
+                                    />
+                                  ) : null}
                                   {mode.label || t('pluginEditor.modeUntitled')}
                                 </span>
                                 <span className="plugin-edit-view__mode-node-preview">

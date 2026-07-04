@@ -216,6 +216,9 @@ export interface WorkflowStageMode {
   label_i18n?: LocalizedText;
   prompt?: string;
   prompt_i18n?: LocalizedText;
+  /** Theme color (hex) for visual options — e.g. a 排版皮肤 mode carries its
+   *  skin's主题色 so the editor canvas can render a swatch. */
+  color?: string;
   branch?: WorkflowBranch;
   modes?: WorkflowStageSubMode[];
   [k: string]: unknown;
@@ -226,6 +229,7 @@ export const WorkflowStageModeSchema = z.object({
   label_i18n:  LocalizedTextSchema.optional(),
   prompt:      z.string().optional(),
   prompt_i18n: LocalizedTextSchema.optional(),
+  color:       z.string().optional(),
   branch:      WorkflowBranchSchema.optional(),
   modes:       z.array(WorkflowStageSubModeSchema).optional(),
 }).passthrough() as unknown as z.ZodType<WorkflowStageMode>;

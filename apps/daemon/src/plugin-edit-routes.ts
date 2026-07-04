@@ -113,11 +113,18 @@ function readSubModes(raw: unknown): StageSubMode[] {
   return out;
 }
 
+// Visual-option theme color. Hex only — the editor injects it straight into
+// an inline style, so anything else (var(), url(), etc.) is dropped.
+const MODE_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+function readModeColor(raw: unknown): string | undefined {
+  return typeof raw === 'string' && MODE_COLOR.test(raw.trim()) ? raw.trim() : undefined;
+}
+
 function readModes(raw: unknown): StageMode[] {
   if (!Array.isArray(raw)) return [];
   const out: StageMode[] = [];
   for (const m of raw) {
-    const mode = (m ?? {}) as { id?: unknown; label?: unknown; label_i18n?: unknown; prompt?: unknown; prompt_i18n?: unknown; branch?: unknown; modes?: unknown };
+    const mode = (m ?? {}) as { id?: unknown; label?: unknown; label_i18n?: unknown; prompt?: unknown; prompt_i18n?: unknown; color?: unknown; branch?: unknown; modes?: unknown };
     const id = typeof mode.id === 'string' ? mode.id : '';
     if (!id) continue;
     const label =
@@ -128,6 +135,8 @@ function readModes(raw: unknown): StageMode[] {
       resolveLocalizedText(mode.prompt_i18n as never, STAGE_LOCALE) ||
       (typeof mode.prompt === 'string' ? mode.prompt : '');
     const entry: StageMode = { id, label, prompt };
+    const color = readModeColor(mode.color);
+    if (color) entry.color = color;
     const branch = readBranch(mode.branch);
     if (branch) entry.branch = branch;
     const sub = readSubModes(mode.modes);
@@ -156,7 +165,7 @@ function readStageSkills(raw: unknown): string[] {
 }
 
 // Flatten od.workflow.stages to the editor's view (id/title/gate/prompt/modes/skills).
-function readStages(manifest: unknown): PluginSourceStage[] {
+export function readStages(manifest: unknown): PluginSourceStage[] {
   const raw = (manifest as { od?: { workflow?: { stages?: unknown } } })?.od?.workflow?.stages;
   if (!Array.isArray(raw)) return [];
   const out: PluginSourceStage[] = [];

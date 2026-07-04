@@ -477,6 +477,17 @@
   color: var(--text);
 }
 .plugin-edit-view__mode-node--active .plugin-edit-view__mode-node-label { color: var(--accent); }
+/* Theme-color swatch for visual options (e.g. 排版皮肤): a dot in the mode's
+   own color so the operator can tell skins apart at a glance. */
+.plugin-edit-view__mode-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border-radius: 50%;
+  vertical-align: baseline;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+}
 .plugin-edit-view__mode-node-preview {
   min-width: 0;
   overflow: hidden;

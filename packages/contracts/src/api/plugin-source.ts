@@ -30,6 +30,11 @@ export interface PluginSourceStageMode {
   id: string;
   label: string;
   prompt: string;
+  /** Theme color (hex) for visual options — e.g. a 排版皮肤 mode carries its
+   *  skin's主题色 so the editor canvas can show a swatch next to the label.
+   *  Read-only in the editor; it lives on the manifest mode and round-trips
+   *  through save via passthrough preservation. */
+  color?: string;
   branch?: PluginSourceStageBranch;
   modes?: PluginSourceStageSubMode[];
 }
