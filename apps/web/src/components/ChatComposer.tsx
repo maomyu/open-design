@@ -556,7 +556,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const after = draft.slice(slash.cursor);
       // Replace the in-flight `/<query>` token with the picked
       // command's canonical insertion text.
-      const replaced = before.replace(/\/[^\s/]*$/, cmd.insert);
+      const replaced = before.replace(/[/／][^\s/／]*$/, cmd.insert);
       const next = replaced + after;
       setDraft(next);
       setSlash(null);
@@ -1079,19 +1079,29 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       );
       // Skip mention and slash detection during IME composition (e.g.,
       // Chinese, Japanese, Korean input) to prevent cursor jumping.
-      // Issue #2851.
+      // Issue #2851. Detection is RE-RUN from onCompositionEnd — without
+      // that, an `@` typed THROUGH the IME (the normal path on Windows
+      // 中文输入法) is skipped here and never re-checked, so the picker
+      // simply never opens on packaged Windows builds.
       if (composingRef.current) return;
+      detectTokens(value, cursor);
+    }
+
+    // Mention/slash token detection, shared by handleChange and the IME
+    // composition-end handler. Accepts full-width ＠／ too: Chinese-punctuation
+    // mode on Windows emits those instead of the half-width characters.
+    function detectTokens(value: string, cursor: number) {
       // Detect a fresh @ at start or after whitespace; capture the typed
       // query up to the cursor.
       const before = value.slice(0, cursor);
-      const m = /(^|\s)@([^\s@]*)$/.exec(before);
+      const m = /(^|\s)[@＠]([^\s@＠]*)$/.exec(before);
       if (m) setMention({ q: m[2] ?? "", cursor });
       else setMention(null);
       // Slash-command popover — open as soon as the draft starts with
       // `/` (and the cursor is still inside the bare command token, no
       // space yet). Closes once the user commits a space or moves past
       // the prefix.
-      const slashMatch = /^\/([^\s/]*)$/.exec(before);
+      const slashMatch = /^[/／]([^\s/／]*)$/.exec(before);
       if (slashMatch) {
         setSlash({ q: slashMatch[1] ?? '', cursor });
         setSlashIndex(0);
@@ -1107,7 +1117,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const cursor = mention.cursor;
       const before = draft.slice(0, cursor);
       const after = draft.slice(cursor);
-      const replaced = before.replace(/@([^\s@]*)$/, `@${filePath} `);
+      const replaced = before.replace(/[@＠]([^\s@＠]*)$/, `@${filePath} `);
       const next = replaced + after;
       setDraft(next);
       setMention(null);
@@ -1140,7 +1150,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       const cursor = mention.cursor;
       const before = draft.slice(0, cursor);
       const after = draft.slice(cursor);
-      const replaced = before.replace(/(^|\s)@([^\s@]*)$/, `$1${text}`);
+      const replaced = before.replace(/(^|\s)[@＠]([^\s@＠]*)$/, `$1${text}`);
       const next = replaced + after;
       setDraft(next);
       setMention(null);
@@ -1477,8 +1487,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                 onCompositionStart={() => {
                   composingRef.current = true;
                 }}
-                onCompositionEnd={() => {
+                onCompositionEnd={(e) => {
                   composingRef.current = false;
+                  // Re-run token detection: the @/／ that ENDED this
+                  // composition was skipped by handleChange's IME guard, and
+                  // Windows IMEs don't reliably fire another input event
+                  // afterwards — without this the picker never opens.
+                  const ta = e.currentTarget;
+                  detectTokens(ta.value, ta.selectionStart ?? ta.value.length);
                 }}
                 onKeyDown={(e) => {
                   if (isImeComposing(e, composingRef.current)) return;

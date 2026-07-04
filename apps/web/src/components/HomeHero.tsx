@@ -2386,15 +2386,21 @@ function fieldPopoverNoteTone(field: InputFieldSpec): string {
   return tone === 'warning' ? 'warning' : 'info';
 }
 
-function getContextMention(value: string): ContextMention | null {
+export function getContextMention(value: string): ContextMention | null {
   // Open a picker on a word-initial token: `@` (mention) and `/` (slash
   // command) surface plugins/skills/MCP/connectors; `#` surfaces the
   // creation-type options that used to live on the tab strip below the
   // composer (general/code stays the default when no type is picked).
-  const match = /(^|\s)([@/#])([^\s@/#]*)$/.exec(value);
+  // Full-width variants (＠ ／ ＃) are accepted too: Windows/中文输入法 in
+  // Chinese-punctuation mode emits those, and a half-width-only trigger
+  // reads as "@ 唤不出插件" on packaged Windows builds.
+  const match = /(^|\s)([@/#＠／＃])([^\s@/#＠／＃]*)$/.exec(value);
   if (!match) return null;
   const prefix = match[1] ?? '';
-  const trigger = (match[2] ?? '@') as ContextMention['trigger'];
+  const raw = match[2] ?? '@';
+  const trigger = (
+    raw === '＠' ? '@' : raw === '／' ? '/' : raw === '＃' ? '#' : raw
+  ) as ContextMention['trigger'];
   const query = match[3] ?? '';
   const start = match.index + prefix.length;
   return {
