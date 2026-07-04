@@ -406,4 +406,95 @@ describe('HomeView context picker', () => {
       projectKind: 'prototype',
     })));
   });
+
+
+  it('hydrates account-backed selects at activation so 2+ accounts get a dropdown', async () => {
+    // Red spec for「两个账号却没有下拉」: the optimistic activation renders
+    // fields from the RAW manifest (optionsFrom:'accounts' but no options),
+    // and apply refuses to run while the required account is unpicked — so
+    // the composer must hydrate the options itself from /api/accounts.
+    const publisher: InstalledPluginRecord = {
+      id: 'wechat-mp-publish',
+      title: '公众号发布',
+      version: '0.4.1',
+      sourceKind: 'bundled',
+      source: '/tmp/wechat',
+      trust: 'bundled',
+      capabilitiesGranted: ['prompt:inject'],
+      fsPath: '/tmp/wechat',
+      installedAt: 0,
+      updatedAt: 0,
+      manifest: {
+        name: 'wechat-mp-publish',
+        title: '公众号发布',
+        version: '0.4.1',
+        od: {
+          kind: 'skill',
+          taskKind: 'new-generation',
+          featured: true,
+          accounts: { platform: 'wechat-mp' },
+          useCase: { query: '账号:{{account}},写 {{topic}}。' },
+          inputs: [
+            { name: 'account', label: '公众号账号', type: 'select', optionsFrom: 'accounts', required: false },
+            { name: 'topic', label: '选题', type: 'string' },
+          ],
+        },
+      },
+    } as InstalledPluginRecord;
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const u = String(url);
+      if (u === '/api/plugins') {
+        return new Response(JSON.stringify({ plugins: [publisher] }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u === '/api/mcp/servers') {
+        return new Response(JSON.stringify({ servers: [], templates: [] }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (u === '/api/accounts') {
+        return new Response(JSON.stringify({
+          platforms: [{ id: 'wechat-mp', accounts: [
+            { id: 'a', name: '茂宇', style: {}, credentials: {} },
+            { id: 'b', name: '野生派茂宇AI', style: {}, credentials: {} },
+          ] }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (u.includes('/apply')) {
+        // 2 accounts → account is required server-side; the activation flow
+        // must NOT fire an apply that would 422. Reaching here is the bug.
+        throw new Error('apply must be deferred until the account is picked');
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+
+    render(
+      <HomeView
+        projects={[]}
+        onSubmit={vi.fn()}
+        onOpenProject={() => undefined}
+        onViewAllProjects={() => undefined}
+      />,
+    );
+
+    const input = await screen.findByTestId('home-hero-input');
+    fireEvent.change(input, { target: { value: '@公众号' } });
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /公众号发布/i }));
+
+    // Brief rendered with the account slot left fillable…
+    await waitFor(() => {
+      expect((input as HTMLTextAreaElement).value).toContain('{{account}}');
+    });
+    // …and opening the slot shows a REAL dropdown with both accounts.
+    fireEvent.pointerDown(await screen.findByTestId('home-hero-prompt-slot-account'));
+    const select = await screen.findByTestId('home-hero-prompt-option-account-select');
+    const labels = [...(select as HTMLSelectElement).options].map((o) => o.value).filter(Boolean);
+    expect(labels).toEqual(['茂宇', '野生派茂宇AI']);
+  });
 });

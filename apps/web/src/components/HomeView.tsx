@@ -33,6 +33,7 @@ import {
   resolvePluginQueryFallback,
 } from '../state/projects';
 import { fetchMcpServers } from '../state/mcp';
+import { fetchPlatformAccounts } from '../providers/daemon';
 import { useI18n } from '../i18n';
 import {
   localizeSkillName,
@@ -599,7 +600,13 @@ export function HomeView({
     activePluginApplyRequestRef.current = applyRequestId;
     setActiveSkill(null);
     const shouldResolveImmediately = options?.deferApply !== true;
-    const inputFields = options?.inputFields ?? record.manifest?.od?.inputs ?? [];
+    // Account-backed selects need their options BEFORE the optimistic render —
+    // the raw manifest has none, and the apply roundtrip refuses to run while
+    // a required account is unpicked. Local daemon call, single-digit ms.
+    const inputFields = await hydrateAccountOptionFields(
+      record,
+      options?.inputFields ?? record.manifest?.od?.inputs ?? [],
+    );
     const optimisticInputs = hydratePluginInputs(
       inputFields,
       withHomeDesignSystemDefault(options?.inputs, inputFields, designSystemOptions),
@@ -1816,6 +1823,42 @@ function estimatePluginContextItemCount(
   const atomCount = context.atoms?.length ?? 0;
   const craftCount = context.craft?.length ?? 0;
   return assetCount + mcpCount + claudePluginCount + atomCount + craftCount;
+}
+
+// Client-side mirror of the daemon's hydrateDynamicInputOptions for
+// `optionsFrom: 'accounts'` fields. The activation flow renders the composer
+// OPTIMISTICALLY from the raw manifest — which carries no `options` array —
+// and the apply roundtrip refuses to run while a required account is missing
+// (422), so without this the account slot has nothing to offer as a dropdown
+// (the "两个账号却没有下拉" bug). Semantics must match the daemon: names as
+// options, exactly one account → default it, 2+ → the pick becomes required.
+// Enforcement stays server-side; this is presentation only.
+async function hydrateAccountOptionFields(
+  record: InstalledPluginRecord,
+  fields: InputFieldSpec[],
+): Promise<InputFieldSpec[]> {
+  const needs = fields.some(
+    (f) => (f as { optionsFrom?: string }).optionsFrom === 'accounts'
+      && !(Array.isArray(f.options) && f.options.length > 0),
+  );
+  if (!needs) return fields;
+  const od = record.manifest?.od as { accounts?: { platform?: string } } | undefined;
+  const platform = od?.accounts?.platform
+    ?? (record.id === 'wechat-mp-publish' ? 'wechat-mp' : null);
+  if (!platform) return fields;
+  const data = await fetchPlatformAccounts();
+  const names = data?.platforms.find((p) => p.id === platform)?.accounts.map((a) => a.name) ?? [];
+  if (names.length === 0) return fields;
+  return fields.map((f) =>
+    (f as { optionsFrom?: string }).optionsFrom === 'accounts'
+      ? {
+          ...f,
+          options: names,
+          ...(names.length === 1 ? { default: names[0] } : {}),
+          ...(names.length >= 2 ? { required: true } : {}),
+        }
+      : f,
+  );
 }
 
 function hydratePluginInputs(
