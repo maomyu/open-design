@@ -25,6 +25,7 @@ import type {
   UpdateMediaArticleRequest,
   UpdateMediaTopicRequest,
 } from '@open-design/contracts';
+import { isOpenDesignHostBrowserAvailable, openHostBrowserProfile } from '@open-design/host';
 
 const ROOT = '/api/media-studio';
 
@@ -586,16 +587,56 @@ export async function publishStudioNote(
 
 // ---- 内置多 Profile 浏览器（风控安全发布） ----
 
+const PLATFORM_BROWSER_TITLES: Record<string, string> = {
+  xiaohongshu: '小红书',
+  douyin: '抖音',
+  kuaishou: '快手',
+  bilibili: 'B站',
+  tencent: '视频号',
+  'wechat-mp': '公众号',
+};
+
+async function resolvePlatformBrowserUrl(platform: string): Promise<string | null> {
+  try {
+    const resp = await fetch(`${ROOT}/browser/urls`);
+    if (!resp.ok) return null;
+    const data = (await resp.json().catch(() => ({}))) as {
+      urls?: Record<string, string | { label?: string; url?: string }>;
+    };
+    const entry = data.urls?.[platform];
+    if (typeof entry === 'string') return entry;
+    return entry?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function openStudioBrowser(body: {
   platform: string;
   account: string;
   url?: string;
 }): Promise<{ ok?: boolean; error?: string }> {
+  const account = body.account.trim() || 'main';
+  // 桌面端优先：应用内置浏览器窗口（session partition 按 平台×账号 持久
+  // 隔离登录态）。不可用或失败时静默落回 daemon 拉起外部 Chrome 档案。
+  if (isOpenDesignHostBrowserAvailable()) {
+    const url = body.url ?? (await resolvePlatformBrowserUrl(body.platform));
+    if (url != null) {
+      const platformLabel = PLATFORM_BROWSER_TITLES[body.platform] ?? body.platform;
+      const opened = await openHostBrowserProfile({
+        platform: body.platform,
+        account,
+        title: `${platformLabel} · ${account}`,
+        url,
+      });
+      if (opened.ok) return { ok: true };
+    }
+  }
   try {
     const resp = await fetch(`${ROOT}/browser/open`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, account }),
     });
     const data = (await resp.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     if (!resp.ok) return { error: data.error ?? `打开浏览器失败 (${resp.status})` };

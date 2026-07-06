@@ -202,7 +202,21 @@ export type OpenDesignHostUpdaterResult =
 
 export type OpenDesignHostUpdaterStatusListener = (status: OpenDesignHostUpdaterStatusSnapshot) => void;
 
+export type OpenDesignHostBrowserProfileRequest = {
+  // Platform id (e.g. "xiaohongshu") + account name form the persistent
+  // session partition key, so每个 平台×账号 的登录态在应用内独立保存。
+  account: string;
+  platform: string;
+  title?: string;
+  url: string;
+};
+
 export type OpenDesignHostBridge = {
+  // Optional capability: hosts older than the embedded-browser feature do
+  // not expose it, and the renderer falls back to its non-embedded path.
+  browser?: {
+    openProfile(request: OpenDesignHostBrowserProfileRequest): Promise<OpenDesignHostActionResult>;
+  };
   client: OpenDesignHostClient;
   pdf: {
     print(html: string, nonce?: string, options?: OpenDesignHostPdfPrintOptions): Promise<OpenDesignHostActionResult>;
@@ -274,6 +288,11 @@ export function isOpenDesignHostBridge(value: unknown): value is OpenDesignHostB
 
   const pet = value.pet;
   if (!isRecord(pet) || !hasFunction(pet, "setVisible")) return false;
+
+  const browser = value.browser;
+  if (browser !== undefined && (!isRecord(browser) || !hasFunction(browser, "openProfile"))) {
+    return false;
+  }
 
   const updater = value.updater;
   if (
@@ -390,6 +409,24 @@ export async function openHostExternalUrl(url: string, scope: OpenDesignHostGlob
   if (host == null) return unavailable("Open Design host is not available");
   try {
     return await host.shell.openExternal(url);
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export function isOpenDesignHostBrowserAvailable(scope: OpenDesignHostGlobalScope = globalThis): boolean {
+  return typeof getOpenDesignHost(scope)?.browser?.openProfile === "function";
+}
+
+export async function openHostBrowserProfile(
+  request: OpenDesignHostBrowserProfileRequest,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): Promise<OpenDesignHostActionResult> {
+  const host = getOpenDesignHost(scope);
+  const browser = host?.browser;
+  if (browser == null) return unavailable("Open Design host embedded browser is not available");
+  try {
+    return await browser.openProfile(request);
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : String(error));
   }

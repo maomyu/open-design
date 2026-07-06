@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 import type {
   OpenDesignHostBridge,
   OpenDesignHostActionResult,
+  OpenDesignHostBrowserProfileRequest,
   OpenDesignHostFailure,
   OpenDesignHostProjectImportResult,
   OpenDesignHostProjectReplaceWorkingDirResult,
@@ -222,6 +223,25 @@ const updater = {
   },
 };
 
+// Embedded multi-profile browser: the main process owns the BrowserWindow
+// and its persistent session partition; the renderer only names the
+// platform/account pair and the target URL.
+const browser = {
+  openProfile: async (request: OpenDesignHostBrowserProfileRequest): Promise<OpenDesignHostActionResult> => {
+    try {
+      const result = await ipcRenderer.invoke('od:browser:open-profile', request);
+      if (isRecord(result) && result.ok === true) return { ok: true };
+      const reason =
+        isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
+          ? result.reason
+          : 'embedded browser window was not opened';
+      return actionFailure(reason);
+    } catch (error) {
+      return actionFailure(reasonFromError(error));
+    }
+  },
+};
+
 const osLocale = readOsLocaleFromArgv();
 
 const hostBridge = {
@@ -231,6 +251,7 @@ const hostBridge = {
     platform: process.platform,
     ...(osLocale !== undefined ? { osLocale } : {}),
   },
+  browser,
   shell,
   project,
   pdf: {

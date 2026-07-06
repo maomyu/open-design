@@ -189,14 +189,26 @@ CLI: `od studio publish-note <id> --targets xiaohongshu:main`。
 
 自动化发布在小红书等平台有风控风险（限流/封号）。双轨设计：
 
-- **安全发布（推荐）**：`media-studio/browser.ts` 为每个 平台×账号 维护独立
-  Chrome `user-data-dir` 档案（`<数据目录>/browser-profiles/<平台>-<账号>/`），
-  一键直达各平台创作者发布页（PLATFORM_PUBLISH_URLS）。`SafeHandoffCard`
-  四步可视化：复制文案（平台化格式）→ 打开图集文件夹（访达）→ 打开专属
-  浏览器 → 回来「标记完成」（入发布记录+状态推进）。登录态在档案里长期
-  保持，多账号永不串号，零自动化指纹。
+- **安全发布（推荐）**：每个 平台×账号 一份独立浏览器档案，一键直达各平台
+  创作者发布页（PLATFORM_PUBLISH_URLS）。`SafeHandoffCard` 四步可视化：
+  复制文案（平台化格式）→ 打开图集文件夹（访达）→ 打开专属浏览器 →
+  回来「标记完成」（入发布记录+状态推进）。登录态在档案里长期保持，
+  多账号永不串号，零自动化指纹。
 - **自动发布**：sau 直传保留（抖音/快手图文、五平台视频）；小红书自动
   默认不勾选并带风控提示。公众号本就只发草稿箱（安全）。
+
+「专属浏览器」按运行环境自动选择实现（web 端 `openStudioBrowser` 内部决策）：
+
+- **应用内置浏览器（桌面壳，2026-07-07 落地，首选）**：`@open-design/host`
+  暴露可选 `browser.openProfile` 能力（IPC `od:browser:open-profile`），
+  `apps/desktop/src/main/embedded-browser.ts` 为每个 平台×账号 创建持久
+  session partition（`persist:od-browser-<平台>-<账号>`）的沙箱窗口——
+  无 preload、无 node、UA 去掉 Electron/应用名指纹、登录弹窗同分区放行、
+  非 http(s) 一律拒绝、同档案窗口复用聚焦。档案数据在应用 userData 的
+  `Partitions/` 下持久保存。
+- **外部 Chrome 档案（网页版降级）**：daemon `media-studio/browser.ts` 以
+  `user-data-dir`（`<数据目录>/browser-profiles/<平台>-<账号>/`）拉起本机
+  Chrome/Chromium/Edge。桌面桥不可用或打开失败时自动走此路。
 
 ## 与既有插件工作流的关系
 
