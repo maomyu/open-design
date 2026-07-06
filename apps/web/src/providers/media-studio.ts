@@ -343,6 +343,29 @@ export async function createStudioAiTask(
   }
 }
 
+// ---- 敏感词扫描 ----
+
+export interface StudioLintHit {
+  word: string;
+  category: string;
+  context: string;
+  count: number;
+}
+
+export async function lintStudioArticle(platform: string, articleId: string): Promise<StudioLintHit[]> {
+  try {
+    const resp = await fetch(
+      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/lint`,
+      { method: 'POST' },
+    );
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as { hits?: StudioLintHit[] };
+    return data.hits ?? [];
+  } catch {
+    return [];
+  }
+}
+
 // ---- 版本历史 ----
 
 export async function fetchStudioVersions(platform: string, articleId: string): Promise<MediaArticleVersion[]> {

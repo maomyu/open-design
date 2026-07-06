@@ -35,6 +35,7 @@ import { dajialaArticleDetail, dajialaHotSearch, dajialaRadar, dajialaWebSearch 
 import { generateGeminiImageFallback, generateQwenImage, QwenImageError } from './media-studio/qwen-image.js';
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
+import { lintContent } from './media-studio/lint.js';
 import { sauCheck, sauLogin, sauUploadVideo, SauError } from './media-studio/sau.js';
 import { scriptToSpeech, synthesizeVoice, TtsError } from './media-studio/volc-tts.js';
 import {
@@ -447,6 +448,14 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     } catch (err) {
       bad(res, 502, err instanceof Error ? err.message : String(err));
     }
+  });
+
+  // ---- 敏感词扫描（发布预检的警示项;标题+摘要+三段正文一起查） ----
+  app.post('/api/media-studio/:platform/articles/:id/lint', (req, res) => {
+    const article = getArticle(db, req.params.id);
+    if (!article) return bad(res, 404, 'article not found');
+    const text = [article.title, article.digest, article.headerMd, article.bodyMd, article.footerMd].join('\n');
+    res.json({ hits: lintContent(text) });
   });
 
   // ---- 知识库（客户挂载,AI 任务自动注入） ----

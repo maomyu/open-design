@@ -27,6 +27,8 @@ import {
   fetchStudioArticles,
   fetchStudioPublishes,
   fetchStudioTopics,
+  lintStudioArticle,
+  type StudioLintHit,
   publishStudioVideo,
   startSauLogin,
   synthesizeStudioTts,
@@ -93,6 +95,8 @@ export function ShortVideoStudioView(): JSX.Element {
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
   const [publishing, setPublishing] = useState(false);
+  const [lintHits, setLintHits] = useState<StudioLintHit[]>([]);
+  const [scheduleAt, setScheduleAt] = useState('');
   // 发布矩阵：平台 → { 参与勾选, sau 账号名, 登录态 }
   const [matrix, setMatrix] = useState<Record<string, { on: boolean; account: string; login: LoginState; detail: string }>>(
     () => Object.fromEntries(SAU_PLATFORMS.map((p) => [p.id, { on: false, account: 'main', login: 'unknown' as LoginState, detail: '' }])),
@@ -196,9 +200,10 @@ export function ShortVideoStudioView(): JSX.Element {
     void flushSave();
   }, [flushSave]);
 
-  // ---- 发布记录 ----
+  // ---- 发布记录 + 敏感词 ----
   useEffect(() => {
     if (tab !== 'publish' || !article) return;
+    void lintStudioArticle(PLATFORM, article.id).then(setLintHits);
     void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
   }, [tab, article?.id]);
 
@@ -320,11 +325,15 @@ export function ShortVideoStudioView(): JSX.Element {
     }
     // 对外发布，明确的人工确认（列出全部目标）。
     const summary = targets.map((t) => `${SAU_PLATFORMS.find((p) => p.id === t.platform)?.label}（账号 ${t.account}）`).join('、');
-    if (!window.confirm(`确认把「${article.title || '(未命名)'}」发布到：${summary}？\n\n这是真实对外发布，发出后需到各平台后台管理。`)) return;
+    if (!window.confirm(`确认把「${article.title || '(未命名)'}」发布到：${summary}？${scheduleAt ? `\n定时：${scheduleAt.replace('T', ' ')}` : ''}\n\n这是真实对外发布，发出后需到各平台后台管理。`)) return;
     setPublishing(true);
     setNotice(null);
     await flushSave();
-    const result = await publishStudioVideo(PLATFORM, article.id, { targets });
+    const schedule = scheduleAt ? scheduleAt.replace('T', ' ') : '';
+    const result = await publishStudioVideo(PLATFORM, article.id, {
+      targets,
+      ...(schedule ? { schedule } : {}),
+    });
     setPublishing(false);
     if (result.error) {
       setNotice({ ok: false, text: result.error });
@@ -737,6 +746,32 @@ export function ShortVideoStudioView(): JSX.Element {
                     );
                   })}
                 </div>
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    定时发布（可选）
+                    <span className={c('cardHint')}>空 = 立即发；设了时间由各平台定时发布（sau 原生支持）</span>
+                  </div>
+                  <div className={c('row')}>
+                    <input
+                      type="datetime-local"
+                      className={c('input')}
+                      style={{ width: 220 }}
+                      value={scheduleAt}
+                      onChange={(e) => setScheduleAt(e.target.value)}
+                    />
+                    {scheduleAt ? (
+                      <button type="button" className={c('btn')} onClick={() => setScheduleAt('')}>
+                        清除
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {lintHits.length > 0 ? (
+                  <div className={`${c('notice')} ${c('noticeErr')}`}>
+                    脚本命中敏感词 {lintHits.length} 处（{lintHits.slice(0, 5).map((h) => h.word).join('、')}
+                    {lintHits.length > 5 ? '…' : ''}）——防限流建议回「脚本」改掉再发。
+                  </div>
+                ) : null}
                 <div className={c('row')}>
                   <button
                     type="button"
@@ -744,7 +779,7 @@ export function ShortVideoStudioView(): JSX.Element {
                     disabled={publishing}
                     onClick={() => void handlePublish()}
                   >
-                    {publishing ? '发布中…' : '发布到已选平台'}
+                    {publishing ? (scheduleAt ? '排定时…' : '发布中…') : scheduleAt ? '定时发布到已选平台' : '发布到已选平台'}
                   </button>
                   <span className={c('saveHint')}>真实对外发布 · 点击后还有一次明细确认</span>
                 </div>

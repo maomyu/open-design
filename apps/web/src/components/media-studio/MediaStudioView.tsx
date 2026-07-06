@@ -32,6 +32,8 @@ import {
   fetchStudioSnippets,
   fetchStudioTopics,
   generateArticleImage,
+  lintStudioArticle,
+  type StudioLintHit,
   publishStudioArticle,
   renderStudioArticle,
   renderStudioPreview,
@@ -168,6 +170,7 @@ export function MediaStudioView(): JSX.Element {
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
   const [publishing, setPublishing] = useState(false);
   const [publishNotice, setPublishNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [lintHits, setLintHits] = useState<StudioLintHit[]>([]);
   const [renderNotice, setRenderNotice] = useState<string | null>(null);
   // AI 任务折叠面板（每步的智能体动作共用一个面板，一次跑一个）
   const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
@@ -297,11 +300,12 @@ export function MediaStudioView(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [previewKey]);
 
-  // ---- publish records ----
+  // ---- publish records + 敏感词扫描 ----
   useEffect(() => {
     if (tab !== 'publish' || !article) return;
     void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
-  }, [tab, article?.id]);
+    void lintStudioArticle(PLATFORM, article.id).then(setLintHits);
+  }, [tab, article?.id, article?.updatedAt]);
 
   // ---- AI 任务（每步的智能体动作） ----
   const startAiTask = useCallback(
@@ -1065,6 +1069,7 @@ export function MediaStudioView(): JSX.Element {
       { ok: Boolean(article.coverSource), text: '封面已设置', goto: 'cover', required: true },
       { ok: Boolean(effectiveAccount && !missingCreds), text: '账号凭证就绪（AppID/AppSecret）', required: true },
       { ok: leftoverMarkers === 0, text: leftoverMarkers > 0 ? `${leftoverMarkers} 个配图占位未处理（可发，但草稿里没这些图）` : '配图占位已全部处理', goto: 'images', required: false },
+      { ok: lintHits.length === 0, text: lintHits.length > 0 ? `敏感词 ${lintHits.length} 处（点开下方明细，防限流建议改掉）` : '敏感词扫描通过', goto: 'write', required: false },
     ];
     const readyToPublish = checks.filter((k) => k.required).every((k) => k.ok);
     return (
@@ -1091,6 +1096,24 @@ export function MediaStudioView(): JSX.Element {
             ))}
           </div>
         </div>
+        {lintHits.length > 0 ? (
+          <div className={c('card')}>
+            <div className={c('cardLabel')}>
+              敏感词明细（{lintHits.length}）
+              <span className={c('cardHint')}>广告法/平台高危方向，误报可忽略——但限流删文风险自负</span>
+            </div>
+            <div className={c('records')}>
+              {lintHits.map((h) => (
+                <div key={h.word} className={c('record')}>
+                  <span className={`${c('chip')} ${c('chipAmber')}`}>{h.category}</span>
+                  <strong>{h.word}</strong>
+                  {h.count > 1 ? <span className={c('cardHint')}>×{h.count}</span> : null}
+                  <span className={c('cardHint')}>{h.context.slice(0, 46)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className={c('card')}>
           <div className={c('cardLabel')}>公众号账号</div>
           {accounts.length === 0 ? (
