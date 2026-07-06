@@ -36,7 +36,7 @@ import { generateGeminiImageFallback, generateQwenImage, QwenImageError } from '
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
 import { lintContent } from './media-studio/lint.js';
-import { sauCheck, sauLogin, sauUploadVideo, SauError } from './media-studio/sau.js';
+import { sauCheck, sauLogin, sauUploadNote, sauUploadVideo, SauError } from './media-studio/sau.js';
 import { scriptToSpeech, synthesizeVoice, TtsError } from './media-studio/volc-tts.js';
 import {
   createArticle,
@@ -222,6 +222,72 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const step = err instanceof WechatPublishError ? err.step : 'draft';
       fail(step, err instanceof Error ? err.message : String(err), accountName);
     }
+  });
+
+  // ---- note: 图文笔记矩阵发布（图集来自 extra.noteImages 资产 URL 列表） ----
+  app.post('/api/media-studio/:platform/articles/:id/publish-note', async (req, res) => {
+    const platform = req.params.platform;
+    const article = getArticle(db, req.params.id);
+    if (!article) return bad(res, 404, 'article not found');
+    const body = (req.body ?? {}) as { targets?: Array<{ platform?: string; account?: string }>; schedule?: string };
+    const targets = (body.targets ?? []).filter((t) => t?.platform && t?.account) as Array<{ platform: string; account: string }>;
+    if (targets.length === 0) return bad(res, 400, '至少选择一个 平台×账号 发布目标');
+    const noteImages = Array.isArray(article.extra.noteImages)
+      ? (article.extra.noteImages as unknown[]).filter((v): v is string => typeof v === 'string')
+      : [];
+    if (noteImages.length === 0) return bad(res, 422, '图集为空——先在「图集」里生成或上传至少 1 张图');
+    // 资产 URL → 本地文件（sau 需要本地路径）
+    const localImages: string[] = [];
+    for (const url of noteImages) {
+      if (!url.startsWith(STUDIO_ASSET_URL_PREFIX)) return bad(res, 422, `图集里有非本地资产图片:${url.slice(0, 60)}`);
+      const rest = url.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
+      if (rest.length !== 2) return bad(res, 422, '图集资产 URL 形状不对');
+      localImages.push(path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? '')));
+    }
+    const title = article.title.trim();
+    if (!title) return bad(res, 422, '标题为空——先在「文案」里定标题');
+    const note = article.bodyMd.trim();
+    if (!note) return bad(res, 422, '正文为空——先在「文案」里写正文');
+    const tags = String(article.extra.tags ?? '').trim();
+    const records = [];
+    for (const target of targets) {
+      let record;
+      try {
+        const result = await sauUploadNote({
+          platform: target.platform,
+          account: target.account,
+          images: localImages,
+          title,
+          note,
+          ...(tags ? { tags } : {}),
+          ...(body.schedule ? { schedule: body.schedule } : {}),
+        });
+        record = recordPublish(db, {
+          articleId: article.id,
+          platform,
+          accountId: null,
+          accountName: `${target.platform}/${target.account}`,
+          status: result.ok ? 'ok' : 'error',
+          draftMediaId: null,
+          failedStep: result.ok ? null : 'upload',
+          error: result.ok ? null : result.detail,
+        });
+      } catch (err) {
+        record = recordPublish(db, {
+          articleId: article.id,
+          platform,
+          accountId: null,
+          accountName: `${target.platform}/${target.account}`,
+          status: 'error',
+          draftMediaId: null,
+          failedStep: 'upload',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      records.push(record);
+    }
+    if (records.some((r) => r.status === 'ok')) markArticlePublished(db, article.id);
+    res.json({ records, article: getArticle(db, article.id) });
   });
 
   app.get('/api/media-studio/:platform/articles/:id/publishes', (req, res) => {

@@ -561,4 +561,27 @@ export async function publishStudioVideo(
   }
 }
 
+/** 图文笔记矩阵发布（sau upload-note）。 */
+export async function publishStudioNote(
+  platform: string,
+  articleId: string,
+  body: { targets: Array<{ platform: string; account: string }>; schedule?: string },
+): Promise<{ records?: MediaPublishRecord[]; article?: MediaArticle; error?: string }> {
+  try {
+    const resp = await fetch(
+      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/publish-note`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    );
+    const data = (await resp.json().catch(() => ({}))) as {
+      records?: MediaPublishRecord[];
+      article?: MediaArticle;
+      error?: string;
+    };
+    if (!resp.ok) return { error: data.error ?? `发布失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
 export { errorMessage as studioErrorMessage };

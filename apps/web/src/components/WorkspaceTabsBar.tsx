@@ -130,6 +130,10 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
       || view === 'projects'
       || view === 'tasks'
       || view === 'plugins'
+      || view === 'accounts'
+      || view === 'studio'
+      || view === 'studio-video'
+      || view === 'studio-note'
       || view === 'design-systems'
       || view === 'integrations'
     ) {
@@ -773,6 +777,7 @@ function displayTabFor(
     accounts: t('entry.navAccounts'),
     studio: '公众号',
     'studio-video': '短视频',
+    'studio-note': '笔记',
     'design-systems': t('entry.navDesignSystems'),
     integrations: t('entry.navIntegrations'),
   };
@@ -785,6 +790,7 @@ function displayTabFor(
     accounts: 'grid',
     studio: 'edit',
     'studio-video': 'play',
+    'studio-note': 'image',
     'design-systems': 'blocks',
     integrations: 'link',
   };

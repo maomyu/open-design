@@ -348,6 +348,13 @@ export interface SauCheckResponse {
   detail: string;
 }
 
+/** 图文笔记矩阵发布（sau upload-note；小红书/抖音/快手）。 */
+export interface PublishNoteRequest {
+  targets: SauTarget[];
+  /** 定时发布 "YYYY-MM-DD HH:mm"（可选）. */
+  schedule?: string;
+}
+
 export interface PublishVideoRequest {
   targets: SauTarget[];
   /** 视频文件绝对路径；空则取文章 extra.videoPath. */

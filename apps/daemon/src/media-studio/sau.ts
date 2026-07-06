@@ -97,6 +97,34 @@ export interface SauUploadInput {
   thumbnail?: string;
 }
 
+export interface SauUploadNoteInput {
+  platform: string;
+  account: string;
+  /** 图集本地绝对路径（1-18 张，顺序即展示顺序）. */
+  images: string[];
+  title: string;
+  note: string;
+  tags?: string;
+  schedule?: string;
+}
+
+/** 真实发布一条图文笔记（对外发布——调用方必须已拿到人工确认）。
+ *  sau 支持图文的平台：小红书/抖音/快手。 */
+export async function sauUploadNote(input: SauUploadNoteInput): Promise<{ ok: boolean; detail: string }> {
+  if (!(await sauAvailable())) throw new SauError(`没找到 sau CLI（${SAU_BIN}）`);
+  const args = [
+    input.platform, 'upload-note',
+    '--account', input.account,
+    '--images', ...input.images,
+    '--title', input.title,
+    '--note', input.note,
+  ];
+  if (input.tags) args.push('--tags', input.tags);
+  if (input.schedule) args.push('--schedule', input.schedule);
+  const result = await runSau(args, 600_000);
+  return { ok: result.code === 0, detail: tail(result.stdout + '\n' + result.stderr, 600) };
+}
+
 /** 真实上传一条视频（对外发布——调用方必须已拿到人工确认）。 */
 export async function sauUploadVideo(input: SauUploadInput): Promise<{ ok: boolean; detail: string }> {
   if (!(await sauAvailable())) throw new SauError(`没找到 sau CLI（${SAU_BIN}）`);

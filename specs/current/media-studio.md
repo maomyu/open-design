@@ -164,6 +164,23 @@ GET/POST/DELETE       /api/media-studio/:platform/snippets[/:id]
 必经步未完成时下一步禁用并给原因、所有错误带「去哪修」的动作指引、
 右侧始终有「发布时的样子」预览（公众号=手机排版预览，短视频=作品卡）。
 
+## 图文笔记创作台（2026-07-07 落地）— 第三台，内容形态矩阵补全
+
+`/studio/note`（platform id `note`）：小红书为主的图文笔记，抖音/快手也收图文。
+选题(共享 TopicsTab, AI-only) → 文案(≤20 字标题/≤1000 字正文/标签实时计数，
+「AI 写笔记」小红书调性一键全流程：调研→写→图集画面建议落 extra.imageIdeas→清腔)
+→ 图集(按建议批量生成 3:4 竖图/单张生成/多选上传/排序/删除，1-18 张，
+extra.noteImages 资产 URL 数组，第 1 张即封面) → 发布(sau upload-note
+小红书/抖音/快手矩阵 + 登录管理 + 定时 + 敏感词警示 + 明细二次确认)。
+CLI: `od studio publish-note <id> --targets xiaohongshu:main`。
+
+## P1 安全与节奏（2026-07-07）
+
+- **敏感词预检**：daemon 词库(广告法极限词/承诺保证/医疗金融高危/平台敏感方向)，
+  `POST /:platform/articles/:id/lint`；公众号进预检清单(警示项+明细卡)，
+  短视频/笔记发布页红条提示。警示不阻断——误报由用户判断。
+- **定时发布**：短视频与笔记发布支持 datetime 定时（sau `--schedule` 原生）。
+
 ## 与既有插件工作流的关系
 
 `wechat-mp-publish` 插件（对话式全自动流水线）保留不动，适合「一句话全托管」；

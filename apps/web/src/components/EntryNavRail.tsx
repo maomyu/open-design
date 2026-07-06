@@ -26,6 +26,7 @@ export type EntryView =
   | 'accounts'
   | 'studio'
   | 'studio-video'
+  | 'studio-note'
   | 'design-systems'
   | 'integrations';
 
@@ -130,6 +131,15 @@ export function EntryNavRail({
           testId="entry-nav-studio-video"
         >
           <Icon name="play" size={18} />
+        </NavButton>
+        <NavButton
+          active={view === 'studio-note'}
+          ariaLabel="笔记"
+          label="笔记"
+          onClick={() => onViewChange('studio-note')}
+          testId="entry-nav-studio-note"
+        >
+          <Icon name="image" size={18} />
         </NavButton>
         <NavButton
           active={view === 'accounts'}

@@ -18,6 +18,7 @@ export type EntryHomeView =
   | 'accounts'
   | 'studio'
   | 'studio-video'
+  | 'studio-note'
   | 'design-systems'
   | 'integrations';
 
@@ -110,6 +111,7 @@ export function parseRoute(pathname: string): Route {
   // /studio → 公众号；/studio/short-video → 短视频。
   if (parts[0] === 'studio') {
     if (parts[1] === 'short-video') return { kind: 'home', view: 'studio-video' };
+    if (parts[1] === 'note') return { kind: 'home', view: 'studio-note' };
     return { kind: 'home', view: 'studio' };
   }
   if (parts[0] === 'integrations') {
@@ -155,6 +157,7 @@ export function buildPath(route: Route): string {
     if (route.view === 'accounts') return '/accounts';
     if (route.view === 'studio') return '/studio';
     if (route.view === 'studio-video') return '/studio/short-video';
+    if (route.view === 'studio-note') return '/studio/note';
     if (route.view === 'design-systems') return '/design-systems';
     if (route.view === 'integrations') return '/integrations';
     return '/';

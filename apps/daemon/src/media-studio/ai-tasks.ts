@@ -165,6 +165,49 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     };
   }
 
+  if (kind === 'write' && platform === 'note') {
+    // 图文笔记（小红书为主）——标题/正文硬限制平台化，图集画面建议单独落 extra。
+    const researchMd = String((article.extra as Record<string, unknown>).researchMd ?? '').trim();
+    const topicUrl = String((article.extra as Record<string, unknown>).topicUrl ?? '');
+    const researchPhase = researchMd
+      ? `## 素材简报（已调研——事实优先用这里的，不必重查）\n${researchMd.slice(0, 3000)}`
+      : [
+          '## 第 0 步：先做素材调研（必做）',
+          topicUrl
+            ? `1. 抓选题原文：\`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${article.platform}/article-detail" -H 'Content-Type: application/json' -d '{"url":"${topicUrl}"}'\`；`
+            : '1. 用你的检索工具找 2-3 篇同题优质内容（看结构、看评论区在问什么）。',
+          '2. 记下：可用事实/数字、大家的写法、评论区高频疑问（笔记的互动钩子就从这来）。',
+        ].join('\n');
+    return {
+      title: `AI 写笔记 · ${article.title || article.topic || '未命名'}`,
+      prompt: [
+        '# 任务：写一篇图文笔记（小红书调性，可直接发布）',
+        `选题：${article.topic || article.title || '（按补充要求定）'}`,
+        note.trim() ? `补充要求：${note.trim()}` : '',
+        accountBlock(input.account),
+        knowledgeBlock(input.knowledge),
+        researchPhase,
+        '## 硬限制（平台规则，超了发不出去）',
+        '- 标题 ≤20 个字：钩子前置（数字/反差/身份代入），可带 1 个 emoji；',
+        '- 正文 ≤1000 字：口语、短段落（1-2 句一段）、适度 emoji 分隔、干货分点、结尾一个互动问题；',
+        '- 话题标签 5-8 个（不带#，逗号分隔）；',
+        '- 正文不放外链、不放微信号（平台高压线）。',
+        '## 图集画面建议（3-6 张，之后图集页按描述逐张生成）',
+        '- 第 1 张是封面：大字观点/清单结论，一眼有信息量；',
+        '- 后续每张一个要点。',
+        '## 交付',
+        `1. 正文存临时文件 /tmp/studio-note-${article.id.slice(0, 8)}.md（纯正文，不含标题/标签/图集建议）；`,
+        `2. \`od studio set ${article.id} --platform ${article.platform} --body-file /tmp/studio-note-${article.id.slice(0, 8)}.md --title "<≤20字标题>" --digest "<一句话简介>" --tags "标签1,标签2"\`；`,
+        `3. 图集画面建议（每行一张的画面描述）存 /tmp/studio-note-ideas-${article.id.slice(0, 8)}.txt，写进 extra：`,
+        '```bash',
+        `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{imageIdeas:fs.readFileSync("/tmp/studio-note-ideas-${article.id.slice(0, 8)}.txt","utf8")}})}).then(r=>console.log("ideas saved",r.status))'`,
+        '```',
+        '4. 写完先按 AI 腔自查清一遍（机翻感/套话），再交付。',
+        cli,
+      ].filter(Boolean).join('\n\n'),
+    };
+  }
+
   if (kind === 'script') {
     // 短视频口播脚本 — reuse short-video-copy 的平台调性方法论（提示词内联）。
     const extra = article.extra as Record<string, unknown>;

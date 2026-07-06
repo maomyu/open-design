@@ -2516,6 +2516,30 @@ async function runStudio(args) {
     if (!resp.ok) { console.error(`tts failed: ${data?.error ?? resp.status}`); process.exit(1); }
     return out(data, `配音完成 ${data?.url}`);
   }
+  if (sub === 'publish-note') {
+    const id = bare[1];
+    const targetsRaw = typeof flags.targets === 'string' ? flags.targets : '';
+    if (!id || !targetsRaw) {
+      console.error('Usage: od studio publish-note <id> --targets xiaohongshu:main,douyin:main [--platform note]');
+      process.exit(2);
+    }
+    const targets = targetsRaw.split(',').map((pair) => {
+      const [platform, account] = pair.split(':');
+      return { platform: (platform ?? '').trim(), account: (account ?? '').trim() };
+    }).filter((t) => t.platform && t.account);
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/publish-note`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targets }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { console.error(`publish-note failed: ${data?.error ?? resp.status}`); process.exit(1); }
+    if (flags.json) return out(data);
+    for (const r of data?.records ?? []) {
+      console.log(`${r.status === 'ok' ? '✓' : '✗'} ${r.accountName}${r.error ? `  ${r.error.slice(0, 120)}` : ''}`);
+    }
+    return;
+  }
   if (sub === 'publish-video') {
     const id = bare[1];
     const targetsRaw = typeof flags.targets === 'string' ? flags.targets : '';
