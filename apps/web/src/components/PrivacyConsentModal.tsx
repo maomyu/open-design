@@ -1,14 +1,6 @@
 import { useAnalytics } from '../analytics/provider';
 import { trackPrivacyModalClick } from '../analytics/events';
 import { useT } from '../i18n';
-import { Icon } from './Icon';
-
-/**
- * Canonical location of the full privacy policy. Kept as a single named
- * constant so it can be repointed (e.g. to a hosted page) without touching
- * markup. `PRIVACY.md` documents the same data handling the modal discloses.
- */
-const PRIVACY_POLICY_URL = 'https://github.com/nexu-io/open-design/blob/main/PRIVACY.md';
 
 interface Props {
   /** Acknowledges the disclosure. Implies default opt-in; the host opts the
@@ -69,16 +61,6 @@ export function PrivacyConsentModal({ onAccept }: Props): JSX.Element {
       </dl>
 
       <p className="hint privacy-consent-banner-footer">{t('settings.privacyConsentBannerFooter')}</p>
-
-      <a
-        className="privacy-consent-policy-link"
-        href={PRIVACY_POLICY_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        <Icon name="external-link" size={13} />
-        <span>{t('settings.privacyConsentPolicyLink')}</span>
-      </a>
 
       <div
         className="privacy-consent-actions"
