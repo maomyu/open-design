@@ -584,4 +584,58 @@ export async function publishStudioNote(
   }
 }
 
+// ---- 内置多 Profile 浏览器（风控安全发布） ----
+
+export async function openStudioBrowser(body: {
+  platform: string;
+  account: string;
+  url?: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/browser/open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = (await resp.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!resp.ok) return { error: data.error ?? `打开浏览器失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
+export async function revealStudioAssets(platform: string, articleId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(
+      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/reveal-assets`,
+      { method: 'POST' },
+    );
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function markStudioPublished(
+  platform: string,
+  articleId: string,
+  targetLabel: string,
+): Promise<{ record?: MediaPublishRecord; article?: MediaArticle }> {
+  try {
+    const resp = await fetch(
+      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/mark-published`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetLabel }),
+      },
+    );
+    if (!resp.ok) return {};
+    return (await resp.json()) as { record?: MediaPublishRecord; article?: MediaArticle };
+  } catch {
+    return {};
+  }
+}
+
 export { errorMessage as studioErrorMessage };

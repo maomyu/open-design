@@ -34,7 +34,7 @@ import {
   type StudioLintHit,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiTask } from './StudioAiPanel';
-import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
+import { ArticleListCard, KnowledgePanel, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { TopicsTab } from './TopicsTab';
 import styles from './MediaStudio.module.css';
 
@@ -102,7 +102,7 @@ export function NoteStudioView(): JSX.Element {
   const [galleryStyle, setGalleryStyle] = useState('illustrated');
   const [galleryModel, setGalleryModel] = useState('qwen');
   const [matrix, setMatrix] = useState<Record<string, { on: boolean; account: string; login: LoginState; detail: string }>>(
-    () => Object.fromEntries(NOTE_PLATFORMS.map((p) => [p.id, { on: p.id === 'xiaohongshu', account: 'main', login: 'unknown' as LoginState, detail: '' }])),
+    () => Object.fromEntries(NOTE_PLATFORMS.map((p) => [p.id, { on: false, account: 'main', login: 'unknown' as LoginState, detail: '' }])),
   );
 
   const articleRef = useRef<MediaArticle | null>(null);
@@ -742,10 +742,27 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('发布属于某篇笔记——先去「文案」新建。')
             ) : (
               <>
+                <SafeHandoffCard
+                  studioPlatform={PLATFORM}
+                  articleId={article.id}
+                  articleTitle={article.title}
+                  targets={NOTE_PLATFORMS}
+                  defaultTarget="xiaohongshu"
+                  hasAssets={noteImages.length > 0}
+                  copyText={() => {
+                    const tagLine = tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean).map((t) => `#${t}`).join(' ');
+                    return `${article.title}\n\n${article.bodyMd.trim()}${tagLine ? `\n\n${tagLine}` : ''}`;
+                  }}
+                  onMarked={() => {
+                    void fetchStudioArticle(PLATFORM, article.id).then((a) => a && setArticle(a));
+                    void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
+                    void refreshArticles();
+                  }}
+                />
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
-                    发布到哪些平台
-                    <span className={c('cardHint')}>图文支持：小红书/抖音/快手；账号名是 sau 的 cookie 档案（默认 main）</span>
+                    自动发布（sau 直传）
+                    <span className={c('cardHint')}>⚠️ 小红书对自动化风控严格，容易限流——建议小红书走上面的安全发布，抖音/快手可自动</span>
                   </div>
                   {NOTE_PLATFORMS.map((p) => {
                     const entry = matrix[p.id]!;

@@ -42,6 +42,7 @@ import {
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiTask } from './StudioAiPanel';
 import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
+import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab } from './TopicsTab';
 import styles from './MediaStudio.module.css';
 
@@ -1184,6 +1185,19 @@ export function MediaStudioView(): JSX.Element {
             onClick={() => void handlePublish()}
           >
             {publishing ? '发布中…' : '发到草稿箱'}
+          </button>
+          <button
+            type="button"
+            className={c('btn')}
+            title="按当前账号打开公众号后台的专属浏览器（档案隔离，多号不串）"
+            onClick={() =>
+              void openStudioBrowser({
+                platform: 'wechat-mp',
+                account: effectiveAccount?.name ?? 'main',
+              })
+            }
+          >
+            打开公众号后台
           </button>
           <span className={c('saveHint')}>只发草稿箱，正式群发你在公众号后台自己点</span>
         </div>

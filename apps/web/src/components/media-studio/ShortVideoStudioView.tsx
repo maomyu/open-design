@@ -36,6 +36,7 @@ import {
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiTask } from './StudioAiPanel';
 import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
+import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab } from './TopicsTab';
 import styles from './MediaStudio.module.css';
 
@@ -741,6 +742,14 @@ export function ShortVideoStudioView(): JSX.Element {
                           </>
                         ) : null}
                         {entry.login === 'logging' ? <span className={`${c('chip')} ${c('chipAmber')}`}>等扫码…</span> : null}
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          title="打开该账号的专属浏览器（档案隔离），手动上传最防风控"
+                          onClick={() => void openStudioBrowser({ platform: p.id, account: entry.account.trim() || 'main' })}
+                        >
+                          专属浏览器
+                        </button>
                         {entry.detail ? <span className={c('cardHint')}>{entry.detail.slice(0, 60)}</span> : null}
                       </div>
                     );

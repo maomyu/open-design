@@ -36,6 +36,7 @@ import { generateGeminiImageFallback, generateQwenImage, QwenImageError } from '
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
 import { lintContent } from './media-studio/lint.js';
+import { BrowserError, openProfileBrowser, PLATFORM_PUBLISH_URLS, revealInFinder } from './media-studio/browser.js';
 import { sauCheck, sauLogin, sauUploadNote, sauUploadVideo, SauError } from './media-studio/sau.js';
 import { scriptToSpeech, synthesizeVoice, TtsError } from './media-studio/volc-tts.js';
 import {
@@ -514,6 +515,58 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     } catch (err) {
       bad(res, 502, err instanceof Error ? err.message : String(err));
     }
+  });
+
+  // ---- 内置多 Profile 浏览器（风控安全发布的核心：真实浏览器手动发） ----
+  app.post('/api/media-studio/browser/open', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { platform?: string; account?: string; url?: string };
+      const platform = String(body.platform ?? '').trim();
+      const account = String(body.account ?? '').trim() || 'main';
+      if (!platform) return bad(res, 400, '缺少 platform');
+      const result = await openProfileBrowser({
+        root: paths.RUNTIME_DATA_DIR,
+        platform,
+        account,
+        ...(body.url ? { url: body.url } : {}),
+      });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      bad(res, err instanceof BrowserError ? 422 : 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.get('/api/media-studio/browser/urls', (_req, res) => {
+    res.json({ urls: PLATFORM_PUBLISH_URLS });
+  });
+
+  // 打开文章的资产目录（图集/封面拖拽进浏览器发布页用）。
+  app.post('/api/media-studio/:platform/articles/:id/reveal-assets', async (req, res) => {
+    const article = getArticle(db, req.params.id);
+    if (!article) return bad(res, 404, 'article not found');
+    const dir = assetsDirFor(article.id);
+    await mkdir(dir, { recursive: true });
+    revealInFinder(dir);
+    res.json({ ok: true, dir });
+  });
+
+  // 安全发布（手动交接）后回来标记：记录 + 状态推进，让列表/复盘有据可查。
+  app.post('/api/media-studio/:platform/articles/:id/mark-published', (req, res) => {
+    const article = getArticle(db, req.params.id);
+    if (!article) return bad(res, 404, 'article not found');
+    const label = String((req.body as any)?.targetLabel ?? '手动发布').slice(0, 60);
+    const record = recordPublish(db, {
+      articleId: article.id,
+      platform: req.params.platform,
+      accountId: null,
+      accountName: `${label} · 手动`,
+      status: 'ok',
+      draftMediaId: null,
+      failedStep: null,
+      error: null,
+    });
+    markArticlePublished(db, article.id);
+    res.json({ record, article: getArticle(db, article.id) });
   });
 
   // ---- 敏感词扫描（发布预检的警示项;标题+摘要+三段正文一起查） ----
