@@ -8,9 +8,9 @@
     "en": "WeChat MP Publisher"
   },
   "version": "0.4.1",
-  "description": "公众号长文流水线:选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发到草稿箱(公众号官方 API)。驱动本机「多媒体自动发布」工作台,Open Build 只做编排与右侧可视化看板。",
+  "description": "公众号长文流水线:选题 → 写稿(信息服务风格)→ 配图 → AI 检测 → 排版 → 发到草稿箱(公众号官方 API)。驱动本机「多媒体自动发布」工作台,Open Build 只做编排与右侧可视化看板。",
   "description_i18n": {
-    "zh-CN": "选题 → 写稿(6 种文章类型)→ 配图 → AI 检测 → 排版 → 发公众号草稿箱。",
+    "zh-CN": "选题 → 写稿(信息服务风格)→ 配图 → AI 检测 → 排版 → 发公众号草稿箱。",
     "en": "Topic → write (6 styles) → images → AI-check → render → push to WeChat MP drafts."
   },
   "license": "MIT",
@@ -39,7 +39,7 @@
     "scenario": "content",
     "featured": true,
     "useCase": {
-      "query": "当一个公众号长文发布总控。公众号账号:{{account}}(已选就直接用它的写作风格和凭证,不再问我;为空才在第 0 步用 AskUserQuestion 让我单选)。选题/方向:{{topic}};文章类型:{{articleType}};排版皮肤:{{skin}};发布通道:{{channel}}。请用本机「多媒体自动发布」工作台的技能开工:先按方向定选题(或用工作台的爆文榜/搜一搜帮我找)→ 按文章类型写一版可发布长文 → 查 AI 腔 → **写完不用我确认,直接按我已选好的皮肤 {{skin}} 自动排版成公众号 HTML(排版风格我已固定,别再问我用哪个/换不换皮肤);排好版后再问我要不要配图** →(要配图就生成图后重排)→ 发到草稿箱。每一步把该步产物插入/更新到项目里的一个 `board.json`(右侧自动渲成飞书多维表格式的只读表:选题候选 / 文章 / 配图 / 发布),再用左侧 AskUserQuestion 选项卡让我确认/提建议改(卡片自带补充建议框,我能点选项也能写一句想法);上面哪项我没填,就用 AskUserQuestion 问我,别替我猜。别生成展示用的 HTML,看板只读、上面别放按钮。**只发到草稿箱,最后到公众号后台我自己确认群发,绝不自动正式发布。**",
+      "query": "当一个公众号长文发布总控。公众号账号:{{account}}(已选就直接用它的写作风格和凭证,不再问我;为空才在第 0 步用 AskUserQuestion 让我单选)。选题/方向:{{topic}};文章类型固定为「信息服务攻略」;排版皮肤:{{skin}};发布通道:{{channel}}。请用本机「多媒体自动发布」工作台的技能开工:先按方向定选题(或用工作台的爆文榜/搜一搜帮我找)→ 按信息服务攻略风格写一版可发布长文 → 查 AI 腔 → **写完不用我确认,直接按我已选好的皮肤 {{skin}} 自动排版成公众号 HTML(排版风格我已固定,别再问我用哪个/换不换皮肤);排好版后再问我要不要配图** →(要配图就生成图后重排)→ 发到草稿箱。每一步把该步产物插入/更新到项目里的一个 `board.json`(右侧自动渲成飞书多维表格式的只读表:选题候选 / 文章 / 配图 / 发布),再用左侧 AskUserQuestion 选项卡让我确认/提建议改(卡片自带补充建议框,我能点选项也能写一句想法);上面哪项我没填,就用 AskUserQuestion 问我,别替我猜。别生成展示用的 HTML,看板只读、上面别放按钮。**只发到草稿箱,最后到公众号后台我自己确认群发,绝不自动正式发布。**",
       "query_i18n": {
         "en": "Act as a WeChat Official Account (公众号) long-form publishing controller. Topic: {{topic}}; article style: {{articleType}}; render skin: {{skin}}; channel: {{channel}}. Drive my local '多媒体自动发布' workbench: pick a topic (or use its trending tools to find one) → write one publishable long-form article in the chosen style → check for AI-tone → **without waiting for my confirmation, auto-render to WeChat HTML with my pre-chosen skin {{skin}} (the render style is fixed — don't ask me which skin or whether to switch); after rendering, ask me whether to add images** → (if yes, generate images and re-render) → push to the DRAFT box. After each step, insert/update that step's product into ONE `board.json` in the project (the right side auto-renders it as Feishu/Bitable-style read-only tables: 选题候选 / 文章 / 配图 / 发布); never generate display HTML — the board is read-only with no buttons. Confirm/edit each step through the left-side AskUserQuestion card (it has a free-text note box); ask me via AskUserQuestion for anything I left blank, don't guess. Push to DRAFT only — I do the final broadcast myself in the WeChat backend; never auto-publish."
       }
@@ -63,12 +63,7 @@
         "label": "文章类型",
         "type": "select",
         "options": [
-          "信息服务攻略",
-          "口语化科普",
-          "深度长文",
-          "情感共鸣",
-          "插画金句",
-          "硬核攻略"
+          "信息服务攻略"
         ],
         "default": "信息服务攻略"
       },
@@ -78,14 +73,12 @@
         "type": "select",
         "options": [
           "kaiti",
-          "purple",
           "orangeheart",
           "github"
         ],
         "default": "kaiti",
         "optionLabels": {
           "kaiti": "kaiti · 深红棕楷体(技术/严肃长文,默认)",
-          "purple": "purple · 紫色经典(科技深度)",
           "orangeheart": "orangeheart · 橙心暖色(热点/情感)",
           "github": "github · 代码风(教程)"
         }
@@ -171,7 +164,7 @@
           "id": "write",
           "title": "写稿",
           "gate": "none",
-          "prompt": "**第一步,先读工作台共享方法论 `MY-wechat-shared/references/viral-method.md`(贝拉垂直小号爆文方法论;SOP/打分/提示词细节见同目录 `viral-method-cards.md`)把策略定下来**:生存画像 → 痛点分级(搜索/倾诉/失眠)→ 把宽泛话题切成具体需求 → 60-30-10 内容角色 → 落脚点(读完要记住/相信/转发什么)→ 四步结构(痛点钩子 → 桥接 IP/产品 → 可转发的观点 → 行动)→ 标题(痛点 + 新鲜表达,先多生成再筛到 1)。**第二步,按用户选的文章类型读对应写作技能、严格照它的风格,把上面的策略落成一版可直接发布的公众号长文**:信息服务攻略→MY-wechat-writer-service(把一件事讲清楚:是什么/适合谁/怎么做/多少钱/什么时候);口语化科普→MY-wechat-writer-default;深度长文→MY-wechat-writer-deep;情感共鸣→MY-wechat-writer-emotion;插画金句→MY-wechat-illustrated-quote(纯图片叙事,走它的独立子流程);硬核攻略→MY-wechat-writer-guide(有态度、下判断的观点体)。**贝拉法管「写给谁 / 痛点 / 落脚点 / 结构 / 标题」,文章类型技能管「用什么腔调和版式落笔」,两层叠用、不冲突。**写完用 MY-wechat-ai-detector 查并清理中英文 AI 腔。正文写进 `board.json`「文章」表(一行:标题 / 正文(longtext)/ 标签 / 状态=已定稿)。正文里按写作技能约定标注配图位 `<!-- IMAGE_N: 描述 -->`(留给后面可选配图用)。**写完别停下问我确认——直接进下一步(排版)自动排版。**\n\n**账号风格(高于文章类型):严格按第 0 步选定账号的「写作风格 / 人设」和范文样本来写**(系统提示「账号」区有该账号的人设与范文);不同号腔调不同,账号风格决定基调,文章类型只决定版式细节,别用千篇一律的通用腔。"
+          "prompt": "**第一步,先读工作台共享方法论 `MY-wechat-shared/references/viral-method.md`(贝拉垂直小号爆文方法论;SOP/打分/提示词细节见同目录 `viral-method-cards.md`)把策略定下来**:生存画像 → 痛点分级(搜索/倾诉/失眠)→ 把宽泛话题切成具体需求 → 60-30-10 内容角色 → 落脚点(读完要记住/相信/转发什么)→ 四步结构(痛点钩子 → 桥接 IP/产品 → 可转发的观点 → 行动)→ 标题(痛点 + 新鲜表达,先多生成再筛到 1)。**第二步,按信息服务攻略风格读 MY-wechat-writer-service 写作技能、严格照它的风格,把上面的策略落成一版可直接发布的公众号长文**(把一件事讲清楚:是什么/适合谁/怎么做/多少钱/什么时候)。**贝拉法管「写给谁 / 痛点 / 落脚点 / 结构 / 标题」,写作技能管「用什么腔调和版式落笔」,两层叠用、不冲突。**写完用 MY-wechat-ai-detector 查并清理中英文 AI 腔。正文写进 `board.json`「文章」表(一行:标题 / 正文(longtext)/ 标签 / 状态=已定稿)。正文里按写作技能约定标注配图位 `<!-- IMAGE_N: 描述 -->`(留给后面可选配图用)。**写完别停下问我确认——直接进下一步(排版)自动排版。**\n\n**账号风格(高于文章类型):严格按第 0 步选定账号的「写作风格 / 人设」和范文样本来写**(系统提示「账号」区有该账号的人设与范文);不同号腔调不同,账号风格决定基调,写作技能只决定版式细节,别用千篇一律的通用腔。"
         },
         {
           "id": "render",
@@ -188,12 +181,6 @@
               "label": "kaiti · 深红棕楷体(默认)",
               "color": "#8B1E22",
               "prompt": "主题色 #8B1E22 深红棕,标题楷体(KaiTi/STKaiti),米白底圆角卡片外框带阴影,引用/高亮块同色系浅底。适合技术深度、严肃长文。按 styles.json 的 kaiti 字段渲染(唯一带 bg_color/body_font/code_font 的皮肤)。"
-            },
-            {
-              "id": "purple",
-              "label": "purple · 紫色经典",
-              "color": "#8064a9",
-              "prompt": "主题色 #8064a9 紫,标题/强调/边框统一紫色系,外框简洁不带圆角阴影。适合科技深度文章。按 styles.json 的 purple 字段换色渲染。"
             },
             {
               "id": "orangeheart",
