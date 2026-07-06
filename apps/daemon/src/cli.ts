@@ -215,6 +215,7 @@ const SUBCOMMAND_MAP = {
   artifacts: runArtifacts,
   account: runAccount,
   accounts: runAccount,
+  studio: runStudio,
   media: runMedia,
   mcp: runMcp,
   research: runResearch,
@@ -2245,6 +2246,346 @@ async function runPluginConfig(rest) {
     console.log(`  ${k.name}${k.required ? ' *' : ''}  [${status}]${k.label ? '  — ' + k.label : ''}`);
   }
   console.log(`\nSet with: od plugin config ${id} --set KEY=VALUE`);
+}
+
+// `od studio` — Media Studio（媒体创作台）: layered articles + deterministic
+// render/publish. Mirrors the 公众号创作台 UI (spec: specs/current/media-studio.md).
+async function runStudio(args) {
+  const flags = parseFlags(args, {
+    string: [
+      'daemon-url', 'platform', 'title', 'topic', 'digest', 'skin', 'cover',
+      'account', 'header-file', 'body-file', 'footer-file', 'file', 'url', 'source', 'angle', 'heat',
+      'keyword', 'feed', 'days', 'desc', 'marker', 'style', 'ratio', 'tags', 'video', 'targets', 'voice',
+    ],
+    boolean: ['json', 'help', 'h', 'as-cover'],
+  });
+  const valueFlags = new Set([
+    '--daemon-url', '--platform', '--title', '--topic', '--digest', '--skin', '--cover',
+    '--account', '--header-file', '--body-file', '--footer-file', '--file', '--url', '--source', '--angle', '--heat',
+    '--keyword', '--feed', '--days', '--desc', '--marker', '--style', '--ratio', '--tags', '--video', '--targets', '--voice',
+  ]);
+  const bare = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--')) { if (valueFlags.has(a)) i++; continue; }
+    bare.push(a);
+  }
+  const sub = bare[0];
+  if (flags.help || flags.h || !sub) {
+    console.log(`Usage:
+  od studio articles [--platform wechat-mp] [--json]      # 文章列表
+  od studio article <id> [--json]                         # 文章详情
+  od studio create --title "<标题>" [--topic "<选题>"] [--body-file <md|->]
+  od studio set <id> [--title|--digest|--skin|--cover|--account ...] [--header-file|--body-file|--footer-file f]
+  od studio render <id> [--skin kaiti|orangeheart|github]        # 渲染并保存
+  od studio render --file <md|->                          # 自由排版,HTML 到 stdout
+  od studio publish <id> --account <accountId>            # 发到公众号草稿箱
+  od studio topics [--json] · od studio topic-add --title "<选题>" [--url u] [--source s]
+  od studio find --keyword "<方向>" [--feed radar|hot|search] [--days 7] [--json]
+  od studio image <id> --desc "<场景描述>" [--marker N|COVER] [--style whiteboard|illustrated|clean] [--ratio 4:3] [--as-cover]`);
+    return;
+  }
+  const platform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'wechat-mp';
+  const root = `${(await pluginDaemonUrl(flags)).replace(/\/$/, '')}/api/media-studio`;
+  const base = `${root}/${encodeURIComponent(platform)}`;
+  const readFileFlag = async (name) => {
+    const v = flags[name];
+    if (typeof v !== 'string' || !v) return undefined;
+    if (v === '-') {
+      const chunks = [];
+      for await (const c of process.stdin) chunks.push(c);
+      return Buffer.concat(chunks).toString('utf8');
+    }
+    const { readFile } = await import('node:fs/promises');
+    return await readFile(v, 'utf8');
+  };
+  const out = (data, text) => {
+    if (flags.json) process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    else if (text) console.log(text);
+  };
+  const fail = async (resp, what) => {
+    console.error(`${what} failed: ${resp.status} ${await resp.text()}`);
+    process.exit(1);
+  };
+
+  if (sub === 'articles') {
+    const resp = await fetch(`${base}/articles`);
+    if (!resp.ok) return fail(resp, 'list articles');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    for (const a of data?.articles ?? []) {
+      console.log(`${a.id}  [${a.status}]  ${a.skin}  ${a.title || '(无标题)'}`);
+    }
+    return;
+  }
+  if (sub === 'article') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio article <id>'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}`);
+    if (!resp.ok) return fail(resp, 'get article');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    const a = data?.article ?? {};
+    console.log(`${a.id}
+标题: ${a.title || '(无标题)'}    状态: ${a.status}    皮肤: ${a.skin}
+选题: ${a.topic ?? '-'}    账号: ${a.accountId ?? '-'}    封面: ${a.coverSource || '-'}
+开头 ${String(a.headerMd ?? '').length} 字 · 正文 ${String(a.bodyMd ?? '').length} 字 · 结尾 ${String(a.footerMd ?? '').length} 字`);
+    return;
+  }
+  if (sub === 'create') {
+    const body = {
+      ...(typeof flags.title === 'string' ? { title: flags.title } : {}),
+      ...(typeof flags.topic === 'string' ? { topic: flags.topic } : {}),
+      ...(typeof flags.skin === 'string' && flags.skin ? { skin: flags.skin } : {}),
+    };
+    const bodyMd = await readFileFlag('body-file');
+    if (bodyMd !== undefined) body.bodyMd = bodyMd;
+    const resp = await fetch(`${base}/articles`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return fail(resp, 'create article');
+    const data = await resp.json();
+    return out(data, `created ${data?.article?.id}  ${data?.article?.title ?? ''}`);
+  }
+  if (sub === 'set') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio set <id> [--title ...]'); process.exit(2); }
+    const patch = {};
+    if (typeof flags.title === 'string') patch.title = flags.title;
+    if (typeof flags.digest === 'string') patch.digest = flags.digest;
+    if (typeof flags.skin === 'string' && flags.skin) patch.skin = flags.skin;
+    if (typeof flags.cover === 'string') patch.coverSource = flags.cover;
+    if (typeof flags.account === 'string') patch.accountId = flags.account;
+    // 平台特有字段进 extra（短视频：话题标签 / 成片路径）。
+    const extra = {};
+    if (typeof flags.tags === 'string') extra.tags = flags.tags;
+    if (typeof flags.video === 'string') extra.videoPath = flags.video;
+    if (Object.keys(extra).length > 0) patch.extra = extra;
+    const headerMd = await readFileFlag('header-file');
+    if (headerMd !== undefined) patch.headerMd = headerMd;
+    const bodyMd = await readFileFlag('body-file');
+    if (bodyMd !== undefined) patch.bodyMd = bodyMd;
+    const footerMd = await readFileFlag('footer-file');
+    if (footerMd !== undefined) patch.footerMd = footerMd;
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    });
+    if (!resp.ok) return fail(resp, 'update article');
+    return out(await resp.json(), `updated ${id}`);
+  }
+  if (sub === 'render') {
+    const id = bare[1];
+    if (typeof flags.file === 'string' && flags.file) {
+      const md = await readFileFlag('file');
+      const resp = await fetch(`${root}/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bodyMd: md ?? '', ...(typeof flags.skin === 'string' && flags.skin ? { skin: flags.skin } : {}) }),
+      });
+      if (!resp.ok) return fail(resp, 'render');
+      const data = await resp.json();
+      if (flags.json) return out(data);
+      process.stdout.write(String(data?.html ?? '') + '\n');
+      return;
+    }
+    if (!id) { console.error('Usage: od studio render <id> | od studio render --file <md|->'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/render`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(typeof flags.skin === 'string' && flags.skin ? { skin: flags.skin } : {}),
+    });
+    if (!resp.ok) return fail(resp, 'render article');
+    const data = await resp.json();
+    return out(data, `rendered ${id} with skin ${data?.skin}${(data?.notes ?? []).length ? `\n- ${(data.notes ?? []).join('\n- ')}` : ''}`);
+  }
+  if (sub === 'publish') {
+    const id = bare[1];
+    const accountId = typeof flags.account === 'string' ? flags.account : '';
+    if (!id || !accountId) { console.error('Usage: od studio publish <id> --account <accountId>'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/publish`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      console.error(`publish failed [${data?.record?.failedStep ?? '?'}]: ${data?.error ?? resp.status}`);
+      process.exit(1);
+    }
+    return out(data, `已发到草稿箱 draft media_id: ${data?.record?.draftMediaId}（去公众号后台确认群发）`);
+  }
+  if (sub === 'topics') {
+    const resp = await fetch(`${base}/topics`);
+    if (!resp.ok) return fail(resp, 'list topics');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    for (const t of data?.topics ?? []) {
+      console.log(`${t.id}  [${t.status}]  ${t.title}${t.source ? `  (${t.source})` : ''}`);
+    }
+    return;
+  }
+  if (sub === 'topic-add') {
+    if (typeof flags.title !== 'string' || !flags.title.trim()) {
+      console.error('Usage: od studio topic-add --title "<选题>" [--url u] [--source s]');
+      process.exit(2);
+    }
+    const resp = await fetch(`${base}/topics`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: flags.title,
+        ...(typeof flags.url === 'string' ? { url: flags.url } : {}),
+        ...(typeof flags.source === 'string' ? { source: flags.source } : {}),
+        ...(typeof flags.angle === 'string' ? { angle: flags.angle } : {}),
+        ...(typeof flags.heat === 'string' ? { heat: flags.heat } : {}),
+      }),
+    });
+    if (!resp.ok) return fail(resp, 'add topic');
+    const data = await resp.json();
+    return out(data, `added topic ${data?.topic?.id}  ${data?.topic?.title}`);
+  }
+  if (sub === 'kb') {
+    const action = bare[1];
+    if (action === 'list' || !action) {
+      const resp = await fetch(`${base}/knowledge`);
+      if (!resp.ok) return fail(resp, 'kb list');
+      const data = await resp.json();
+      if (flags.json) return out(data);
+      for (const k of data?.items ?? []) {
+        console.log(`${k.id}  ${k.name}${k.accountId ? `  (账号 ${k.accountId})` : ''}  ${k.contentMd.length} 字`);
+      }
+      return;
+    }
+    if (action === 'add') {
+      const name = typeof flags.title === 'string' ? flags.title : '';
+      const content = await readFileFlag('file');
+      if (!name || content === undefined) {
+        console.error('Usage: od studio kb add --title "<名称>" --file <md|-> [--account <accountId>]');
+        process.exit(2);
+      }
+      const resp = await fetch(`${base}/knowledge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          contentMd: content,
+          ...(typeof flags.account === 'string' && flags.account ? { accountId: flags.account } : {}),
+        }),
+      });
+      if (!resp.ok) return fail(resp, 'kb add');
+      const data = await resp.json();
+      return out(data, `added knowledge ${data?.item?.id}  ${data?.item?.name}`);
+    }
+    if (action === 'rm') {
+      const id = bare[2];
+      if (!id) { console.error('Usage: od studio kb rm <id>'); process.exit(2); }
+      const resp = await fetch(`${base}/knowledge/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!resp.ok) return fail(resp, 'kb rm');
+      return out(await resp.json(), `removed ${id}`);
+    }
+    console.error('Usage: od studio kb list | add --title ... --file <md|-> | rm <id>');
+    process.exit(2);
+  }
+  if (sub === 'versions') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio versions <articleId> [--json]'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/versions`);
+    if (!resp.ok) return fail(resp, 'versions');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    for (const v of data?.versions ?? []) {
+      console.log(`${v.id}  ${new Date(v.createdAt).toLocaleString()}  ${v.label}  正文 ${v.bodyMd.length} 字`);
+    }
+    return;
+  }
+  if (sub === 'restore') {
+    const id = bare[1];
+    const vid = bare[2];
+    if (!id || !vid) { console.error('Usage: od studio restore <articleId> <versionId>'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/versions/${encodeURIComponent(vid)}/restore`, { method: 'POST' });
+    if (!resp.ok) return fail(resp, 'restore');
+    return out(await resp.json(), `restored ${id} ← ${vid}`);
+  }
+  if (sub === 'tts') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio tts <id> [--voice S_xxx] [--platform short-video]'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(typeof flags.voice === 'string' && flags.voice ? { voice: flags.voice } : {}),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { console.error(`tts failed: ${data?.error ?? resp.status}`); process.exit(1); }
+    return out(data, `配音完成 ${data?.url}`);
+  }
+  if (sub === 'publish-video') {
+    const id = bare[1];
+    const targetsRaw = typeof flags.targets === 'string' ? flags.targets : '';
+    if (!id || !targetsRaw) {
+      console.error('Usage: od studio publish-video <id> --targets douyin:main,xiaohongshu:main [--video /abs/path.mp4]');
+      process.exit(2);
+    }
+    const targets = targetsRaw.split(',').map((pair) => {
+      const [platform, account] = pair.split(':');
+      return { platform: (platform ?? '').trim(), account: (account ?? '').trim() };
+    }).filter((t) => t.platform && t.account);
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/publish-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targets,
+        ...(typeof flags.video === 'string' && flags.video ? { videoPath: flags.video } : {}),
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { console.error(`publish-video failed: ${data?.error ?? resp.status}`); process.exit(1); }
+    if (flags.json) return out(data);
+    for (const r of data?.records ?? []) {
+      console.log(`${r.status === 'ok' ? '✓' : '✗'} ${r.accountName}${r.error ? `  ${r.error.slice(0, 120)}` : ''}`);
+    }
+    return;
+  }
+  if (sub === 'find') {
+    const keyword = typeof flags.keyword === 'string' ? flags.keyword.trim() : '';
+    const feed = typeof flags.feed === 'string' ? flags.feed : 'radar';
+    const endpoint = feed === 'hot' ? 'hot-search' : feed === 'search' ? 'web-search' : 'radar';
+    const resp = await fetch(`${base}/topics/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(keyword ? { keyword } : {}),
+        ...(typeof flags.days === 'string' && flags.days ? { days: Number(flags.days) } : {}),
+      }),
+    });
+    if (!resp.ok) return fail(resp, `find(${feed})`);
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    const tag = (s) => (s.length === 2 ? '⭐' : s[0] === 'trending' ? '🔥' : '🔍');
+    for (const it of data?.items ?? []) {
+      console.log(`${tag(it.signals ?? [])} ${it.title}  —— ${it.account}${it.readNum ? `  阅读 ${it.readNum}` : ''}\n   ${it.url}`);
+    }
+    console.log(`共 ${data?.items?.length ?? 0} 条（${(data?.sources ?? []).join('+') || '无来源'}）`);
+    return;
+  }
+  if (sub === 'image') {
+    const id = bare[1];
+    const desc = typeof flags.desc === 'string' ? flags.desc.trim() : '';
+    if (!id || !desc) { console.error('Usage: od studio image <id> --desc "<场景描述>" [--marker N|COVER]'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        description: desc,
+        ...(typeof flags.marker === 'string' && flags.marker ? { marker: flags.marker } : {}),
+        ...(typeof flags.style === 'string' && flags.style ? { style: flags.style } : {}),
+        ...(typeof flags.ratio === 'string' && flags.ratio ? { ratio: flags.ratio } : {}),
+        ...(flags['as-cover'] ? { asCover: true } : {}),
+      }),
+    });
+    if (!resp.ok) return fail(resp, 'generate image');
+    const data = await resp.json();
+    return out(data, `已生成 ${data?.url}${typeof flags.marker === 'string' && flags.marker ? `（已替换标注 IMAGE_${flags.marker}）` : ''}`);
+  }
+  console.error(`unknown studio subcommand: ${sub} (try: od studio --help)`);
+  process.exit(2);
 }
 
 // `od account` — the PLATFORM-level self-media account center (账号中心).

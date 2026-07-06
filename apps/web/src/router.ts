@@ -16,6 +16,8 @@ export type EntryHomeView =
   | 'tasks'
   | 'plugins'
   | 'accounts'
+  | 'studio'
+  | 'studio-video'
   | 'design-systems'
   | 'integrations';
 
@@ -104,6 +106,12 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'accounts') {
     return { kind: 'home', view: 'accounts' };
   }
+  // 创作台 — Media Studio (spec: specs/current/media-studio.md).
+  // /studio → 公众号；/studio/short-video → 短视频。
+  if (parts[0] === 'studio') {
+    if (parts[1] === 'short-video') return { kind: 'home', view: 'studio-video' };
+    return { kind: 'home', view: 'studio' };
+  }
   if (parts[0] === 'integrations') {
     return { kind: 'home', view: 'integrations' };
   }
@@ -145,6 +153,8 @@ export function buildPath(route: Route): string {
     if (route.view === 'tasks') return '/automations';
     if (route.view === 'plugins') return '/plugins';
     if (route.view === 'accounts') return '/accounts';
+    if (route.view === 'studio') return '/studio';
+    if (route.view === 'studio-video') return '/studio/short-video';
     if (route.view === 'design-systems') return '/design-systems';
     if (route.view === 'integrations') return '/integrations';
     return '/';

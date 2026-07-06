@@ -1,0 +1,1570 @@
+// 公众号创作台（Media Studio）— spec: specs/current/media-studio.md
+//
+// 四个子导航（选题/写作/排版/发布）围绕同一个持久「文章」实体，既能各自
+// 独立使用（自由排版、手动选题），又天然串联（选题→写作→排版→发布）。
+// 排版与发布是确定性产品代码（daemon 渲染器/发布器），不经过智能体。
+//
+// 文案约定：本模块为客户定制（纯中文交付），文案直接内联，不进 i18n 矩阵。
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  AccountProfileView,
+  MediaArticle,
+  MediaArticleSummary,
+  MediaPublishRecord,
+  MediaSnippet,
+  MediaTopic,
+  StudioAiTaskKind,
+  UpdateMediaArticleRequest,
+} from '@open-design/contracts';
+import { Icon } from '../Icon';
+import { fetchPlatformAccounts } from '../../providers/daemon';
+import {
+  createStudioAiTask,
+  createStudioArticle,
+  createStudioSnippet,
+  createStudioTopic,
+  deleteStudioArticle,
+  deleteStudioSnippet,
+  deleteStudioTopic,
+  fetchStudioArticle,
+  fetchStudioArticles,
+  fetchStudioPublishes,
+  fetchStudioSnippets,
+  fetchStudioTopics,
+  generateArticleImage,
+  publishStudioArticle,
+  renderStudioArticle,
+  renderStudioPreview,
+  updateStudioArticle,
+  uploadStudioAsset,
+} from '../../providers/media-studio';
+import { StudioAiPanel, type StudioAiTask } from './StudioAiPanel';
+import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
+import { TopicsTab } from './TopicsTab';
+import styles from './MediaStudio.module.css';
+
+const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
+
+const PLATFORM = 'wechat-mp';
+const LAST_ARTICLE_KEY = 'open-design:studio:last-article';
+
+type StudioTab = 'topics' | 'write' | 'cover' | 'images' | 'publish' | 'list' | 'knowledge';
+
+const TABS: Array<{ id: StudioTab; label: string; step: string; optional?: boolean }> = [
+  { id: 'topics', label: '选题', step: '1' },
+  { id: 'write', label: '写作', step: '2' },
+  { id: 'cover', label: '封面', step: '3' },
+  { id: 'images', label: '配图', step: '4', optional: true },
+  { id: 'publish', label: '发布', step: '5' },
+];
+
+/** 写作风格固定为「信息服务攻略」（2026-07-06 用户拍板只留一种）。 */
+const FIXED_ARTICLE_TYPE = '信息服务攻略';
+const WORD_COUNTS = ['800-1200', '1500-2000', '2500-3500', '4000 以上'];
+
+/** 生图模型入口——将来接新模型往这里加一行即可（id 透传给 daemon 分发）。 */
+const IMAGE_MODELS: Array<{ id: string; label: string }> = [
+  { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
+  { id: 'gemini', label: 'Gemini（备用）' },
+];
+
+/** 正文里已生成/已插入的图片：![alt](src)。 */
+const BODY_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+
+interface BodyImage {
+  alt: string;
+  src: string;
+  md: string;
+}
+
+function parseBodyImages(bodyMd: string): BodyImage[] {
+  const out: BodyImage[] = [];
+  for (const m of bodyMd.matchAll(BODY_IMAGE_RE)) {
+    out.push({ alt: m[1] ?? '', src: m[2] ?? '', md: m[0] ?? '' });
+  }
+  return out;
+}
+
+const IMAGE_STYLES: Array<{ id: string; label: string }> = [
+  { id: 'whiteboard', label: '白板手绘（默认）' },
+  { id: 'illustrated', label: '暖插画（带文字）' },
+  { id: 'clean', label: '纯净插画（无文字）' },
+];
+
+/** 正文里的配图标注：<!-- IMAGE_1: 描述, 4:3 --> / <!-- IMAGE_COVER: 描述, 16:9 --> */
+const IMAGE_MARKER_RE = /<!--\s*IMAGE_([A-Za-z0-9]+)\s*:\s*([\s\S]*?)-->/g;
+
+interface ImageMarker {
+  marker: string;
+  description: string;
+  ratio: string;
+}
+
+function parseImageMarkers(bodyMd: string): ImageMarker[] {
+  const out: ImageMarker[] = [];
+  for (const m of bodyMd.matchAll(IMAGE_MARKER_RE)) {
+    const raw = (m[2] ?? '').trim();
+    const ratioMatch = raw.match(/[,，]\s*(\d+:\d+)\s*$/);
+    out.push({
+      marker: m[1] ?? '',
+      description: ratioMatch ? raw.slice(0, ratioMatch.index).trim() : raw,
+      ratio: ratioMatch?.[1] ?? (String(m[1]).toUpperCase() === 'COVER' ? '16:9' : '4:3'),
+    });
+  }
+  return out;
+}
+
+const SKINS: Array<{ id: string; name: string; color: string; hint: string }> = [
+  { id: 'kaiti', name: 'kaiti · 深红棕楷体', color: '#8B1E22', hint: '技术/严肃长文（默认）' },
+  { id: 'orangeheart', name: 'orangeheart · 橙心暖色', color: '#ef7060', hint: '热点/情感' },
+  { id: 'github', name: 'github · 代码风', color: '#333333', hint: '教程/代码' },
+];
+
+const STATUS_LABEL: Record<MediaArticle['status'], { text: string; chip: string }> = {
+  writing: { text: '写作中', chip: 'chipAmber' },
+  rendered: { text: '已排版', chip: 'chipBlue' },
+  published: { text: '已发草稿', chip: 'chipGreen' },
+};
+
+/** 公众号标题上限 64 字节（约 21 个中文字符）——超了 draft/add 报 45166。 */
+function titleBytes(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
+function escapeHtml(s: string): string {
+  return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+/** 预览外壳：手机宽度白底 + 标题区，内容就是 daemon 渲染的 <section> 片段。 */
+function previewDoc(title: string, fragment: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+  body{margin:0;background:#ededed;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI',sans-serif;}
+  .wrap{max-width:414px;margin:0 auto;background:#fff;min-height:100vh;padding:22px 16px 48px;box-sizing:border-box;}
+  h1.__t{font-size:22px;line-height:1.4;margin:0 0 6px;font-weight:700;color:#111;}
+  .__meta{font-size:13px;color:#a0a0a0;margin-bottom:18px;}
+  img{max-width:100%;}
+  </style></head><body><div class="wrap">${
+    title ? `<h1 class="__t">${escapeHtml(title)}</h1><div class="__meta">公众号预览 · 实时</div>` : ''
+  }${fragment}</div></body></html>`;
+}
+
+function timeLabel(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function MediaStudioView(): JSX.Element {
+  const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
+  const [article, setArticle] = useState<MediaArticle | null>(null);
+  const [tab, setTab] = useState<StudioTab>('write');
+  const [topics, setTopics] = useState<MediaTopic[]>([]);
+  const [snippets, setSnippets] = useState<MediaSnippet[]>([]);
+  const [accounts, setAccounts] = useState<AccountProfileView[]>([]);
+  const [previewHtml, setPreviewHtml] = useState('');
+  const [previewNotes, setPreviewNotes] = useState<string[]>([]);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
+  const [publishing, setPublishing] = useState(false);
+  const [publishNotice, setPublishNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [renderNotice, setRenderNotice] = useState<string | null>(null);
+  // AI 任务折叠面板（每步的智能体动作共用一个面板，一次跑一个）
+  const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
+  const aiSeqRef = useRef(0);
+  const [aiWordCount, setAiWordCount] = useState('1500-2000');
+  const [reviseNote, setReviseNote] = useState('');
+  const [imageBusy, setImageBusy] = useState<string | null>(null);
+  const [snippetDraft, setSnippetDraft] = useState<{ slot: 'header' | 'footer'; name: string } | null>(null);
+  const [snippetManage, setSnippetManage] = useState<'header' | 'footer' | null>(null);
+  const [imageNotice, setImageNotice] = useState<string | null>(null);
+
+  const articleRef = useRef<MediaArticle | null>(null);
+  articleRef.current = article;
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingRef = useRef<{ id: string; patch: UpdateMediaArticleRequest } | null>(null);
+
+  // ---- data loading ----
+  const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
+    const list = (await fetchStudioArticles(PLATFORM)) ?? [];
+    setArticles(list);
+    return list;
+  }, []);
+
+  const selectArticle = useCallback(async (id: string | null) => {
+    if (id) {
+      const a = await fetchStudioArticle(PLATFORM, id);
+      setArticle(a);
+      if (a) window.localStorage.setItem(LAST_ARTICLE_KEY, a.id);
+    } else {
+      setArticle(null);
+      window.localStorage.removeItem(LAST_ARTICLE_KEY);
+    }
+    setPublishNotice(null);
+    setRenderNotice(null);
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const list = await refreshArticles();
+      const remembered = window.localStorage.getItem(LAST_ARTICLE_KEY);
+      const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
+      if (pick) await selectArticle(pick.id);
+      else setTab('topics');
+      const [topicList, snippetList, accountsResp] = await Promise.all([
+        fetchStudioTopics(PLATFORM),
+        fetchStudioSnippets(PLATFORM),
+        fetchPlatformAccounts(),
+      ]);
+      setTopics(topicList ?? []);
+      setSnippets(snippetList);
+      const platformAccounts = accountsResp?.platforms.find((p) => p.id === PLATFORM)?.accounts ?? [];
+      setAccounts(platformAccounts);
+    })();
+  }, [refreshArticles, selectArticle]);
+
+  // ---- autosave ----
+  const flushSave = useCallback(async () => {
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (!pending || Object.keys(pending.patch).length === 0) return;
+    const updated = await updateStudioArticle(PLATFORM, pending.id, pending.patch);
+    if (!updated) {
+      setSaveState('error');
+      return;
+    }
+    setSaveState('saved');
+    setArticle((a) =>
+      a && a.id === updated.id ? { ...a, status: updated.status, updatedAt: updated.updatedAt } : a,
+    );
+    setArticles((list) =>
+      list
+        ? list.map((s) =>
+            s.id === updated.id
+              ? { ...s, title: updated.title, skin: updated.skin, status: updated.status, updatedAt: updated.updatedAt }
+              : s,
+          )
+        : list,
+    );
+  }, []);
+
+  const editArticle = useCallback(
+    (patch: UpdateMediaArticleRequest) => {
+      const current = articleRef.current;
+      if (!current) return;
+      setArticle((a) => (a ? ({ ...a, ...patch } as MediaArticle) : a));
+      const pending = pendingRef.current;
+      pendingRef.current =
+        pending && pending.id === current.id
+          ? { id: current.id, patch: { ...pending.patch, ...patch } }
+          : { id: current.id, patch };
+      setSaveState('saving');
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => void flushSave(), 700);
+    },
+    [flushSave],
+  );
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    void flushSave();
+  }, [flushSave]);
+
+  // ---- live preview（防抖调无状态渲染；写作页所见即排版产物） ----
+  const previewSource = article
+    ? { skin: article.skin, headerMd: article.headerMd, bodyMd: article.bodyMd, footerMd: article.footerMd }
+    : null;
+  const previewSourceRef = useRef(previewSource);
+  previewSourceRef.current = previewSource;
+  const previewKey = previewSource ? JSON.stringify(previewSource) : '';
+  useEffect(() => {
+    if (!previewKey) {
+      setPreviewHtml('');
+      setPreviewNotes([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const src = previewSourceRef.current;
+      if (!src) return;
+      void (async () => {
+        const r = await renderStudioPreview({ platform: PLATFORM, ...src });
+        if (r) {
+          setPreviewHtml(r.html);
+          setPreviewNotes(r.notes);
+        }
+      })();
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [previewKey]);
+
+  // ---- publish records ----
+  useEffect(() => {
+    if (tab !== 'publish' || !article) return;
+    void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
+  }, [tab, article?.id]);
+
+  // ---- AI 任务（每步的智能体动作） ----
+  const startAiTask = useCallback(
+    async (kind: StudioAiTaskKind, input?: { note?: string; articleType?: string; wordCount?: string }) => {
+      await flushSave();
+      const current = articleRef.current;
+      const created = await createStudioAiTask(PLATFORM, {
+        kind,
+        ...(kind !== 'topics' && current ? { articleId: current.id } : {}),
+        input: {
+          ...(input?.note ? { note: input.note } : {}),
+          ...(input?.articleType ? { articleType: input.articleType } : {}),
+          ...(input?.wordCount ? { wordCount: input.wordCount } : {}),
+          ...(current?.accountId ? { accountId: current.accountId } : {}),
+        },
+      });
+      if ('error' in created) {
+        window.alert(created.error);
+        return;
+      }
+      aiSeqRef.current += 1;
+      setAiTask({ ...created, seq: aiSeqRef.current });
+    },
+    [flushSave],
+  );
+
+  const refreshAfterAiTask = useCallback(() => {
+    void refreshArticles();
+    void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+    const current = articleRef.current;
+    if (current) {
+      void fetchStudioArticle(PLATFORM, current.id).then((a) => {
+        if (a && articleRef.current?.id === a.id) setArticle(a);
+      });
+    }
+  }, [refreshArticles]);
+
+  // ---- actions ----
+  async function handleCreateArticle(fromTopic?: MediaTopic) {
+    await flushSave();
+    const created = await createStudioArticle(PLATFORM, {
+      ...(fromTopic ? { fromTopicId: fromTopic.id, title: fromTopic.title, topic: fromTopic.title } : {}),
+      // 账号（人设）在创建时就绑定——AI 写作从第一版就按人设写。
+      ...(accounts[0] ? { accountId: accounts[0].id } : {}),
+    });
+    if (!created) return;
+    await refreshArticles();
+    setArticle(created);
+    window.localStorage.setItem(LAST_ARTICLE_KEY, created.id);
+    setTab('write');
+    if (fromTopic) {
+      setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
+    }
+  }
+
+  async function handleDeleteArticle() {
+    if (!article) return;
+    if (!window.confirm(`删除文章「${article.title || '(无标题)'}」？发布记录会一并删除。`)) return;
+    pendingRef.current = null;
+    await deleteStudioArticle(PLATFORM, article.id);
+    const list = await refreshArticles();
+    await selectArticle(list[0]?.id ?? null);
+  }
+
+  async function handleSaveRender() {
+    if (!article) return;
+    await flushSave();
+    const r = await renderStudioArticle(PLATFORM, article.id, article.skin);
+    if (r?.article) {
+      setArticle(r.article);
+      setRenderNotice(`已保存排版（${SKINS.find((s) => s.id === r.skin)?.name ?? r.skin}）`);
+      await refreshArticles();
+    } else {
+      setRenderNotice('保存排版失败');
+    }
+  }
+
+  async function handleCopyHtml() {
+    if (!previewHtml) return;
+    try {
+      await navigator.clipboard.writeText(previewHtml);
+      setRenderNotice('已复制 HTML 到剪贴板');
+    } catch {
+      setRenderNotice('复制失败——浏览器未授权剪贴板');
+    }
+  }
+
+  async function handlePublish() {
+    if (!article || publishing) return;
+    const accountId = article.accountId ?? accounts[0]?.id ?? '';
+    if (!accountId) {
+      setPublishNotice({ ok: false, text: '还没有公众号账号——先去「账号」页添加一个（含 AppID/AppSecret）' });
+      return;
+    }
+    setPublishing(true);
+    setPublishNotice(null);
+    await flushSave();
+    const result = await publishStudioArticle(PLATFORM, article.id, accountId);
+    setPublishing(false);
+    if (result.error) {
+      setPublishNotice({ ok: false, text: result.error });
+    } else if (result.record) {
+      setPublishNotice({
+        ok: true,
+        text: `已发到草稿箱（media_id: ${result.record.draftMediaId}）。去公众号后台确认群发——这里绝不自动正式发布。`,
+      });
+      if (result.article) setArticle(result.article);
+      await refreshArticles();
+    }
+    if (article) setPublishes(await fetchStudioPublishes(PLATFORM, article.id));
+  }
+
+
+  // ---- sub renders ----
+  const activeSummaryStatus = article ? STATUS_LABEL[article.status] : null;
+
+  function renderSnippetControls(slot: 'header' | 'footer', value: string) {
+    const slotSnippets = snippets.filter((sn) => sn.slot === slot);
+    const slotName = slot === 'header' ? '开头' : '结尾';
+    const draftOpen = snippetDraft?.slot === slot;
+    return (
+      <>
+        <div className={c('row')}>
+          {slotSnippets.length > 0 ? (
+            <select
+              className={c('select')}
+              value=""
+              onChange={(e) => {
+                const sn = slotSnippets.find((x) => x.id === e.target.value);
+                if (sn) editArticle(slot === 'header' ? { headerMd: sn.contentMd } : { footerMd: sn.contentMd });
+              }}
+            >
+              <option value="" disabled>
+                插入固定{slotName}…
+              </option>
+              {slotSnippets.map((sn) => (
+                <option key={sn.id} value={sn.id}>
+                  {sn.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <label className={c('btn')} style={{ cursor: 'pointer' }} title={`上传图片插入固定${slotName}`}>
+            <Icon name="upload" size={14} /> 插入图片
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                const current = articleRef.current;
+                if (!file || !current) return;
+                void (async () => {
+                  const result = await uploadStudioAsset(PLATFORM, current.id, file);
+                  if (result.error) {
+                    setImageNotice(result.error);
+                    return;
+                  }
+                  if (result.url) {
+                    const md = `![固定${slotName}图](${result.url})`;
+                    if (slot === 'header') {
+                      editArticle({ headerMd: current.headerMd ? `${current.headerMd}\n\n${md}` : md });
+                    } else {
+                      editArticle({ footerMd: current.footerMd ? `${current.footerMd}\n\n${md}` : md });
+                    }
+                  }
+                })();
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className={c('btn')}
+            disabled={!value.trim()}
+            onClick={() => setSnippetDraft(draftOpen ? null : { slot, name: '' })}
+          >
+            存为片段
+          </button>
+          {slotSnippets.length > 0 ? (
+            <button
+              type="button"
+              className={c('btn')}
+              onClick={() => setSnippetManage(snippetManage === slot ? null : slot)}
+            >
+              管理（{slotSnippets.length}）
+            </button>
+          ) : null}
+        </div>
+        {draftOpen ? (
+          <div className={c('row')}>
+            <input
+              className={`${c('input')} ${c('grow')}`}
+              value={snippetDraft?.name ?? ''}
+              placeholder={`给这段固定${slotName}起个名字…`}
+              autoFocus
+              onChange={(e) => setSnippetDraft({ slot, name: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && snippetDraft?.name.trim()) void saveSnippetDraft(slot, value);
+                if (e.key === 'Escape') setSnippetDraft(null);
+              }}
+            />
+            <button
+              type="button"
+              className={`${c('btn')} ${c('btnPrimary')}`}
+              disabled={!snippetDraft?.name.trim()}
+              onClick={() => void saveSnippetDraft(slot, value)}
+            >
+              保存
+            </button>
+            <button type="button" className={c('btn')} onClick={() => setSnippetDraft(null)}>
+              取消
+            </button>
+          </div>
+        ) : null}
+        {snippetManage === slot ? (
+          <div className={c('records')}>
+            {slotSnippets.map((sn) => (
+              <div key={sn.id} className={c('record')}>
+                <strong>{sn.name}</strong>
+                <span className={c('cardHint')}>{sn.contentMd.replace(/\s+/g, '').length} 字</span>
+                <span className={c('headSpacer')} />
+                <button
+                  type="button"
+                  className={`${c('btn')} ${c('btnDanger')}`}
+                  onClick={async () => {
+                    if (await deleteStudioSnippet(PLATFORM, sn.id)) {
+                      setSnippets((list) => list.filter((x) => x.id !== sn.id));
+                    }
+                  }}
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  async function saveSnippetDraft(slot: 'header' | 'footer', content: string) {
+    const name = snippetDraft?.name.trim();
+    if (!name) return;
+    const created = await createStudioSnippet(PLATFORM, { slot, name, contentMd: content });
+    if (created) {
+      setSnippets((list) => [created, ...list]);
+      setSnippetDraft(null);
+    }
+  }
+
+  function renderTopicsTab() {
+    return (
+      <TopicsTab
+        platform={PLATFORM}
+        aiOnly
+        topics={topics}
+        onAdd={async (draft) => {
+          const created = await createStudioTopic(PLATFORM, draft);
+          if (created) setTopics((list) => [created, ...list]);
+        }}
+        onDelete={async (id) => {
+          if (await deleteStudioTopic(PLATFORM, id)) {
+            setTopics((list) => list.filter((t) => t.id !== id));
+          }
+        }}
+        onWrite={(topic) => void handleCreateArticle(topic)}
+        onAiFind={(note) => void startAiTask('topics', { note })}
+        aiBusy={aiTask !== null}
+      />
+    );
+  }
+
+  function renderWriteTab() {
+    if (!article) {
+      return (
+        <div className={c('empty')}>
+          <div>还没有文章。从「选题」挑一个开始，或直接新建一篇空白文章。</div>
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void handleCreateArticle()}>
+            <Icon name="plus" size={14} /> 新建文章
+          </button>
+        </div>
+      );
+    }
+    return (
+      <>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            AI 写作
+            <span className={c('cardHint')}>一键全流程：先调研素材 → 按人设写（信息服务风格）→ 自动清 AI 腔；选个目标字数即可</span>
+          </div>
+          <div className={c('row')}>
+            <select className={c('select')} value={aiWordCount} title="目标字数" onChange={(e) => setAiWordCount(e.target.value)}>
+              {WORD_COUNTS.map((t) => (
+                <option key={t} value={t}>
+                  {t} 字
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className={`${c('btn')} ${c('btnPrimary')}`}
+              onClick={() => void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount })}
+            >
+              <Icon name="sparkles" size={14} /> AI 写一版
+            </button>
+
+          </div>
+          <div className={c('row')}>
+            <input
+              className={`${c('input')} ${c('grow')}`}
+              value={reviseNote}
+              placeholder="想怎么改？例：第二段太啰嗦、标题换一个、结尾加行动引导…"
+              onChange={(e) => setReviseNote(e.target.value)}
+            />
+            <button
+              type="button"
+              className={c('btn')}
+              disabled={!reviseNote.trim()}
+              onClick={() => {
+                void startAiTask('revise', { note: reviseNote.trim() });
+                setReviseNote('');
+              }}
+            >
+              按我说的改
+            </button>
+          </div>
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            标题
+            <span className={c('cardHint')} style={titleBytes(article.title) > 64 ? { color: '#b0342c', fontWeight: 600 } : undefined}>
+              只进公众号标题栏 · {titleBytes(article.title)}/64 字节{titleBytes(article.title) > 64 ? '（超了，发布会失败）' : ''}
+            </span>
+          </div>
+          <input
+            className={c('input')}
+            value={article.title}
+            placeholder="文章标题…"
+            onChange={(e) => editArticle({ title: e.target.value })}
+          />
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            固定开头
+            <span className={c('cardHint')}>可选 · 文字+图片都行（关注引导图/栏目头图），可存成片段跨文章复用</span>
+          </div>
+          <textarea
+            className={c('textarea')}
+            value={article.headerMd}
+            placeholder="例：你好，我是 XX。这是「XX 栏目」第 N 篇…"
+            onChange={(e) => editArticle({ headerMd: e.target.value })}
+          />
+          {renderSnippetControls('header', article.headerMd)}
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            正文（Markdown）
+            <span className={c('cardHint')}>
+              ## 小节标题 · **加粗** · &gt; 引用 · 1. 列表 · ![图](地址) · {article.bodyMd.length} 字
+            </span>
+          </div>
+          <textarea
+            className={`${c('textarea')} ${c('textareaLarge')}`}
+            value={article.bodyMd}
+            placeholder={'从导语直接开始写（不要在开头再写一遍大标题）。\n\n## 第一个小节\n\n正文…'}
+            onChange={(e) => editArticle({ bodyMd: e.target.value })}
+          />
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            固定结尾
+            <span className={c('cardHint')}>可选 · 文字+图片都行（二维码/签名档/引导在看图），可存成片段跨文章复用</span>
+          </div>
+          <textarea
+            className={c('textarea')}
+            value={article.footerMd}
+            placeholder="例：> 关注我，每周三篇实战干货。"
+            onChange={(e) => editArticle({ footerMd: e.target.value })}
+          />
+          {renderSnippetControls('footer', article.footerMd)}
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            排版皮肤
+            <span className={c('cardHint')}>右侧预览就是最终草稿的样子（所见即所发）；切换即时生效</span>
+          </div>
+          <div className={c('skinGrid')}>
+            {SKINS.map((s) => {
+              // 已下架皮肤（如 purple）的旧文章：渲染器回退 kaiti，高亮也跟着回退。
+              const activeSkin = SKINS.some((x) => x.id === article.skin) ? article.skin : 'kaiti';
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`${c('skinCard')}${activeSkin === s.id ? ` ${c('skinCardActive')}` : ''}`}
+                  onClick={() => editArticle({ skin: s.id })}
+                >
+                  <span className={c('skinSwatch')} style={{ background: s.color }} />
+                  <span className={c('skinName')}>{s.name}</span>
+                  <span className={c('skinHint')}>{s.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className={c('row')}>
+            <button type="button" className={c('btn')} onClick={() => void handleSaveRender()}>
+              保存排版
+            </button>
+            <button type="button" className={c('btn')} disabled={!previewHtml} onClick={() => void handleCopyHtml()}>
+              复制 HTML
+            </button>
+            {renderNotice ? <span className={c('saveHint')}>{renderNotice}</span> : null}
+          </div>
+        </div>
+        <VersionsCard
+          platform={PLATFORM}
+          article={article}
+          onRestored={(a) => {
+            pendingRef.current = null;
+            setArticle(a);
+            void refreshArticles();
+          }}
+        />
+        <div className={c('row')}>
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => setTab('cover')}>
+            下一步：封面 <Icon name="chevron-right" size={14} />
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  function renderCoverTab() {
+    if (!article) {
+      return (
+        <div className={c('empty')}>
+          <div>封面属于某篇文章——先去「写作」新建一篇。</div>
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void handleCreateArticle()}>
+            <Icon name="plus" size={14} /> 新建文章
+          </button>
+        </div>
+      );
+    }
+    const coverMarker = parseImageMarkers(article.bodyMd).find((m) => m.marker.toUpperCase() === 'COVER') ?? null;
+    const coverSnippets = snippets.filter((s) => s.slot === 'cover');
+    const generateCover = async (desc: string, style: string, referenceImage: string, model: string) => {
+      setImageBusy('COVER');
+      setImageNotice(null);
+      const result = await generateArticleImage(PLATFORM, article.id, {
+        description: desc,
+        style,
+        model,
+        ratio: '16:9',
+        asCover: true,
+        ...(referenceImage.trim() ? { referenceImage: referenceImage.trim() } : {}),
+      });
+      setImageBusy(null);
+      if ('error' in result) {
+        setImageNotice(result.error);
+        return;
+      }
+      setArticle(result.article);
+      setImageNotice('封面已生成并设置为当前封面');
+    };
+    const saveCoverToLibrary = async () => {
+      if (!article.coverSource) return;
+      const name = window.prompt('给这张封面起个名字（存入封面库，后续文章可复用）：', article.title.slice(0, 12));
+      if (!name || !name.trim()) return;
+      const created = await createStudioSnippet(PLATFORM, {
+        slot: 'cover',
+        name: name.trim(),
+        contentMd: article.coverSource,
+      });
+      if (created) {
+        setSnippets((list) => [created, ...list]);
+        setImageNotice(`封面「${created.name}」已存入封面库`);
+      }
+    };
+    return (
+      <>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            当前封面（16:9 · 发布必需）
+            <span className={c('cardHint')}>
+              {article.coverSource ? '' : '还没有封面——公众号草稿必须有封面，先在下面生成或从封面库挑一张'}
+            </span>
+          </div>
+          {article.coverSource ? (
+            <div className={c('row')}>
+              <img className={c('coverPreview')} src={article.coverSource} alt="当前封面" />
+              <div className={c('row')}>
+                <button type="button" className={c('btn')} onClick={() => void saveCoverToLibrary()}>
+                  存入封面库
+                </button>
+                <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => editArticle({ coverSource: '' })}>
+                  移除
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className={c('row')}>
+            <label className={c('btn')} style={{ cursor: 'pointer' }}>
+              <Icon name="upload" size={14} /> 用本机图片作封面
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  void (async () => {
+                    setImageNotice('上传中…');
+                    const result = await uploadStudioAsset(PLATFORM, article.id, file);
+                    if (result.error) setImageNotice(result.error);
+                    else if (result.url) {
+                      editArticle({ coverSource: result.url });
+                      setImageNotice('本机图片已设为封面');
+                    }
+                  })();
+                }}
+              />
+            </label>
+          </div>
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            生成封面
+            <span className={c('cardHint')}>提示词可自由改；给参考图（URL 或本机绝对路径）可让画面跟着参考走</span>
+          </div>
+          <CoverGenerator
+            initialDescription={coverMarker?.description ?? article.title}
+            busy={imageBusy === 'COVER'}
+            onGenerate={(desc, style, ref, model) => void generateCover(desc, style, ref, model)}
+            onUploadReference={async (file) => {
+              const result = await uploadStudioAsset(PLATFORM, article.id, file);
+              if (result.error) {
+                setImageNotice(result.error);
+                return null;
+              }
+              return result.url ?? null;
+            }}
+          />
+        </div>
+        {coverSnippets.length > 0 ? (
+          <div className={c('card')}>
+            <div className={c('cardLabel')}>
+              封面库（{coverSnippets.length}）
+              <span className={c('cardHint')}>沉淀下来的好封面，点「用这张」直接设为当前封面</span>
+            </div>
+            <div className={c('coverGrid')}>
+              {coverSnippets.map((s) => (
+                <div key={s.id} className={c('coverCard')}>
+                  <img className={c('coverThumb')} src={s.contentMd} alt={s.name} />
+                  <div className={c('row')}>
+                    <span className={c('grow')}>{s.name}</span>
+                    <button type="button" className={c('btn')} onClick={() => editArticle({ coverSource: s.contentMd })}>
+                      用这张
+                    </button>
+                    <button
+                      type="button"
+                      className={`${c('btn')} ${c('btnDanger')}`}
+                      onClick={async () => {
+                        if (await deleteStudioSnippet(PLATFORM, s.id)) {
+                          setSnippets((list) => list.filter((x) => x.id !== s.id));
+                        }
+                      }}
+                    >
+                      删
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {imageNotice ? (
+          <div className={`${c('notice')} ${imageNotice.includes('失败') || imageNotice.includes('缺少') ? c('noticeErr') : c('noticeOk')}`}>
+            {imageNotice}
+          </div>
+        ) : null}
+        <div className={c('row')}>
+          <button type="button" className={c('btn')} onClick={() => setTab('images')}>
+            下一步：配图（可选） <Icon name="chevron-right" size={14} />
+          </button>
+          <button
+            type="button"
+            className={`${c('btn')} ${c('btnPrimary')}`}
+            disabled={!article.coverSource}
+            onClick={() => setTab('publish')}
+            title={article.coverSource ? '' : '先生成或选择封面'}
+          >
+            直接去发布 <Icon name="chevron-right" size={14} />
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  function renderImagesTab() {
+    if (!article) {
+      return (
+        <div className={c('empty')}>
+          <div>配图需要先有文章——去「写作」新建一篇（AI 写稿会自动带上配图标注）。</div>
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void handleCreateArticle()}>
+            <Icon name="plus" size={14} /> 新建文章
+          </button>
+        </div>
+      );
+    }
+    const bodyMarkers = parseImageMarkers(article.bodyMd).filter((m) => m.marker.toUpperCase() !== 'COVER');
+    const bodyImages = parseBodyImages(article.bodyMd);
+    const generate = async (opts: { marker: string; description: string; ratio?: string; style: string; model: string }) => {
+      setImageBusy(opts.marker);
+      setImageNotice(null);
+      const result = await generateArticleImage(PLATFORM, article.id, {
+        description: opts.description,
+        style: opts.style,
+        model: opts.model,
+        ...(opts.ratio ? { ratio: opts.ratio } : {}),
+        marker: opts.marker,
+      });
+      setImageBusy(null);
+      if ('error' in result) {
+        setImageNotice(result.error);
+        return;
+      }
+      setArticle(result.article);
+      setImageNotice(`图 ${opts.marker} 已生成并插入正文（右侧预览可见）`);
+    };
+    // 对已生成的图：改提示词重生成（原位替换）。
+    const regenerate = async (img: BodyImage, description: string, style: string, model: string) => {
+      setImageBusy(img.src);
+      setImageNotice(null);
+      const result = await generateArticleImage(PLATFORM, article.id, {
+        description,
+        style,
+        model,
+        ratio: '4:3',
+      });
+      setImageBusy(null);
+      if ('error' in result) {
+        setImageNotice(result.error);
+        return;
+      }
+      if (result.url) {
+        const current = articleRef.current;
+        if (!current) return;
+        editArticle({ bodyMd: current.bodyMd.replace(img.md, `![${description.slice(0, 40)}](${result.url})`) });
+        setImageNotice('已重新生成并替换（右侧预览可见）');
+      }
+    };
+    const removeImage = (img: BodyImage) => {
+      const current = articleRef.current;
+      if (!current) return;
+      const next = current.bodyMd.replace(img.md, '').replace(/\n{3,}/g, '\n\n');
+      editArticle({ bodyMd: next });
+      setImageNotice('已从正文移除（图片文件保留在资产目录，可随时重插）');
+    };
+    return (
+      <>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            正文配图位（{bodyMarkers.length}）· 可选
+            <span className={c('cardHint')}>来自正文的 &lt;!-- IMAGE_N --&gt; 标注；生成后自动替换成图片、预览立即可见。不配图也能发。</span>
+          </div>
+          {bodyMarkers.length === 0 ? (
+            <div className={c('cardHint')}>
+              正文里没有配图标注。AI 写稿会自动标注；手写的话在正文插入一行：&lt;!-- IMAGE_1: 场景描述, 4:3 --&gt;
+            </div>
+          ) : (
+            bodyMarkers.map((m) => (
+              <MarkerRow
+                key={m.marker}
+                marker={m}
+                busy={imageBusy === m.marker}
+                onGenerate={(desc, style, model) =>
+                  void generate({ marker: m.marker, description: desc, ratio: m.ratio, style, model })
+                }
+              />
+            ))
+          )}
+        </div>
+        {bodyImages.length > 0 ? (
+          <div className={c('card')}>
+            <div className={c('cardLabel')}>
+              已生成的图（{bodyImages.length}）
+              <span className={c('cardHint')}>不满意就改提示词重生成（原位替换），或直接移除</span>
+            </div>
+            {bodyImages.map((img) => (
+              <GeneratedImageRow
+                key={img.src}
+                image={img}
+                busy={imageBusy === img.src}
+                onRegenerate={(desc, style, model) => void regenerate(img, desc, style, model)}
+                onRemove={() => removeImage(img)}
+              />
+            ))}
+          </div>
+        ) : null}
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            上传本机图片插入正文
+            <span className={c('cardHint')}>直接选图，插到正文末尾（预览可见；发布时自动上传微信）</span>
+          </div>
+          <label className={c('btn')} style={{ cursor: 'pointer', alignSelf: 'flex-start' }}>
+            <Icon name="upload" size={14} /> 选择图片
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                void (async () => {
+                  setImageNotice('上传中…');
+                  const result = await uploadStudioAsset(PLATFORM, article.id, file);
+                  if (result.error) setImageNotice(result.error);
+                  else if (result.url) {
+                    editArticle({ bodyMd: `${article.bodyMd}\n\n![配图](${result.url})` });
+                    setImageNotice('图片已插入正文末尾（可在写作页调整位置）');
+                  }
+                })();
+              }}
+            />
+          </label>
+        </div>
+        {imageNotice ? <div className={`${c('notice')} ${imageNotice.includes('失败') || imageNotice.includes('缺少') ? c('noticeErr') : c('noticeOk')}`}>{imageNotice}</div> : null}
+        <div className={c('row')}>
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => setTab('publish')}>
+            下一步：发布 <Icon name="chevron-right" size={14} />
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  function renderPublishTab() {
+    if (!article) {
+      return (
+        <div className={c('empty')}>
+          <div>发布需要先有文章——去「写作」新建一篇，或从「选题」开始。</div>
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void handleCreateArticle()}>
+            <Icon name="plus" size={14} /> 新建文章
+          </button>
+        </div>
+      );
+    }
+    const boundAccount = accounts.find((a) => a.id === article.accountId) ?? null;
+    const effectiveAccount = boundAccount ?? accounts[0] ?? null;
+    const missingCreds =
+      effectiveAccount && !(effectiveAccount.credentials?.WECHAT_APPID && effectiveAccount.credentials?.WECHAT_SECRET);
+    // 发布预检：全绿才允许点发布——不让用户点了才报错。
+    const bytes = titleBytes(article.title.trim());
+    const leftoverMarkers = parseImageMarkers(article.bodyMd).filter((m) => m.marker.toUpperCase() !== 'COVER').length;
+    const checks: Array<{ ok: boolean; text: string; goto?: StudioTab; required: boolean }> = [
+      { ok: article.title.trim().length > 0 && bytes <= 64, text: `标题就绪（${bytes}/64 字节）`, goto: 'write', required: true },
+      { ok: article.bodyMd.trim().length > 0, text: '正文非空', goto: 'write', required: true },
+      { ok: Boolean(article.coverSource), text: '封面已设置', goto: 'cover', required: true },
+      { ok: Boolean(effectiveAccount && !missingCreds), text: '账号凭证就绪（AppID/AppSecret）', required: true },
+      { ok: leftoverMarkers === 0, text: leftoverMarkers > 0 ? `${leftoverMarkers} 个配图占位未处理（可发，但草稿里没这些图）` : '配图占位已全部处理', goto: 'images', required: false },
+    ];
+    const readyToPublish = checks.filter((k) => k.required).every((k) => k.ok);
+    return (
+      <>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            发布前检查
+            <span className={c('cardHint')}>必查项全绿才能发</span>
+          </div>
+          <div className={c('records')}>
+            {checks.map((k) => (
+              <div key={k.text} className={c('record')}>
+                <span className={`${c('chip')} ${k.ok ? c('chipGreen') : k.required ? c('chipRed') : c('chipAmber')}`}>
+                  {k.ok ? '✓' : k.required ? '✗' : '!'}
+                </span>
+                <span>{k.text}</span>
+                <span className={c('headSpacer')} />
+                {!k.ok && k.goto ? (
+                  <button type="button" className={c('btn')} onClick={() => setTab(k.goto!)}>
+                    去处理
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>公众号账号</div>
+          {accounts.length === 0 ? (
+            <div>
+              还没有公众号账号。去{' '}
+              <a className={c('link')} href="/accounts">
+                账号页
+              </a>{' '}
+              添加（名称 + AppID/AppSecret，注意公众号后台要配 IP 白名单）。
+            </div>
+          ) : (
+            <>
+              <select
+                className={c('select')}
+                value={effectiveAccount?.id ?? ''}
+                onChange={(e) => editArticle({ accountId: e.target.value })}
+              >
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+              {missingCreds ? (
+                <div className={`${c('notice')} ${c('noticeErr')}`}>
+                  账号「{effectiveAccount?.name}」缺少 WECHAT_APPID / WECHAT_SECRET——去「账号」页补上后再发。
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            摘要
+            <span className={c('cardHint')}>可选 · 空则自动取正文前 100 字</span>
+          </div>
+          <input
+            className={c('input')}
+            value={article.digest}
+            placeholder="显示在会话卡片里的一句话…"
+            onChange={(e) => editArticle({ digest: e.target.value })}
+          />
+        </div>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>封面</div>
+          {article.coverSource ? (
+            <div className={c('row')}>
+              <img className={c('coverPreview')} src={article.coverSource} alt="封面" />
+              <button type="button" className={c('btn')} onClick={() => setTab('cover')}>
+                换封面
+              </button>
+            </div>
+          ) : (
+            <div className={`${c('notice')} ${c('noticeErr')}`}>
+              还没有封面——公众号草稿必须有封面。
+              <button type="button" className={c('btn')} style={{ marginLeft: 8 }} onClick={() => setTab('cover')}>
+                去「封面」步生成
+              </button>
+            </div>
+          )}
+        </div>
+        <div className={c('row')}>
+          <button
+            type="button"
+            className={`${c('btn')} ${c('btnPrimary')}`}
+            disabled={publishing || accounts.length === 0 || !readyToPublish}
+            title={readyToPublish ? '' : '上面的必查项还有红的'}
+            onClick={() => void handlePublish()}
+          >
+            {publishing ? '发布中…' : '发到草稿箱'}
+          </button>
+          <span className={c('saveHint')}>只发草稿箱，正式群发你在公众号后台自己点</span>
+        </div>
+        {publishNotice ? (
+          <div className={`${c('notice')} ${publishNotice.ok ? c('noticeOk') : c('noticeErr')}`}>
+            {publishNotice.text}
+            {publishNotice.ok ? (
+              <>
+                {' '}
+                <a className={c('link')} href="https://mp.weixin.qq.com" target="_blank" rel="noreferrer">
+                  去公众号后台确认群发 →
+                </a>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+        {publishes.length > 0 ? (
+          <div className={c('card')}>
+            <div className={c('cardLabel')}>发布记录</div>
+            <div className={c('records')}>
+              {publishes.map((p) => (
+                <div key={p.id} className={c('record')}>
+                  <span className={c('recordTime')}>{timeLabel(p.createdAt)}</span>
+                  <span className={`${c('chip')} ${p.status === 'ok' ? c('chipGreen') : c('chipRed')}`}>
+                    {p.status === 'ok' ? '成功' : `失败 · ${p.failedStep ?? ''}`}
+                  </span>
+                  <span>{p.accountName}</span>
+                  {p.draftMediaId ? <span className={c('mono')}>{p.draftMediaId}</span> : null}
+                  {p.error ? <span className={c('recordError')}>{p.error}</span> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {article.status === 'published' ? (
+          <div className={c('card')}>
+            <div className={c('cardLabel')}>
+              发布复盘
+              <span className={c('cardHint')}>群发 24-48 小时后回来填实际数据，AI 给下一篇的改进建议</span>
+            </div>
+            <input
+              className={c('input')}
+              value={String((article.extra as Record<string, unknown>)?.reviewData ?? '')}
+              placeholder="例：阅读 3200，点赞 45，在看 12，转发 30，主要来自朋友圈"
+              onChange={(e) => editArticle({ extra: { reviewData: e.target.value } })}
+            />
+            <div className={c('row')}>
+              <button type="button" className={c('btn')} onClick={() => void startAiTask('review')}>
+                <Icon name="sparkles" size={14} /> AI 复盘并给下一篇建议
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  const showPreview = tab === 'write' || tab === 'cover' || tab === 'images' || tab === 'publish';
+  // 列表/知识库是管理面，不占预览列。
+
+  return (
+    <div className={c('root')}>
+      <div className={c('head')}>
+        <h1 className={c('title')}>公众号创作台</h1>
+        {activeSummaryStatus ? (
+          <span className={`${c('chip')} ${c(activeSummaryStatus.chip)}`}>{activeSummaryStatus.text}</span>
+        ) : null}
+        {article && accounts.length > 0 ? (
+          <select
+            className={c('select')}
+            value={article.accountId ?? ''}
+            title="这篇文章属于哪个公众号——AI 按它的人设写作、发布用它的凭证"
+            onChange={(e) => editArticle({ accountId: e.target.value || null })}
+          >
+            <option value="">（未绑定账号）</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        <span className={c('saveHint')}>
+          {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : saveState === 'error' ? '保存失败' : ''}
+        </span>
+        <div className={c('headSpacer')} />
+        <div className={c('articlePicker')}>
+          <select
+            className={c('select')}
+            value={article?.id ?? ''}
+            onChange={(e) => {
+              // 同步捕获目标值：受控 select 在 React 重渲后 DOM 值会弹回旧文章，
+              // 异步再读 e.target.value 拿到的是旧 id，导致切换永远不生效。
+              const nextId = e.target.value || null;
+              void flushSave().then(() => selectArticle(nextId));
+            }}
+          >
+            <option value="">（未选择文章）</option>
+            {(articles ?? []).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.title || '(无标题)'}
+              </option>
+            ))}
+          </select>
+          <button type="button" className={c('btn')} onClick={() => void handleCreateArticle()}>
+            <Icon name="plus" size={14} /> 新建
+          </button>
+          {article ? (
+            <button
+              type="button"
+              className={`${c('btn')} ${c('btnDanger')}`}
+              onClick={() => void handleDeleteArticle()}
+              title="删除当前文章"
+            >
+              <Icon name="trash" size={14} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className={c('tabs')} role="tablist" aria-label="创作台导航">
+        {TABS.map((item) => {
+          // 步骤完成态：让用户一眼看到这篇文章走到哪一步了。
+          const done =
+            item.id === 'write'
+              ? Boolean(article && article.title.trim() && article.bodyMd.trim())
+              : item.id === 'cover'
+                ? Boolean(article?.coverSource)
+                : item.id === 'publish'
+                  ? article?.status === 'published'
+                  : false;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              className={`${c('tab')}${tab === item.id ? ` ${c('tabActive')}` : ''}`}
+              onClick={() => setTab(item.id)}
+            >
+              <span className={c('tabStep')}>{item.step}</span>
+              {item.label}
+              {item.optional ? <span className={c('tabStep')}>·选</span> : null}
+              {done ? <Icon name="check" size={12} /> : null}
+            </button>
+          );
+        })}
+        <span style={{ width: 1, alignSelf: 'stretch', background: 'var(--border, #e1e5eb)', margin: '4px 6px' }} />
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'list'}
+          className={`${c('tab')}${tab === 'list' ? ` ${c('tabActive')}` : ''}`}
+          onClick={() => setTab('list')}
+        >
+          文章
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'knowledge'}
+          className={`${c('tab')}${tab === 'knowledge' ? ` ${c('tabActive')}` : ''}`}
+          onClick={() => setTab('knowledge')}
+        >
+          知识库
+        </button>
+      </div>
+
+      <div className={c('main')}>
+        <div className={c('editorCol')}>
+          {tab === 'list' ? (
+            <ArticleListCard
+              articles={articles ?? []}
+              statusLabel={(st) => STATUS_LABEL[st]}
+              accountNameOf={(id) => accounts.find((a) => a.id === id)?.name ?? '—'}
+              onOpen={(id) => {
+                void flushSave().then(() => selectArticle(id));
+                setTab('write');
+              }}
+              onDelete={(id) => {
+                void (async () => {
+                  const target = (articles ?? []).find((a) => a.id === id);
+                  if (!window.confirm(`删除文章「${target?.title || '(无标题)'}」？发布记录会一并删除。`)) return;
+                  await deleteStudioArticle(PLATFORM, id);
+                  const list = await refreshArticles();
+                  if (articleRef.current?.id === id) await selectArticle(list[0]?.id ?? null);
+                })();
+              }}
+              onCreate={() => void handleCreateArticle()}
+            />
+          ) : null}
+          {tab === 'knowledge' ? (
+            <KnowledgePanel platform={PLATFORM} accounts={accounts.map((a) => ({ id: a.id, name: a.name }))} />
+          ) : null}
+          {tab === 'topics' ? renderTopicsTab() : null}
+          {tab === 'write' ? renderWriteTab() : null}
+          {tab === 'cover' ? renderCoverTab() : null}
+          {tab === 'images' ? renderImagesTab() : null}
+          {tab === 'publish' ? renderPublishTab() : null}
+        </div>
+        {showPreview && article ? (
+          <div className={c('previewCol')}>
+            <span className={c('previewTag')}>
+              <Icon name="eye" size={13} /> 实时预览（与发布产物同源）
+            </span>
+            <div className={c('previewShell')}>
+              <iframe
+                className={c('previewFrame')}
+                sandbox=""
+                title="公众号排版预览"
+                srcDoc={previewDoc(article?.title ?? '', previewHtml)}
+              />
+            </div>
+            {previewNotes.length > 0 ? (
+              <ul className={c('previewNotes')}>
+                {previewNotes.map((n) => (
+                  <li key={n}>· {n}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      <StudioAiPanel task={aiTask} onFinished={refreshAfterAiTask} onDismiss={() => setAiTask(null)} />
+    </div>
+  );
+}
+
+// ---- 配图子组件 ----
+
+function CoverGenerator({
+  initialDescription,
+  busy,
+  onGenerate,
+  onUploadReference,
+}: {
+  initialDescription: string;
+  busy: boolean;
+  onGenerate: (description: string, style: string, referenceImage: string, model: string) => void;
+  /** 选本机图作参考：上传后返回可用 URL（失败返回 null）。 */
+  onUploadReference?: (file: File) => Promise<string | null>;
+}): JSX.Element {
+  const [desc, setDesc] = useState(initialDescription);
+  const [style, setStyle] = useState('whiteboard');
+  const [model, setModel] = useState('qwen');
+  const [reference, setReference] = useState('');
+  useEffect(() => {
+    setDesc(initialDescription);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDescription]);
+  return (
+    <>
+      <textarea
+        className={c('textarea')}
+        value={desc}
+        placeholder="封面提示词：画面里有什么、什么氛围、要不要文字…"
+        onChange={(e) => setDesc(e.target.value)}
+      />
+      <div className={c('row')}>
+        <input
+          className={`${c('input')} ${c('grow')}`}
+          value={reference}
+          placeholder="参考图（可选）：https://… 或 /Users/…/参考.jpg"
+          onChange={(e) => setReference(e.target.value)}
+        />
+        {onUploadReference ? (
+          <label className={c('btn')} style={{ cursor: 'pointer' }} title="选本机图片作参考">
+            <Icon name="upload" size={14} />
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                void onUploadReference(file).then((url) => {
+                  if (url) setReference(url);
+                });
+              }}
+            />
+          </label>
+        ) : null}
+        <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
+          {IMAGE_STYLES.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
+          {IMAGE_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className={`${c('btn')} ${c('btnPrimary')}`}
+          disabled={busy || !desc.trim()}
+          onClick={() => onGenerate(desc.trim(), style, reference, model)}
+        >
+          {busy ? '生成中…' : '生成封面'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function MarkerRow({
+  marker,
+  busy,
+  onGenerate,
+}: {
+  marker: ImageMarker;
+  busy: boolean;
+  onGenerate: (description: string, style: string, model: string) => void;
+}): JSX.Element {
+  const [desc, setDesc] = useState(marker.description);
+  const [style, setStyle] = useState('whiteboard');
+  const [model, setModel] = useState('qwen');
+  return (
+    <div className={c('row')}>
+      <span className={`${c('chip')} ${c('chipBlue')}`}>图 {marker.marker} · {marker.ratio}</span>
+      <input
+        className={`${c('input')} ${c('grow')}`}
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+      />
+      <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
+        {IMAGE_STYLES.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+      <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
+        {IMAGE_MODELS.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className={`${c('btn')} ${c('btnPrimary')}`}
+        disabled={busy || !desc.trim()}
+        onClick={() => onGenerate(desc.trim(), style, model)}
+      >
+        {busy ? '生成中…' : '生成'}
+      </button>
+    </div>
+  );
+}
+
+function GeneratedImageRow({
+  image,
+  busy,
+  onRegenerate,
+  onRemove,
+}: {
+  image: BodyImage;
+  busy: boolean;
+  onRegenerate: (description: string, style: string, model: string) => void;
+  onRemove: () => void;
+}): JSX.Element {
+  const [desc, setDesc] = useState(image.alt || '');
+  const [style, setStyle] = useState('whiteboard');
+  const [model, setModel] = useState('qwen');
+  return (
+    <div className={c('row')}>
+      <img className={c('genThumb')} src={image.src} alt={image.alt} />
+      <input
+        className={`${c('input')} ${c('grow')}`}
+        value={desc}
+        placeholder="改一下画面描述再重生成…"
+        onChange={(e) => setDesc(e.target.value)}
+      />
+      <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
+        {IMAGE_STYLES.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.label}
+          </option>
+        ))}
+      </select>
+      <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
+        {IMAGE_MODELS.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className={`${c('btn')} ${c('btnPrimary')}`}
+        disabled={busy || !desc.trim()}
+        onClick={() => onRegenerate(desc.trim(), style, model)}
+      >
+        {busy ? '生成中…' : '重生成'}
+      </button>
+      <button type="button" className={`${c('btn')} ${c('btnDanger')}`} disabled={busy} onClick={onRemove}>
+        移除
+      </button>
+    </div>
+  );
+}

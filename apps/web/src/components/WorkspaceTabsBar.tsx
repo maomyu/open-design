@@ -771,6 +771,8 @@ function displayTabFor(
     tasks: t('entry.navTasks'),
     plugins: t('entry.navPlugins'),
     accounts: t('entry.navAccounts'),
+    studio: '公众号',
+    'studio-video': '短视频',
     'design-systems': t('entry.navDesignSystems'),
     integrations: t('entry.navIntegrations'),
   };
@@ -781,6 +783,8 @@ function displayTabFor(
     tasks: 'kanban',
     plugins: 'grid',
     accounts: 'grid',
+    studio: 'edit',
+    'studio-video': 'play',
     'design-systems': 'blocks',
     integrations: 'link',
   };

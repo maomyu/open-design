@@ -212,6 +212,97 @@ function migrate(db: SqliteDb): void {
 
     CREATE INDEX IF NOT EXISTS idx_routine_runs_routine
       ON routine_runs(routine_id, started_at DESC);
+
+    -- Media Studio（媒体创作台）: platform-scoped, project-independent long
+    -- lived content assets. See specs/current/media-studio.md.
+    CREATE TABLE IF NOT EXISTS media_articles (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      account_id TEXT,
+      title TEXT NOT NULL DEFAULT '',
+      digest TEXT NOT NULL DEFAULT '',
+      topic TEXT,
+      header_md TEXT NOT NULL DEFAULT '',
+      body_md TEXT NOT NULL DEFAULT '',
+      footer_md TEXT NOT NULL DEFAULT '',
+      skin TEXT NOT NULL DEFAULT '',
+      cover_source TEXT NOT NULL DEFAULT '',
+      rendered_html TEXT,
+      rendered_skin TEXT,
+      rendered_at INTEGER,
+      status TEXT NOT NULL DEFAULT 'writing',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_articles_platform
+      ON media_articles(platform, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS media_topics (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      title TEXT NOT NULL,
+      angle TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL DEFAULT '',
+      heat TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'candidate',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_topics_platform
+      ON media_topics(platform, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS media_snippets (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      slot TEXT NOT NULL,
+      name TEXT NOT NULL,
+      content_md TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL
+    );
+
+    -- 版本历史：AI 覆盖正文前自动快照,可一键回退（用户的后悔药）。
+    CREATE TABLE IF NOT EXISTS media_article_versions (
+      id TEXT PRIMARY KEY,
+      article_id TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      digest TEXT NOT NULL DEFAULT '',
+      header_md TEXT NOT NULL DEFAULT '',
+      body_md TEXT NOT NULL DEFAULT '',
+      footer_md TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(article_id) REFERENCES media_articles(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_versions_article
+      ON media_article_versions(article_id, created_at DESC);
+
+    -- 知识库：客户挂载的产品资料/品牌规范/行业素材,AI 任务组提示词时注入。
+    CREATE TABLE IF NOT EXISTS media_knowledge (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      account_id TEXT,
+      name TEXT NOT NULL,
+      content_md TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_knowledge_platform
+      ON media_knowledge(platform, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS media_publishes (
+      id TEXT PRIMARY KEY,
+      article_id TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      account_id TEXT,
+      account_name TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      draft_media_id TEXT,
+      failed_step TEXT,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(article_id) REFERENCES media_articles(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_publishes_article
+      ON media_publishes(article_id, created_at DESC);
   `);
   // Forward-compatible column add for databases created before metadata_json.
   // SQLite has no IF NOT EXISTS for ALTER, so we check pragma_table_info.
@@ -221,6 +312,13 @@ function migrate(db: SqliteDb): void {
   }
   if (!cols.some((c: DbRow) => c.name === 'custom_instructions')) {
     db.exec(`ALTER TABLE projects ADD COLUMN custom_instructions TEXT`);
+  }
+  // Media Studio: platform-specific entity fields (short-video 的 videoPath/
+  // audioPath/tags/voice 等) live in one JSON column so the shared article
+  // entity stays platform-agnostic. See specs/current/media-studio.md.
+  const mediaArticleCols = db.prepare(`PRAGMA table_info(media_articles)`).all() as DbRow[];
+  if (mediaArticleCols.length > 0 && !mediaArticleCols.some((c: DbRow) => c.name === 'extra_json')) {
+    db.exec(`ALTER TABLE media_articles ADD COLUMN extra_json TEXT`);
   }
   const messageCols = db.prepare(`PRAGMA table_info(messages)`).all() as DbRow[];
   if (!messageCols.some((c: DbRow) => c.name === 'agent_id')) {

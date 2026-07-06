@@ -85,6 +85,8 @@ import { InlineModelSwitcher } from './InlineModelSwitcher';
 import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
 import { AccountsView } from './AccountsView';
+import { MediaStudioView } from './media-studio/MediaStudioView';
+import { ShortVideoStudioView } from './media-studio/ShortVideoStudioView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
 import { TasksView } from './TasksView';
@@ -670,6 +672,8 @@ export function EntryShell({
               />
             ) : null}
             {view === 'accounts' ? <AccountsView /> : null}
+            {view === 'studio' ? <MediaStudioView /> : null}
+            {view === 'studio-video' ? <ShortVideoStudioView /> : null}
             {view === 'design-systems' ? (
               designSystemsLoading ? (
                 <CenteredLoader label={t('common.loading')} />

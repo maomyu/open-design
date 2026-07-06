@@ -1,0 +1,830 @@
+// 短视频创作台 — spec: specs/current/media-studio.md
+//
+// 把 short-video-copy 总控 + 五个平台发布插件（抖音/小红书/快手/B站/视频号）
+// 的能力抽象成一个可视化工作台：选题 → 脚本 → 配音（可选）→ 成片 → 多平台发布。
+// 数据/发布是确定性直调（大家来、火山 TTS、sau CLI），创意环节 AI 参与
+// （AI 写脚本/按建议改），全部落进共享的文章实体（platform: short-video）。
+//
+// 发布是真正对外动作：必须用户勾选目标并二次确认后才调 sau 上传（合规铁律）。
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type {
+  MediaArticle,
+  MediaArticleSummary,
+  MediaPublishRecord,
+  MediaTopic,
+  SauPlatformId,
+  UpdateMediaArticleRequest,
+} from '@open-design/contracts';
+import { Icon } from '../Icon';
+import {
+  checkSauLogin,
+  createStudioAiTask,
+  createStudioArticle,
+  createStudioTopic,
+  deleteStudioArticle,
+  deleteStudioTopic,
+  fetchStudioArticle,
+  fetchStudioArticles,
+  fetchStudioPublishes,
+  fetchStudioTopics,
+  publishStudioVideo,
+  startSauLogin,
+  synthesizeStudioTts,
+  updateStudioArticle,
+} from '../../providers/media-studio';
+import { StudioAiPanel, type StudioAiTask } from './StudioAiPanel';
+import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
+import { TopicsTab } from './TopicsTab';
+import styles from './MediaStudio.module.css';
+
+const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
+
+const PLATFORM = 'short-video';
+const LAST_ARTICLE_KEY = 'open-design:studio:last-video-article';
+
+type VideoTab = 'topics' | 'script' | 'voice' | 'video' | 'publish' | 'list' | 'knowledge';
+
+const SAU_PLATFORMS: Array<{ id: SauPlatformId; label: string }> = [
+  { id: 'douyin', label: '抖音' },
+  { id: 'xiaohongshu', label: '小红书' },
+  { id: 'kuaishou', label: '快手' },
+  { id: 'bilibili', label: 'B站' },
+  { id: 'tencent', label: '视频号' },
+];
+
+const TONES = ['真诚口播', '干货清单', '故事化', '测评对比', '情绪共鸣'];
+const DURATIONS = ['15s', '30s', '60s', '1-3min'];
+
+const STATUS_LABEL: Record<MediaArticle['status'], { text: string; chip: string }> = {
+  writing: { text: '创作中', chip: 'chipAmber' },
+  rendered: { text: '已就绪', chip: 'chipBlue' },
+  published: { text: '已发布', chip: 'chipGreen' },
+};
+
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+/** 口播时长估算：中文约 4.5 字/秒。 */
+function estimateDuration(text: string): string {
+  const chars = text.replace(/\s+/g, '').length;
+  if (chars === 0) return '';
+  const seconds = Math.round(chars / 4.5);
+  return seconds >= 60 ? `约 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `约 ${seconds} 秒`;
+}
+
+function timeLabel(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+type LoginState = 'unknown' | 'checking' | 'in' | 'out' | 'logging';
+
+export function ShortVideoStudioView(): JSX.Element {
+  const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
+  const [article, setArticle] = useState<MediaArticle | null>(null);
+  const [tab, setTab] = useState<VideoTab>('script');
+  const [topics, setTopics] = useState<MediaTopic[]>([]);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
+  const aiSeqRef = useRef(0);
+  const [reviseNote, setReviseNote] = useState('');
+  const [ttsBusy, setTtsBusy] = useState(false);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
+  const [publishing, setPublishing] = useState(false);
+  // 发布矩阵：平台 → { 参与勾选, sau 账号名, 登录态 }
+  const [matrix, setMatrix] = useState<Record<string, { on: boolean; account: string; login: LoginState; detail: string }>>(
+    () => Object.fromEntries(SAU_PLATFORMS.map((p) => [p.id, { on: false, account: 'main', login: 'unknown' as LoginState, detail: '' }])),
+  );
+
+  const articleRef = useRef<MediaArticle | null>(null);
+  articleRef.current = article;
+  const saveTimerRef = useRef<number | null>(null);
+  const pendingRef = useRef<{ id: string; patch: UpdateMediaArticleRequest } | null>(null);
+
+  const extra = (article?.extra ?? {}) as Record<string, unknown>;
+  const audioUrl = str(extra.audioUrl);
+  const videoPath = str(extra.videoPath);
+  const tags = str(extra.tags);
+
+  // ---- 数据加载 ----
+  const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
+    const list = (await fetchStudioArticles(PLATFORM)) ?? [];
+    setArticles(list);
+    return list;
+  }, []);
+
+  const selectArticle = useCallback(async (id: string | null) => {
+    if (id) {
+      const a = await fetchStudioArticle(PLATFORM, id);
+      setArticle(a);
+      if (a) window.localStorage.setItem(LAST_ARTICLE_KEY, a.id);
+    } else {
+      setArticle(null);
+      window.localStorage.removeItem(LAST_ARTICLE_KEY);
+    }
+    setNotice(null);
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const list = await refreshArticles();
+      const remembered = window.localStorage.getItem(LAST_ARTICLE_KEY);
+      const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
+      if (pick) await selectArticle(pick.id);
+      else setTab('topics');
+      setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+    })();
+  }, [refreshArticles, selectArticle]);
+
+  // ---- 自动保存（与公众号创作台同款机制） ----
+  const flushSave = useCallback(async () => {
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (!pending || Object.keys(pending.patch).length === 0) return;
+    const updated = await updateStudioArticle(PLATFORM, pending.id, pending.patch);
+    if (!updated) {
+      setSaveState('error');
+      return;
+    }
+    setSaveState('saved');
+    setArticle((a) => (a && a.id === updated.id ? { ...a, status: updated.status, updatedAt: updated.updatedAt, extra: updated.extra } : a));
+    setArticles((list) =>
+      list ? list.map((s) => (s.id === updated.id ? { ...s, title: updated.title, status: updated.status, updatedAt: updated.updatedAt } : s)) : list,
+    );
+  }, []);
+
+  const editArticle = useCallback(
+    (patch: UpdateMediaArticleRequest) => {
+      const current = articleRef.current;
+      if (!current) return;
+      setArticle((a) => {
+        if (!a) return a;
+        const next = { ...a, ...patch } as MediaArticle;
+        if (patch.extra) {
+          const merged = { ...a.extra } as Record<string, unknown>;
+          for (const [k, v] of Object.entries(patch.extra)) {
+            if (v === null) delete merged[k];
+            else merged[k] = v;
+          }
+          next.extra = merged;
+        }
+        return next;
+      });
+      const pending = pendingRef.current;
+      pendingRef.current =
+        pending && pending.id === current.id
+          ? {
+              id: current.id,
+              patch: {
+                ...pending.patch,
+                ...patch,
+                ...(pending.patch.extra || patch.extra ? { extra: { ...pending.patch.extra, ...patch.extra } } : {}),
+              },
+            }
+          : { id: current.id, patch };
+      setSaveState('saving');
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => void flushSave(), 700);
+    },
+    [flushSave],
+  );
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    void flushSave();
+  }, [flushSave]);
+
+  // ---- 发布记录 ----
+  useEffect(() => {
+    if (tab !== 'publish' || !article) return;
+    void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
+  }, [tab, article?.id]);
+
+  // ---- AI 任务 ----
+  const startAiTask = useCallback(
+    async (kind: 'topics' | 'script' | 'revise' | 'review', input?: { note?: string }) => {
+      await flushSave();
+      const current = articleRef.current;
+      const created = await createStudioAiTask(PLATFORM, {
+        kind,
+        ...(kind !== 'topics' && current ? { articleId: current.id } : {}),
+        input: { ...(input?.note ? { note: input.note } : {}) },
+      });
+      if ('error' in created) {
+        setNotice({ ok: false, text: created.error });
+        return;
+      }
+      aiSeqRef.current += 1;
+      setAiTask({ ...created, seq: aiSeqRef.current });
+    },
+    [flushSave],
+  );
+
+  const refreshAfterAiTask = useCallback(() => {
+    void refreshArticles();
+    void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+    const current = articleRef.current;
+    if (current) {
+      void fetchStudioArticle(PLATFORM, current.id).then((a) => {
+        if (a && articleRef.current?.id === a.id) setArticle(a);
+      });
+    }
+  }, [refreshArticles]);
+
+  async function handleCreateArticle(fromTopic?: MediaTopic) {
+    await flushSave();
+    const created = await createStudioArticle(PLATFORM, {
+      ...(fromTopic ? { fromTopicId: fromTopic.id, title: fromTopic.title, topic: fromTopic.title } : {}),
+    });
+    if (!created) return;
+    await refreshArticles();
+    setArticle(created);
+    window.localStorage.setItem(LAST_ARTICLE_KEY, created.id);
+    setTab('script');
+    if (fromTopic) setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
+  }
+
+  async function handleDeleteArticle() {
+    if (!article) return;
+    if (!window.confirm(`删除「${article.title || '(未命名)'}」？发布记录一并删除。`)) return;
+    pendingRef.current = null;
+    await deleteStudioArticle(PLATFORM, article.id);
+    const list = await refreshArticles();
+    await selectArticle(list[0]?.id ?? null);
+  }
+
+  // ---- 配音 ----
+  async function handleTts() {
+    if (!article || ttsBusy) return;
+    await flushSave();
+    setTtsBusy(true);
+    setNotice(null);
+    const voice = str(extra.voice);
+    const result = await synthesizeStudioTts(PLATFORM, article.id, voice ? { voice } : {});
+    setTtsBusy(false);
+    if (result.error) {
+      setNotice({ ok: false, text: result.error });
+      return;
+    }
+    if (result.article) setArticle(result.article);
+    setNotice({ ok: true, text: '配音已生成，下面直接试听' });
+  }
+
+  // ---- 发布矩阵 ----
+  async function handleCheckLogin(platformId: string) {
+    const entry = matrix[platformId];
+    if (!entry) return;
+    setMatrix((m) => ({ ...m, [platformId]: { ...m[platformId]!, login: 'checking', detail: '' } }));
+    const result = await checkSauLogin(PLATFORM, { platform: platformId, account: entry.account });
+    setMatrix((m) => ({
+      ...m,
+      [platformId]: {
+        ...m[platformId]!,
+        login: result.error ? 'unknown' : result.loggedIn ? 'in' : 'out',
+        detail: result.error ?? (result.loggedIn ? '' : '未登录——点「扫码登录」'),
+      },
+    }));
+  }
+
+  async function handleLogin(platformId: string) {
+    const entry = matrix[platformId];
+    if (!entry) return;
+    setMatrix((m) => ({ ...m, [platformId]: { ...m[platformId]!, login: 'logging', detail: '已弹出浏览器窗口，扫码登录后自动继续…' } }));
+    const result = await startSauLogin(PLATFORM, { platform: platformId, account: entry.account });
+    setMatrix((m) => ({
+      ...m,
+      [platformId]: {
+        ...m[platformId]!,
+        login: result.error ? 'unknown' : result.ok ? 'in' : 'out',
+        detail: result.error ?? (result.ok ? '登录成功' : `登录未完成：${(result.detail ?? '').slice(0, 80)}`),
+      },
+    }));
+  }
+
+  async function handlePublish() {
+    if (!article || publishing) return;
+    const targets = SAU_PLATFORMS.filter((p) => matrix[p.id]?.on).map((p) => ({
+      platform: p.id,
+      account: matrix[p.id]!.account.trim() || 'main',
+    }));
+    if (targets.length === 0) {
+      setNotice({ ok: false, text: '先勾选至少一个发布平台' });
+      return;
+    }
+    if (!videoPath.trim()) {
+      setNotice({ ok: false, text: '没有成片——去「成片」步填视频文件路径' });
+      setTab('video');
+      return;
+    }
+    // 对外发布，明确的人工确认（列出全部目标）。
+    const summary = targets.map((t) => `${SAU_PLATFORMS.find((p) => p.id === t.platform)?.label}（账号 ${t.account}）`).join('、');
+    if (!window.confirm(`确认把「${article.title || '(未命名)'}」发布到：${summary}？\n\n这是真实对外发布，发出后需到各平台后台管理。`)) return;
+    setPublishing(true);
+    setNotice(null);
+    await flushSave();
+    const result = await publishStudioVideo(PLATFORM, article.id, { targets });
+    setPublishing(false);
+    if (result.error) {
+      setNotice({ ok: false, text: result.error });
+    } else {
+      const ok = (result.records ?? []).filter((r) => r.status === 'ok').length;
+      const failed = (result.records ?? []).length - ok;
+      setNotice({ ok: failed === 0, text: `发布完成：成功 ${ok} 个${failed ? `，失败 ${failed} 个（详情见发布记录）` : ''}` });
+      if (result.article) setArticle(result.article);
+      await refreshArticles();
+    }
+    if (article) setPublishes(await fetchStudioPublishes(PLATFORM, article.id));
+  }
+
+  // ---- 步骤完成态（用户一眼看到走到哪了） ----
+  const stepDone: Record<VideoTab, boolean> = {
+    topics: topics.some((t) => t.status === 'used'),
+    script: Boolean(article && article.title.trim() && article.bodyMd.trim()),
+    voice: Boolean(audioUrl),
+    video: Boolean(videoPath.trim()),
+    publish: article?.status === 'published',
+    list: false,
+    knowledge: false,
+  };
+
+  const TABS: Array<{ id: VideoTab; label: string; step: string; optional?: boolean }> = [
+    { id: 'topics', label: '选题', step: '1' },
+    { id: 'script', label: '脚本', step: '2' },
+    { id: 'voice', label: '配音', step: '3', optional: true },
+    { id: 'video', label: '成片', step: '4' },
+    { id: 'publish', label: '发布', step: '5' },
+  ];
+
+  const activeStatus = article ? STATUS_LABEL[article.status] : null;
+  const speechText = article ? article.bodyMd : '';
+
+  function emptyCta(text: string) {
+    return (
+      <div className={c('empty')}>
+        <div>{text}</div>
+        <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void handleCreateArticle()}>
+          <Icon name="plus" size={14} /> 新建作品
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={c('root')}>
+      <div className={c('head')}>
+        <h1 className={c('title')}>短视频创作台</h1>
+        {activeStatus ? <span className={`${c('chip')} ${c(activeStatus.chip)}`}>{activeStatus.text}</span> : null}
+        <span className={c('saveHint')}>
+          {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : saveState === 'error' ? '保存失败' : ''}
+        </span>
+        <div className={c('headSpacer')} />
+        <div className={c('articlePicker')}>
+          <select
+            className={c('select')}
+            value={article?.id ?? ''}
+            onChange={(e) => {
+              // 同步捕获：受控 select 重渲后 DOM 值弹回旧值，异步读会拿错 id。
+              const nextId = e.target.value || null;
+              void flushSave().then(() => selectArticle(nextId));
+            }}
+          >
+            <option value="">（未选择作品）</option>
+            {(articles ?? []).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.title || '(未命名)'}
+              </option>
+            ))}
+          </select>
+          <button type="button" className={c('btn')} onClick={() => void handleCreateArticle()}>
+            <Icon name="plus" size={14} /> 新建
+          </button>
+          {article ? (
+            <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => void handleDeleteArticle()} title="删除当前作品">
+              <Icon name="trash" size={14} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className={c('tabs')} role="tablist" aria-label="短视频创作台导航">
+        {TABS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === item.id}
+            className={`${c('tab')}${tab === item.id ? ` ${c('tabActive')}` : ''}`}
+            onClick={() => setTab(item.id)}
+          >
+            <span className={c('tabStep')}>{item.step}</span>
+            {item.label}
+            {item.optional ? <span className={c('tabStep')}>·选</span> : null}
+            {stepDone[item.id] ? <Icon name="check" size={12} /> : null}
+          </button>
+        ))}
+        <span style={{ width: 1, alignSelf: 'stretch', background: 'var(--border, #e1e5eb)', margin: '4px 6px' }} />
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'list'}
+          className={`${c('tab')}${tab === 'list' ? ` ${c('tabActive')}` : ''}`}
+          onClick={() => setTab('list')}
+        >
+          作品
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'knowledge'}
+          className={`${c('tab')}${tab === 'knowledge' ? ` ${c('tabActive')}` : ''}`}
+          onClick={() => setTab('knowledge')}
+        >
+          知识库
+        </button>
+      </div>
+
+      <div className={c('main')}>
+        <div className={c('editorCol')}>
+          {tab === 'list' ? (
+            <ArticleListCard
+              articles={articles ?? []}
+              statusLabel={(st) => STATUS_LABEL[st]}
+              onOpen={(id) => {
+                void flushSave().then(() => selectArticle(id));
+                setTab('script');
+              }}
+              onDelete={(id) => {
+                void (async () => {
+                  const target = (articles ?? []).find((a) => a.id === id);
+                  if (!window.confirm(`删除「${target?.title || '(未命名)'}」？发布记录一并删除。`)) return;
+                  await deleteStudioArticle(PLATFORM, id);
+                  const list = await refreshArticles();
+                  if (articleRef.current?.id === id) await selectArticle(list[0]?.id ?? null);
+                })();
+              }}
+              onCreate={() => void handleCreateArticle()}
+            />
+          ) : null}
+          {tab === 'knowledge' ? <KnowledgePanel platform={PLATFORM} accounts={[]} /> : null}
+          {tab === 'topics' ? (
+            <TopicsTab
+              platform={PLATFORM}
+              topics={topics}
+              onAdd={async (draft) => {
+                const created = await createStudioTopic(PLATFORM, draft);
+                if (created) setTopics((list) => [created, ...list]);
+              }}
+              onDelete={async (id) => {
+                if (await deleteStudioTopic(PLATFORM, id)) setTopics((list) => list.filter((t) => t.id !== id));
+              }}
+              onWrite={(topic) => void handleCreateArticle(topic)}
+              onAiFind={(note) => void startAiTask('topics', { note })}
+              aiBusy={aiTask !== null}
+            />
+          ) : null}
+
+          {tab === 'script' ? (
+            !article ? (
+              emptyCta('还没有作品。从「选题」挑一个开始，或新建一个空白作品。')
+            ) : (
+              <>
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    AI 写脚本
+                    <span className={c('cardHint')}>按主发平台调性 + 语气 + 时长出稿（标题备选/口播稿/标签/封面文字一次到位）</span>
+                  </div>
+                  <div className={c('row')}>
+                    <select
+                      className={c('select')}
+                      value={str(extra.targetPlatform) || '抖音'}
+                      onChange={(e) => editArticle({ extra: { targetPlatform: e.target.value } })}
+                    >
+                      {SAU_PLATFORMS.map((p) => (
+                        <option key={p.id} value={p.label}>
+                          主发 {p.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className={c('select')}
+                      value={str(extra.tone) || '真诚口播'}
+                      onChange={(e) => editArticle({ extra: { tone: e.target.value } })}
+                    >
+                      {TONES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className={c('select')}
+                      value={str(extra.duration) || '30s'}
+                      onChange={(e) => editArticle({ extra: { duration: e.target.value } })}
+                    >
+                      {DURATIONS.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void startAiTask('script')}>
+                      <Icon name="sparkles" size={14} /> AI 写脚本
+                    </button>
+                  </div>
+                  <div className={c('row')}>
+                    <input
+                      className={`${c('input')} ${c('grow')}`}
+                      value={reviseNote}
+                      placeholder="想怎么改？例：钩子不够狠、口语一点、CTA 换成引导关注…"
+                      onChange={(e) => setReviseNote(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className={c('btn')}
+                      disabled={!reviseNote.trim()}
+                      onClick={() => {
+                        void startAiTask('revise', { note: reviseNote.trim() });
+                        setReviseNote('');
+                      }}
+                    >
+                      按我说的改
+                    </button>
+                  </div>
+                </div>
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    标题
+                    <span className={c('cardHint')}>发布时就是视频标题</span>
+                  </div>
+                  <input
+                    className={c('input')}
+                    value={article.title}
+                    placeholder="视频标题…"
+                    onChange={(e) => editArticle({ title: e.target.value })}
+                  />
+                </div>
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    口播脚本
+                    <span className={c('cardHint')}>
+                      {speechText.replace(/\s+/g, '').length} 字 · {estimateDuration(speechText) || '—'}（4.5 字/秒估算）
+                    </span>
+                  </div>
+                  <textarea
+                    className={`${c('textarea')} ${c('textareaLarge')}`}
+                    value={article.bodyMd}
+                    placeholder={'钩子（前3秒）…\n\n正文分点…\n\nCTA…'}
+                    onChange={(e) => editArticle({ bodyMd: e.target.value })}
+                  />
+                </div>
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    话题标签
+                    <span className={c('cardHint')}>逗号分隔，发布时带上</span>
+                  </div>
+                  <input
+                    className={c('input')}
+                    value={tags}
+                    placeholder="AI工具,效率,小团队"
+                    onChange={(e) => editArticle({ extra: { tags: e.target.value } })}
+                  />
+                </div>
+                <VersionsCard
+                  platform={PLATFORM}
+                  article={article}
+                  onRestored={(a) => {
+                    pendingRef.current = null;
+                    setArticle(a);
+                    void refreshArticles();
+                  }}
+                />
+                <div className={c('row')}>
+                  <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => setTab('voice')}>
+                    下一步：配音（可选） <Icon name="chevron-right" size={14} />
+                  </button>
+                </div>
+              </>
+            )
+          ) : null}
+
+          {tab === 'voice' ? (
+            !article ? (
+              emptyCta('配音属于某个作品——先去「脚本」新建。')
+            ) : (
+              <>
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    配音（火山复刻音色）· 可选
+                    <span className={c('cardHint')}>用口播脚本直接合成；音色 ID 以 S_ 开头为复刻音色，空用默认「解说1号」</span>
+                  </div>
+                  <div className={c('row')}>
+                    <input
+                      className={`${c('input')} ${c('grow')}`}
+                      value={str(extra.voice)}
+                      placeholder="音色 ID（可选，默认 S_M46v4EJ42 解说1号）"
+                      onChange={(e) => editArticle({ extra: { voice: e.target.value } })}
+                    />
+                    <button
+                      type="button"
+                      className={`${c('btn')} ${c('btnPrimary')}`}
+                      disabled={ttsBusy || !article.bodyMd.trim()}
+                      onClick={() => void handleTts()}
+                    >
+                      {ttsBusy ? '合成中…' : '生成配音'}
+                    </button>
+                  </div>
+                  {audioUrl ? (
+                    // eslint-disable-next-line jsx-a11y/media-has-caption
+                    <audio controls src={audioUrl} style={{ width: '100%' }} />
+                  ) : (
+                    <div className={c('cardHint')}>还没有配音。不需要配音（真人出镜/已有成片）直接去下一步。</div>
+                  )}
+                </div>
+                <div className={c('row')}>
+                  <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => setTab('video')}>
+                    下一步：成片 <Icon name="chevron-right" size={14} />
+                  </button>
+                </div>
+              </>
+            )
+          ) : null}
+
+          {tab === 'video' ? (
+            !article ? (
+              emptyCta('成片属于某个作品——先去「脚本」新建。')
+            ) : (
+              <>
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    成片（发布必需）
+                    <span className={c('cardHint')}>已有成片给本机绝对路径；要 AI 生成视频，用「插件」页的短视频工作流跑完再把成片路径填回来</span>
+                  </div>
+                  <input
+                    className={c('input')}
+                    value={videoPath}
+                    placeholder="/Users/…/成片.mp4"
+                    onChange={(e) => editArticle({ extra: { videoPath: e.target.value } })}
+                  />
+                  {videoPath.trim() ? (
+                    <div className={c('cardHint')}>发布时会校验文件存在；标题/描述/标签都从本作品带过去。</div>
+                  ) : null}
+                </div>
+                <div className={c('row')}>
+                  <button
+                    type="button"
+                    className={`${c('btn')} ${c('btnPrimary')}`}
+                    disabled={!videoPath.trim()}
+                    onClick={() => setTab('publish')}
+                    title={videoPath.trim() ? '' : '先填成片路径'}
+                  >
+                    下一步：发布 <Icon name="chevron-right" size={14} />
+                  </button>
+                </div>
+              </>
+            )
+          ) : null}
+
+          {tab === 'publish' ? (
+            !article ? (
+              emptyCta('发布属于某个作品——先去「脚本」新建。')
+            ) : (
+              <>
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    发布到哪些平台
+                    <span className={c('cardHint')}>账号名是 sau 的 cookie 档案名（默认 main）；先「检查登录」，未登录点「扫码登录」会弹本机浏览器窗口</span>
+                  </div>
+                  {SAU_PLATFORMS.map((p) => {
+                    const entry = matrix[p.id]!;
+                    return (
+                      <div key={p.id} className={c('row')}>
+                        <label className={c('row')} style={{ minWidth: 96 }}>
+                          <input
+                            type="checkbox"
+                            checked={entry.on}
+                            onChange={(e) => setMatrix((m) => ({ ...m, [p.id]: { ...m[p.id]!, on: e.target.checked } }))}
+                          />
+                          <strong>{p.label}</strong>
+                        </label>
+                        <input
+                          className={c('input')}
+                          style={{ width: 130 }}
+                          value={entry.account}
+                          onChange={(e) => setMatrix((m) => ({ ...m, [p.id]: { ...m[p.id]!, account: e.target.value } }))}
+                        />
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={entry.login === 'checking' || entry.login === 'logging'}
+                          onClick={() => void handleCheckLogin(p.id)}
+                        >
+                          {entry.login === 'checking' ? '检查中…' : '检查登录'}
+                        </button>
+                        {entry.login === 'in' ? <span className={`${c('chip')} ${c('chipGreen')}`}>已登录</span> : null}
+                        {entry.login === 'out' ? (
+                          <>
+                            <span className={`${c('chip')} ${c('chipRed')}`}>未登录</span>
+                            <button type="button" className={c('btn')} onClick={() => void handleLogin(p.id)}>
+                              扫码登录
+                            </button>
+                          </>
+                        ) : null}
+                        {entry.login === 'logging' ? <span className={`${c('chip')} ${c('chipAmber')}`}>等扫码…</span> : null}
+                        {entry.detail ? <span className={c('cardHint')}>{entry.detail.slice(0, 60)}</span> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className={c('row')}>
+                  <button
+                    type="button"
+                    className={`${c('btn')} ${c('btnPrimary')}`}
+                    disabled={publishing}
+                    onClick={() => void handlePublish()}
+                  >
+                    {publishing ? '发布中…' : '发布到已选平台'}
+                  </button>
+                  <span className={c('saveHint')}>真实对外发布 · 点击后还有一次明细确认</span>
+                </div>
+                {article.status === 'published' ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      发布复盘
+                      <span className={c('cardHint')}>发出 24-48 小时后回来填数据，AI 给下一条的改进建议</span>
+                    </div>
+                    <input
+                      className={c('input')}
+                      value={str(extra.reviewData)}
+                      placeholder="例：抖音播放 2.1w 赞 300，小红书曝光 8000 收藏 40"
+                      onChange={(e) => editArticle({ extra: { reviewData: e.target.value } })}
+                    />
+                    <div className={c('row')}>
+                      <button type="button" className={c('btn')} onClick={() => void startAiTask('review')}>
+                        <Icon name="sparkles" size={14} /> AI 复盘并给下一条建议
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {publishes.length > 0 ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>发布记录</div>
+                    <div className={c('records')}>
+                      {publishes.map((r) => (
+                        <div key={r.id} className={c('record')}>
+                          <span className={c('recordTime')}>{timeLabel(r.createdAt)}</span>
+                          <span className={`${c('chip')} ${r.status === 'ok' ? c('chipGreen') : c('chipRed')}`}>
+                            {r.status === 'ok' ? '成功' : '失败'}
+                          </span>
+                          <span>{r.accountName}</span>
+                          {r.error ? <span className={c('recordError')}>{r.error.slice(0, 160)}</span> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )
+          ) : null}
+
+          {notice ? (
+            <div className={`${c('notice')} ${notice.ok ? c('noticeOk') : c('noticeErr')}`}>{notice.text}</div>
+          ) : null}
+        </div>
+
+        {article && tab !== 'topics' && tab !== 'list' && tab !== 'knowledge' ? (
+          <div className={c('previewCol')}>
+            <span className={c('previewTag')}>
+              <Icon name="eye" size={13} /> 作品卡（发布时的样子）
+            </span>
+            <div className={c('videoCard')}>
+              <div className={c('videoCardTitle')}>{article.title || '（还没有标题）'}</div>
+              <div className={c('videoCardMeta')}>
+                {str(extra.targetPlatform) || '抖音'} · {str(extra.tone) || '真诚口播'} · {estimateDuration(speechText) || '时长未知'}
+              </div>
+              {audioUrl ? (
+                // eslint-disable-next-line jsx-a11y/media-has-caption
+                <audio controls src={audioUrl} style={{ width: '100%' }} />
+              ) : null}
+              <div className={c('videoCardScript')}>
+                {speechText.trim() ? speechText.slice(0, 1200) : '口播脚本会显示在这里…'}
+              </div>
+              {tags.trim() ? (
+                <div className={c('row')}>
+                  {tags.split(/[,，]/).filter(Boolean).slice(0, 8).map((t) => (
+                    <span key={t} className={`${c('chip')} ${c('chipBlue')}`}>
+                      #{t.trim()}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className={c('videoCardMeta')}>{videoPath ? `成片：${videoPath.split('/').pop()}` : '成片：未就绪'}</div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <StudioAiPanel task={aiTask} onFinished={refreshAfterAiTask} onDismiss={() => setAiTask(null)} />
+    </div>
+  );
+}

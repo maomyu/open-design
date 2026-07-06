@@ -1,0 +1,383 @@
+/**
+ * Media Studio（媒体创作台）contracts — spec: specs/current/media-studio.md
+ *
+ * Core idea: a persistent, layered Article entity that four standalone-but-
+ * chainable navigations (选题/写作/排版/发布) all operate on. Rendering and
+ * publishing are deterministic product code (no agent in the loop); topic
+ * finding and writing may be agent-assisted but always land in this entity.
+ *
+ * Platform-parameterized: `wechat-mp` is the first implementation. New
+ * platforms reuse the same entities/routes with their own renderer/publisher.
+ */
+
+/** Known studio platforms. Keep the string fallback so new platforms can ship
+ *  daemon-side before this union catches up. */
+export type MediaStudioPlatform = 'wechat-mp' | (string & {});
+
+export type MediaArticleStatus = 'writing' | 'rendered' | 'published';
+
+/** 公众号排版皮肤 ids（与工作台 styles.json 同源，已移植为 daemon 常量）。 */
+export type WechatSkinId = 'kaiti' | 'orangeheart' | 'github';
+
+/** The layered article. `title` never renders into the body — platforms
+ *  carry it in their own title field. Body = headerMd + bodyMd + footerMd
+ *  concatenated at render time so fixed openings/closings stay reusable. */
+export interface MediaArticle {
+  id: string;
+  platform: MediaStudioPlatform;
+  /** Bound platform-account id (accounts center), optional until publish. */
+  accountId: string | null;
+  title: string;
+  digest: string;
+  /** Where this article came from (topic title), display-only. */
+  topic: string | null;
+  headerMd: string;
+  bodyMd: string;
+  footerMd: string;
+  skin: string;
+  /** Cover image source: http(s) URL or absolute local path. Empty string =
+   *  fall back to the first in-body image at publish time. */
+  coverSource: string;
+  /** Last persisted render (排版导航「保存排版」). Live preview does NOT
+   *  write this — it uses the stateless render endpoint. */
+  renderedHtml: string | null;
+  renderedSkin: string | null;
+  renderedAt: number | null;
+  status: MediaArticleStatus;
+  /** Platform-specific fields (short-video: videoPath/audioPath/tags/voice/
+   *  tone/duration…), free-form JSON so the shared entity stays generic. */
+  extra: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** List-view projection (omit heavy bodies). */
+export interface MediaArticleSummary {
+  id: string;
+  platform: MediaStudioPlatform;
+  accountId: string | null;
+  title: string;
+  topic: string | null;
+  skin: string;
+  status: MediaArticleStatus;
+  updatedAt: number;
+  createdAt: number;
+}
+
+export interface MediaTopic {
+  id: string;
+  platform: MediaStudioPlatform;
+  title: string;
+  angle: string;
+  source: string;
+  url: string;
+  heat: string;
+  status: 'candidate' | 'used';
+  createdAt: number;
+}
+
+/** Reusable snippet library — fixed openings/closings (markdown) and saved
+ *  covers (contentMd carries the asset URL for slot 'cover'). */
+export interface MediaSnippet {
+  id: string;
+  platform: MediaStudioPlatform;
+  slot: 'header' | 'footer' | 'cover';
+  name: string;
+  contentMd: string;
+  updatedAt: number;
+}
+
+/** 版本快照（AI 动作前自动创建；可手动存档）。 */
+export interface MediaArticleVersion {
+  id: string;
+  articleId: string;
+  label: string;
+  title: string;
+  digest: string;
+  headerMd: string;
+  bodyMd: string;
+  footerMd: string;
+  createdAt: number;
+}
+export interface MediaVersionListResponse {
+  versions: MediaArticleVersion[];
+}
+
+/** 知识库条目（platform 级,可选绑定账号）。 */
+export interface MediaKnowledge {
+  id: string;
+  platform: MediaStudioPlatform;
+  accountId: string | null;
+  name: string;
+  contentMd: string;
+  updatedAt: number;
+}
+export interface MediaKnowledgeListResponse {
+  items: MediaKnowledge[];
+}
+export interface CreateMediaKnowledgeRequest {
+  name: string;
+  contentMd: string;
+  accountId?: string | null;
+}
+
+export interface UploadStudioAssetRequest {
+  filename: string;
+  /** base64（不带 data: 前缀）. */
+  dataBase64: string;
+}
+export interface UploadStudioAssetResponse {
+  url: string;
+  file: string;
+}
+
+/** 抓取公众号原文（大家来 article_detail 直调）——素材简报的原料。 */
+export interface FetchArticleDetailRequest {
+  url: string;
+}
+export interface FetchArticleDetailResponse {
+  title: string;
+  account: string;
+  markdown: string;
+}
+
+export interface MediaPublishRecord {
+  id: string;
+  articleId: string;
+  platform: MediaStudioPlatform;
+  accountId: string | null;
+  accountName: string;
+  status: 'ok' | 'error';
+  /** WeChat draft media_id on success. */
+  draftMediaId: string | null;
+  /** Which step failed: token | upload | cover | draft | render | account. */
+  failedStep: string | null;
+  error: string | null;
+  createdAt: number;
+}
+
+// ---- requests / responses ----
+
+export interface MediaArticleListResponse {
+  articles: MediaArticleSummary[];
+}
+export interface MediaArticleResponse {
+  article: MediaArticle;
+}
+export interface CreateMediaArticleRequest {
+  title?: string;
+  topic?: string | null;
+  /** When set, marks the topic row as used and copies its title. */
+  fromTopicId?: string | null;
+  accountId?: string | null;
+  skin?: string;
+  headerMd?: string;
+  bodyMd?: string;
+  footerMd?: string;
+}
+export interface UpdateMediaArticleRequest {
+  title?: string;
+  digest?: string;
+  topic?: string | null;
+  accountId?: string | null;
+  headerMd?: string;
+  bodyMd?: string;
+  footerMd?: string;
+  skin?: string;
+  coverSource?: string;
+  /** Shallow-merged into the stored extra (null value deletes the key). */
+  extra?: Record<string, unknown>;
+}
+
+/** Stateless render — powers live preview and the standalone 排版 mode.
+ *  Renders header+body+footer with the platform renderer; nothing persisted. */
+export interface MediaRenderRequest {
+  platform?: MediaStudioPlatform;
+  skin?: string;
+  headerMd?: string;
+  bodyMd?: string;
+  footerMd?: string;
+}
+export interface MediaRenderResponse {
+  html: string;
+  skin: string;
+  /** Non-fatal notes（e.g. 剥掉了首行大标题 / 检测到本地图片将在发布时上传替换）. */
+  notes: string[];
+}
+
+export interface PublishMediaArticleRequest {
+  /** Platform account id from the accounts center. */
+  accountId: string;
+}
+export interface PublishMediaArticleResponse {
+  record: MediaPublishRecord;
+  article: MediaArticle;
+}
+export interface MediaPublishListResponse {
+  publishes: MediaPublishRecord[];
+}
+
+export interface MediaTopicListResponse {
+  topics: MediaTopic[];
+}
+export interface CreateMediaTopicRequest {
+  title: string;
+  angle?: string;
+  source?: string;
+  url?: string;
+  heat?: string;
+}
+export interface UpdateMediaTopicRequest {
+  title?: string;
+  angle?: string;
+  source?: string;
+  url?: string;
+  heat?: string;
+  status?: 'candidate' | 'used';
+}
+export interface MediaTopicResponse {
+  topic: MediaTopic;
+}
+
+export interface MediaSnippetListResponse {
+  snippets: MediaSnippet[];
+}
+export interface CreateMediaSnippetRequest {
+  slot: 'header' | 'footer' | 'cover';
+  name: string;
+  contentMd: string;
+}
+export interface MediaSnippetResponse {
+  snippet: MediaSnippet;
+}
+
+// ---- topic data feeds（大家来爆文榜/微信搜一搜/双信号雷达，daemon 直调） ----
+
+/** One hot-article hit from the dajiala data feeds. Transient (not stored)
+ *  until the user promotes it into a MediaTopic candidate. */
+export interface MediaTopicHit {
+  title: string;
+  url: string;
+  account: string;
+  publishedAt: string;
+  /** trending = 阅读爆款榜命中；realtime = 搜一搜命中；both = ⭐双信号. */
+  signals: Array<'trending' | 'realtime'>;
+  readNum: number | null;
+  zanNum: number | null;
+  /** 爆值 from the trending feed, opaque string. */
+  hot: string | null;
+  desc: string | null;
+}
+
+export interface TopicFeedSearchRequest {
+  keyword?: string;
+  /** trending window in days (default 7). */
+  days?: number;
+  page?: number;
+  /** realtime sort: hottest(默认)/latest/all. */
+  sort?: 'hottest' | 'latest' | 'all';
+}
+export interface TopicFeedSearchResponse {
+  items: MediaTopicHit[];
+  /** Which feeds actually responded (radar degrades gracefully). */
+  sources: Array<'trending' | 'realtime'>;
+}
+
+// ---- article images（千问生图直调） ----
+
+export interface GenerateArticleImageRequest {
+  /** Scene description (Chinese ok). */
+  description: string;
+  /** 生图模型 id：qwen(默认) / gemini；将来扩展更多模型往这里加. */
+  model?: string;
+  /** whiteboard(默认) / illustrated / clean. */
+  style?: string;
+  /** 16:9 / 4:3(默认) / 3:4 / 1:1 / 9:16. */
+  ratio?: string;
+  /** When set, replace this `<!-- IMAGE_<marker>: ... -->` comment in bodyMd
+   *  with the generated image markdown. e.g. marker: "1" or "COVER". */
+  marker?: string | null;
+  /** true → also set the article coverSource to the generated asset. */
+  asCover?: boolean;
+  /** Optional reference image (URL or local absolute path) steering the
+   *  generation — 封面可带参考图. */
+  referenceImage?: string | null;
+}
+export interface GenerateArticleImageResponse {
+  /** Web-servable asset URL (/api/media-studio/assets/...). */
+  url: string;
+  file: string;
+  article: MediaArticle;
+}
+
+// ---- studio AI tasks（每步的智能体动作；执行走既有 /api/runs） ----
+
+export type StudioAiTaskKind = 'topics' | 'write' | 'revise' | 'ai-check' | 'script' | 'research' | 'review';
+
+// ---- short-video: 配音（火山 TTS 直调工作台脚本） ----
+
+export interface StudioTtsRequest {
+  /** 文本；空则取文章口播脚本（bodyMd 去掉标注后的纯文本）. */
+  text?: string;
+  /** 火山音色 id（S_ 开头为复刻音色）；空用默认音色. */
+  voice?: string;
+}
+export interface StudioTtsResponse {
+  /** Web-servable wav URL (/api/media-studio/assets/...). */
+  url: string;
+  file: string;
+  article: MediaArticle;
+}
+
+// ---- short-video: 多平台矩阵发布（sau CLI 直调；对外动作,UI 必须人工确认） ----
+
+/** sau 平台 id（tencent = 视频号）. */
+export type SauPlatformId = 'douyin' | 'xiaohongshu' | 'kuaishou' | 'bilibili' | 'tencent';
+
+export interface SauTarget {
+  platform: SauPlatformId;
+  /** sau 的 --account 档案名（cookie 档案）. */
+  account: string;
+}
+
+export interface SauCheckRequest {
+  target: SauTarget;
+}
+export interface SauCheckResponse {
+  loggedIn: boolean;
+  detail: string;
+}
+
+export interface PublishVideoRequest {
+  targets: SauTarget[];
+  /** 视频文件绝对路径；空则取文章 extra.videoPath. */
+  videoPath?: string;
+  /** 定时发布 "YYYY-MM-DD HH:mm"（可选）. */
+  schedule?: string;
+}
+export interface PublishVideoResponse {
+  records: MediaPublishRecord[];
+  article: MediaArticle;
+}
+
+export interface StudioAiTaskRequest {
+  kind: StudioAiTaskKind;
+  articleId?: string | null;
+  input?: {
+    /** topics: 方向/领域；write: 补充要求；revise: 修改意见. */
+    note?: string;
+    /** write: 文章类型（对应工作台 writer 技能）. */
+    articleType?: string;
+    /** write: 目标字数档位（如 "1500-2000"）. */
+    wordCount?: string;
+    /** 绑定账号 id（写作按人设写）. */
+    accountId?: string;
+  };
+}
+export interface StudioAiTaskResponse {
+  projectId: string;
+  conversationId: string;
+  /** Composed step prompt — the web starts the run via POST /api/runs. */
+  prompt: string;
+  title: string;
+}

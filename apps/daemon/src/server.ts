@@ -428,6 +428,7 @@ import { registerFinalizeRoutes, registerImportRoutes, registerProjectExportRout
 import { registerHandoffRoutes } from './handoff-routes.js';
 import { registerPluginEditRoutes } from './plugin-edit-routes.js';
 import { registerAccountRoutes } from './account-routes.js';
+import { registerMediaStudioRoutes } from './media-studio-routes.js';
 import { registerPluginDraftRoutes } from './plugin-draft-routes.js';
 import { registerSkillDraftRoutes } from './skill-draft-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
@@ -5540,6 +5541,7 @@ export async function startServer({
   });
   registerPluginEditRoutes(app, { db, http: httpDeps, paths: pathDeps });
   registerAccountRoutes(app, { http: httpDeps, paths: pathDeps });
+  registerMediaStudioRoutes(app, { db, paths: pathDeps });
   registerPluginDraftRoutes(app, { db, http: httpDeps, paths: pathDeps });
   registerDeploymentCheckRoutes(app, { db, http: httpDeps, deploy: deployDeps });
   app.use('/frames', express.static(FRAMES_DIR));

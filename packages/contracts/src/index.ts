@@ -17,6 +17,7 @@ export * from './api/live-artifacts.js';
 export * from './api/media.js';
 export * from './api/mcp.js';
 export * from './api/memory.js';
+export * from './api/media-studio.js';
 export * from './api/orbit.js';
 export * from './api/plugin-candidates.js';
 export * from './api/plugin-draft.js';

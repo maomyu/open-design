@@ -24,6 +24,8 @@ export type EntryView =
   | 'tasks'
   | 'plugins'
   | 'accounts'
+  | 'studio'
+  | 'studio-video'
   | 'design-systems'
   | 'integrations';
 
@@ -109,6 +111,25 @@ export function EntryNavRail({
           testId="entry-nav-home"
         >
           <Icon name="home" size={18} />
+        </NavButton>
+        {/* 创作台（客户定制,中文文案不进 i18n;spec: specs/current/media-studio.md） */}
+        <NavButton
+          active={view === 'studio'}
+          ariaLabel="公众号"
+          label="公众号"
+          onClick={() => onViewChange('studio')}
+          testId="entry-nav-studio"
+        >
+          <Icon name="edit" size={18} />
+        </NavButton>
+        <NavButton
+          active={view === 'studio-video'}
+          ariaLabel="短视频"
+          label="短视频"
+          onClick={() => onViewChange('studio-video')}
+          testId="entry-nav-studio-video"
+        >
+          <Icon name="play" size={18} />
         </NavButton>
         <NavButton
           active={view === 'accounts'}
