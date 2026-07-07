@@ -187,6 +187,13 @@ export function MediaStudioView(): JSX.Element {
   const [snippetDraft, setSnippetDraft] = useState<{ slot: 'header' | 'footer'; name: string } | null>(null);
   const [snippetManage, setSnippetManage] = useState<'header' | 'footer' | null>(null);
   const [imageNotice, setImageNotice] = useState<string | null>(null);
+  // 手机宽度预览（375px）：默认开——预览应还原读者真实看到的样子。
+  const [phonePreview, setPhonePreview] = useState(true);
+  // 封面候选：一次生成 2 张对比选用；点「用这张」才落为封面。
+  const [coverCandidates, setCoverCandidates] = useState<string[]>([]);
+  const [coverGenBusy, setCoverGenBusy] = useState(false);
+  // 划选改写：正文选中 ≥10 字时，「按我说的改」只改选中段。
+  const [reviseSelection, setReviseSelection] = useState('');
 
   const articleRef = useRef<MediaArticle | null>(null);
   articleRef.current = article;
@@ -382,6 +389,7 @@ export function MediaStudioView(): JSX.Element {
     setArticle(created);
     window.localStorage.setItem(LAST_ARTICLE_KEY, created.id);
     setTab('write');
+    studioToast.ok(fromTopic ? '已从选题建稿，标题和素材链接已带入' : '已新建文章');
     if (fromTopic) {
       setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
     }
@@ -640,11 +648,25 @@ export function MediaStudioView(): JSX.Element {
             </button>
 
           </div>
+          {reviseSelection ? (
+            <div className={c('row')}>
+              <span className={`${c('chip')} ${c('chipBlue')}`}>
+                已选中正文 {reviseSelection.trim().length} 字 · 将只改写这一段
+              </span>
+              <button type="button" className={c('btn')} onClick={() => setReviseSelection('')}>
+                取消选中
+              </button>
+            </div>
+          ) : null}
           <div className={c('row')}>
             <input
               className={`${c('input')} ${c('grow')}`}
               value={reviseNote}
-              placeholder="想怎么改？例：第二段太啰嗦、标题换一个、结尾加行动引导…"
+              placeholder={
+                reviseSelection
+                  ? '这一段想怎么改？例：更口语、压缩到一半、加个例子…'
+                  : '想怎么改？例：第二段太啰嗦、标题换一个、结尾加行动引导…（想只改某段：先在正文里选中它）'
+              }
               onChange={(e) => setReviseNote(e.target.value)}
             />
             <button
@@ -652,11 +674,15 @@ export function MediaStudioView(): JSX.Element {
               className={c('btn')}
               disabled={!reviseNote.trim()}
               onClick={() => {
-                void startAiTask('revise', { note: reviseNote.trim() });
+                const note = reviseSelection
+                  ? `【只改写下面选中的段落，文章其余部分一字不动】\n选中段落：\n${reviseSelection.trim()}\n\n修改要求：${reviseNote.trim()}`
+                  : reviseNote.trim();
+                void startAiTask('revise', { note });
                 setReviseNote('');
+                setReviseSelection('');
               }}
             >
-              按我说的改
+              {reviseSelection ? '只改选中段' : '按我说的改'}
             </button>
           </div>
         </div>
@@ -698,7 +724,16 @@ export function MediaStudioView(): JSX.Element {
             className={`${c('textarea')} ${c('textareaLarge')}`}
             value={article.bodyMd}
             placeholder={'从导语直接开始写（不要在开头再写一遍大标题）。\n\n## 第一个小节\n\n正文…'}
-            onChange={(e) => editArticle({ bodyMd: e.target.value })}
+            onChange={(e) => {
+              editArticle({ bodyMd: e.target.value });
+              if (reviseSelection) setReviseSelection('');
+            }}
+            onSelect={(e) => {
+              // 划选 ≥10 字即进入「只改这段」模式；点别处（选区折叠）自动退出。
+              const t = e.currentTarget;
+              const sel = t.value.slice(t.selectionStart ?? 0, t.selectionEnd ?? 0);
+              setReviseSelection(sel.trim().length >= 10 ? sel : '');
+            }}
           />
         </div>
         <div className={c('card')}>
@@ -778,24 +813,31 @@ export function MediaStudioView(): JSX.Element {
     }
     const coverMarker = parseImageMarkers(article.bodyMd).find((m) => m.marker.toUpperCase() === 'COVER') ?? null;
     const coverSnippets = snippets.filter((s) => s.slot === 'cover');
+    // 一次并行出 2 张候选（asCover:false 只产资产不落库），点「用这张」才成为封面。
     const generateCover = async (desc: string, style: string, referenceImage: string, model: string) => {
-      setImageBusy('COVER');
+      setCoverGenBusy(true);
       setImageNotice(null);
-      const result = await generateArticleImage(PLATFORM, article.id, {
+      const request = {
         description: desc,
         style,
         model,
         ratio: '16:9',
-        asCover: true,
+        asCover: false,
         ...(referenceImage.trim() ? { referenceImage: referenceImage.trim() } : {}),
-      });
-      setImageBusy(null);
-      if ('error' in result) {
-        setImageNotice(result.error);
+      };
+      const results = await Promise.all([
+        generateArticleImage(PLATFORM, article.id, request),
+        generateArticleImage(PLATFORM, article.id, request),
+      ]);
+      setCoverGenBusy(false);
+      const urls = results.flatMap((r) => ('error' in r ? [] : [r.url]));
+      if (urls.length === 0) {
+        const first = results[0];
+        setImageNotice('error' in first ? first.error : '生成失败');
         return;
       }
-      setArticle(result.article);
-      setImageNotice('封面已生成并设置为当前封面');
+      setCoverCandidates((prev) => [...urls, ...prev].slice(0, 6));
+      studioToast.ok(urls.length === 2 ? '2 张候选已生成，对比后点「用这张」' : '生成 1 张候选（另一张失败）');
     };
     const saveCoverToLibrary = async () => {
       if (!article.coverSource) return;
@@ -865,7 +907,7 @@ export function MediaStudioView(): JSX.Element {
           </div>
           <CoverGenerator
             initialDescription={coverMarker?.description ?? article.title}
-            busy={imageBusy === 'COVER'}
+            busy={coverGenBusy}
             onGenerate={(desc, style, ref, model) => void generateCover(desc, style, ref, model)}
             onUploadReference={async (file) => {
               const result = await uploadStudioAsset(PLATFORM, article.id, file);
@@ -876,6 +918,37 @@ export function MediaStudioView(): JSX.Element {
               return result.url ?? null;
             }}
           />
+          {coverGenBusy || coverCandidates.length > 0 ? (
+            <div className={c('coverGrid')}>
+              {coverGenBusy
+                ? [0, 1].map((i) => <div key={`cover-skeleton-${i}`} className={c('coverSkeleton')} />)
+                : null}
+              {coverCandidates.map((url) => (
+                <div key={url} className={c('coverCard')}>
+                  <img className={c('coverThumb')} src={url} alt="候选封面" />
+                  <div className={c('row')}>
+                    <button
+                      type="button"
+                      className={`${c('btn')} ${c('btnPrimary')}`}
+                      onClick={() => {
+                        editArticle({ coverSource: url });
+                        studioToast.ok('已设为当前封面');
+                      }}
+                    >
+                      用这张
+                    </button>
+                    <button
+                      type="button"
+                      className={c('btn')}
+                      onClick={() => setCoverCandidates((list) => list.filter((u) => u !== url))}
+                    >
+                      弃
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
         {coverSnippets.length > 0 ? (
           <div className={c('card')}>
@@ -1232,9 +1305,19 @@ export function MediaStudioView(): JSX.Element {
             {publishNotice.ok ? (
               <>
                 {' '}
-                <a className={c('link')} href="https://mp.weixin.qq.com" target="_blank" rel="noreferrer">
-                  去公众号后台确认群发 →
-                </a>
+                <button
+                  type="button"
+                  className={c('link')}
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', font: 'inherit', padding: 0 }}
+                  onClick={() =>
+                    void openStudioBrowser({
+                      platform: 'wechat-mp',
+                      account: effectiveAccount?.name ?? 'main',
+                    })
+                  }
+                >
+                  去公众号后台确认群发 →（专属浏览器）
+                </button>
               </>
             ) : null}
           </div>
@@ -1451,10 +1534,27 @@ export function MediaStudioView(): JSX.Element {
           <div className={c('previewCol')}>
             <span className={c('previewTag')}>
               <Icon name="eye" size={13} /> 实时预览（与发布产物同源）
+              <span className={c('headSpacer')} />
+              <button
+                type="button"
+                className={`${c('previewModeBtn')}${phonePreview ? ` ${c('previewModeBtnActive')}` : ''}`}
+                title="按手机宽度（375px）预览——读者真实看到的样子"
+                onClick={() => setPhonePreview(true)}
+              >
+                手机
+              </button>
+              <button
+                type="button"
+                className={`${c('previewModeBtn')}${!phonePreview ? ` ${c('previewModeBtnActive')}` : ''}`}
+                title="铺满预览列"
+                onClick={() => setPhonePreview(false)}
+              >
+                全宽
+              </button>
             </span>
-            <div className={c('previewShell')}>
+            <div className={`${c('previewShell')}${phonePreview ? ` ${c('previewShellPhone')}` : ''}`}>
               <iframe
-                className={c('previewFrame')}
+                className={`${c('previewFrame')}${phonePreview ? ` ${c('previewFramePhone')}` : ''}`}
                 sandbox=""
                 title="公众号排版预览"
                 srcDoc={previewDoc(article?.title ?? '', previewHtml)}
@@ -1559,7 +1659,7 @@ function CoverGenerator({
           disabled={busy || !desc.trim()}
           onClick={() => onGenerate(desc.trim(), style, reference, model)}
         >
-          {busy ? '生成中…' : '生成封面'}
+          {busy ? '生成中…' : '生成 2 张候选'}
         </button>
       </div>
     </>

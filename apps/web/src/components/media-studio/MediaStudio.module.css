@@ -626,3 +626,45 @@
   font-size: 13px;
 }
 .emptyGuide strong { color: var(--text, #1a1916); font-size: 14px; }
+
+/* ---- 手机宽度预览 ---- */
+.previewModeBtn {
+  border: 1px solid var(--border, #e1e5eb);
+  background: var(--bg-elevated, #fff);
+  color: var(--text-muted, #74716b);
+  border-radius: 6px;
+  padding: 2px 9px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.previewModeBtnActive {
+  color: var(--accent, #1a73e8);
+  border-color: var(--accent, #1a73e8);
+  background: #f0f5ff;
+}
+.previewShellPhone {
+  display: flex;
+  justify-content: center;
+  background: var(--bg, #f3f2ef);
+}
+.previewFramePhone {
+  width: 375px;
+  max-width: 100%;
+  flex: 0 0 auto;
+  border-inline: 1px solid var(--border, #e1e5eb);
+  background: #fff;
+}
+
+/* ---- 封面候选骨架 ---- */
+.coverSkeleton {
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  border: 1px solid var(--border, #e1e5eb);
+  background: linear-gradient(100deg, #f2f1ee 40%, #faf9f7 50%, #f2f1ee 60%);
+  background-size: 200% 100%;
+  animation: coverShimmer 1.2s ease-in-out infinite;
+}
+@keyframes coverShimmer {
+  from { background-position: 130% 0; }
+  to { background-position: -30% 0; }
+}
