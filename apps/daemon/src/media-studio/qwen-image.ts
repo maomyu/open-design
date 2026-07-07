@@ -100,9 +100,49 @@ async function referenceImageContent(ref: string): Promise<{ image: string }> {
   return { image: `data:${mime};base64,${buf.toString('base64')}` };
 }
 
+/** 阿里云内容安全审查拦截（inappropriate content）——概率性撞线（涉军/制服等
+ *  题材尤甚），同参数重抽一次往往就过。 */
+function isContentBlocked(message: string): boolean {
+  return /inappropriate|data_inspection|green/i.test(message);
+}
+
 /** Generates one image and writes it to outFile (extension adjusted to the
- *  actual content type). Returns the final absolute file path. */
+ *  actual content type). Returns the final absolute file path.
+ *  两类高频瞬时错误自动自愈：内容审查拦截（概率撞线）重抽一次；
+ *  429 限流退避 20 秒最多重试两次。仍失败时给可操作的人话错误。 */
 export async function generateQwenImage(opts: QwenImageOptions): Promise<string> {
+  let contentRetried = false;
+  let rateRetries = 0;
+  for (;;) {
+    try {
+      return await generateQwenImageOnce(opts);
+    } catch (err) {
+      if (!(err instanceof QwenImageError)) throw err;
+      if (isContentBlocked(err.message)) {
+        if (!contentRetried) {
+          contentRetried = true;
+          continue;
+        }
+        throw new QwenImageError(
+          '生成结果被阿里云内容安全拦截（已自动重试一次仍未过审）。这是模型输出的概率性撞线，' +
+          '不是配置问题——把画面描述改得更中性（少提军装/制服/机构等敏感元素）再试通常就好；' +
+          '或在配置里补 GEMINI_API_KEY 用备用模型自动兜底。',
+        );
+      }
+      if (/HTTP 429/.test(err.message)) {
+        if (rateRetries < 2) {
+          rateRetries += 1;
+          await new Promise((r) => setTimeout(r, 20_000));
+          continue;
+        }
+        throw new QwenImageError('千问生图触发限流（已自动等待重试仍受限）——歇一分钟再点，或一次少生成几张。');
+      }
+      throw err;
+    }
+  }
+}
+
+async function generateQwenImageOnce(opts: QwenImageOptions): Promise<string> {
   const style = opts.style ?? 'whiteboard';
   let stylePrefix = WHITEBOARD_STYLE;
   let negative = DEFAULT_NEGATIVE;
@@ -139,7 +179,10 @@ export async function generateQwenImage(opts: QwenImageOptions): Promise<string>
   }
   const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
   if (!resp.ok) {
-    throw new QwenImageError(`千问接口 HTTP ${resp.status}: ${String(data?.message ?? data?.code ?? '')}（检查 QWEN_API_KEY）`);
+    const msg = String(data?.message ?? data?.code ?? '');
+    // 只有鉴权类错误才提示查 key；内容审查等业务错误透传原因（外层会重试/翻译）。
+    const keyHint = resp.status === 401 || resp.status === 403 ? '（检查 QWEN_API_KEY）' : '';
+    throw new QwenImageError(`千问接口 HTTP ${resp.status}: ${msg}${keyHint}`);
   }
   const content: Array<Record<string, unknown>> = data?.output?.choices?.[0]?.message?.content ?? [];
   const imageUrl = content.map((c) => c.image).find((v): v is string => typeof v === 'string');
