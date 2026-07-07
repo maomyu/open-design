@@ -283,6 +283,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         knowledgeBlock(input.knowledge),
         researchPhase,
         '## 硬约束',
+        '- **标题必须重新拟**（选题原句只是方向描述，不是成品标题），**严格 ≤21 个中文字符**（微信硬限 64 字节，超出 `od studio set` 会直接报错拒收）。写完标题先数一遍字数再用。',
         '- **正文不写大标题**（标题单独走 title 字段），从导语/首段直接开始。',
         '- 按写作方法论在正文里标注配图位：`<!-- IMAGE_N: 具体场景描述, 4:3 -->`（封面 `<!-- IMAGE_COVER: 描述, 16:9 -->` 放最前）。',
         '- markdown 只用 `##`/`###` 小节、`**加粗**`、`>` 引用、`1.`/`-` 列表。',

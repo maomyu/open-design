@@ -2354,7 +2354,19 @@ async function runStudio(args) {
     const id = bare[1];
     if (!id) { console.error('Usage: od studio set <id> [--title ...]'); process.exit(2); }
     const patch = {};
-    if (typeof flags.title === 'string') patch.title = flags.title;
+    if (typeof flags.title === 'string') {
+      // 硬闸：微信标题上限 64 字节（约 21 个中文字符）。AI 无人值守写回时
+      // 超长直接报错，让 agent 当场重拟——绝不把发布必败的标题落库。
+      const titleBytes = Buffer.byteLength(flags.title, 'utf8');
+      if (titleBytes > 64) {
+        console.error(
+          `标题超长：${titleBytes}/64 字节（约 ${Math.ceil(titleBytes / 3)} 个中文字符）。` +
+          `微信标题上限 64 字节≈21 个中文字符——请重新拟一个更短的标题再 set（当前标题：${flags.title}）`,
+        );
+        process.exit(3);
+      }
+      patch.title = flags.title;
+    }
     if (typeof flags.digest === 'string') patch.digest = flags.digest;
     if (typeof flags.skin === 'string' && flags.skin) patch.skin = flags.skin;
     if (typeof flags.cover === 'string') patch.coverSource = flags.cover;
