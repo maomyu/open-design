@@ -32,7 +32,15 @@ import type {
 import type { PathDeps, RouteDeps } from './server-context.js';
 import { readAppConfig, platformAccountsForPlatform } from './app-config.js';
 import { getProject, insertConversation, insertProject } from './db.js';
-import { dajialaArticleDetail, dajialaHotSearch, dajialaRadar, dajialaWebSearch } from './media-studio/dajiala.js';
+import {
+  dajialaArticleDetail,
+  dajialaHotSearch,
+  dajialaKwSearch,
+  dajialaPeersLatest,
+  dajialaRadar,
+  dajialaSugWords,
+  dajialaWebSearch,
+} from './media-studio/dajiala.js';
 import { generateGeminiImageFallback, generateQwenImage, QwenImageError } from './media-studio/qwen-image.js';
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
@@ -298,7 +306,10 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
 
   // ---- topic data feeds（大家来直调；价格永不入响应，只报条数） ----
   const feedHandler = (
-    run: (key: string, body: TopicFeedSearchRequest) => Promise<{ items: unknown[]; sources: string[] }>,
+    run: (
+      key: string,
+      body: TopicFeedSearchRequest,
+    ) => Promise<{ items: unknown[]; sources: string[]; words?: string[] }>,
   ) => {
     return async (req: any, res: any) => {
       try {
@@ -334,6 +345,35 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   app.post('/api/media-studio/:platform/topics/radar', feedHandler(async (key, body) => {
     if (!body.keyword?.trim()) throw new Error('雷达需要关键词');
     return dajialaRadar(key, { keyword: body.keyword.trim(), days: body.days ?? 7 });
+  }));
+
+  // 2026-07-07 接口调研落地：全库搜索（带真实阅读数）/ 需求词 / 对标动态。
+  app.post('/api/media-studio/:platform/topics/kw-search', feedHandler(async (key, body) => {
+    if (!body.keyword?.trim()) throw new Error('全库搜索需要关键词');
+    return {
+      items: await dajialaKwSearch(key, { keyword: body.keyword.trim(), page: body.page ?? 1 }),
+      sources: ['kwdb'],
+    };
+  }));
+
+  app.post('/api/media-studio/:platform/topics/sug', feedHandler(async (key, body) => {
+    if (!body.keyword?.trim()) throw new Error('需求词需要一个起点词');
+    return {
+      items: [],
+      sources: ['sug'],
+      words: await dajialaSugWords(key, body.keyword.trim()),
+    };
+  }));
+
+  app.post('/api/media-studio/:platform/topics/peers', feedHandler(async (key, body) => {
+    const accounts = Array.isArray(body.accounts)
+      ? body.accounts.map((a) => String(a).trim()).filter(Boolean)
+      : [];
+    if (accounts.length === 0) throw new Error('对标动态需要至少一个账号名');
+    return {
+      items: await dajialaPeersLatest(key, accounts),
+      sources: ['peer'],
+    };
   }));
 
   // ---- article images（千问生图直调 + 标注替换回写） ----

@@ -1,12 +1,68 @@
-// 选题导航（两个创作台共享）：手动候选 + 大家来数据按钮（爆文榜/搜一搜/
-// 双信号雷达）+「AI 帮我选题」。独立可用，也向写作/脚本步输送选题。
+// 选题导航（两个创作台共享）：手动候选 + 组合式选题雷达（数据源可勾选
+// 组合：爆文榜/搜一搜/全库搜索/需求词/对标动态）+「AI 帮我选题」。
+// 独立可用，也向写作/脚本步输送选题。
 import { useMemo, useState } from 'react';
 import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import { searchTopicFeed, type TopicFeedKind } from '../../providers/media-studio';
+import { studioToast } from './StudioFeedback';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
+
+// 数据源目录：不同行业/关键词需要的源不一样，用户自由勾选组合（组合被记忆）。
+const FEED_SOURCES: Array<{ id: TopicFeedKind; label: string; hint: string; needsKeyword: boolean }> = [
+  { id: 'hot-search', label: '🔥 爆文榜', hint: '数据库爆款（可不带关键词看全网）', needsKeyword: false },
+  { id: 'web-search', label: '🔍 搜一搜', hint: '腾讯实时搜索结果', needsKeyword: true },
+  { id: 'kw-search', label: '📚 全库搜索', hint: '全量文章库，带真实阅读数', needsKeyword: true },
+  { id: 'sug', label: '💡 需求词', hint: '微信搜索联想词=用户真实需求', needsKeyword: true },
+  { id: 'peers', label: '👥 对标动态', hint: '对标账号的最新发文', needsKeyword: false },
+];
+const FEEDS_STORE_KEY = 'open-design:studio:topic-feeds';
+const PEERS_STORE_KEY = 'open-design:studio:topic-peers';
+
+function loadEnabledFeeds(): Set<TopicFeedKind> {
+  try {
+    const raw = window.localStorage.getItem(FEEDS_STORE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw) as string[];
+      const valid = arr.filter((f): f is TopicFeedKind => FEED_SOURCES.some((s) => s.id === f));
+      if (valid.length > 0) return new Set(valid);
+    }
+  } catch {
+    /* fall through to default */
+  }
+  return new Set<TopicFeedKind>(['hot-search', 'web-search']);
+}
+
+/** 多源结果合并：同一篇文章（url 归一）信号取并集，信号多的排前，再按阅读数。 */
+function mergeHits(lists: MediaTopicHit[][]): MediaTopicHit[] {
+  const bucket = new Map<string, MediaTopicHit>();
+  for (const list of lists) {
+    for (const hit of list) {
+      const key = hit.url || hit.title;
+      const existing = bucket.get(key);
+      if (existing) {
+        existing.signals = [...new Set([...existing.signals, ...hit.signals])] as MediaTopicHit['signals'];
+        if (!existing.desc && hit.desc) existing.desc = hit.desc;
+        if (existing.readNum == null && hit.readNum != null) existing.readNum = hit.readNum;
+        if (existing.zanNum == null && hit.zanNum != null) existing.zanNum = hit.zanNum;
+      } else {
+        bucket.set(key, { ...hit });
+      }
+    }
+  }
+  return [...bucket.values()].sort(
+    (a, b) => b.signals.length - a.signals.length || (b.readNum ?? 0) - (a.readNum ?? 0),
+  );
+}
+
+const SIGNAL_LABEL: Record<MediaTopicHit['signals'][number], string> = {
+  trending: '🔥 爆款',
+  realtime: '🔍 搜一搜',
+  kwdb: '📚 全库',
+  peer: '👥 对标',
+};
 
 // ---- 选题导航（独立可用） ----
 
@@ -29,30 +85,78 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [url, setUrl] = useState('');
   const [direction, setDirection] = useState('');
   const [hits, setHits] = useState<MediaTopicHit[]>([]);
-  const [feedBusy, setFeedBusy] = useState<TopicFeedKind | null>(null);
+  const [feedBusy, setFeedBusy] = useState(false);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
   const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set());
+  const [enabledFeeds, setEnabledFeeds] = useState<Set<TopicFeedKind>>(loadEnabledFeeds);
+  const [peers, setPeers] = useState(() => window.localStorage.getItem(PEERS_STORE_KEY) ?? '');
+  const [sugWords, setSugWords] = useState<string[]>([]);
   const canAdd = title.trim().length > 0;
   const candidates = useMemo(() => topics.filter((t) => t.status === 'candidate'), [topics]);
   const used = useMemo(() => topics.filter((t) => t.status === 'used'), [topics]);
 
-  async function runFeed(feed: TopicFeedKind) {
-    setFeedBusy(feed);
-    setFeedNotice(null);
-    const result = await searchTopicFeed(platform, feed, {
-      ...(direction.trim() ? { keyword: direction.trim() } : {}),
+  function toggleFeed(id: TopicFeedKind) {
+    setEnabledFeeds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      window.localStorage.setItem(FEEDS_STORE_KEY, JSON.stringify([...next]));
+      return next;
     });
-    setFeedBusy(null);
-    if ('error' in result) {
-      setFeedNotice(result.error);
+  }
+
+  const peerList = peers.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+
+  async function runCombo(keywordOverride?: string) {
+    const keyword = (keywordOverride ?? direction).trim();
+    const active = FEED_SOURCES.filter((s) => enabledFeeds.has(s.id));
+    const runnable = active.filter((s) => {
+      if (s.needsKeyword && !keyword) return false;
+      if (s.id === 'peers' && peerList.length === 0) return false;
+      return true;
+    });
+    if (runnable.length === 0) {
+      studioToast.info(keyword ? '勾选的源都跑不了——对标动态需要先填账号名' : '先填个关键词，或勾选不需要关键词的源');
       return;
     }
-    setHits(result.items);
-    setFeedNotice(`拉到 ${result.items.length} 条（${result.sources.map((s) => (s === 'trending' ? '爆文榜' : '搜一搜')).join(' + ')}）`);
+    const skipped = active.length - runnable.length;
+    setFeedBusy(true);
+    setFeedNotice(null);
+    setSugWords([]);
+    const results = await Promise.all(
+      runnable.map((s) =>
+        searchTopicFeed(platform, s.id, {
+          ...(keyword ? { keyword } : {}),
+          ...(s.id === 'peers' ? { accounts: peerList } : {}),
+        }).then((r) => ({ source: s, r })),
+      ),
+    );
+    setFeedBusy(false);
+    const okLists: MediaTopicHit[][] = [];
+    const okLabels: string[] = [];
+    const failures: string[] = [];
+    let words: string[] = [];
+    for (const { source, r } of results) {
+      if ('error' in r) {
+        failures.push(`${source.label.replace(/^\S+\s/, '')}：${r.error}`);
+        continue;
+      }
+      okLabels.push(source.label);
+      if (r.words && r.words.length > 0) words = r.words;
+      if (r.items.length > 0) okLists.push(r.items);
+    }
+    const merged = mergeHits(okLists);
+    setHits(merged);
+    setSugWords(words);
+    const parts = [`${okLabels.join(' + ')} 共 ${merged.length} 条`];
+    if (words.length > 0) parts.push(`需求词 ${words.length} 个`);
+    if (skipped > 0) parts.push(`${skipped} 个源缺关键词/账号被跳过`);
+    setFeedNotice(parts.join(' · '));
+    for (const f of failures) studioToast.err(f);
   }
 
   const signalTag = (signals: MediaTopicHit['signals']) =>
-    signals.length === 2 ? '⭐ 双信号' : signals[0] === 'trending' ? '🔥 爆款' : '🔍 搜一搜';
+    signals.length >= 2 ? `⭐ ${signals.map((s) => SIGNAL_LABEL[s].replace(/^\S+\s/, '')).join('+')}` : SIGNAL_LABEL[signals[0] ?? 'trending'];
 
   async function saveHit(hit: MediaTopicHit) {
     await onAdd({
@@ -82,39 +186,45 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     <>
       <div className={c('card')}>
         <div className={c('cardLabel')}>
-          找热点
-          <span className={c('cardHint')}>{aiOnly ? '热榜仅供参考溯源——候选统一由「AI 帮我选题」结合热点产出' : '大家来数据：⭐双信号=最强选题 · 🔥爆款=流量验证 · 🔍搜一搜=搜索需求'}</span>
+          找热点 · 组合选题雷达
+          <span className={c('cardHint')}>{aiOnly ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出' : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}</span>
         </div>
+        <div className={c('row')}>
+          {FEED_SOURCES.map((s) => (
+            <label key={s.id} className={c('row')} title={s.hint} style={{ gap: 4, cursor: 'pointer' }}>
+              <input type="checkbox" checked={enabledFeeds.has(s.id)} onChange={() => toggleFeed(s.id)} />
+              <span style={{ fontSize: 12.5 }}>{s.label}</span>
+            </label>
+          ))}
+        </div>
+        {enabledFeeds.has('peers') ? (
+          <input
+            className={c('input')}
+            value={peers}
+            placeholder="对标账号名，逗号分隔（≤5 个），例：人民日报,虎嗅APP"
+            onChange={(e) => {
+              setPeers(e.target.value);
+              window.localStorage.setItem(PEERS_STORE_KEY, e.target.value);
+            }}
+          />
+        ) : null}
         <div className={c('row')}>
           <input
             className={`${c('input')} ${c('grow')}`}
             value={direction}
             placeholder="方向/领域关键词，例：AI 编程、考研、育儿…"
             onChange={(e) => setDirection(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !feedBusy) void runCombo();
+            }}
           />
           <button
             type="button"
             className={`${c('btn')} ${c('btnPrimary')}`}
-            disabled={feedBusy !== null || !direction.trim()}
-            onClick={() => void runFeed('radar')}
+            disabled={feedBusy || enabledFeeds.size === 0}
+            onClick={() => void runCombo()}
           >
-            {feedBusy === 'radar' ? '雷达扫描中…' : '双信号雷达'}
-          </button>
-          <button
-            type="button"
-            className={c('btn')}
-            disabled={feedBusy !== null}
-            onClick={() => void runFeed('hot-search')}
-          >
-            {feedBusy === 'hot-search' ? '拉取中…' : '爆文榜'}
-          </button>
-          <button
-            type="button"
-            className={c('btn')}
-            disabled={feedBusy !== null || !direction.trim()}
-            onClick={() => void runFeed('web-search')}
-          >
-            {feedBusy === 'web-search' ? '搜索中…' : '搜一搜'}
+            {feedBusy ? '组合扫描中…' : `开始找题（${enabledFeeds.size} 源）`}
           </button>
           <button
             type="button"
@@ -126,6 +236,26 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             <Icon name="sparkles" size={14} /> AI 帮我选题
           </button>
         </div>
+        {sugWords.length > 0 ? (
+          <div className={c('row')} style={{ flexWrap: 'wrap' }}>
+            <span className={c('cardHint')}>💡 大家在搜：</span>
+            {sugWords.map((w) => (
+              <button
+                key={w}
+                type="button"
+                className={`${c('chip')} ${c('chipBlue')}`}
+                style={{ cursor: 'pointer', border: 'none' }}
+                title="点击用这个需求词重新组合找题"
+                onClick={() => {
+                  setDirection(w);
+                  void runCombo(w);
+                }}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {feedNotice ? <div className={c('cardHint')}>{feedNotice}</div> : null}
         {hits.length > 0 ? (
           <table className={c('table')}>

@@ -227,3 +227,86 @@ export async function dajialaRadar(
   const items = [...bucket.values()].sort((a, b) => rank(a) - rank(b) || (b.readNum ?? 0) - (a.readNum ?? 0));
   return { items, sources };
 }
+
+// ---- 2026-07-07 接口调研新增（均已真实调用验证，参数以实测为准） ----
+
+const SUG_URL = 'https://www.dajiala.com/fbmain/monitor/v3/web_search_sug';
+const KWDB_URL = 'https://www.dajiala.com/fbmain/monitor/v3/kw_search';
+const HISTORY_URL = 'https://www.dajiala.com/fbmain/monitor/v3/post_history';
+
+/** 微信搜一搜联想词——亿级用户的真实搜索需求词（参数 keyword，实测返回 data.sug_words）。 */
+export async function dajialaSugWords(apiKey: string, keyword: string): Promise<string[]> {
+  const data = await postWithRetry(SUG_URL, () => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyword, key: apiKey, cookies_buffer: '', verifycode: '' }),
+  }));
+  requireOk(data, '需求词');
+  const inner = (data.data ?? {}) as Record<string, unknown>;
+  const words = inner.sug_words;
+  return Array.isArray(words) ? words.map((w) => String(w)).filter(Boolean).slice(0, 12) : [];
+}
+
+/** 全库文章搜索（数据库，按条计费）——带真实阅读/赞/在看，适合竞品同题调研（参数 kw，实测）。 */
+export async function dajialaKwSearch(
+  apiKey: string,
+  opts: { keyword: string; page?: number },
+): Promise<MediaTopicHit[]> {
+  const data = await postWithRetry(KWDB_URL, () => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kw: opts.keyword, key: apiKey, page: opts.page ?? 1 }),
+  }));
+  requireOk(data, '全库搜索');
+  const items = Array.isArray(data.data) ? (data.data as RawItem[]) : [];
+  return items
+    .map((it) => ({
+      title: stripHtml(it.title) || '（无标题）',
+      url: String(it.short_link ?? it.url ?? ''),
+      account: String(it.wx_name ?? '') || '（未知公众号）',
+      publishedAt: String(it.publish_time_str ?? ''),
+      signals: ['kwdb'] as MediaTopicHit['signals'],
+      readNum: Number(it.read ?? 0) || null,
+      zanNum: Number(it.praise ?? 0) || null,
+      hot: null,
+      desc: stripHtml(it.content).replace(/\s+/g, ' ').trim().slice(0, 140) || null,
+    }))
+    .sort((a, b) => (b.readNum ?? 0) - (a.readNum ?? 0));
+}
+
+/** 对标账号最新发文（参数 name，实测；每号一页 5 条）。多号并行，单号失败静默跳过。 */
+export async function dajialaPeersLatest(
+  apiKey: string,
+  accounts: string[],
+): Promise<MediaTopicHit[]> {
+  const names = accounts.map((a) => a.trim()).filter(Boolean).slice(0, 5);
+  const settled = await Promise.allSettled(
+    names.map(async (name) => {
+      const data = await postWithRetry(HISTORY_URL, () => ({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, key: apiKey, page: 1 }),
+      }));
+      requireOk(data, `对标「${name}」`);
+      const items = Array.isArray(data.data) ? (data.data as RawItem[]) : [];
+      return items.slice(0, 5).map((it) => ({
+        title: stripHtml(it.title) || '（无标题）',
+        url: String(it.url ?? ''),
+        account: name,
+        publishedAt: String(it.post_time_str ?? ''),
+        signals: ['peer'] as MediaTopicHit['signals'],
+        readNum: null,
+        zanNum: null,
+        hot: null,
+        desc: stripHtml(it.digest).trim().slice(0, 140) || null,
+      }));
+    }),
+  );
+  const hits: MediaTopicHit[] = [];
+  for (const s of settled) if (s.status === 'fulfilled') hits.push(...s.value);
+  if (hits.length === 0 && settled.some((s) => s.status === 'rejected')) {
+    const first = settled.find((s) => s.status === 'rejected') as PromiseRejectedResult;
+    throw first.reason instanceof Error ? first.reason : new DajialaError(String(first.reason));
+  }
+  return hits.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+}

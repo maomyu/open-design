@@ -2281,7 +2281,7 @@ async function runStudio(args) {
   od studio render --file <md|->                          # 自由排版,HTML 到 stdout
   od studio publish <id> --account <accountId>            # 发到公众号草稿箱
   od studio topics [--json] · od studio topic-add --title "<选题>" [--url u] [--source s]
-  od studio find --keyword "<方向>" [--feed radar|hot|search] [--days 7] [--json]
+  od studio find --keyword "<方向>" [--feed radar|hot|search|kwdb|sug|peers] [--accounts "号1,号2"] [--days 7] [--json]
   od studio image <id> --desc "<场景描述>" [--marker N|COVER] [--style whiteboard|illustrated|clean] [--ratio 4:3] [--as-cover]`);
     return;
   }
@@ -2570,19 +2570,31 @@ async function runStudio(args) {
   if (sub === 'find') {
     const keyword = typeof flags.keyword === 'string' ? flags.keyword.trim() : '';
     const feed = typeof flags.feed === 'string' ? flags.feed : 'radar';
-    const endpoint = feed === 'hot' ? 'hot-search' : feed === 'search' ? 'web-search' : 'radar';
+    const endpoint =
+      feed === 'hot' ? 'hot-search'
+      : feed === 'search' ? 'web-search'
+      : feed === 'kwdb' ? 'kw-search'
+      : feed === 'sug' ? 'sug'
+      : feed === 'peers' ? 'peers'
+      : 'radar';
+    const accounts = typeof flags.accounts === 'string'
+      ? flags.accounts.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+      : [];
     const resp = await fetch(`${base}/topics/${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...(keyword ? { keyword } : {}),
         ...(typeof flags.days === 'string' && flags.days ? { days: Number(flags.days) } : {}),
+        ...(accounts.length > 0 ? { accounts } : {}),
       }),
     });
     if (!resp.ok) return fail(resp, `find(${feed})`);
     const data = await resp.json();
     if (flags.json) return out(data);
-    const tag = (s) => (s.length === 2 ? '⭐' : s[0] === 'trending' ? '🔥' : '🔍');
+    for (const w of data?.words ?? []) console.log(`💡 ${w}`);
+    const TAGS = { trending: '🔥', realtime: '🔍', kwdb: '📚', peer: '👥' };
+    const tag = (s) => (s.length >= 2 ? '⭐' : TAGS[s[0]] ?? '·');
     for (const it of data?.items ?? []) {
       console.log(`${tag(it.signals ?? [])} ${it.title}  —— ${it.account}${it.readNum ? `  阅读 ${it.readNum}` : ''}\n   ${it.url}`);
     }

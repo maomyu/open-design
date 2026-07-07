@@ -260,8 +260,8 @@ export interface MediaTopicHit {
   url: string;
   account: string;
   publishedAt: string;
-  /** trending = 阅读爆款榜命中；realtime = 搜一搜命中；both = ⭐双信号. */
-  signals: Array<'trending' | 'realtime'>;
+  /** trending = 阅读爆款榜；realtime = 搜一搜；kwdb = 全库搜索；peer = 对标动态. */
+  signals: Array<'trending' | 'realtime' | 'kwdb' | 'peer'>;
   readNum: number | null;
   zanNum: number | null;
   /** 爆值 from the trending feed, opaque string. */
@@ -276,11 +276,15 @@ export interface TopicFeedSearchRequest {
   page?: number;
   /** realtime sort: hottest(默认)/latest/all. */
   sort?: 'hottest' | 'latest' | 'all';
+  /** peers feed：对标账号名列表（≤5 个）. */
+  accounts?: string[];
 }
 export interface TopicFeedSearchResponse {
   items: MediaTopicHit[];
   /** Which feeds actually responded (radar degrades gracefully). */
-  sources: Array<'trending' | 'realtime'>;
+  sources: Array<'trending' | 'realtime' | 'kwdb' | 'sug' | 'peer'>;
+  /** sug feed：微信搜索联想词（微信用户的真实需求词）. */
+  words?: string[];
 }
 
 // ---- article images（千问生图直调） ----

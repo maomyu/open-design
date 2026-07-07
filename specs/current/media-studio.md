@@ -97,7 +97,14 @@ GET/POST/DELETE       /api/media-studio/:platform/snippets[/:id]
 
 创作台不是去 AI 化——是把插件流水线拆成「每步可视化、可单独触发」。每个导航三层：
 
-- **数据按钮（确定性直调）**：大家来爆文榜/微信搜一搜/双信号雷达（`media-studio/dajiala.ts`）、
+- **数据按钮（确定性直调）**：大家来数据源**组合式选题雷达**（2026-07-07 接口调研后
+  落地）——爆文榜/搜一搜/全库搜索(kw_search,带真实阅读数)/需求词(web_search_sug,
+  微信搜索联想=真实需求)/对标动态(post_history,对标账号最新发文) 五源可勾选组合,
+  组合与对标账号名单 localStorage 记忆;多源结果按 url 去重合并信号(⭐多信号优先);
+  需求词渲染为 chips,点击下钻重跑组合。CLI: `od studio find --feed radar|hot|search|
+  kwdb|sug|peers [--accounts]`。接口参数均经真实调用验证(官方文档站为 apifox:
+  s.apifox.cn,微信指数接口参数未探明暂未接入;备选待接:read_zan_pro 六维互动验证、
+  article_comment2 评论区挖角度、get_account_type_rank 类目榜找对标)。原实现:
   千问生图（`media-studio/qwen-image.ts`，白板/插画/纯净三风格，prompt 铁律代码化）。
   key 一处配置两处用：读 `wechat-mp-publish` 插件配置 + 工作台 .env 兜底（`step-keys.ts`）。
 - **AI 动作（scoped agent run）**：AI 帮我选题 / AI 写一版（6 文章类型 × 账号人设 × 贝拉方法论）/

@@ -284,7 +284,7 @@ export async function deleteStudioSnippet(platform: string, id: string): Promise
   }
 }
 
-export type TopicFeedKind = 'hot-search' | 'web-search' | 'radar';
+export type TopicFeedKind = 'hot-search' | 'web-search' | 'radar' | 'kw-search' | 'sug' | 'peers';
 
 /** 大家来数据接口（daemon 直调）。返回 {error} 而不是抛异常。 */
 export async function searchTopicFeed(
