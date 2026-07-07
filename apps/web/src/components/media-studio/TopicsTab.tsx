@@ -6,7 +6,6 @@ import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
   fetchAccountRank,
-  fetchTopicComments,
   searchTopicFeed,
   type RankedAccountRow,
   type TopicFeedKind,
@@ -123,25 +122,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [enabledFeeds, setEnabledFeeds] = useState<Set<TopicFeedKind>>(loadEnabledFeeds);
   const [peers, setPeers] = useState(() => window.localStorage.getItem(PEERS_STORE_KEY) ?? '');
   const [sugWords, setSugWords] = useState<string[]>([]);
-  // 选题深挖：评论弹层 / 类目榜找对标
-  const [commentsView, setCommentsView] = useState<{
-    title: string;
-    list: Array<{ content: string; likes: number }>;
-    error?: string;
-  } | null>(null);
-  const [commentsBusy, setCommentsBusy] = useState<string | null>(null);
+  // 选题深挖：类目榜找对标
   const [rankView, setRankView] = useState<RankedAccountRow[] | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
-
-  async function openComments(hit: MediaTopicHit) {
-    if (!hit.url) return;
-    setCommentsBusy(hit.url);
-    const result = await fetchTopicComments(platform, hit.url);
-    setCommentsBusy(null);
-    // 失败也开弹层把原因摆出来（比如「文章已被发布者删除」）——toast 一闪
-    // 而过会让人以为按钮没反应。
-    setCommentsView({ title: hit.title, list: result.comments ?? [], ...(result.error ? { error: result.error } : {}) });
-  }
 
   async function openRank() {
     setRankBusy(true);
@@ -373,17 +356,6 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     <td>{hit.account}</td>
                     <td>{hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—'}</td>
                     <td className={c('tdActions')}>
-                      {hit.url ? (
-                        <button
-                          type="button"
-                          className={c('btn')}
-                          disabled={commentsBusy === hit.url}
-                          title="看这篇的评论区——读者在问什么=你的切入角度"
-                          onClick={() => void openComments(hit)}
-                        >
-                          {commentsBusy === hit.url ? '拉取中…' : '评论'}
-                        </button>
-                      ) : null}{' '}
                       {aiOnly ? null : (
                         <button
                           type="button"
@@ -487,60 +459,6 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           </table>
         )}
       </div>
-      {commentsView ? (
-        <div
-          className={c('lightbox')}
-          role="button"
-          tabIndex={0}
-          onClick={() => setCommentsView(null)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setCommentsView(null);
-          }}
-        >
-          <div className={c('topicOverlayCard')} role="dialog" onClick={(e) => e.stopPropagation()}>
-            <div className={c('cardLabel')}>
-              评论区（{commentsView.list.length}）
-              <span className={c('cardHint')}>{commentsView.title.slice(0, 40)}</span>
-            </div>
-            {commentsView.error ? (
-              <div className={`${c('notice')} ${c('noticeErr')}`}>{commentsView.error}</div>
-            ) : commentsView.list.length === 0 ? (
-              <div className={c('cardHint')}>这篇没有公开评论（很多号未开评论区，属正常情况）。</div>
-            ) : (
-              <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {commentsView.list.map((cm, i) => (
-                  <div key={`${i}-${cm.content.slice(0, 12)}`} style={{ fontSize: 12.5, lineHeight: 1.6 }}>
-                    <span className={`${c('chip')} ${c('chipGrey')}`}>👍 {cm.likes}</span> {cm.content.slice(0, 160)}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className={c('row')}>
-              {commentsView.list.length > 0 ? (
-                <button
-                  type="button"
-                  className={`${c('btn')} ${c('btnPrimary')}`}
-                  disabled={aiBusy}
-                  title="把评论区交给 AI：提炼读者关心但原文没讲透的点，产出候选选题"
-                  onClick={() => {
-                    const digest = commentsView.list
-                      .slice(0, 15)
-                      .map((cm) => `- (${cm.likes}赞) ${cm.content.slice(0, 80)}`)
-                      .join('\n');
-                    onAiFind(`从这篇爆文《${commentsView.title}》的读者评论里挖选题角度——找"读者关心但原文没讲透"的点：\n${digest}`);
-                    setCommentsView(null);
-                  }}
-                >
-                  <Icon name="sparkles" size={14} /> 让 AI 从评论提炼选题角度
-                </button>
-              ) : null}
-              <button type="button" className={c('btn')} onClick={() => setCommentsView(null)}>
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
       {rankView ? (
         <div
           className={c('lightbox')}
