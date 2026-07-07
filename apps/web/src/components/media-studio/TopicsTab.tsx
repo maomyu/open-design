@@ -127,6 +127,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [sugWords, setSugWords] = useState<string[]>([]);
   // 深挖三件套：六维验证（按 url 缓存）/ 评论弹层 / 类目榜找对标
   const [engagements, setEngagements] = useState<Record<string, TopicEngagement | 'loading'>>({});
+  // 批量验证开关：默认关（按条计费的显式选择，不记忆）。勾上后每次搜索
+  // 自动对全部结果抓六维数据。
+  const [verifyAll, setVerifyAll] = useState(false);
+  const [verifyProgress, setVerifyProgress] = useState<{ done: number; total: number } | null>(null);
   const [commentsView, setCommentsView] = useState<{
     title: string;
     list: Array<{ content: string; likes: number }>;
@@ -136,20 +140,30 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [rankView, setRankView] = useState<RankedAccountRow[] | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
 
-  async function verifyHit(hit: MediaTopicHit) {
-    if (!hit.url || engagements[hit.url]) return;
-    setEngagements((m) => ({ ...m, [hit.url]: 'loading' }));
-    const result = await verifyTopicEngagement(platform, hit.url);
-    if (result.error || !result.engagement) {
-      setEngagements((m) => {
-        const next = { ...m };
-        delete next[hit.url];
-        return next;
-      });
-      studioToast.err(result.error ?? '验证失败');
-      return;
+  /** 批量验证：6 并发一批抓六维数据；单篇失败静默跳过（已删除文章等）。 */
+  async function batchVerify(list: MediaTopicHit[]) {
+    const targets = list.filter((h) => h.url && !engagements[h.url]);
+    if (targets.length === 0) return;
+    setVerifyProgress({ done: 0, total: targets.length });
+    let done = 0;
+    let ok = 0;
+    for (let i = 0; i < targets.length; i += 6) {
+      const batch = targets.slice(i, i + 6);
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all(
+        batch.map(async (hit) => {
+          const result = await verifyTopicEngagement(platform, hit.url);
+          done += 1;
+          if (!result.error && result.engagement) {
+            ok += 1;
+            setEngagements((m) => ({ ...m, [hit.url]: result.engagement! }));
+          }
+          setVerifyProgress({ done, total: targets.length });
+        }),
+      );
     }
-    setEngagements((m) => ({ ...m, [hit.url]: result.engagement! }));
+    setVerifyProgress(null);
+    studioToast.ok(`互动数据验证完成：${ok}/${targets.length} 篇（失败的多为已删除文章）`);
   }
 
   async function openComments(hit: MediaTopicHit) {
@@ -246,6 +260,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     if (skipped > 0) parts.push(`${skipped} 个源缺关键词/账号被跳过`);
     setFeedNotice(parts.join(' · '));
     for (const f of failures) studioToast.err(f);
+    if (verifyAll && merged.length > 0) {
+      void batchVerify(merged.slice(0, 30));
+    }
   }
 
   const signalTag = (signals: MediaTopicHit['signals']) =>
@@ -325,13 +342,24 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               if (e.key === 'Enter' && !feedBusy) void runCombo();
             }}
           />
+          <label className={`${c('row')} ${c('feedSrc')}`} style={{ gap: 4, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <input type="checkbox" checked={verifyAll} onChange={(e) => setVerifyAll(e.target.checked)} />
+            <span style={{ fontSize: 12.5 }}>📊 验证数据</span>
+            <span className={c('feedSrcTip')} role="tooltip">
+              搜索完成后自动抓每篇的真实互动数据（阅读/转发/收藏），转发高=传播力强、最值得写。按条计费、稍慢，所以默认不开，需要判断选题质量时再勾。
+            </span>
+          </label>
           <button
             type="button"
             className={`${c('btn')} ${c('btnPrimary')}`}
             disabled={feedBusy || enabledFeeds.size === 0}
             onClick={() => void runCombo()}
           >
-            {feedBusy ? '组合扫描中…' : `开始找题（${enabledFeeds.size} 源）`}
+            {feedBusy
+              ? '组合扫描中…'
+              : verifyProgress
+                ? `验证中 ${verifyProgress.done}/${verifyProgress.total}…`
+                : `开始找题（${enabledFeeds.size} 源）`}
           </button>
           <button
             type="button"
@@ -407,16 +435,6 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                       )}
                     </td>
                     <td className={c('tdActions')}>
-                      {hit.url && !eng ? (
-                        <button
-                          type="button"
-                          className={c('btn')}
-                          title="抓这篇的六维真实数据（阅读/赞/在看/转发/收藏/评论）——转发率是选题传播力金标准"
-                          onClick={() => void verifyHit(hit)}
-                        >
-                          验证
-                        </button>
-                      ) : null}{' '}
                       {hit.url ? (
                         <button
                           type="button"
