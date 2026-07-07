@@ -200,6 +200,8 @@ export function MediaStudioView(): JSX.Element {
 
   const articleRef = useRef<MediaArticle | null>(null);
   articleRef.current = article;
+  const aiTaskRef = useRef<StudioAiTask | null>(null);
+  aiTaskRef.current = aiTask;
   const saveTimerRef = useRef<number | null>(null);
   const pendingRef = useRef<{ id: string; patch: UpdateMediaArticleRequest } | null>(null);
 
@@ -392,6 +394,12 @@ export function MediaStudioView(): JSX.Element {
       if (current) {
         void fetchStudioArticle(PLATFORM, current.id).then((a) => {
           if (a && articleRef.current?.id === a.id) setArticle(a);
+          // 兜底告警：写作类任务「完成」但正文仍空 = agent 没执行写回
+          //（曾发生把稿子写成本地文件交差）。明确告诉用户而不是静默。
+          const t = aiTaskRef.current;
+          if (outcome === 'done' && a && t && /写/.test(t.title) && !a.bodyMd.trim()) {
+            studioToast.err('任务结束了但正文没有写回——请重跑一次；再发生请反馈');
+          }
         });
       }
     },

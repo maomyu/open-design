@@ -158,6 +158,8 @@ export function ShortVideoStudioView(): JSX.Element {
 
   const articleRef = useRef<MediaArticle | null>(null);
   articleRef.current = article;
+  const aiTaskRef = useRef<StudioAiTask | null>(null);
+  aiTaskRef.current = aiTask;
   const saveTimerRef = useRef<number | null>(null);
   const pendingRef = useRef<{ id: string; patch: UpdateMediaArticleRequest } | null>(null);
 
@@ -324,6 +326,10 @@ export function ShortVideoStudioView(): JSX.Element {
       if (current) {
         void fetchStudioArticle(PLATFORM, current.id).then((a) => {
           if (a && articleRef.current?.id === a.id) setArticle(a);
+          const t = aiTaskRef.current;
+          if (outcome === 'done' && a && t && /写/.test(t.title) && !a.bodyMd.trim()) {
+            studioToast.err('任务结束了但脚本没有写回——请重跑一次；再发生请反馈');
+          }
         });
       }
     },
