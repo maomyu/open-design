@@ -376,6 +376,10 @@ export interface ComposeInput {
   // Run-scoped media policy. Defaults to enabled when omitted so existing
   // local OD behavior keeps the same media prompt contract.
   mediaExecution?: MediaExecutionPolicy | undefined;
+  // True for unattended runs (studio AI tasks) that CLI-ban AskUserQuestion:
+  // the Clarifying-questions guidance must be replaced with a decide-yourself
+  // instruction, or the model keeps trying to pause on choices.
+  disallowAskUserQuestion?: boolean | undefined;
 }
 
 export function composeSystemPrompt({
@@ -411,6 +415,7 @@ export function composeSystemPrompt({
   userInstructions,
   projectInstructions,
   mediaExecution,
+  disallowAskUserQuestion,
 }: ComposeInput): string {
   // General-purpose "code" mode short-circuits the entire design stack.
   // When the project is in code mode the agent is a plain Claude Code-style
@@ -692,7 +697,15 @@ export function composeSystemPrompt({
   // `<question-form>` flow defined in DISCOVERY_AND_PHILOSOPHY; this only
   // covers follow-ups where the next action depends on a small set of
   // choices the user can pick quickly.
-  if (agentId === 'claude') {
+  if (agentId === 'claude' && disallowAskUserQuestion === true) {
+    // Unattended runs (studio AI tasks): AskUserQuestion is banned at the CLI
+    // layer, so replace the nudge with an explicit decide-yourself rule —
+    // otherwise the model still drafts questions as markdown text and stalls
+    // the deliverable.
+    parts.push(
+      '\n\n---\n\n## Unattended run — no questions\n\nThis run is fully unattended: nobody is watching the chat, and the `AskUserQuestion` tool is disabled. Never ask for clarification, confirmation, or preferences — in the chat text either. Whenever multiple approaches are possible, pick the one that best serves the end reader and the account persona, note the decision in one line of your final summary, and keep going until the deliverable is complete.',
+    );
+  } else if (agentId === 'claude') {
     // The AskUserQuestion nudge ALWAYS applies for Claude. The left-chat card is
     // the ONE interaction surface, and it already carries a free-text "补充建议"
     // box so the user picks an option AND types their own steer in a single

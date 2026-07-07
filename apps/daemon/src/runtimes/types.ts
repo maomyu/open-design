@@ -20,6 +20,10 @@ export type RuntimeBuildOptions = {
   // ignore this. When unset, claude.ts keeps its historical default
   // (`bypassPermissions`) so existing design-mode runs are unchanged.
   permissionMode?: 'plan' | 'default' | 'acceptEdits' | 'bypassPermissions' | null;
+  // Tool names this run must not be able to call (already validated by the
+  // chat handler). claude.ts maps it to `--disallowedTools`; adapters
+  // without an equivalent flag ignore it.
+  disallowedTools?: string[];
 };
 
 export type RuntimeContext = {

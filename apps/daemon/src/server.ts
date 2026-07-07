@@ -9903,6 +9903,7 @@ export async function startServer({
     connectedExternalMcp,
     appliedPluginSnapshotId,
     mediaExecution,
+    disallowAskUserQuestion,
   }) => {
     const project =
       typeof projectId === 'string' && projectId
@@ -10401,6 +10402,7 @@ export async function startServer({
       locale: typeof locale === 'string' ? locale : undefined,
       mediaExecution,
       streamFormat,
+      disallowAskUserQuestion: disallowAskUserQuestion === true,
       connectedExternalMcp: Array.isArray(connectedExternalMcp)
         ? connectedExternalMcp
         : undefined,
@@ -10512,10 +10514,20 @@ export async function startServer({
       model,
       reasoning,
       permissionMode,
+      disallowedTools,
       locale,
       research,
       context,
     } = chatBody;
+    // Tool bans are a security-adjacent surface: accept only plain tool-name
+    // tokens, cap the list, and drop everything else silently. Computed here
+    // (before system-prompt composition) so the AskUserQuestion guidance
+    // block can be omitted for runs that ban the tool.
+    const safeDisallowedTools = Array.isArray(disallowedTools)
+      ? disallowedTools
+          .filter((t) => typeof t === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(t))
+          .slice(0, 16)
+      : [];
     if (typeof projectId === 'string' && projectId) run.projectId = projectId;
     if (typeof conversationId === 'string' && conversationId)
       run.conversationId = conversationId;
@@ -10765,6 +10777,9 @@ export async function startServer({
         // prompt composer can splice in `## Active stage` blocks.
         // Default ON; set OD_BUNDLED_ATOM_PROMPTS=0 to opt out.
         appliedPluginSnapshotId: run?.appliedPluginSnapshotId ?? null,
+        // Runs that CLI-ban AskUserQuestion must also drop the system-prompt
+        // block that teaches the model to reach for it.
+        disallowAskUserQuestion: safeDisallowedTools.includes('AskUserQuestion'),
       });
 
     // Make skill side files reachable through three layers, in order of
@@ -10948,6 +10963,7 @@ export async function startServer({
       model: safeModel,
       reasoning: safeReasoning,
       permissionMode: safePermissionMode,
+      ...(safeDisallowedTools.length > 0 ? { disallowedTools: safeDisallowedTools } : {}),
     };
     const send = (event, data) => {
       persistRunEventToAssistantMessage(db, run, event, data);

@@ -43,6 +43,13 @@ export interface ChatRequest {
    * `default` (per-action approval) is reserved for a later release.
    */
   permissionMode?: 'plan' | 'default' | 'acceptEdits' | 'bypassPermissions' | null;
+  /**
+   * Tool names the runtime must refuse for this run (e.g. `AskUserQuestion`
+   * for unattended studio tasks that must never pause on a question).
+   * Adapters without native support ignore it; claude maps it to
+   * `--disallowedTools`. Names are validated daemon-side.
+   */
+  disallowedTools?: string[] | null;
   /** UI locale selected by the client, used by prompt composition for user-visible generated UI. */
   locale?: string;
   research?: ResearchOptions;

@@ -125,6 +125,8 @@ export const StudioAiPanel = forwardRef<StudioAiPanelHandle, Props>(function Stu
       projectId: task.projectId,
       conversationId: task.conversationId,
       assistantMessageId: assistantMessage.id,
+      // 创作台任务无人值守：CLI 层直接禁掉提问工具，模型物理上没法停下来问。
+      disallowedTools: ['AskUserQuestion'],
       locale: 'zh-CN',
       handlers: {
         onDelta: (chunk) => {

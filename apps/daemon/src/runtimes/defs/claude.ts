@@ -75,6 +75,13 @@ export const claudeAgentDef = {
       // historical headless design-mode behavior (no interactive prompts).
       const permissionMode = options.permissionMode || 'bypassPermissions';
       args.push('--permission-mode', permissionMode);
+      // Unattended runs (studio AI tasks) hard-disable interactive tools at
+      // the CLI layer — prompt-level rules alone don't stop the model from
+      // reaching for AskUserQuestion. Names are pre-validated by the chat
+      // handler.
+      if (Array.isArray(options.disallowedTools) && options.disallowedTools.length > 0) {
+        args.push('--disallowedTools', options.disallowedTools.join(','));
+      }
       return args;
     },
     promptViaStdin: true,

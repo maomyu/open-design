@@ -240,6 +240,8 @@ export interface DaemonStreamOptions {
   // Claude-native permission mode (code-mode projects only). Forwarded to
   // the daemon which maps it to claude's `--permission-mode`.
   permissionMode?: 'plan' | 'default' | 'acceptEdits' | 'bypassPermissions' | null;
+  // Tool names this run must not call（无人值守创作台任务禁 AskUserQuestion）。
+  disallowedTools?: string[];
   research?: ResearchOptions;
   context?: RunContextSelection;
   locale?: string;
@@ -327,6 +329,7 @@ export async function streamViaDaemon({
   model,
   reasoning,
   permissionMode,
+  disallowedTools,
   research,
   context,
   locale,
@@ -360,6 +363,7 @@ export async function streamViaDaemon({
     model: model ?? null,
     reasoning: reasoning ?? null,
     permissionMode: permissionMode ?? null,
+    ...(disallowedTools && disallowedTools.length > 0 ? { disallowedTools } : {}),
     locale,
     ...(context ? { context } : {}),
     ...(research ? { research } : {}),
