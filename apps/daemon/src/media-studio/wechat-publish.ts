@@ -10,7 +10,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { MediaArticle } from '@open-design/contracts';
-import { renderWechatHtml } from './wechat-render.js';
+import { fontSizesFromExtra, renderWechatHtml } from './wechat-render.js';
 
 const WECHAT_API = 'https://api.weixin.qq.com/cgi-bin';
 const FETCH_TIMEOUT_MS = 30_000;
@@ -159,6 +159,7 @@ export async function publishWechatDraft(input: WechatPublishInput): Promise<Wec
     bodyMd: article.bodyMd,
     footerMd: article.footerMd,
     skin: article.skin,
+    ...fontSizesFromExtra(article.extra),
   });
   let content = rendered.html;
 

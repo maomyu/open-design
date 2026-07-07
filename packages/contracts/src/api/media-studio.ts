@@ -197,6 +197,10 @@ export interface MediaRenderRequest {
   headerMd?: string;
   bodyMd?: string;
   footerMd?: string;
+  /** 正文字号 px（12-22；缺省用皮肤默认 15）。 */
+  bodyFontSize?: number;
+  /** 小节标题字号 px（14-30；缺省用皮肤默认 20，### 自动 -3）。 */
+  headingFontSize?: number;
 }
 export interface MediaRenderResponse {
   html: string;

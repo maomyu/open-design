@@ -75,7 +75,7 @@ import {
   updateArticle,
   updateTopic,
 } from './media-studio/store.js';
-import { renderWechatHtml, WECHAT_SKINS } from './media-studio/wechat-render.js';
+import { fontSizesFromExtra, renderWechatHtml, WECHAT_SKINS } from './media-studio/wechat-render.js';
 import { publishWechatDraft, WechatPublishError } from './media-studio/wechat-publish.js';
 
 export interface RegisterMediaStudioRoutesDeps extends RouteDeps<'db'> {
@@ -159,6 +159,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       bodyMd: article.bodyMd,
       footerMd: article.footerMd,
       skin,
+      ...fontSizesFromExtra(article.extra),
     });
     const updated = saveArticleRender(db, article.id, result.html, result.skin);
     res.json({ html: result.html, skin: result.skin, notes: result.notes, article: updated });

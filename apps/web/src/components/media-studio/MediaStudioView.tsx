@@ -322,8 +322,18 @@ export function MediaStudioView(): JSX.Element {
   }, [flushSave]);
 
   // ---- live preview（防抖调无状态渲染；写作页所见即排版产物） ----
+  const articleExtra = (article?.extra ?? {}) as Record<string, unknown>;
+  const bodyFontSize = typeof articleExtra.bodyFontSize === 'number' ? articleExtra.bodyFontSize : 15;
+  const headingFontSize = typeof articleExtra.headingFontSize === 'number' ? articleExtra.headingFontSize : 20;
   const previewSource = article
-    ? { skin: article.skin, headerMd: article.headerMd, bodyMd: article.bodyMd, footerMd: article.footerMd }
+    ? {
+        skin: article.skin,
+        headerMd: article.headerMd,
+        bodyMd: article.bodyMd,
+        footerMd: article.footerMd,
+        bodyFontSize,
+        headingFontSize,
+      }
     : null;
   const previewSourceRef = useRef(previewSource);
   previewSourceRef.current = previewSource;
@@ -824,6 +834,54 @@ export function MediaStudioView(): JSX.Element {
                 </button>
               );
             })}
+          </div>
+          <div className={c('row')}>
+            <span className={c('cardHint')}>正文字号</span>
+            <button
+              type="button"
+              className={c('btn')}
+              disabled={bodyFontSize <= 12}
+              onClick={() => editArticle({ extra: { bodyFontSize: Math.max(12, bodyFontSize - 1) } })}
+            >
+              A−
+            </button>
+            <span style={{ fontSize: 12.5, minWidth: 38, textAlign: 'center' }}>{bodyFontSize}px</span>
+            <button
+              type="button"
+              className={c('btn')}
+              disabled={bodyFontSize >= 22}
+              onClick={() => editArticle({ extra: { bodyFontSize: Math.min(22, bodyFontSize + 1) } })}
+            >
+              A＋
+            </button>
+            <span className={c('cardHint')} style={{ marginLeft: 12 }}>小节标题</span>
+            <button
+              type="button"
+              className={c('btn')}
+              disabled={headingFontSize <= 14}
+              onClick={() => editArticle({ extra: { headingFontSize: Math.max(14, headingFontSize - 1) } })}
+            >
+              A−
+            </button>
+            <span style={{ fontSize: 12.5, minWidth: 38, textAlign: 'center' }}>{headingFontSize}px</span>
+            <button
+              type="button"
+              className={c('btn')}
+              disabled={headingFontSize >= 30}
+              onClick={() => editArticle({ extra: { headingFontSize: Math.min(30, headingFontSize + 1) } })}
+            >
+              A＋
+            </button>
+            {bodyFontSize !== 15 || headingFontSize !== 20 ? (
+              <button
+                type="button"
+                className={c('btn')}
+                title="恢复皮肤默认字号（正文 15 / 标题 20）"
+                onClick={() => editArticle({ extra: { bodyFontSize: null, headingFontSize: null } })}
+              >
+                重置
+              </button>
+            ) : null}
           </div>
           <div className={c('row')}>
             <button type="button" className={c('btn')} onClick={() => void handleSaveRender()}>

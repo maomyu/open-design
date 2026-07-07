@@ -34,6 +34,7 @@ export interface WechatSkin {
   bodyFont: string;
   codeFont: string;
   h2FontSize: string;
+  h3FontSize: string;
   bodyFontSize: string;
   lineHeight: string;
   letterSpacing: string;
@@ -49,6 +50,7 @@ const BASE: Omit<WechatSkin, 'id' | 'name' | 'titleColor' | 'textColor' | 'quote
   bodyFont: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif",
   codeFont: "'Source Code Pro', Consolas, Menlo, monospace",
   h2FontSize: '20px',
+  h3FontSize: '17px',
   bodyFontSize: '15px',
   lineHeight: '2',
   letterSpacing: '0.05em',
@@ -87,6 +89,19 @@ export interface WechatRenderInput {
   bodyMd?: string | null;
   footerMd?: string | null;
   skin?: string | null;
+  /** 正文字号 px（12-22，默认取皮肤的 15）。 */
+  bodyFontSize?: number | null;
+  /** 小节标题（##）字号 px（14-30，默认取皮肤的 20；### 自动 -3px）。 */
+  headingFontSize?: number | null;
+}
+
+/** 从文章 extra 里取用户设置的字号（写作页 +/- 调的），持久渲染与发布共用。 */
+export function fontSizesFromExtra(extra: unknown): Pick<WechatRenderInput, 'bodyFontSize' | 'headingFontSize'> {
+  const rec = (extra ?? {}) as Record<string, unknown>;
+  return {
+    ...(typeof rec.bodyFontSize === 'number' ? { bodyFontSize: rec.bodyFontSize } : {}),
+    ...(typeof rec.headingFontSize === 'number' ? { headingFontSize: rec.headingFontSize } : {}),
+  };
 }
 
 export interface WechatRenderResult {
@@ -140,7 +155,20 @@ function isMmbiz(src: string): boolean {
  * keystroke (live preview) and again at publish time (single source of truth).
  */
 export function renderWechatHtml(input: WechatRenderInput): WechatRenderResult {
-  const skin = getWechatSkin(input.skin ?? DEFAULT_WECHAT_SKIN);
+  const baseSkin = getWechatSkin(input.skin ?? DEFAULT_WECHAT_SKIN);
+  // 用户可调字号：正文/小节标题分别覆盖皮肤默认（clamp 保证微信端可读范围）。
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v)));
+  const bodyPx = typeof input.bodyFontSize === 'number' && Number.isFinite(input.bodyFontSize)
+    ? clamp(input.bodyFontSize, 12, 22)
+    : null;
+  const headPx = typeof input.headingFontSize === 'number' && Number.isFinite(input.headingFontSize)
+    ? clamp(input.headingFontSize, 14, 30)
+    : null;
+  const skin: WechatSkin = {
+    ...baseSkin,
+    ...(bodyPx != null ? { bodyFontSize: `${bodyPx}px` } : {}),
+    ...(headPx != null ? { h2FontSize: `${headPx}px`, h3FontSize: `${Math.max(headPx - 3, 13)}px` } : {}),
+  };
   const notes: string[] = [];
   const localImageSrcs: string[] = [];
 
@@ -234,7 +262,7 @@ export function renderWechatHtml(input: WechatRenderInput): WechatRenderResult {
         );
       } else {
         blocks.push(
-          `<h3 style="margin: 1.6em 0px 0.6em;font-size: 17px;font-weight: bold;color: ${skin.titleColor};letter-spacing: ${skin.letterSpacing};font-family: ${skin.headingFont};">${text}</h3>`,
+          `<h3 style="margin: 1.6em 0px 0.6em;font-size: ${skin.h3FontSize};font-weight: bold;color: ${skin.titleColor};letter-spacing: ${skin.letterSpacing};font-family: ${skin.headingFont};">${text}</h3>`,
         );
       }
       i += 1;
