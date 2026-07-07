@@ -2,7 +2,7 @@
 // POST /api/runs + SSE + cancel），以浓缩视图展示 agent 实时动作：
 // 工具调用一行一条、正文文字滚动最后几行、可随时中止。任务结束回调
 // onFinished 让创作台刷新数据（agent 通过 od studio CLI 已把产物落库）。
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { AgentEvent, ChatMessage } from '../../types';
 import { Icon } from '../Icon';
 import { loadConfig } from '../../state/config';
@@ -21,11 +21,19 @@ export interface StudioAiTask {
   seq: number;
 }
 
+export type StudioAiOutcome = 'done' | 'error' | 'stopped';
+
 interface Props {
   task: StudioAiTask | null;
-  /** Fires after the run ends (success or error) — refresh store-backed data. */
-  onFinished: () => void;
+  /** Fires after the run ends — refresh store-backed data; outcome drives the toast. */
+  onFinished: (outcome: StudioAiOutcome) => void;
   onDismiss: () => void;
+  /** Mirrors running state up so the View can render a cross-tab global bar. */
+  onRunningChange?: (running: boolean) => void;
+}
+
+export interface StudioAiPanelHandle {
+  cancel: () => void;
 }
 
 type PanelStatus = 'running' | 'done' | 'error' | 'stopped';
@@ -41,17 +49,41 @@ function describeEvent(ev: AgentEvent): string | null {
   return null;
 }
 
-export function StudioAiPanel({ task, onFinished, onDismiss }: Props): JSX.Element | null {
+export const StudioAiPanel = forwardRef<StudioAiPanelHandle, Props>(function StudioAiPanel(
+  { task, onFinished, onDismiss, onRunningChange }: Props,
+  ref,
+): JSX.Element | null {
   const [expanded, setExpanded] = useState(true);
   const [status, setStatus] = useState<PanelStatus>('running');
   const [lines, setLines] = useState<string[]>([]);
   const [tail, setTail] = useState('');
   const cancelRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+  const statusRef = useRef<PanelStatus>('running');
+
+  const markStatus = (next: PanelStatus | ((s: PanelStatus) => PanelStatus)): void => {
+    setStatus((prev) => {
+      const value = typeof next === 'function' ? next(prev) : next;
+      statusRef.current = value;
+      return value;
+    });
+  };
+
+  const cancelRun = (): void => {
+    cancelRef.current?.abort();
+    markStatus('stopped');
+  };
+
+  useImperativeHandle(ref, () => ({ cancel: cancelRun }));
+
+  useEffect(() => {
+    onRunningChange?.(task != null && status === 'running');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.seq, status]);
 
   useEffect(() => {
     if (!task) return;
-    setStatus('running');
+    markStatus('running');
     setLines([]);
     setTail('');
     setExpanded(true);
@@ -100,13 +132,15 @@ export function StudioAiPanel({ task, onFinished, onDismiss }: Props): JSX.Eleme
           setTail(text.slice(-400));
         },
         onDone: () => {
-          setStatus((s) => (s === 'stopped' ? s : 'done'));
-          onFinished();
+          const wasStopped = statusRef.current === 'stopped';
+          markStatus((s) => (s === 'stopped' ? s : 'done'));
+          onFinished(wasStopped ? 'stopped' : 'done');
         },
         onError: (err) => {
-          setStatus((s) => (s === 'stopped' ? s : 'error'));
+          const wasStopped = statusRef.current === 'stopped';
+          markStatus((s) => (s === 'stopped' ? s : 'error'));
           push(`✗ ${err.message}`);
-          onFinished();
+          onFinished(wasStopped ? 'stopped' : 'error');
         },
         onAgentEvent: (ev) => {
           const line = describeEvent(ev);
@@ -153,8 +187,7 @@ export function StudioAiPanel({ task, onFinished, onDismiss }: Props): JSX.Eleme
             className={`${c('btn')} ${c('btnDanger')}`}
             onClick={(e) => {
               e.stopPropagation();
-              cancelRef.current?.abort();
-              setStatus('stopped');
+              cancelRun();
             }}
           >
             中止
@@ -186,4 +219,4 @@ export function StudioAiPanel({ task, onFinished, onDismiss }: Props): JSX.Eleme
       ) : null}
     </div>
   );
-}
+});

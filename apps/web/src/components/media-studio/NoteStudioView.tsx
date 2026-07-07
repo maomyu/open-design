@@ -33,7 +33,8 @@ import {
   uploadStudioAsset,
   type StudioLintHit,
 } from '../../providers/media-studio';
-import { StudioAiPanel, type StudioAiTask } from './StudioAiPanel';
+import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
+import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, KnowledgePanel, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { TopicsTab } from './TopicsTab';
 import styles from './MediaStudio.module.css';
@@ -91,6 +92,10 @@ export function NoteStudioView(): JSX.Element {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
   const aiSeqRef = useRef(0);
+  const [aiRunning, setAiRunning] = useState(false);
+  const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
+  const aiAnchorRef = useRef<HTMLDivElement | null>(null);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [reviseNote, setReviseNote] = useState('');
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
@@ -158,6 +163,7 @@ export function NoteStudioView(): JSX.Element {
       return;
     }
     setSaveState('saved');
+    setSavedAt(new Date());
     setArticle((a) => (a && a.id === updated.id ? { ...a, status: updated.status, updatedAt: updated.updatedAt, extra: updated.extra } : a));
     setArticles((list) =>
       list ? list.map((s) => (s.id === updated.id ? { ...s, title: updated.title, status: updated.status, updatedAt: updated.updatedAt } : s)) : list,
@@ -205,6 +211,19 @@ export function NoteStudioView(): JSX.Element {
     void flushSave();
   }, [flushSave]);
 
+  // Cmd/Ctrl+S：跳过防抖立即落库。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+        void flushSave();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [flushSave]);
+
   // ---- 发布记录 + 敏感词 ----
   useEffect(() => {
     if (tab !== 'publish' || !article) return;
@@ -223,7 +242,7 @@ export function NoteStudioView(): JSX.Element {
         input: { ...(input?.note ? { note: input.note } : {}) },
       });
       if ('error' in created) {
-        setNotice({ ok: false, text: created.error });
+        studioToast.err(created.error);
         return;
       }
       aiSeqRef.current += 1;
@@ -232,16 +251,22 @@ export function NoteStudioView(): JSX.Element {
     [flushSave],
   );
 
-  const refreshAfterAiTask = useCallback(() => {
-    void refreshArticles();
-    void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
-    const current = articleRef.current;
-    if (current) {
-      void fetchStudioArticle(PLATFORM, current.id).then((a) => {
-        if (a && articleRef.current?.id === a.id) setArticle(a);
-      });
-    }
-  }, [refreshArticles]);
+  const refreshAfterAiTask = useCallback(
+    (outcome: StudioAiOutcome) => {
+      if (outcome === 'done') studioToast.ok('AI 任务完成，产物已回填');
+      else if (outcome === 'error') studioToast.err('AI 任务出错，详情见底部面板');
+      else studioToast.info('AI 任务已中止');
+      void refreshArticles();
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      const current = articleRef.current;
+      if (current) {
+        void fetchStudioArticle(PLATFORM, current.id).then((a) => {
+          if (a && articleRef.current?.id === a.id) setArticle(a);
+        });
+      }
+    },
+    [refreshArticles],
+  );
 
   async function handleCreateArticle(fromTopic?: MediaTopic) {
     await flushSave();
@@ -416,9 +441,7 @@ export function NoteStudioView(): JSX.Element {
       <div className={c('head')}>
         <h1 className={c('title')}>图文笔记创作台</h1>
         {activeStatus ? <span className={`${c('chip')} ${c(activeStatus.chip)}`}>{activeStatus.text}</span> : null}
-        <span className={c('saveHint')}>
-          {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : saveState === 'error' ? '保存失败' : ''}
-        </span>
+        <SaveStatusBadge state={saveState} savedAt={savedAt} onRetry={() => void flushSave()} />
         <div className={c('headSpacer')} />
         <div className={c('articlePicker')}>
           <select
@@ -446,6 +469,23 @@ export function NoteStudioView(): JSX.Element {
           ) : null}
         </div>
       </div>
+
+      {aiTask && aiRunning ? (
+        <div className={c('aiGlobalBar')}>
+          <span className={c('aiGlobalPulse')} />
+          <span className={c('aiGlobalTitle')}>AI 正在执行：{aiTask.title}（切换页签不影响任务）</span>
+          <button
+            type="button"
+            className={c('aiGlobalBtn')}
+            onClick={() => aiAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+          >
+            查看过程
+          </button>
+          <button type="button" className={c('aiGlobalBtn')} onClick={() => aiPanelRef.current?.cancel()}>
+            中止
+          </button>
+        </div>
+      ) : null}
 
       <div className={c('tabs')} role="tablist" aria-label="图文笔记创作台导航">
         {TABS.map((item) => (
@@ -883,6 +923,12 @@ export function NoteStudioView(): JSX.Element {
           ) : null}
 
           {notice ? <div className={`${c('notice')} ${notice.ok ? c('noticeOk') : c('noticeErr')}`}>{notice.text}</div> : null}
+          {tab === 'copy' && stepDone.copy ? (
+            <NextStepBar hint="文案完成，下一步准备图集（第 1 张即封面）" label="去图集" onGo={() => setTab('gallery')} />
+          ) : null}
+          {tab === 'gallery' && stepDone.gallery ? (
+            <NextStepBar hint="图集就绪，去发布（推荐安全发布，零风控指纹）" label="去发布" onGo={() => setTab('publish')} />
+          ) : null}
         </div>
 
         {article && tab !== 'topics' && tab !== 'list' && tab !== 'knowledge' ? (
@@ -927,7 +973,16 @@ export function NoteStudioView(): JSX.Element {
           </div>
         ) : null}
       </div>
-      <StudioAiPanel task={aiTask} onFinished={refreshAfterAiTask} onDismiss={() => setAiTask(null)} />
+      <div ref={aiAnchorRef}>
+        <StudioAiPanel
+          ref={aiPanelRef}
+          task={aiTask}
+          onFinished={refreshAfterAiTask}
+          onDismiss={() => setAiTask(null)}
+          onRunningChange={setAiRunning}
+        />
+      </div>
+      <StudioToastHost />
     </div>
   );
 }

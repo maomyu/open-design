@@ -40,7 +40,8 @@ import {
   updateStudioArticle,
   uploadStudioAsset,
 } from '../../providers/media-studio';
-import { StudioAiPanel, type StudioAiTask } from './StudioAiPanel';
+import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
+import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
 import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab } from './TopicsTab';
@@ -176,6 +177,10 @@ export function MediaStudioView(): JSX.Element {
   // AI 任务折叠面板（每步的智能体动作共用一个面板，一次跑一个）
   const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
   const aiSeqRef = useRef(0);
+  const [aiRunning, setAiRunning] = useState(false);
+  const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
+  const aiAnchorRef = useRef<HTMLDivElement | null>(null);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [aiWordCount, setAiWordCount] = useState('1500-2000');
   const [reviseNote, setReviseNote] = useState('');
   const [imageBusy, setImageBusy] = useState<string | null>(null);
@@ -238,6 +243,7 @@ export function MediaStudioView(): JSX.Element {
       return;
     }
     setSaveState('saved');
+    setSavedAt(new Date());
     setArticle((a) =>
       a && a.id === updated.id ? { ...a, status: updated.status, updatedAt: updated.updatedAt } : a,
     );
@@ -272,6 +278,19 @@ export function MediaStudioView(): JSX.Element {
   useEffect(() => () => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     void flushSave();
+  }, [flushSave]);
+
+  // Cmd/Ctrl+S：跳过防抖立即落库（徽标即反馈，不弹 toast）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+        void flushSave();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [flushSave]);
 
   // ---- live preview（防抖调无状态渲染；写作页所见即排版产物） ----
@@ -324,7 +343,7 @@ export function MediaStudioView(): JSX.Element {
         },
       });
       if ('error' in created) {
-        window.alert(created.error);
+        studioToast.err(created.error);
         return;
       }
       aiSeqRef.current += 1;
@@ -333,16 +352,22 @@ export function MediaStudioView(): JSX.Element {
     [flushSave],
   );
 
-  const refreshAfterAiTask = useCallback(() => {
-    void refreshArticles();
-    void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
-    const current = articleRef.current;
-    if (current) {
-      void fetchStudioArticle(PLATFORM, current.id).then((a) => {
-        if (a && articleRef.current?.id === a.id) setArticle(a);
-      });
-    }
-  }, [refreshArticles]);
+  const refreshAfterAiTask = useCallback(
+    (outcome: StudioAiOutcome) => {
+      if (outcome === 'done') studioToast.ok('AI 任务完成，产物已回填');
+      else if (outcome === 'error') studioToast.err('AI 任务出错，详情见底部面板');
+      else studioToast.info('AI 任务已中止');
+      void refreshArticles();
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      const current = articleRef.current;
+      if (current) {
+        void fetchStudioArticle(PLATFORM, current.id).then((a) => {
+          if (a && articleRef.current?.id === a.id) setArticle(a);
+        });
+      }
+    },
+    [refreshArticles],
+  );
 
   // ---- actions ----
   async function handleCreateArticle(fromTopic?: MediaTopic) {
@@ -1280,9 +1305,7 @@ export function MediaStudioView(): JSX.Element {
             ))}
           </select>
         ) : null}
-        <span className={c('saveHint')}>
-          {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : saveState === 'error' ? '保存失败' : ''}
-        </span>
+        <SaveStatusBadge state={saveState} savedAt={savedAt} onRetry={() => void flushSave()} />
         <div className={c('headSpacer')} />
         <div className={c('articlePicker')}>
           <select
@@ -1317,6 +1340,23 @@ export function MediaStudioView(): JSX.Element {
           ) : null}
         </div>
       </div>
+
+      {aiTask && aiRunning ? (
+        <div className={c('aiGlobalBar')}>
+          <span className={c('aiGlobalPulse')} />
+          <span className={c('aiGlobalTitle')}>AI 正在执行：{aiTask.title}（切换页签不影响任务）</span>
+          <button
+            type="button"
+            className={c('aiGlobalBtn')}
+            onClick={() => aiAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+          >
+            查看过程
+          </button>
+          <button type="button" className={c('aiGlobalBtn')} onClick={() => aiPanelRef.current?.cancel()}>
+            中止
+          </button>
+        </div>
+      ) : null}
 
       <div className={c('tabs')} role="tablist" aria-label="创作台导航">
         {TABS.map((item) => {
@@ -1397,6 +1437,15 @@ export function MediaStudioView(): JSX.Element {
           {tab === 'cover' ? renderCoverTab() : null}
           {tab === 'images' ? renderImagesTab() : null}
           {tab === 'publish' ? renderPublishTab() : null}
+          {tab === 'write' && article && article.title.trim() && article.bodyMd.trim() ? (
+            <NextStepBar hint="写作完成，下一步生成封面（发布必经）" label="去封面" onGo={() => setTab('cover')} />
+          ) : null}
+          {tab === 'cover' && article?.coverSource ? (
+            <NextStepBar hint="封面已就绪；配图可选，也可以直接去发布" label="去发布" onGo={() => setTab('publish')} />
+          ) : null}
+          {tab === 'images' && article?.coverSource ? (
+            <NextStepBar hint="配图满意后就可以发布了" label="去发布" onGo={() => setTab('publish')} />
+          ) : null}
         </div>
         {showPreview && article ? (
           <div className={c('previewCol')}>
@@ -1421,7 +1470,16 @@ export function MediaStudioView(): JSX.Element {
           </div>
         ) : null}
       </div>
-      <StudioAiPanel task={aiTask} onFinished={refreshAfterAiTask} onDismiss={() => setAiTask(null)} />
+      <div ref={aiAnchorRef}>
+        <StudioAiPanel
+          ref={aiPanelRef}
+          task={aiTask}
+          onFinished={refreshAfterAiTask}
+          onDismiss={() => setAiTask(null)}
+          onRunningChange={setAiRunning}
+        />
+      </div>
+      <StudioToastHost />
     </div>
   );
 }
