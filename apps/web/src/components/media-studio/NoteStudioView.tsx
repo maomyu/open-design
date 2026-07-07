@@ -96,6 +96,9 @@ export function NoteStudioView(): JSX.Element {
   const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
   const aiAnchorRef = useRef<HTMLDivElement | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [galleryProgress, setGalleryProgress] = useState<{ done: number; total: number } | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState('');
+  const dragIndexRef = useRef<number | null>(null);
   const [reviseNote, setReviseNote] = useState('');
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
@@ -307,32 +310,63 @@ export function NoteStudioView(): JSX.Element {
       return;
     }
     if (result.url) {
-      editArticle({ extra: { noteImages: [...noteImages, result.url] } });
+      editArticle({ extra: { noteImages: [...latestNoteImages(), result.url] } });
       setNotice({ ok: true, text: '已生成并加入图集' });
     }
   }
 
-  async function generateAllFromIdeas() {
-    const ideas = imageIdeas.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 9);
-    if (ideas.length === 0) return;
-    for (const idea of ideas) {
-      // 逐张串行生成（图接口有频控；中途失败不影响已生成的）。
-      // eslint-disable-next-line no-await-in-loop
-      await generateGalleryImage(idea);
-    }
+  /** 读最新图集——串行批量生成期间组件闭包会过期，靠 ref 拿实时数组防丢图。 */
+  function latestNoteImages(): string[] {
+    const raw = (articleRef.current?.extra as Record<string, unknown> | undefined)?.noteImages;
+    return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : [];
   }
 
-  function moveImage(index: number, delta: number) {
-    const next = [...noteImages];
-    const target = index + delta;
-    if (target < 0 || target >= next.length) return;
-    const [item] = next.splice(index, 1);
-    next.splice(target, 0, item!);
+  async function generateAllFromIdeas() {
+    if (!article) return;
+    const ideas = imageIdeas.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 9);
+    if (ideas.length === 0) return;
+    setGalleryProgress({ done: 0, total: ideas.length });
+    setGalleryBusy('__batch__');
+    let acc = latestNoteImages();
+    let okCount = 0;
+    for (const [i, idea] of ideas.entries()) {
+      // 逐张串行生成（图接口有频控；中途失败不影响已生成的）。
+      // eslint-disable-next-line no-await-in-loop
+      const result = await generateArticleImage(PLATFORM, article.id, {
+        description: idea,
+        style: galleryStyle,
+        model: galleryModel,
+        ratio: '3:4',
+      });
+      if ('error' in result) {
+        studioToast.err(`第 ${i + 1} 张失败：${result.error}`);
+      } else if (result.url) {
+        acc = [...acc, result.url];
+        editArticle({ extra: { noteImages: acc } });
+        okCount += 1;
+      }
+      setGalleryProgress({ done: i + 1, total: ideas.length });
+    }
+    setGalleryBusy(null);
+    setGalleryProgress(null);
+    studioToast.ok(`图集生成完成：成功 ${okCount}/${ideas.length} 张`);
+  }
+
+  function reorderImage(from: number, to: number) {
+    if (from === to) return;
+    const next = [...latestNoteImages()];
+    if (from < 0 || from >= next.length || to < 0 || to >= next.length) return;
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item!);
     editArticle({ extra: { noteImages: next } });
   }
 
+  function moveImage(index: number, delta: number) {
+    reorderImage(index, index + delta);
+  }
+
   function removeImage(index: number) {
-    editArticle({ extra: { noteImages: noteImages.filter((_, i) => i !== index) } });
+    editArticle({ extra: { noteImages: latestNoteImages().filter((_, i) => i !== index) } });
   }
 
   // ---- 发布 ----
@@ -676,7 +710,11 @@ export function NoteStudioView(): JSX.Element {
                         disabled={galleryBusy !== null}
                         onClick={() => void generateAllFromIdeas()}
                       >
-                        {galleryBusy ? '生成中…' : '按建议生成全部'}
+                        {galleryProgress
+                          ? `生成中 ${galleryProgress.done}/${galleryProgress.total}…`
+                          : galleryBusy
+                            ? '生成中…'
+                            : '按建议生成全部'}
                       </button>
                     </div>
                   </div>
@@ -723,7 +761,7 @@ export function NoteStudioView(): JSX.Element {
                               else if (result.error) setNotice({ ok: false, text: result.error });
                             }
                             if (urls.length > 0) {
-                              editArticle({ extra: { noteImages: [...noteImages, ...urls] } });
+                              editArticle({ extra: { noteImages: [...latestNoteImages(), ...urls] } });
                               setNotice({ ok: true, text: `已加入 ${urls.length} 张` });
                             }
                           })();
@@ -742,8 +780,30 @@ export function NoteStudioView(): JSX.Element {
                   ) : (
                     <div className={c('coverGrid')}>
                       {noteImages.map((url, i) => (
-                        <div key={url} className={c('coverCard')}>
-                          <img className={c('coverThumb')} style={{ aspectRatio: '3 / 4' }} src={url} alt={`图 ${i + 1}`} />
+                        <div
+                          key={url}
+                          className={c('coverCard')}
+                          draggable
+                          title="拖拽调整顺序 · 点图看大图"
+                          onDragStart={() => {
+                            dragIndexRef.current = i;
+                          }}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const from = dragIndexRef.current;
+                            dragIndexRef.current = null;
+                            if (from != null && from !== i) reorderImage(from, i);
+                          }}
+                          style={{ cursor: 'grab' }}
+                        >
+                          <img
+                            className={c('coverThumb')}
+                            style={{ aspectRatio: '3 / 4' }}
+                            src={url}
+                            alt={`图 ${i + 1}`}
+                            onClick={() => setLightboxUrl(url)}
+                          />
                           <div className={c('row')}>
                             <span className={`${c('chip')} ${i === 0 ? c('chipGreen') : c('chipGrey')}`}>{i === 0 ? '封面' : `#${i + 1}`}</span>
                             <span className={c('headSpacer')} />
@@ -792,6 +852,14 @@ export function NoteStudioView(): JSX.Element {
                   copyText={() => {
                     const tagLine = tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean).map((t) => `#${t}`).join(' ');
                     return `${article.title}\n\n${article.bodyMd.trim()}${tagLine ? `\n\n${tagLine}` : ''}`;
+                  }}
+                  copyParts={() => {
+                    const tagLine = tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean).map((t) => `#${t}`).join(' ');
+                    return [
+                      { label: '标题', text: article.title },
+                      { label: '正文', text: article.bodyMd.trim() },
+                      { label: '标签', text: tagLine },
+                    ];
                   }}
                   onMarked={() => {
                     void fetchStudioArticle(PLATFORM, article.id).then((a) => a && setArticle(a));
@@ -983,6 +1051,19 @@ export function NoteStudioView(): JSX.Element {
         />
       </div>
       <StudioToastHost />
+      {lightboxUrl ? (
+        <div
+          className={c('lightbox')}
+          role="button"
+          tabIndex={0}
+          onClick={() => setLightboxUrl('')}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' || e.key === 'Enter') setLightboxUrl('');
+          }}
+        >
+          <img className={c('lightboxImg')} src={lightboxUrl} alt="大图预览" />
+        </div>
+      ) : null}
     </div>
   );
 }

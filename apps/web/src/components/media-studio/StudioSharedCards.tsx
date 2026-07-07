@@ -311,6 +311,7 @@ export function SafeHandoffCard({
   targets,
   defaultTarget,
   copyText,
+  copyParts,
   hasAssets,
   onMarked,
 }: {
@@ -321,6 +322,8 @@ export function SafeHandoffCard({
   defaultTarget?: string;
   /** 按目标平台生成要粘贴的文案（标题/正文/标签的平台化格式）。 */
   copyText: (targetId: string) => string;
+  /** 分段复制：标题/正文/标签各自一键——发布页表单是分字段的，分段粘更顺手。 */
+  copyParts?: (targetId: string) => Array<{ label: string; text: string }>;
   /** 有没有可打开的图集/资产目录。 */
   hasAssets: boolean;
   onMarked: () => void;
@@ -373,6 +376,28 @@ export function SafeHandoffCard({
         >
           {done.copy ? '✓ ' : '① '}复制文案
         </button>
+        {copyParts
+          ? copyParts(target).map((part) =>
+              part.text.trim() ? (
+                <button
+                  key={part.label}
+                  type="button"
+                  className={c('btn')}
+                  title={`只复制${part.label}——发布页表单分字段粘贴更顺手`}
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(part.text);
+                      setNote(`${part.label}已复制`);
+                    } catch {
+                      setNote('复制失败——浏览器未授权剪贴板');
+                    }
+                  }}
+                >
+                  {part.label}
+                </button>
+              ) : null,
+            )
+          : null}
         <button
           type="button"
           className={c('btn')}
