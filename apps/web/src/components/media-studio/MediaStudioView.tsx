@@ -362,6 +362,25 @@ export function MediaStudioView(): JSX.Element {
     [flushSave],
   );
 
+  // AI 任务运行中每 3 秒轮询——agent 中途经 od studio 写回的内容实时上屏
+  // （不等任务结束）。有未落库的本地编辑时跳过，绝不覆盖用户正在打的字。
+  useEffect(() => {
+    if (!aiRunning) return;
+    const timer = window.setInterval(() => {
+      const current = articleRef.current;
+      if (pendingRef.current) return;
+      if (current) {
+        void fetchStudioArticle(PLATFORM, current.id).then((a) => {
+          if (a && articleRef.current?.id === a.id && !pendingRef.current && a.updatedAt !== articleRef.current?.updatedAt) {
+            setArticle(a);
+          }
+        });
+      }
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [aiRunning]);
+
   const refreshAfterAiTask = useCallback(
     (outcome: StudioAiOutcome) => {
       if (outcome === 'done') studioToast.ok('AI 任务完成，产物已回填');
