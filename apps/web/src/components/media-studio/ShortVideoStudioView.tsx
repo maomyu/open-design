@@ -33,6 +33,7 @@ import {
   startSauLogin,
   synthesizeStudioTts,
   updateStudioArticle,
+  uploadStudioVideo,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
@@ -82,6 +83,49 @@ function timeLabel(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 下一个 hh:mm 时点（今天已过就取明天），datetime-local 值格式。 */
+function nextSlot(hh: number, mm: number): string {
+  const d = new Date();
+  if (d.getHours() > hh || (d.getHours() === hh && d.getMinutes() >= mm)) d.setDate(d.getDate() + 1);
+  d.setHours(hh, mm, 0, 0);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 脚本结构条：按空行分段，逐段字数→时长，开场超时给黄金 3 秒提醒。 */
+function ScriptTimeline({ bodyMd }: { bodyMd: string }): JSX.Element | null {
+  const segments = bodyMd
+    .split(/\n{2,}/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (segments.length < 2) return null;
+  const counts = segments.map((s) => s.replace(/\s+/g, '').length);
+  const secOf = (chars: number) => chars / 4.5;
+  const hookSec = secOf(counts[0] ?? 0);
+  return (
+    <>
+      <div className={c('scriptTimeline')}>
+        {segments.map((s, i) => (
+          <div
+            key={`${i}-${counts[i]}`}
+            className={c('scriptSegment')}
+            style={{ flexGrow: Math.max(counts[i] ?? 1, 1) }}
+            title={`第 ${i + 1} 段 · ${counts[i]} 字 ≈ ${Math.round(secOf(counts[i] ?? 0))} 秒\n${s.slice(0, 80)}`}
+          >
+            <span>{i === 0 ? '开场' : i === segments.length - 1 ? '结尾' : `段${i + 1}`}</span>
+            <strong>{Math.round(secOf(counts[i] ?? 0))}s</strong>
+          </div>
+        ))}
+      </div>
+      {hookSec > 5 ? (
+        <div className={c('cardHint')} style={{ color: '#9a6b00' }}>
+          ⚠ 开场约 {Math.round(hookSec)} 秒——黄金前 3 秒要立住钩子，建议第一段压到 15 字内
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 type LoginState = 'unknown' | 'checking' | 'in' | 'out' | 'logging';
 
 export function ShortVideoStudioView(): JSX.Element {
@@ -98,6 +142,10 @@ export function ShortVideoStudioView(): JSX.Element {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [reviseNote, setReviseNote] = useState('');
   const [ttsBusy, setTtsBusy] = useState(false);
+  // 试听音色：preview 音频独立存放，绝不覆盖正式配音。
+  const [voicePreviewUrl, setVoicePreviewUrl] = useState('');
+  const [voicePreviewBusy, setVoicePreviewBusy] = useState(false);
+  const [videoUploadBusy, setVideoUploadBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
   const [publishing, setPublishing] = useState(false);
@@ -628,6 +676,7 @@ export function ShortVideoStudioView(): JSX.Element {
                     placeholder={'钩子（前3秒）…\n\n正文分点…\n\nCTA…'}
                     onChange={(e) => editArticle({ bodyMd: e.target.value })}
                   />
+                  <ScriptTimeline bodyMd={article.bodyMd} />
                 </div>
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
@@ -678,6 +727,28 @@ export function ShortVideoStudioView(): JSX.Element {
                     />
                     <button
                       type="button"
+                      className={c('btn')}
+                      disabled={voicePreviewBusy}
+                      title="用一句短文本快速听这个音色的语气节奏，不覆盖正式配音"
+                      onClick={() => {
+                        void (async () => {
+                          setVoicePreviewBusy(true);
+                          const voice = str(extra.voice).trim();
+                          const result = await synthesizeStudioTts(PLATFORM, article.id, {
+                            text: '大家好，这是当前音色的试听效果，听听语气和节奏合不合适。',
+                            ...(voice ? { voice } : {}),
+                            preview: true,
+                          });
+                          setVoicePreviewBusy(false);
+                          if (result.error) studioToast.err(result.error);
+                          else if (result.url) setVoicePreviewUrl(result.url);
+                        })();
+                      }}
+                    >
+                      {voicePreviewBusy ? '试听生成中…' : '试听音色'}
+                    </button>
+                    <button
+                      type="button"
                       className={`${c('btn')} ${c('btnPrimary')}`}
                       disabled={ttsBusy || !article.bodyMd.trim()}
                       onClick={() => void handleTts()}
@@ -685,6 +756,13 @@ export function ShortVideoStudioView(): JSX.Element {
                       {ttsBusy ? '合成中…' : '生成配音'}
                     </button>
                   </div>
+                  {voicePreviewUrl ? (
+                    <div className={c('row')}>
+                      <span className={c('cardHint')}>试听：</span>
+                      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                      <audio controls src={voicePreviewUrl} style={{ flex: 1, height: 32 }} />
+                    </div>
+                  ) : null}
                   {audioUrl ? (
                     // eslint-disable-next-line jsx-a11y/media-has-caption
                     <audio controls src={audioUrl} style={{ width: '100%' }} />
@@ -710,6 +788,33 @@ export function ShortVideoStudioView(): JSX.Element {
                   <div className={c('cardLabel')}>
                     成片（发布必需）
                     <span className={c('cardHint')}>已有成片给本机绝对路径；要 AI 生成视频，用「插件」页的短视频工作流跑完再把成片路径填回来</span>
+                  </div>
+                  <div className={c('row')}>
+                    <label className={c('btn')} style={{ cursor: 'pointer' }} title="直接选本机视频文件，自动存进作品素材目录">
+                      <Icon name="upload" size={14} /> {videoUploadBusy ? '上传中…' : '选择本机视频'}
+                      <input
+                        type="file"
+                        accept="video/*"
+                        style={{ display: 'none' }}
+                        disabled={videoUploadBusy}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          void (async () => {
+                            setVideoUploadBusy(true);
+                            const result = await uploadStudioVideo(PLATFORM, article.id, file);
+                            setVideoUploadBusy(false);
+                            if (result.error) studioToast.err(result.error);
+                            else if (result.article) {
+                              setArticle(result.article);
+                              studioToast.ok('成片已就位，可以去发布了');
+                            }
+                          })();
+                        }}
+                      />
+                    </label>
+                    <span className={c('cardHint')}>或直接粘绝对路径：</span>
                   </div>
                   <input
                     className={c('input')}
@@ -745,6 +850,17 @@ export function ShortVideoStudioView(): JSX.Element {
                   <div className={c('cardLabel')}>
                     发布到哪些平台
                     <span className={c('cardHint')}>账号名是 sau 的 cookie 档案名（默认 main）；先「检查登录」，未登录点「扫码登录」会弹本机浏览器窗口</span>
+                    <span className={c('headSpacer')} />
+                    <button
+                      type="button"
+                      className={c('btn')}
+                      title="并行检查五个平台的登录态"
+                      onClick={() => {
+                        for (const p of SAU_PLATFORMS) void handleCheckLogin(p.id);
+                      }}
+                    >
+                      一键检查全部
+                    </button>
                   </div>
                   {SAU_PLATFORMS.map((p) => {
                     const entry = matrix[p.id]!;
@@ -808,6 +924,12 @@ export function ShortVideoStudioView(): JSX.Element {
                       value={scheduleAt}
                       onChange={(e) => setScheduleAt(e.target.value)}
                     />
+                    <button type="button" className={c('btn')} onClick={() => setScheduleAt(nextSlot(20, 0))}>
+                      今晚 20:00
+                    </button>
+                    <button type="button" className={c('btn')} onClick={() => setScheduleAt(nextSlot(7, 30))}>
+                      明早 07:30
+                    </button>
                     {scheduleAt ? (
                       <button type="button" className={c('btn')} onClick={() => setScheduleAt('')}>
                         清除

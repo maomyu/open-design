@@ -486,10 +486,35 @@ export async function deleteStudioKnowledge(platform: string, id: string): Promi
 
 // ---- short-video: 配音 / 登录态 / 矩阵发布 ----
 
+export async function uploadStudioVideo(
+  platform: string,
+  articleId: string,
+  file: File,
+): Promise<{ path?: string; article?: MediaArticle; error?: string }> {
+  try {
+    const resp = await fetch(
+      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/upload-video`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'x-file-name': encodeURIComponent(file.name),
+        },
+        body: file,
+      },
+    );
+    const data = (await resp.json().catch(() => ({}))) as { path?: string; article?: MediaArticle; error?: string };
+    if (!resp.ok) return { error: data.error ?? `上传失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
 export async function synthesizeStudioTts(
   platform: string,
   articleId: string,
-  body: { text?: string; voice?: string },
+  body: { text?: string; voice?: string; preview?: boolean },
 ): Promise<{ url?: string; article?: MediaArticle; error?: string }> {
   try {
     const resp = await fetch(

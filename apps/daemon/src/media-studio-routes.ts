@@ -14,8 +14,9 @@
 //   GET/POST/PATCH/DELETE   /api/media-studio/:platform/topics[/:id]
 //   GET/POST/DELETE         /api/media-studio/:platform/snippets[/:id]
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import express from 'express';
 import type { Express } from 'express';
 import type {
   CreateMediaArticleRequest,
@@ -605,13 +606,15 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const article = getArticle(db, req.params.id);
     if (!article) return bad(res, 404, 'article not found');
     try {
-      const body = (req.body ?? {}) as { text?: string; voice?: string };
+      const body = (req.body ?? {}) as { text?: string; voice?: string; preview?: boolean };
       const text = (body.text ?? '').trim() || scriptToSpeech(article.bodyMd);
       if (!text) return bad(res, 400, '没有可配音的文本——先在「脚本」里写口播稿');
       const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR);
       const dir = assetsDirFor(article.id);
       await mkdir(dir, { recursive: true });
-      const file = `voice-${Date.now()}.wav`;
+      // preview（试听音色）只产音频不落库，绝不覆盖正式配音。
+      const isPreview = body.preview === true;
+      const file = `${isPreview ? 'voice-preview' : 'voice'}-${Date.now()}.wav`;
       await synthesizeVoice({
         text,
         ...(body.voice ? { voice: body.voice } : {}),
@@ -619,13 +622,47 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         env: keys,
       });
       const url = `${STUDIO_ASSET_URL_PREFIX}${encodeURIComponent(article.id)}/${encodeURIComponent(file)}`;
-      const updated = updateArticle(db, article.id, { extra: { audioUrl: url, audioVoice: body.voice ?? null } });
+      const updated = isPreview
+        ? article
+        : updateArticle(db, article.id, { extra: { audioUrl: url, audioVoice: body.voice ?? null } });
       res.json({ url, file, article: updated });
     } catch (err) {
       const status = err instanceof TtsError ? 422 : 500;
       bad(res, status, err instanceof Error ? err.message : String(err));
     }
   });
+
+  // 成片本机上传：大文件走 octet-stream 流（base64 JSON 的 20MB 上限对视频不够）。
+  // 落到文章资产目录并直接把绝对路径写进 extra.videoPath（sau 发布用绝对路径）。
+  app.post(
+    '/api/media-studio/:platform/articles/:id/upload-video',
+    express.raw({ type: 'application/octet-stream', limit: '512mb' }),
+    async (req, res) => {
+      const article = getArticle(db, req.params.id);
+      if (!article) return bad(res, 404, 'article not found');
+      const buf = req.body as Buffer;
+      if (!Buffer.isBuffer(buf) || buf.length === 0) return bad(res, 400, '没有收到视频数据');
+      try {
+        const rawName = String(req.headers['x-file-name'] ?? 'video.mp4');
+        let decoded = rawName;
+        try {
+          decoded = decodeURIComponent(rawName);
+        } catch {
+          /* keep raw */
+        }
+        const safe = decoded.replace(/[^\w.\-一-龥]+/g, '_').slice(-80) || 'video.mp4';
+        const dir = assetsDirFor(article.id);
+        await mkdir(dir, { recursive: true });
+        const file = `video-${Date.now()}-${safe}`;
+        const abs = path.join(dir, file);
+        await writeFile(abs, buf);
+        const updated = updateArticle(db, article.id, { extra: { videoPath: abs } });
+        res.json({ path: abs, article: updated });
+      } catch (err) {
+        bad(res, 500, err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
 
   // ---- short-video: sau 登录态与矩阵发布（对外动作,人工确认后才会打到这里） ----
   app.post('/api/media-studio/:platform/sau/check', async (req, res) => {
