@@ -74,28 +74,6 @@ export const WECHAT_SKINS: WechatSkin[] = [
     containerRadius: '24px',
     containerShadow: 'rgba(0, 0, 0, 0.06) 0px 12px 35px',
   },
-  {
-    ...BASE,
-    id: 'orangeheart',
-    name: 'orangeheart · 橙心暖色',
-    titleColor: '#ef7060',
-    textColor: '#000000',
-    quoteBg: '#fff5f5',
-    quoteBorder: '#ef7060',
-    linkColor: '#ef7060',
-    headingFont: "Optima, 'PingFang SC', serif",
-  },
-  {
-    ...BASE,
-    id: 'github',
-    name: 'github · 代码风',
-    titleColor: '#333333',
-    textColor: '#333333',
-    quoteBg: '#f6f8fa',
-    quoteBorder: '#dfe2e5',
-    linkColor: '#4183c4',
-    headingFont: "'Open Sans', 'Helvetica Neue', 'PingFang SC', sans-serif",
-  },
 ];
 
 export const DEFAULT_WECHAT_SKIN = 'kaiti';

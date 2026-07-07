@@ -119,9 +119,7 @@ function parseImageMarkers(bodyMd: string): ImageMarker[] {
 }
 
 const SKINS: Array<{ id: string; name: string; color: string; hint: string }> = [
-  { id: 'kaiti', name: 'kaiti · 深红棕楷体', color: '#8B1E22', hint: '技术/严肃长文（默认）' },
-  { id: 'orangeheart', name: 'orangeheart · 橙心暖色', color: '#ef7060', hint: '热点/情感' },
-  { id: 'github', name: 'github · 代码风', color: '#333333', hint: '教程/代码' },
+  { id: 'kaiti', name: 'kaiti · 深红棕楷体', color: '#8B1E22', hint: '全账号统一排版（唯一皮肤）' },
 ];
 
 const STATUS_LABEL: Record<MediaArticle['status'], { text: string; chip: string }> = {

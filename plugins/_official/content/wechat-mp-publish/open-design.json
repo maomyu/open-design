@@ -72,15 +72,11 @@
         "label": "排版皮肤",
         "type": "select",
         "options": [
-          "kaiti",
-          "orangeheart",
-          "github"
+          "kaiti"
         ],
         "default": "kaiti",
         "optionLabels": {
-          "kaiti": "kaiti · 深红棕楷体(技术/严肃长文,默认)",
-          "orangeheart": "orangeheart · 橙心暖色(热点/情感)",
-          "github": "github · 代码风(教程)"
+          "kaiti": "kaiti · 深红棕楷体(技术/严肃长文,默认)"
         }
       },
       {
@@ -181,18 +177,6 @@
               "label": "kaiti · 深红棕楷体(默认)",
               "color": "#8B1E22",
               "prompt": "主题色 #8B1E22 深红棕,标题楷体(KaiTi/STKaiti),米白底圆角卡片外框带阴影,引用/高亮块同色系浅底。适合技术深度、严肃长文。按 styles.json 的 kaiti 字段渲染(唯一带 bg_color/body_font/code_font 的皮肤)。"
-            },
-            {
-              "id": "orangeheart",
-              "label": "orangeheart · 橙心暖色",
-              "color": "#ef7060",
-              "prompt": "主题色 #ef7060 珊瑚橙,暖色调标题与强调,外框简洁。适合热点解读、情感向内容。按 styles.json 的 orangeheart 字段换色渲染。"
-            },
-            {
-              "id": "github",
-              "label": "github · 代码风",
-              "color": "#333333",
-              "prompt": "主题色 #333333 深灰,GitHub 文档观感,代码块/行内 code 优先保真。适合代码教程、技术教程。按 styles.json 的 github 字段换色渲染。"
             }
           ]
         },

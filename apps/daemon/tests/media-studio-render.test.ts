@@ -65,12 +65,17 @@ describe('renderWechatHtml', () => {
     expect(r.html).toContain('&lt;script&gt;');
   });
 
-  it('supports all four ported skins', () => {
-    expect(WECHAT_SKINS.map((s) => s.id)).toEqual(['kaiti', 'orangeheart', 'github']);
+  it('ships kaiti as the single skin and falls back to it for removed ids', () => {
+    expect(WECHAT_SKINS.map((s) => s.id)).toEqual(['kaiti']);
     for (const skin of WECHAT_SKINS) {
       const r = renderWechatHtml({ bodyMd: '## 标题\n\n段落', skin: skin.id });
       expect(r.skin).toBe(skin.id);
       expect(r.html).toContain(skin.titleColor);
+    }
+    // 已移除的皮肤（orangeheart/github/purple）与未知 id 都要稳定兜底 kaiti。
+    for (const removed of ['orangeheart', 'github', 'purple', 'nope']) {
+      const r = renderWechatHtml({ bodyMd: '段落', skin: removed });
+      expect(r.skin).toBe('kaiti');
     }
   });
 });
