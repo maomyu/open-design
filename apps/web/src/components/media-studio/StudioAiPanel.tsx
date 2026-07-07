@@ -30,6 +30,8 @@ interface Props {
   onDismiss: () => void;
   /** Mirrors running state up so the View can render a cross-tab global bar. */
   onRunningChange?: (running: boolean) => void;
+  /** 提示词约定 agent 输出「【进度】…」标记行——解析后上报给全局状态条。 */
+  onStageChange?: (stage: string) => void;
 }
 
 export interface StudioAiPanelHandle {
@@ -50,7 +52,7 @@ function describeEvent(ev: AgentEvent): string | null {
 }
 
 export const StudioAiPanel = forwardRef<StudioAiPanelHandle, Props>(function StudioAiPanel(
-  { task, onFinished, onDismiss, onRunningChange }: Props,
+  { task, onFinished, onDismiss, onRunningChange, onStageChange }: Props,
   ref,
 ): JSX.Element | null {
   const [expanded, setExpanded] = useState(true);
@@ -87,6 +89,7 @@ export const StudioAiPanel = forwardRef<StudioAiPanelHandle, Props>(function Stu
     setLines([]);
     setTail('');
     setExpanded(true);
+    onStageChange?.('');
     const abort = new AbortController();
     const cancel = new AbortController();
     cancelRef.current = cancel;
@@ -132,6 +135,11 @@ export const StudioAiPanel = forwardRef<StudioAiPanelHandle, Props>(function Stu
         onDelta: (chunk) => {
           text += chunk;
           setTail(text.slice(-400));
+          // 阶段标记：取文本流里最后一个「【进度】…」行上报。
+          const stages = text.match(/【进度】[^\n【]{1,60}/g);
+          if (stages && stages.length > 0) {
+            onStageChange?.(stages[stages.length - 1]!.replace('【进度】', '').trim());
+          }
         },
         onDone: () => {
           const wasStopped = statusRef.current === 'stopped';

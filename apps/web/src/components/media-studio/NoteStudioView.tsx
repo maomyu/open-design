@@ -37,6 +37,7 @@ import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type Stu
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, KnowledgePanel, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { TopicsTab } from './TopicsTab';
+import { useOrphanRun } from './useOrphanRun';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -93,6 +94,8 @@ export function NoteStudioView(): JSX.Element {
   const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
   const aiSeqRef = useRef(0);
   const [aiRunning, setAiRunning] = useState(false);
+  const [aiStage, setAiStage] = useState('');
+  const [aiElapsed, setAiElapsed] = useState(0);
   const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
   const aiAnchorRef = useRef<HTMLDivElement | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -117,6 +120,9 @@ export function NoteStudioView(): JSX.Element {
   articleRef.current = article;
   const aiTaskRef = useRef<StudioAiTask | null>(null);
   aiTaskRef.current = aiTask;
+  // 页面刷新/热更后仍在跑的后台任务：恢复感知（亮条+驱动轮询+可中止）。
+  const { orphan, cancelOrphan } = useOrphanRun(aiTask === null);
+  const effectiveAiRunning = aiRunning || orphan != null;
   const saveTimerRef = useRef<number | null>(null);
   const pendingRef = useRef<{ id: string; patch: UpdateMediaArticleRequest } | null>(null);
 
@@ -216,6 +222,18 @@ export function NoteStudioView(): JSX.Element {
     void flushSave();
   }, [flushSave]);
 
+
+  // AI 任务计时：跑多久一目了然（配合阶段自报，「有没有在执行」不再靠猜）。
+  useEffect(() => {
+    if (!effectiveAiRunning) {
+      setAiElapsed(0);
+      return;
+    }
+    const started = Date.now();
+    const timer = window.setInterval(() => setAiElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [effectiveAiRunning]);
+
   // Cmd/Ctrl+S：跳过防抖立即落库。
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -258,7 +276,7 @@ export function NoteStudioView(): JSX.Element {
 
   // AI 任务运行中每 3 秒轮询——agent 中途写回的文案/图集建议实时上屏。
   useEffect(() => {
-    if (!aiRunning) return;
+    if (!effectiveAiRunning) return;
     const timer = window.setInterval(() => {
       const current = articleRef.current;
       if (pendingRef.current) return;
@@ -272,7 +290,7 @@ export function NoteStudioView(): JSX.Element {
       void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [aiRunning]);
+  }, [effectiveAiRunning]);
 
   const refreshAfterAiTask = useCallback(
     (outcome: StudioAiOutcome) => {
@@ -528,18 +546,28 @@ export function NoteStudioView(): JSX.Element {
         </div>
       </div>
 
-      {aiTask && aiRunning ? (
+      {(aiTask && aiRunning) || orphan ? (
         <div className={c('aiGlobalBar')}>
           <span className={c('aiGlobalPulse')} />
-          <span className={c('aiGlobalTitle')}>AI 正在执行：{aiTask.title}（切换页签不影响任务）</span>
+          <span className={c('aiGlobalTitle')}>
+            {aiTask
+              ? `AI 正在执行：${aiTask.title}${aiStage ? ` · ${aiStage}` : ''} · 已运行 ${aiElapsed >= 60 ? `${Math.floor(aiElapsed / 60)} 分 ${aiElapsed % 60} 秒` : `${aiElapsed} 秒`}`
+              : '后台 AI 任务运行中（页面刷新前启动）——产物完成后自动写回并刷新'}
+          </span>
+          {aiTask ? (
+            <button
+              type="button"
+              className={c('aiGlobalBtn')}
+              onClick={() => aiAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+            >
+              查看过程
+            </button>
+          ) : null}
           <button
             type="button"
             className={c('aiGlobalBtn')}
-            onClick={() => aiAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+            onClick={() => (orphan ? cancelOrphan() : aiPanelRef.current?.cancel())}
           >
-            查看过程
-          </button>
-          <button type="button" className={c('aiGlobalBtn')} onClick={() => aiPanelRef.current?.cancel()}>
             中止
           </button>
         </div>
@@ -1072,6 +1100,7 @@ export function NoteStudioView(): JSX.Element {
           onFinished={refreshAfterAiTask}
           onDismiss={() => setAiTask(null)}
           onRunningChange={setAiRunning}
+          onStageChange={setAiStage}
         />
       </div>
       <StudioToastHost />

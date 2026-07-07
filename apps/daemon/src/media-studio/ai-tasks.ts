@@ -258,7 +258,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     const researchPhase = researchMd
       ? `## 素材简报（已调研——事实与数据优先用这里的，不必重查）\n${researchMd.slice(0, 4000)}`
       : [
-          '## 第 0 步：先做素材调研（必做，然后才动笔）',
+          '## 第 0 步：先做素材调研（必做，然后才动笔；**时间盒：最多 3 次检索，素材够支撑正文就立刻动笔**——宁可写作中发现缺口再补一查，绝不前置长调研）',
           topicUrl
             ? `1. 抓选题原文：\`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${article.platform}/article-detail" -H 'Content-Type: application/json' -d '{"url":"${topicUrl}"}'\`（返回 title/account/markdown；接口失败就跳过原文，别空转重试）。`
             : '1. 没有选题原文链接——直接用你的检索工具找 2-4 篇高质量相关内容。',
@@ -274,6 +274,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
       prompt: [
         '# 任务：写一版可发布的公众号长文正文（先调研，后写作，写完清 AI 腔，一次完成）',
         '**最高优先级：必须一次性交付完整成品，且成品必须通过 `od studio set` 命令写回（把稿子写成本地/项目目录文件不算交付）。全程绝不提问、绝不等待确认——任何取舍自己按最优判断拍板并继续（调研范围、结构、角度、案例取舍……全部如此）。**',
+        '**进度自报（用户在界面上实时等着看）**：每进入一个阶段，先单独输出一行进度标记再干活——`【进度】1/3 调研素材中…`、`【进度】2/3 撰写正文中…`（初稿写回后）`【进度】3/3 清理 AI 腔、准备终稿…`。只输出这三条，别加别的进度行。',
         `选题：${article.topic || article.title || '（见下方补充要求）'}`,
         `文章类型：${articleType}`,
         input.wordCount?.trim() ? `目标字数：${input.wordCount.trim()} 字（允许 ±15%，宁短勿注水）` : '',
