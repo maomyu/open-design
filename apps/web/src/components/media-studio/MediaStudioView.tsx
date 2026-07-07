@@ -52,6 +52,27 @@ const c = (key: string): string => (styles as Record<string, string | undefined>
 
 const PLATFORM = 'wechat-mp';
 const LAST_ARTICLE_KEY = 'open-design:studio:last-article';
+// 用户字号偏好：改一次即成默认，之后新建的文章自动沿用（写进文章 extra，
+// 发布端同源可见）。已有文章保持各自的设置不被追改。
+const FONT_DEFAULTS_KEY = 'open-design:studio:font-defaults';
+
+function loadFontDefaults(): { body: number; heading: number } | null {
+  try {
+    const raw = window.localStorage.getItem(FONT_DEFAULTS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { body?: unknown; heading?: unknown };
+    const body = typeof parsed.body === 'number' ? parsed.body : 15;
+    const heading = typeof parsed.heading === 'number' ? parsed.heading : 20;
+    return { body, heading };
+  } catch {
+    return null;
+  }
+}
+
+function saveFontDefaults(body: number, heading: number): void {
+  if (body === 15 && heading === 20) window.localStorage.removeItem(FONT_DEFAULTS_KEY);
+  else window.localStorage.setItem(FONT_DEFAULTS_KEY, JSON.stringify({ body, heading }));
+}
 
 type StudioTab = 'topics' | 'write' | 'cover' | 'images' | 'publish' | 'list' | 'knowledge';
 
@@ -335,6 +356,18 @@ export function MediaStudioView(): JSX.Element {
         headingFontSize,
       }
     : null;
+  // 调字号 = 同时更新本篇 + 记为个人默认（新建文章自动沿用，避免每篇重调）。
+  const applyFontSizes = (nextBody: number, nextHeading: number) => {
+    saveFontDefaults(nextBody, nextHeading);
+    const isDefault = nextBody === 15 && nextHeading === 20;
+    editArticle({
+      extra: {
+        bodyFontSize: isDefault ? null : nextBody,
+        headingFontSize: isDefault ? null : nextHeading,
+      },
+    });
+  };
+
   const previewSourceRef = useRef(previewSource);
   previewSourceRef.current = previewSource;
   const previewKey = previewSource ? JSON.stringify(previewSource) : '';
@@ -446,6 +479,11 @@ export function MediaStudioView(): JSX.Element {
     // startAiTask 走 articleRef 取当前文章；setArticle 要到下次渲染才同步
     // 到 ref，这里手动先同步，让「去写作」能立刻带起 AI 写作。
     articleRef.current = created;
+    // 用户字号偏好自动带入新文章（写进 extra，发布端同源）。
+    const fontDefaults = loadFontDefaults();
+    if (fontDefaults) {
+      editArticle({ extra: { bodyFontSize: fontDefaults.body, headingFontSize: fontDefaults.heading } });
+    }
     window.localStorage.setItem(LAST_ARTICLE_KEY, created.id);
     setTab('write');
     if (fromTopic) {
@@ -836,12 +874,12 @@ export function MediaStudioView(): JSX.Element {
             })}
           </div>
           <div className={c('row')}>
-            <span className={c('cardHint')}>正文字号</span>
+            <span className={c('cardHint')} title="调整后自动成为你的默认字号——以后新建的文章直接沿用">正文字号</span>
             <button
               type="button"
               className={c('btn')}
               disabled={bodyFontSize <= 12}
-              onClick={() => editArticle({ extra: { bodyFontSize: Math.max(12, bodyFontSize - 1) } })}
+              onClick={() => applyFontSizes(Math.max(12, bodyFontSize - 1), headingFontSize)}
             >
               A−
             </button>
@@ -850,7 +888,7 @@ export function MediaStudioView(): JSX.Element {
               type="button"
               className={c('btn')}
               disabled={bodyFontSize >= 22}
-              onClick={() => editArticle({ extra: { bodyFontSize: Math.min(22, bodyFontSize + 1) } })}
+              onClick={() => applyFontSizes(Math.min(22, bodyFontSize + 1), headingFontSize)}
             >
               A＋
             </button>
@@ -859,7 +897,7 @@ export function MediaStudioView(): JSX.Element {
               type="button"
               className={c('btn')}
               disabled={headingFontSize <= 14}
-              onClick={() => editArticle({ extra: { headingFontSize: Math.max(14, headingFontSize - 1) } })}
+              onClick={() => applyFontSizes(bodyFontSize, Math.max(14, headingFontSize - 1))}
             >
               A−
             </button>
@@ -868,7 +906,7 @@ export function MediaStudioView(): JSX.Element {
               type="button"
               className={c('btn')}
               disabled={headingFontSize >= 30}
-              onClick={() => editArticle({ extra: { headingFontSize: Math.min(30, headingFontSize + 1) } })}
+              onClick={() => applyFontSizes(bodyFontSize, Math.min(30, headingFontSize + 1))}
             >
               A＋
             </button>
@@ -876,8 +914,8 @@ export function MediaStudioView(): JSX.Element {
               <button
                 type="button"
                 className={c('btn')}
-                title="恢复皮肤默认字号（正文 15 / 标题 20）"
-                onClick={() => editArticle({ extra: { bodyFontSize: null, headingFontSize: null } })}
+                title="恢复皮肤默认字号（正文 15 / 标题 20），并清除个人默认"
+                onClick={() => applyFontSizes(15, 20)}
               >
                 重置
               </button>
