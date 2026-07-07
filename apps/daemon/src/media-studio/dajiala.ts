@@ -52,7 +52,10 @@ function requireOk(data: Record<string, unknown>, feed: string): void {
   const code = typeof data.code === 'number' ? data.code : -1;
   if (code !== 0) {
     const msg = String(data.msg ?? data.message ?? '未知错误');
-    throw new DajialaError(`${feed}返回 code=${code}: ${msg}（检查 DAJIALA_API_KEY / 余额）`);
+    // 业务错误（如 101 文章已被发布者删除）直接透传原因；只有疑似
+    // 鉴权/余额类问题才附排查提示，避免所有错误都误导用户去查 key。
+    const hint = /key|余额|欠费|充值|权限|登录/i.test(msg) ? '（检查 DAJIALA_API_KEY / 余额）' : '';
+    throw new DajialaError(`${feed}：${msg}${hint}`);
   }
 }
 

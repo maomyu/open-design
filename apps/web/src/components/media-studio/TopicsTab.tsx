@@ -127,7 +127,11 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [sugWords, setSugWords] = useState<string[]>([]);
   // 深挖三件套：六维验证（按 url 缓存）/ 评论弹层 / 类目榜找对标
   const [engagements, setEngagements] = useState<Record<string, TopicEngagement | 'loading'>>({});
-  const [commentsView, setCommentsView] = useState<{ title: string; list: Array<{ content: string; likes: number }> } | null>(null);
+  const [commentsView, setCommentsView] = useState<{
+    title: string;
+    list: Array<{ content: string; likes: number }>;
+    error?: string;
+  } | null>(null);
   const [commentsBusy, setCommentsBusy] = useState<string | null>(null);
   const [rankView, setRankView] = useState<RankedAccountRow[] | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
@@ -153,11 +157,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     setCommentsBusy(hit.url);
     const result = await fetchTopicComments(platform, hit.url);
     setCommentsBusy(null);
-    if (result.error) {
-      studioToast.err(result.error);
-      return;
-    }
-    setCommentsView({ title: hit.title, list: result.comments ?? [] });
+    // 失败也开弹层把原因摆出来（比如「文章已被发布者删除」）——toast 一闪
+    // 而过会让人以为按钮没反应。
+    setCommentsView({ title: hit.title, list: result.comments ?? [], ...(result.error ? { error: result.error } : {}) });
   }
 
   async function openRank() {
@@ -544,8 +546,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               评论区（{commentsView.list.length}）
               <span className={c('cardHint')}>{commentsView.title.slice(0, 40)}</span>
             </div>
-            {commentsView.list.length === 0 ? (
-              <div className={c('cardHint')}>这篇没有公开评论。</div>
+            {commentsView.error ? (
+              <div className={`${c('notice')} ${c('noticeErr')}`}>{commentsView.error}</div>
+            ) : commentsView.list.length === 0 ? (
+              <div className={c('cardHint')}>这篇没有公开评论（很多号未开评论区，属正常情况）。</div>
             ) : (
               <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {commentsView.list.map((cm, i) => (
