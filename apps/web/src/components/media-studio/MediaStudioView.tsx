@@ -187,8 +187,8 @@ export function MediaStudioView(): JSX.Element {
   const [snippetDraft, setSnippetDraft] = useState<{ slot: 'header' | 'footer'; name: string } | null>(null);
   const [snippetManage, setSnippetManage] = useState<'header' | 'footer' | null>(null);
   const [imageNotice, setImageNotice] = useState<string | null>(null);
-  // 手机宽度预览（375px）：默认开——预览应还原读者真实看到的样子。
-  const [phonePreview, setPhonePreview] = useState(true);
+  // 预览宽度：默认全宽（用户拍板），手机 375px 作为可选切换。
+  const [phonePreview, setPhonePreview] = useState(false);
   // 封面候选：一次生成 2 张对比选用；点「用这张」才落为封面。
   const [coverCandidates, setCoverCandidates] = useState<string[]>([]);
   const [coverGenBusy, setCoverGenBusy] = useState(false);
