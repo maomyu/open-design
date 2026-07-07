@@ -33,11 +33,14 @@ import type { PathDeps, RouteDeps } from './server-context.js';
 import { readAppConfig, platformAccountsForPlatform } from './app-config.js';
 import { getProject, insertConversation, insertProject } from './db.js';
 import {
+  dajialaAccountRank,
   dajialaArticleDetail,
+  dajialaComments,
   dajialaHotSearch,
   dajialaKwSearch,
   dajialaPeersLatest,
   dajialaRadar,
+  dajialaReadZanPro,
   dajialaSugWords,
   dajialaWebSearch,
 } from './media-studio/dajiala.js';
@@ -373,6 +376,43 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     return {
       items: await dajialaPeersLatest(key, accounts),
       sources: ['peer'],
+    };
+  }));
+
+  // 选题深挖三件套：六维互动验证 / 评论区 / 类目榜（均为大家来直调）。
+  const withDajialaKey = (
+    run: (key: string, body: Record<string, unknown>) => Promise<unknown>,
+  ) => {
+    return async (req: any, res: any) => {
+      try {
+        const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR);
+        const apiKey = (keys.DAJIALA_API_KEY ?? '').trim();
+        if (!apiKey) return bad(res, 422, missingKeyError('DAJIALA_API_KEY'));
+        res.json(await run(apiKey, (req.body ?? {}) as Record<string, unknown>));
+      } catch (err) {
+        bad(res, 502, err instanceof Error ? err.message : String(err));
+      }
+    };
+  };
+
+  app.post('/api/media-studio/:platform/topics/verify', withDajialaKey(async (key, body) => {
+    const url = String(body.url ?? '').trim();
+    if (!url) throw new Error('验证需要文章链接');
+    return { engagement: await dajialaReadZanPro(key, url) };
+  }));
+
+  app.post('/api/media-studio/:platform/topics/comments', withDajialaKey(async (key, body) => {
+    const url = String(body.url ?? '').trim();
+    if (!url) throw new Error('看评论需要文章链接');
+    return { comments: await dajialaComments(key, url) };
+  }));
+
+  app.post('/api/media-studio/:platform/topics/account-rank', withDajialaKey(async (key, body) => {
+    return {
+      accounts: await dajialaAccountRank(key, {
+        ...(body.type != null ? { type: Number(body.type) } : {}),
+        ...(body.page != null ? { page: Number(body.page) } : {}),
+      }),
     };
   }));
 

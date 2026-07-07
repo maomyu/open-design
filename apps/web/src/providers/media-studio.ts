@@ -305,6 +305,82 @@ export async function searchTopicFeed(
   }
 }
 
+export interface TopicEngagement {
+  read: number;
+  zan: number;
+  looking: number;
+  share: number;
+  collect: number;
+  comment: number;
+}
+
+export async function verifyTopicEngagement(
+  platform: string,
+  url: string,
+): Promise<{ engagement?: TopicEngagement; error?: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/${encodeURIComponent(platform)}/topics/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as { engagement?: TopicEngagement; error?: string };
+    if (!resp.ok) return { error: data.error ?? `验证失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
+export async function fetchTopicComments(
+  platform: string,
+  url: string,
+): Promise<{ comments?: Array<{ content: string; likes: number }>; error?: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/${encodeURIComponent(platform)}/topics/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as {
+      comments?: Array<{ content: string; likes: number }>;
+      error?: string;
+    };
+    if (!resp.ok) return { error: data.error ?? `拉评论失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
+export interface RankedAccountRow {
+  rank: number;
+  name: string;
+  wxid: string;
+  avgRead: number | null;
+  avgTopRead: number | null;
+  postTotal: number | null;
+  index: string | null;
+}
+
+export async function fetchAccountRank(
+  platform: string,
+  body?: { type?: number; page?: number },
+): Promise<{ accounts?: RankedAccountRow[]; error?: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/${encodeURIComponent(platform)}/topics/account-rank`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    });
+    const data = (await resp.json().catch(() => ({}))) as { accounts?: RankedAccountRow[]; error?: string };
+    if (!resp.ok) return { error: data.error ?? `拉榜单失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
 export async function generateArticleImage(
   platform: string,
   articleId: string,

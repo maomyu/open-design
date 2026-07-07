@@ -4,19 +4,53 @@
 import { useMemo, useState } from 'react';
 import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
 import { Icon } from '../Icon';
-import { searchTopicFeed, type TopicFeedKind } from '../../providers/media-studio';
+import {
+  fetchAccountRank,
+  fetchTopicComments,
+  searchTopicFeed,
+  verifyTopicEngagement,
+  type RankedAccountRow,
+  type TopicEngagement,
+  type TopicFeedKind,
+} from '../../providers/media-studio';
 import { studioToast } from './StudioFeedback';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
 // 数据源目录：不同行业/关键词需要的源不一样，用户自由勾选组合（组合被记忆）。
-const FEED_SOURCES: Array<{ id: TopicFeedKind; label: string; hint: string; needsKeyword: boolean }> = [
-  { id: 'hot-search', label: '🔥 爆文榜', hint: '数据库爆款（可不带关键词看全网）', needsKeyword: false },
-  { id: 'web-search', label: '🔍 搜一搜', hint: '腾讯实时搜索结果', needsKeyword: true },
-  { id: 'kw-search', label: '📚 全库搜索', hint: '全量文章库，带真实阅读数', needsKeyword: true },
-  { id: 'sug', label: '💡 需求词', hint: '微信搜索联想词=用户真实需求', needsKeyword: true },
-  { id: 'peers', label: '👥 对标动态', hint: '对标账号的最新发文', needsKeyword: false },
+// usage 在鼠标悬停时以低调浮层展示——解释这个源是什么、怎么用。
+const FEED_SOURCES: Array<{ id: TopicFeedKind; label: string; usage: string; needsKeyword: boolean }> = [
+  {
+    id: 'hot-search',
+    label: '🔥 爆文榜',
+    usage: '近期全网爆款文章库。不填关键词=看大盘热点；填了=看这个领域谁在爆。爆过的标题就是被验证过的选题方向。',
+    needsKeyword: false,
+  },
+  {
+    id: 'web-search',
+    label: '🔍 搜一搜',
+    usage: '腾讯搜一搜的实时结果（需要关键词）。看此刻用户能搜到什么，适合追热点、验证时效性。',
+    needsKeyword: true,
+  },
+  {
+    id: 'kw-search',
+    label: '📚 全库搜索',
+    usage: '全量历史文章库，带真实阅读数（需要关键词）。看同题竞品的真实数据：谁写爆过、读者买不买账。',
+    needsKeyword: true,
+  },
+  {
+    id: 'sug',
+    label: '💡 需求词',
+    usage: '微信搜索框的联想词=亿级用户的真实需求（需要关键词）。返回的词条点一下就能用它重新组合找题（下钻）。',
+    needsKeyword: true,
+  },
+  {
+    id: 'peers',
+    label: '👥 对标动态',
+    usage: '盯住同行：拉每个对标公众号最近 5 篇发文。先在下方填账号名（可点「找对标」从榜单挑），不填关键词也能跑。',
+    needsKeyword: false,
+  },
 ];
 const FEEDS_STORE_KEY = 'open-design:studio:topic-feeds';
 const PEERS_STORE_KEY = 'open-design:studio:topic-peers';
@@ -91,6 +125,63 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [enabledFeeds, setEnabledFeeds] = useState<Set<TopicFeedKind>>(loadEnabledFeeds);
   const [peers, setPeers] = useState(() => window.localStorage.getItem(PEERS_STORE_KEY) ?? '');
   const [sugWords, setSugWords] = useState<string[]>([]);
+  // 深挖三件套：六维验证（按 url 缓存）/ 评论弹层 / 类目榜找对标
+  const [engagements, setEngagements] = useState<Record<string, TopicEngagement | 'loading'>>({});
+  const [commentsView, setCommentsView] = useState<{ title: string; list: Array<{ content: string; likes: number }> } | null>(null);
+  const [commentsBusy, setCommentsBusy] = useState<string | null>(null);
+  const [rankView, setRankView] = useState<RankedAccountRow[] | null>(null);
+  const [rankBusy, setRankBusy] = useState(false);
+
+  async function verifyHit(hit: MediaTopicHit) {
+    if (!hit.url || engagements[hit.url]) return;
+    setEngagements((m) => ({ ...m, [hit.url]: 'loading' }));
+    const result = await verifyTopicEngagement(platform, hit.url);
+    if (result.error || !result.engagement) {
+      setEngagements((m) => {
+        const next = { ...m };
+        delete next[hit.url];
+        return next;
+      });
+      studioToast.err(result.error ?? '验证失败');
+      return;
+    }
+    setEngagements((m) => ({ ...m, [hit.url]: result.engagement! }));
+  }
+
+  async function openComments(hit: MediaTopicHit) {
+    if (!hit.url) return;
+    setCommentsBusy(hit.url);
+    const result = await fetchTopicComments(platform, hit.url);
+    setCommentsBusy(null);
+    if (result.error) {
+      studioToast.err(result.error);
+      return;
+    }
+    setCommentsView({ title: hit.title, list: result.comments ?? [] });
+  }
+
+  async function openRank() {
+    setRankBusy(true);
+    const result = await fetchAccountRank(platform);
+    setRankBusy(false);
+    if (result.error) {
+      studioToast.err(result.error);
+      return;
+    }
+    setRankView(result.accounts ?? []);
+  }
+
+  function addPeer(name: string) {
+    const list = peers.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    if (list.includes(name)) {
+      studioToast.info(`「${name}」已在对标名单里`);
+      return;
+    }
+    const next = [...list, name].slice(0, 5).join(',');
+    setPeers(next);
+    window.localStorage.setItem(PEERS_STORE_KEY, next);
+    studioToast.ok(`已加入对标：${name}`);
+  }
   const canAdd = title.trim().length > 0;
   const candidates = useMemo(() => topics.filter((t) => t.status === 'candidate'), [topics]);
   const used = useMemo(() => topics.filter((t) => t.status === 'used'), [topics]);
@@ -191,22 +282,36 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
         </div>
         <div className={c('row')}>
           {FEED_SOURCES.map((s) => (
-            <label key={s.id} className={c('row')} title={s.hint} style={{ gap: 4, cursor: 'pointer' }}>
+            <label key={s.id} className={`${c('row')} ${c('feedSrc')}`} style={{ gap: 4, cursor: 'pointer' }}>
               <input type="checkbox" checked={enabledFeeds.has(s.id)} onChange={() => toggleFeed(s.id)} />
               <span style={{ fontSize: 12.5 }}>{s.label}</span>
+              <span className={c('feedSrcTip')} role="tooltip">
+                {s.usage}
+              </span>
             </label>
           ))}
         </div>
         {enabledFeeds.has('peers') ? (
-          <input
-            className={c('input')}
-            value={peers}
-            placeholder="对标账号名，逗号分隔（≤5 个），例：人民日报,虎嗅APP"
-            onChange={(e) => {
-              setPeers(e.target.value);
-              window.localStorage.setItem(PEERS_STORE_KEY, e.target.value);
-            }}
-          />
+          <div className={c('row')}>
+            <input
+              className={`${c('input')} ${c('grow')}`}
+              value={peers}
+              placeholder="对标账号名，逗号分隔（≤5 个），例：人民日报,虎嗅APP"
+              onChange={(e) => {
+                setPeers(e.target.value);
+                window.localStorage.setItem(PEERS_STORE_KEY, e.target.value);
+              }}
+            />
+            <button
+              type="button"
+              className={c('btn')}
+              disabled={rankBusy}
+              title="从公众号榜单里挑对标账号（带平均阅读/发文量数据）"
+              onClick={() => void openRank()}
+            >
+              {rankBusy ? '拉榜中…' : '找对标'}
+            </button>
+          </div>
         ) : null}
         <div className={c('row')}>
           <input
@@ -269,34 +374,72 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               </tr>
             </thead>
             <tbody>
-              {hits.slice(0, 30).map((hit) => (
-                <tr key={hit.url || hit.title}>
-                  <td>{signalTag(hit.signals)}</td>
-                  <td>
-                    {hit.url ? (
-                      <a className={c('link')} href={hit.url} target="_blank" rel="noreferrer">
-                        {hit.title}
-                      </a>
-                    ) : (
-                      hit.title
-                    )}
-                  </td>
-                  <td>{hit.account}</td>
-                  <td>{hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—'}</td>
-                  <td className={c('tdActions')}>
-                    {aiOnly ? null : (
-                      <button
-                        type="button"
-                        className={c('btn')}
-                        disabled={savedHitUrls.has(hit.url || hit.title)}
-                        onClick={() => void saveHit(hit)}
-                      >
-                        {savedHitUrls.has(hit.url || hit.title) ? '已存' : '存为候选'}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {hits.slice(0, 30).map((hit) => {
+                const eng = hit.url ? engagements[hit.url] : undefined;
+                return (
+                  <tr key={hit.url || hit.title}>
+                    <td>{signalTag(hit.signals)}</td>
+                    <td>
+                      {hit.url ? (
+                        <a className={c('link')} href={hit.url} target="_blank" rel="noreferrer">
+                          {hit.title}
+                        </a>
+                      ) : (
+                        hit.title
+                      )}
+                    </td>
+                    <td>{hit.account}</td>
+                    <td>
+                      {eng && eng !== 'loading' ? (
+                        <span title="阅读 / 赞 / 在看 / 转发 / 收藏——转发高=传播力强，最值得写">
+                          阅读 {eng.read} · <strong>转发 {eng.share}</strong> · 藏 {eng.collect}
+                        </span>
+                      ) : eng === 'loading' ? (
+                        '验证中…'
+                      ) : hit.readNum ? (
+                        `阅读 ${hit.readNum}`
+                      ) : hit.desc ? (
+                        hit.desc.slice(0, 24)
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className={c('tdActions')}>
+                      {hit.url && !eng ? (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          title="抓这篇的六维真实数据（阅读/赞/在看/转发/收藏/评论）——转发率是选题传播力金标准"
+                          onClick={() => void verifyHit(hit)}
+                        >
+                          验证
+                        </button>
+                      ) : null}{' '}
+                      {hit.url ? (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={commentsBusy === hit.url}
+                          title="看这篇的评论区——读者在问什么=你的切入角度"
+                          onClick={() => void openComments(hit)}
+                        >
+                          {commentsBusy === hit.url ? '拉取中…' : '评论'}
+                        </button>
+                      ) : null}{' '}
+                      {aiOnly ? null : (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={savedHitUrls.has(hit.url || hit.title)}
+                          onClick={() => void saveHit(hit)}
+                        >
+                          {savedHitUrls.has(hit.url || hit.title) ? '已存' : '存为候选'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         ) : null}
@@ -386,6 +529,109 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           </table>
         )}
       </div>
+      {commentsView ? (
+        <div
+          className={c('lightbox')}
+          role="button"
+          tabIndex={0}
+          onClick={() => setCommentsView(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setCommentsView(null);
+          }}
+        >
+          <div className={c('topicOverlayCard')} role="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className={c('cardLabel')}>
+              评论区（{commentsView.list.length}）
+              <span className={c('cardHint')}>{commentsView.title.slice(0, 40)}</span>
+            </div>
+            {commentsView.list.length === 0 ? (
+              <div className={c('cardHint')}>这篇没有公开评论。</div>
+            ) : (
+              <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {commentsView.list.map((cm, i) => (
+                  <div key={`${i}-${cm.content.slice(0, 12)}`} style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                    <span className={`${c('chip')} ${c('chipGrey')}`}>👍 {cm.likes}</span> {cm.content.slice(0, 160)}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className={c('row')}>
+              {commentsView.list.length > 0 ? (
+                <button
+                  type="button"
+                  className={`${c('btn')} ${c('btnPrimary')}`}
+                  disabled={aiBusy}
+                  title="把评论区交给 AI：提炼读者关心但原文没讲透的点，产出候选选题"
+                  onClick={() => {
+                    const digest = commentsView.list
+                      .slice(0, 15)
+                      .map((cm) => `- (${cm.likes}赞) ${cm.content.slice(0, 80)}`)
+                      .join('\n');
+                    onAiFind(`从这篇爆文《${commentsView.title}》的读者评论里挖选题角度——找"读者关心但原文没讲透"的点：\n${digest}`);
+                    setCommentsView(null);
+                  }}
+                >
+                  <Icon name="sparkles" size={14} /> 让 AI 从评论提炼选题角度
+                </button>
+              ) : null}
+              <button type="button" className={c('btn')} onClick={() => setCommentsView(null)}>
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {rankView ? (
+        <div
+          className={c('lightbox')}
+          role="button"
+          tabIndex={0}
+          onClick={() => setRankView(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setRankView(null);
+          }}
+        >
+          <div className={c('topicOverlayCard')} role="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className={c('cardLabel')}>
+              公众号榜单 · 挑对标
+              <span className={c('cardHint')}>看平均阅读和发文量，点「加入对标」进名单（≤5 个）</span>
+            </div>
+            <div style={{ overflowY: 'auto' }}>
+              <table className={c('table')}>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>公众号</th>
+                    <th>平均阅读</th>
+                    <th>发文量</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rankView.slice(0, 20).map((a) => (
+                    <tr key={`${a.rank}-${a.wxid || a.name}`}>
+                      <td>{a.rank}</td>
+                      <td>{a.name}</td>
+                      <td>{a.avgRead ?? '—'}</td>
+                      <td>{a.postTotal ?? '—'}</td>
+                      <td className={c('tdActions')}>
+                        <button type="button" className={c('btn')} onClick={() => addPeer(a.name)}>
+                          加入对标
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className={c('row')}>
+              <button type="button" className={c('btn')} onClick={() => setRankView(null)}>
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {used.length > 0 ? (
         <div className={c('card')}>
           <div className={c('cardLabel')}>已用过（{used.length}）</div>

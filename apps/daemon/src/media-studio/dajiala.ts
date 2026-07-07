@@ -310,3 +310,101 @@ export async function dajialaPeersLatest(
   }
   return hits.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
 }
+
+const READ_ZAN_PRO_URL = 'https://www.dajiala.com/fbmain/monitor/v3/read_zan_pro';
+const COMMENT_URL = 'https://www.dajiala.com/fbmain/monitor/v3/article_comment2';
+const RANK_URL = 'https://www.dajiala.com/fbmain/rank/v1/get_account_type_rank';
+
+export interface ArticleEngagement {
+  read: number;
+  zan: number;
+  looking: number;
+  share: number;
+  collect: number;
+  comment: number;
+}
+
+/** 六维互动数据（实测字段 read/zan/looking/share_num/collect_num/comment_count）——转发数是选题传播力金标准。 */
+export async function dajialaReadZanPro(apiKey: string, url: string): Promise<ArticleEngagement> {
+  const data = await postWithRetry(READ_ZAN_PRO_URL, () => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, key: apiKey, verifycode: '' }),
+  }));
+  requireOk(data, '互动数据');
+  const d = (data.data ?? {}) as Record<string, unknown>;
+  const n = (v: unknown) => Number(v ?? 0) || 0;
+  return {
+    read: n(d.read),
+    zan: n(d.zan),
+    looking: n(d.looking),
+    share: n(d.share_num),
+    collect: n(d.collect_num),
+    comment: n(d.comment_count),
+  };
+}
+
+export interface ArticleComment {
+  content: string;
+  likes: number;
+}
+
+/** 文章一级评论（读者真实疑问=切入角度）。字段名宽松映射，最多取 30 条。 */
+export async function dajialaComments(apiKey: string, url: string): Promise<ArticleComment[]> {
+  const data = await postWithRetry(COMMENT_URL, () => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, key: apiKey, verifycode: '' }),
+  }));
+  requireOk(data, '评论区');
+  const items = Array.isArray(data.data) ? (data.data as RawItem[]) : [];
+  return items
+    .map((it) => ({
+      content: stripHtml(it.content ?? it.comment_content ?? it.nick_comment ?? '').trim(),
+      likes: Number(it.like_num ?? it.praise_num ?? it.likeNum ?? 0) || 0,
+    }))
+    .filter((c) => c.content.length > 0)
+    .slice(0, 30);
+}
+
+export interface RankedAccount {
+  rank: number;
+  name: string;
+  wxid: string;
+  avgRead: number | null;
+  avgTopRead: number | null;
+  postTotal: number | null;
+  index: string | null;
+}
+
+/** 公众号类目榜（实测外层是 error_code 而非 code；空参=默认总榜，type/page 原样透传）。 */
+export async function dajialaAccountRank(
+  apiKey: string,
+  opts: { type?: number; page?: number },
+): Promise<RankedAccount[]> {
+  const data = await postWithRetry(RANK_URL, () => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      key: apiKey,
+      ...(opts.type != null ? { type: opts.type } : {}),
+      ...(opts.page != null ? { page: opts.page } : {}),
+    }),
+  }));
+  const errCode = String(data.error_code ?? data.code ?? '-1');
+  if (errCode !== '0') {
+    throw new DajialaError(`榜单返回 error_code=${errCode}: ${String(data.msg ?? '未知错误')}`);
+  }
+  const outer = (data.data ?? {}) as Record<string, unknown>;
+  const items = Array.isArray(outer.data) ? (outer.data as RawItem[]) : [];
+  const num = (v: unknown) => (v == null || v === '' ? null : Number(v) || null);
+  return items.map((it) => ({
+    rank: Number(it.rank ?? 0) || 0,
+    name: String(it.mp_name ?? '（未知）'),
+    wxid: String(it.wxid ?? ''),
+    avgRead: num(it.avg_readnum),
+    avgTopRead: num(it.avg_top_readnum),
+    postTotal: num(it.post_total),
+    index: it.dajiala_index != null ? String(it.dajiala_index) : null,
+  }));
+}

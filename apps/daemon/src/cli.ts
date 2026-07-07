@@ -2282,6 +2282,9 @@ async function runStudio(args) {
   od studio publish <id> --account <accountId>            # 发到公众号草稿箱
   od studio topics [--json] · od studio topic-add --title "<选题>" [--url u] [--source s]
   od studio find --keyword "<方向>" [--feed radar|hot|search|kwdb|sug|peers] [--accounts "号1,号2"] [--days 7] [--json]
+  od studio topic-verify --url "<文章链接>" [--json]        # 六维互动数据（转发=传播力）
+  od studio topic-comments --url "<文章链接>" [--json]      # 评论区（读者疑问=切入角度）
+  od studio account-rank [--type N] [--page N] [--json]     # 公众号榜单（挑对标）
   od studio image <id> --desc "<场景描述>" [--marker N|COVER] [--style whiteboard|illustrated|clean] [--ratio 4:3] [--as-cover]`);
     return;
   }
@@ -2599,6 +2602,44 @@ async function runStudio(args) {
       console.log(`${tag(it.signals ?? [])} ${it.title}  —— ${it.account}${it.readNum ? `  阅读 ${it.readNum}` : ''}\n   ${it.url}`);
     }
     console.log(`共 ${data?.items?.length ?? 0} 条（${(data?.sources ?? []).join('+') || '无来源'}）`);
+    return;
+  }
+  if (sub === 'topic-verify' || sub === 'topic-comments') {
+    const url = typeof flags.url === 'string' ? flags.url.trim() : '';
+    if (!url) { console.error(`Usage: od studio ${sub} --url "<文章链接>"`); process.exit(2); }
+    const endpoint = sub === 'topic-verify' ? 'verify' : 'comments';
+    const resp = await fetch(`${base}/topics/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!resp.ok) return fail(resp, sub);
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    if (sub === 'topic-verify') {
+      const e = data?.engagement ?? {};
+      console.log(`阅读 ${e.read} · 赞 ${e.zan} · 在看 ${e.looking} · 转发 ${e.share} · 收藏 ${e.collect} · 评论 ${e.comment}`);
+    } else {
+      for (const cm of data?.comments ?? []) console.log(`👍${cm.likes}  ${cm.content}`);
+      console.log(`共 ${data?.comments?.length ?? 0} 条评论`);
+    }
+    return;
+  }
+  if (sub === 'account-rank') {
+    const resp = await fetch(`${base}/topics/account-rank`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(typeof flags.type === 'string' && flags.type ? { type: Number(flags.type) } : {}),
+        ...(typeof flags.page === 'string' && flags.page ? { page: Number(flags.page) } : {}),
+      }),
+    });
+    if (!resp.ok) return fail(resp, 'account-rank');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    for (const a of data?.accounts ?? []) {
+      console.log(`#${a.rank} ${a.name}  平均阅读 ${a.avgRead ?? '—'} · 发文 ${a.postTotal ?? '—'}`);
+    }
     return;
   }
   if (sub === 'image') {
