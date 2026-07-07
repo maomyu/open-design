@@ -194,6 +194,9 @@ export function MediaStudioView(): JSX.Element {
   const [coverGenBusy, setCoverGenBusy] = useState(false);
   // 划选改写：正文选中 ≥10 字时，「按我说的改」只改选中段。
   const [reviseSelection, setReviseSelection] = useState('');
+  // 配图操作一步撤销：重生成/移除前记正文快照，正文没再动过就能一键还原。
+  const [imageUndo, setImageUndo] = useState<{ prevBodyMd: string; afterBodyMd: string; label: string } | null>(null);
+  const [imageLightbox, setImageLightbox] = useState('');
 
   const articleRef = useRef<MediaArticle | null>(null);
   articleRef.current = article;
@@ -1036,7 +1039,7 @@ export function MediaStudioView(): JSX.Element {
       setArticle(result.article);
       setImageNotice(`图 ${opts.marker} 已生成并插入正文（右侧预览可见）`);
     };
-    // 对已生成的图：改提示词重生成（原位替换）。
+    // 对已生成的图：改提示词重生成（原位替换，可一步撤销）。
     const regenerate = async (img: BodyImage, description: string, style: string, model: string) => {
       setImageBusy(img.src);
       setImageNotice(null);
@@ -1054,16 +1057,46 @@ export function MediaStudioView(): JSX.Element {
       if (result.url) {
         const current = articleRef.current;
         if (!current) return;
-        editArticle({ bodyMd: current.bodyMd.replace(img.md, `![${description.slice(0, 40)}](${result.url})`) });
-        setImageNotice('已重新生成并替换（右侧预览可见）');
+        const next = current.bodyMd.replace(img.md, `![${description.slice(0, 40)}](${result.url})`);
+        setImageUndo({ prevBodyMd: current.bodyMd, afterBodyMd: next, label: '替换' });
+        editArticle({ bodyMd: next });
+        setImageNotice('已重新生成并替换（不满意可点右边「撤销」换回旧图）');
       }
     };
     const removeImage = (img: BodyImage) => {
       const current = articleRef.current;
       if (!current) return;
       const next = current.bodyMd.replace(img.md, '').replace(/\n{3,}/g, '\n\n');
+      setImageUndo({ prevBodyMd: current.bodyMd, afterBodyMd: next, label: '移除' });
       editArticle({ bodyMd: next });
-      setImageNotice('已从正文移除（图片文件保留在资产目录，可随时重插）');
+      setImageNotice('已从正文移除（图片文件保留在资产目录）');
+    };
+    const undoImageAction = () => {
+      if (!imageUndo) return;
+      const current = articleRef.current;
+      if (!current) return;
+      if (current.bodyMd !== imageUndo.afterBodyMd) {
+        studioToast.err('正文在这之后又被改过，请从「写作」页的历史版本找回');
+        setImageUndo(null);
+        return;
+      }
+      editArticle({ bodyMd: imageUndo.prevBodyMd });
+      setImageUndo(null);
+      setImageNotice(null);
+      studioToast.ok(`已撤销${imageUndo.label}`);
+    };
+    // 每张图在正文里的位置提示：取图前最近一段文字的结尾片段。
+    const contextBefore = (img: BodyImage): string => {
+      const idx = article.bodyMd.indexOf(img.md);
+      if (idx <= 0) return '';
+      const before = article.bodyMd
+        .slice(0, idx)
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+        .replace(/[#>*`]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return before.length > 26 ? `…${before.slice(-26)}` : before;
     };
     return (
       <>
@@ -1077,16 +1110,18 @@ export function MediaStudioView(): JSX.Element {
               正文里没有配图标注。AI 写稿会自动标注；手写的话在正文插入一行：&lt;!-- IMAGE_1: 场景描述, 4:3 --&gt;
             </div>
           ) : (
-            bodyMarkers.map((m) => (
-              <MarkerRow
-                key={m.marker}
-                marker={m}
-                busy={imageBusy === m.marker}
-                onGenerate={(desc, style, model) =>
-                  void generate({ marker: m.marker, description: desc, ratio: m.ratio, style, model })
-                }
-              />
-            ))
+            <div className={c('genGrid')}>
+              {bodyMarkers.map((m) => (
+                <MarkerRow
+                  key={m.marker}
+                  marker={m}
+                  busy={imageBusy === m.marker}
+                  onGenerate={(desc, style, model) =>
+                    void generate({ marker: m.marker, description: desc, ratio: m.ratio, style, model })
+                  }
+                />
+              ))}
+            </div>
           )}
         </div>
         {bodyImages.length > 0 ? (
@@ -1095,15 +1130,19 @@ export function MediaStudioView(): JSX.Element {
               已生成的图（{bodyImages.length}）
               <span className={c('cardHint')}>不满意就改提示词重生成（原位替换），或直接移除</span>
             </div>
-            {bodyImages.map((img) => (
-              <GeneratedImageRow
-                key={img.src}
-                image={img}
-                busy={imageBusy === img.src}
-                onRegenerate={(desc, style, model) => void regenerate(img, desc, style, model)}
-                onRemove={() => removeImage(img)}
-              />
-            ))}
+            <div className={c('genGrid')}>
+              {bodyImages.map((img) => (
+                <GeneratedImageRow
+                  key={img.src}
+                  image={img}
+                  context={contextBefore(img)}
+                  busy={imageBusy === img.src}
+                  onPreview={() => setImageLightbox(img.src)}
+                  onRegenerate={(desc, style, model) => void regenerate(img, desc, style, model)}
+                  onRemove={() => removeImage(img)}
+                />
+              ))}
+            </div>
           </div>
         ) : null}
         <div className={c('card')}>
@@ -1134,7 +1173,16 @@ export function MediaStudioView(): JSX.Element {
             />
           </label>
         </div>
-        {imageNotice ? <div className={`${c('notice')} ${imageNotice.includes('失败') || imageNotice.includes('缺少') ? c('noticeErr') : c('noticeOk')}`}>{imageNotice}</div> : null}
+        {imageNotice ? (
+          <div className={`${c('notice')} ${imageNotice.includes('失败') || imageNotice.includes('缺少') ? c('noticeErr') : c('noticeOk')}`}>
+            {imageNotice}
+            {imageUndo ? (
+              <button type="button" className={c('btn')} style={{ marginLeft: 8 }} onClick={undoImageAction}>
+                撤销{imageUndo.label}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <div className={c('row')}>
           <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => setTab('publish')}>
             下一步：发布 <Icon name="chevron-right" size={14} />
@@ -1580,6 +1628,19 @@ export function MediaStudioView(): JSX.Element {
         />
       </div>
       <StudioToastHost />
+      {imageLightbox ? (
+        <div
+          className={c('lightbox')}
+          role="button"
+          tabIndex={0}
+          onClick={() => setImageLightbox('')}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' || e.key === 'Enter') setImageLightbox('');
+          }}
+        >
+          <img className={c('lightboxImg')} src={imageLightbox} alt="配图大图" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1679,47 +1740,61 @@ function MarkerRow({
   const [style, setStyle] = useState('whiteboard');
   const [model, setModel] = useState('qwen');
   return (
-    <div className={c('row')}>
-      <span className={`${c('chip')} ${c('chipBlue')}`}>图 {marker.marker} · {marker.ratio}</span>
-      <input
-        className={`${c('input')} ${c('grow')}`}
+    <div className={c('genCard')}>
+      <div className={c('row')}>
+        <span className={`${c('chip')} ${c('chipBlue')}`}>图 {marker.marker} · {marker.ratio}</span>
+        <span className={c('cardHint')}>待生成</span>
+      </div>
+      <textarea
+        className={c('textarea')}
+        rows={2}
+        style={{ minHeight: 0 }}
         value={desc}
+        placeholder="画面描述：有什么、什么氛围…"
         onChange={(e) => setDesc(e.target.value)}
       />
-      <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
-        {IMAGE_STYLES.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.label}
-          </option>
-        ))}
-      </select>
-      <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
-        {IMAGE_MODELS.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        className={`${c('btn')} ${c('btnPrimary')}`}
-        disabled={busy || !desc.trim()}
-        onClick={() => onGenerate(desc.trim(), style, model)}
-      >
-        {busy ? '生成中…' : '生成'}
-      </button>
+      <div className={c('row')}>
+        <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
+          {IMAGE_STYLES.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
+          {IMAGE_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <span className={c('headSpacer')} />
+        <button
+          type="button"
+          className={`${c('btn')} ${c('btnPrimary')}`}
+          disabled={busy || !desc.trim()}
+          onClick={() => onGenerate(desc.trim(), style, model)}
+        >
+          {busy ? '生成中…' : '生成'}
+        </button>
+      </div>
     </div>
   );
 }
 
 function GeneratedImageRow({
   image,
+  context,
   busy,
+  onPreview,
   onRegenerate,
   onRemove,
 }: {
   image: BodyImage;
+  /** 图在正文中的位置提示（前文摘录），改描述时有参照。 */
+  context?: string;
   busy: boolean;
+  onPreview: () => void;
   onRegenerate: (description: string, style: string, model: string) => void;
   onRemove: () => void;
 }): JSX.Element {
@@ -1727,39 +1802,48 @@ function GeneratedImageRow({
   const [style, setStyle] = useState('whiteboard');
   const [model, setModel] = useState('qwen');
   return (
-    <div className={c('row')}>
-      <img className={c('genThumb')} src={image.src} alt={image.alt} />
-      <input
-        className={`${c('input')} ${c('grow')}`}
+    <div className={c('genCard')}>
+      <button type="button" className={c('genImgBtn')} title="点击看大图" onClick={onPreview}>
+        <img className={c('genImgLarge')} src={image.src} alt={image.alt} />
+        {busy ? <span className={c('genImgBusy')}>重新生成中…</span> : null}
+      </button>
+      {context ? <div className={c('genContext')}>位于「{context}」之后</div> : null}
+      <textarea
+        className={c('textarea')}
+        rows={2}
+        style={{ minHeight: 0 }}
         value={desc}
         placeholder="改一下画面描述再重生成…"
         onChange={(e) => setDesc(e.target.value)}
       />
-      <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
-        {IMAGE_STYLES.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.label}
-          </option>
-        ))}
-      </select>
-      <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
-        {IMAGE_MODELS.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        className={`${c('btn')} ${c('btnPrimary')}`}
-        disabled={busy || !desc.trim()}
-        onClick={() => onRegenerate(desc.trim(), style, model)}
-      >
-        {busy ? '生成中…' : '重生成'}
-      </button>
-      <button type="button" className={`${c('btn')} ${c('btnDanger')}`} disabled={busy} onClick={onRemove}>
-        移除
-      </button>
+      <div className={c('row')}>
+        <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
+          {IMAGE_STYLES.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
+          {IMAGE_MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <span className={c('headSpacer')} />
+        <button
+          type="button"
+          className={`${c('btn')} ${c('btnPrimary')}`}
+          disabled={busy || !desc.trim()}
+          onClick={() => onRegenerate(desc.trim(), style, model)}
+        >
+          {busy ? '生成中…' : '重生成'}
+        </button>
+        <button type="button" className={`${c('btn')} ${c('btnDanger')}`} disabled={busy} onClick={onRemove}>
+          移除
+        </button>
+      </div>
     </div>
   );
 }
