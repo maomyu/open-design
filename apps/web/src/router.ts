@@ -51,7 +51,12 @@ export type Route =
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-  if (parts.length === 0) return { kind: 'home', view: 'home' };
+  // 客户定制(2026-07-08 用户拍板):动线全部从创作台开工,打开应用直接落
+  // 公众号创作台;主页(prompt 对话框)导航入口移除,/home 直链保留可达。
+  if (parts.length === 0) return { kind: 'home', view: 'studio' };
+  if (parts[0] === 'home') {
+    return { kind: 'home', view: 'home' };
+  }
   if (parts[0] === 'onboarding') {
     return { kind: 'home', view: 'onboarding' };
   }
@@ -155,6 +160,8 @@ export function parseRoute(pathname: string): Route {
 
 export function buildPath(route: Route): string {
   if (route.kind === 'home') {
+    // '/' 已默认落公众号创作台,主页要有自己的显式路径才可达。
+    if (route.view === 'home') return '/home';
     if (route.view === 'onboarding') return '/onboarding';
     if (route.view === 'projects') return '/projects';
     if (route.view === 'tasks') return '/automations';
@@ -166,6 +173,7 @@ export function buildPath(route: Route): string {
     if (route.view === 'knowledge') return '/knowledge';
     if (route.view === 'design-systems') return '/design-systems';
     if (route.view === 'integrations') return '/integrations';
+    if (route.view === 'studio') return '/studio';
     return '/';
   }
   if (route.kind === 'creator') {

@@ -1066,7 +1066,8 @@ function AppInner() {
     iframeKeepAlivePool.evictProject(id, { includeActive: true });
     setProjects((curr) => curr.filter((p) => p.id !== id));
     if (route.kind === 'project' && route.projectId === id) {
-      navigate({ kind: 'home', view: 'home' });
+      // 主页导航入口已移除(客户定制),回落到公众号创作台。
+      navigate({ kind: 'home', view: 'studio' });
     }
     return true;
   }, [iframeKeepAlivePool, route]);
@@ -1081,7 +1082,7 @@ function AppInner() {
   }, []);
 
   const handleBack = useCallback(() => {
-    navigate({ kind: 'home', view: 'home' });
+    navigate({ kind: 'home', view: 'studio' });
   }, []);
 
   const handleClearPendingPrompt = useCallback(() => {
@@ -1202,7 +1203,7 @@ function AppInner() {
       if (cancelled) return;
       setProjects(list);
       if (!list.find((p) => p.id === route.projectId)) {
-        navigate({ kind: 'home', view: 'home' }, { replace: true });
+        navigate({ kind: 'home', view: 'studio' }, { replace: true });
       }
     })();
     return () => {

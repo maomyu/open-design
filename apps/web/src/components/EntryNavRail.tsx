@@ -74,8 +74,6 @@ export function EntryNavRail({
 }: Props) {
   const t = useT();
   const brandLabel = t('app.brand');
-  const homeLabel = t('entry.navHome');
-  const isHome = view === 'home';
   const recentProjects = useMemo(
     () => [...projects].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, RECENT_LIMIT),
     [projects],
@@ -87,7 +85,7 @@ export function EntryNavRail({
         <button
           type="button"
           className="entry-nav-rail__logo"
-          onClick={() => onViewChange('home')}
+          onClick={() => onViewChange('studio')}
           aria-label={brandLabel}
           data-testid="entry-nav-logo"
         >
@@ -103,17 +101,9 @@ export function EntryNavRail({
           </span>
         </button>
         <div className="entry-nav-rail__logo-divider" role="separator" aria-hidden="true" />
-        {/* 「新建项目」入口对客户定制版隐藏(2026-07-04 用户要求)——客户动线
-            从自媒体/主页对话框开工,项目由运行自动创建;要恢复把 NavButton 加回。 */}
-        <NavButton
-          active={isHome}
-          ariaLabel={homeLabel}
-          label={homeLabel}
-          onClick={() => onViewChange('home')}
-          testId="entry-nav-home"
-        >
-          <Icon name="home" size={18} />
-        </NavButton>
+        {/* 「新建项目」与「主页」入口对客户定制版隐藏(2026-07-04 与 2026-07-08
+            用户拍板)——动线全部从创作台开工,项目由运行自动创建;主页 /home
+            直链仍可达,要恢复把 NavButton 加回、logo onClick 改回 'home'。 */}
         {/* 创作台（客户定制,中文文案不进 i18n;spec: specs/current/media-studio.md） */}
         <NavButton
           active={view === 'studio'}
