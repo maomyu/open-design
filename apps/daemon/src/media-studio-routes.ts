@@ -950,7 +950,16 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   app.post('/api/media-studio/:platform/topics', (req, res) => {
     const body = (req.body ?? {}) as CreateMediaTopicRequest;
     if (typeof body.title !== 'string' || !body.title.trim()) return bad(res, 400, 'title is required');
-    res.json({ topic: createTopic(db, req.params.platform, { ...body, title: body.title.trim() }) });
+    // 入库清洗：AI 偶尔把角度拼进标题（「标题 ｜ 角度：xxx」），拆回各自字段，
+    // 否则表格的「角度」列空着、标题列挤成一长串。
+    let title = body.title.trim();
+    let angle = typeof body.angle === 'string' ? body.angle.trim() : '';
+    const m = title.match(/^(.*?)\s*[|｜]\s*角度[:：]\s*(.+)$/);
+    if (m) {
+      title = m[1]!.trim();
+      if (!angle) angle = m[2]!.trim();
+    }
+    res.json({ topic: createTopic(db, req.params.platform, { ...body, title, ...(angle ? { angle } : {}) }) });
   });
 
   app.patch('/api/media-studio/:platform/topics/:id', (req, res) => {

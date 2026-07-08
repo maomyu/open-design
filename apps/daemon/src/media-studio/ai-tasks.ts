@@ -117,6 +117,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '2. 结合热点数据把方向细化成 **3-5 个具体选题**：每个都要有明确的切入角度（写给谁/解决什么痛点/落脚点），不要泛泛的大话题。',
         '3. 每个选题用 CLI 落库（有原文依据的必须带来源和链接）：',
         `   \`od studio topic-add --title "<选题标题>" --angle "<切入角度>" --source "<来源公众号/平台>" --url "<原文链接>" --heat "<高|中|低>"\``,
+        '   **标题参数里只放标题本身**——角度/来源/热度分别放各自参数，绝不把「｜ 角度：xxx」拼进 --title。',
         cli,
       ].filter(Boolean).join('\n\n'),
     };
