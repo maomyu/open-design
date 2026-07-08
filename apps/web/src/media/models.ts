@@ -29,6 +29,8 @@ import type { AudioKind, MediaAspect } from '../types';
  */
 export type MediaProviderId =
   | 'openai'
+  | 'dashscope'
+  | 'dajiala'
   | 'volcengine'
   | 'grok'
   | 'hyperframes'
@@ -88,6 +90,22 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     integrated: true,
     defaultBaseUrl: 'https://api.openai.com/v1',
     docsUrl: 'https://platform.openai.com/api-keys',
+  },
+  {
+    id: 'dashscope',
+    label: '阿里云百炼（通义千问）',
+    hint: '公众号创作台生图 · qwen-image-2.0-pro',
+    integrated: true,
+    defaultBaseUrl: 'https://dashscope.aliyuncs.com',
+    docsUrl: 'https://bailian.console.aliyun.com',
+  },
+  {
+    id: 'dajiala',
+    label: '大家来（极致了数据）',
+    hint: '公众号创作台选题数据 · 爆文榜/搜一搜/需求词/对标',
+    integrated: true,
+    defaultBaseUrl: 'https://www.dajiala.com',
+    docsUrl: 'https://www.dajiala.com/main/interface',
   },
   {
     id: 'volcengine',

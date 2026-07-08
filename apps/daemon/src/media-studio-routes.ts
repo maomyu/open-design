@@ -318,7 +318,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   ) => {
     return async (req: any, res: any) => {
       try {
-        const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR);
+        const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT);
         const apiKey = (keys.DAJIALA_API_KEY ?? '').trim();
         if (!apiKey) return bad(res, 422, missingKeyError('DAJIALA_API_KEY'));
         const body = (req.body ?? {}) as TopicFeedSearchRequest;
@@ -387,7 +387,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   ) => {
     return async (req: any, res: any) => {
       try {
-        const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR);
+        const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT);
         const apiKey = (keys.DAJIALA_API_KEY ?? '').trim();
         if (!apiKey) return bad(res, 422, missingKeyError('DAJIALA_API_KEY'));
         res.json(await run(apiKey, (req.body ?? {}) as Record<string, unknown>));
@@ -431,7 +431,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const description = String(body.description ?? '').trim();
     if (!description) return bad(res, 400, '缺少图片描述');
     try {
-      const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR);
+      const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT);
       const model = typeof body.model === 'string' && body.model ? body.model : 'qwen';
       const apiKey = (keys.QWEN_API_KEY ?? keys.DASHSCOPE_API_KEY ?? '').trim();
       if (model === 'qwen' && !apiKey) return bad(res, 422, missingKeyError('QWEN_API_KEY'));
@@ -613,7 +613,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     try {
       const url = String((req.body as any)?.url ?? '').trim();
       if (!/^https?:\/\//.test(url)) return bad(res, 400, '需要 http(s) 原文链接');
-      const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR);
+      const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT);
       const apiKey = (keys.DAJIALA_API_KEY ?? '').trim();
       if (!apiKey) return bad(res, 422, missingKeyError('DAJIALA_API_KEY'));
       res.json(await dajialaArticleDetail(apiKey, url));
@@ -713,7 +713,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const body = (req.body ?? {}) as { text?: string; voice?: string; preview?: boolean };
       const text = (body.text ?? '').trim() || scriptToSpeech(article.bodyMd);
       if (!text) return bad(res, 400, '没有可配音的文本——先在「脚本」里写口播稿');
-      const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR);
+      const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT);
       const dir = assetsDirFor(article.id);
       await mkdir(dir, { recursive: true });
       // preview（试听音色）只产音频不落库，绝不覆盖正式配音。

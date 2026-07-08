@@ -32,6 +32,8 @@ export type MediaModel = {
 
 export const MEDIA_PROVIDERS: MediaProvider[] = [
   { id: 'openai', label: 'OpenAI', hint: 'gpt-image-2 / dall-e-3', integrated: true, defaultBaseUrl: 'https://api.openai.com/v1' },
+  { id: 'dashscope', label: '阿里云百炼（通义千问）', hint: '公众号创作台生图 · qwen-image-2.0-pro', integrated: true, defaultBaseUrl: 'https://dashscope.aliyuncs.com', docsUrl: 'https://bailian.console.aliyun.com' },
+  { id: 'dajiala', label: '大家来（极致了数据）', hint: '公众号创作台选题数据 · 爆文榜/搜一搜/需求词/对标', integrated: true, defaultBaseUrl: 'https://www.dajiala.com', docsUrl: 'https://www.dajiala.com/main/interface' },
   { id: 'volcengine', label: 'Volcengine Ark (Doubao)', hint: 'Seedance 2.0 / Seedream', integrated: true, defaultBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
   { id: 'grok', label: 'xAI Grok Imagine', hint: 'grok-imagine — image + video with native audio', integrated: true, defaultBaseUrl: 'https://api.x.ai/v1' },
   { id: 'hyperframes', label: 'HyperFrames', hint: 'Local HTML -> MP4 renderer', integrated: true, credentialsRequired: false, settingsVisible: false },

@@ -79,6 +79,8 @@ const ENV_KEYS: Record<string, string[]> = {
     'AZURE_API_KEY',
     'AZURE_OPENAI_API_KEY',
   ],
+  dashscope: ['OD_DASHSCOPE_API_KEY', 'DASHSCOPE_API_KEY', 'QWEN_API_KEY'],
+  dajiala: ['OD_DAJIALA_API_KEY', 'DAJIALA_API_KEY'],
   volcengine: ['OD_VOLCENGINE_API_KEY', 'ARK_API_KEY', 'VOLCENGINE_API_KEY'],
   // OD_GROK_API_KEY first (the project-reserved override, same shape as
   // every other provider above), then XAI_API_KEY as the canonical
