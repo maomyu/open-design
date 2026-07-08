@@ -453,23 +453,25 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       }
       let finalPath: string;
       let note: string | null = null;
-      if (model === 'volc') {
-        // 火山方舟 Seedream 4.0：独立钥匙（ARK_API_KEY），审查体系与阿里不同，
-        // 涉军等题材常常能直出。
+      if (model === 'volc' || model.startsWith('volc:')) {
+        // 火山方舟 Seedream：独立钥匙（ARK_API_KEY），审查体系与阿里不同，
+        // 涉军等题材常常能直出。版本优先级：下拉里选的具体版本（volc:<id>）
+        // > 设置里的自定义模型 > 默认最新（5.0）。
         const arkKey = (keys.ARK_API_KEY ?? keys.VOLC_ARK_API_KEY ?? '').trim();
         if (!arkKey) {
           throw new VolcImageError(
             '未配置火山方舟 API Key——去「设置 → 媒体生成 → Volcengine Ark」填上（ark.cn-beijing.volces.com 控制台创建，注意开通 Seedream 模型权限）',
           );
         }
-        // 设置界面的自定义模型字段可指定精确版本（如 doubao-seedream-4-5-xxxxxx）。
+        const requestedModel = model.includes(':') ? model.slice(model.indexOf(':') + 1).trim() : '';
         const volcCfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine').catch(() => ({} as { model?: string }));
+        const volcModel = requestedModel || volcCfg.model || '';
         finalPath = await generateVolcImage({
           prompt: description,
           outFile: path.join(dir, baseName),
           ...(body.style ? { style: body.style } : {}),
           ...(body.ratio ? { ratio: body.ratio } : {}),
-          ...(volcCfg.model ? { model: volcCfg.model } : {}),
+          ...(volcModel ? { model: volcModel } : {}),
           apiKey: arkKey,
         });
       } else if (model === 'gemini') {

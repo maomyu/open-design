@@ -18,10 +18,11 @@ const ARK_IMAGE_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generatio
 const DEFAULT_MODEL = 'doubao-seedream-5-0-260128';
 const TIMEOUT_MS = 120_000;
 
-/** Seedream 用具体像素尺寸；与千问的比例档位一一对应。 */
+/** Seedream 用具体像素尺寸；5.0 实测要求 ≥3,686,400 像素（2K 档），
+ *  16:9/9:16 用 2560×1440 满足下限，其余档位本就达标。 */
 const SIZE_MAP: Record<string, string> = {
-  '16:9': '2048x1152',
-  '9:16': '1152x2048',
+  '16:9': '2560x1440',
+  '9:16': '1440x2560',
   '1:1': '2048x2048',
   '4:3': '2304x1728',
   '3:4': '1728x2304',

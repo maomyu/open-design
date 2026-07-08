@@ -91,7 +91,10 @@ const WORD_COUNTS = ['800-1200', '1500-2000', '2500-3500', '4000 以上'];
 /** 生图模型入口——将来接新模型往这里加一行即可（id 透传给 daemon 分发）。 */
 const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
-  { id: 'volc', label: '火山 · Seedream 4.0' },
+  // 火山按版本选：id 里 volc: 后面就是方舟的 Model ID（不带即用最新默认）。
+  { id: 'volc', label: '火山 · Seedream 5.0（最新）' },
+  { id: 'volc:doubao-seedream-5-0-lite-260128', label: '火山 · Seedream 5.0 Lite（快·联网）' },
+  { id: 'volc:doubao-seedream-4-5-251128', label: '火山 · Seedream 4.5' },
   { id: 'gemini', label: 'Gemini（备用）' },
 ];
 
