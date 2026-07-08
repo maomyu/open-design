@@ -125,9 +125,9 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
   if (!id) return null;
   if (record.kind === 'entry') {
     const view = record.view;
+    // 'home' 不在白名单:主页对话框已下线,历史存下的主页 tab 直接丢弃。
     if (
-      view === 'home'
-      || view === 'projects'
+      view === 'projects'
       || view === 'tasks'
       || view === 'plugins'
       || view === 'accounts'
@@ -173,30 +173,8 @@ function uniqueIdForTab(tab: WorkspaceChromeTab): string {
 }
 
 function normalizeTabsState(state: WorkspaceTabsState): WorkspaceTabsState {
-  let sourceTabs = state.tabs.length > 0 ? state.tabs : [createEntryTab('home')];
-
-  // Deduplicate Home tabs (singleton constraint)
-  const homeTabs = sourceTabs.filter((tab) => tab.kind === 'entry' && tab.view === 'home');
-  if (homeTabs.length > 1) {
-    // Find canonical Home tab:
-    // 1. Is one of them currently active?
-    // 2. Otherwise, pick the one with highest lastActiveAt.
-    // 3. Otherwise, pick the first one.
-    let canonicalHome = homeTabs.find((tab) => tab.id === state.activeTabId);
-    if (!canonicalHome) {
-      canonicalHome = homeTabs.reduce((newest, currentTab) =>
-        currentTab.lastActiveAt > newest.lastActiveAt ? currentTab : newest,
-        homeTabs[0]!
-      );
-    }
-    // Filter out all duplicate Home tabs except the canonical one
-    sourceTabs = sourceTabs.filter((tab) => {
-      if (tab.kind === 'entry' && tab.view === 'home') {
-        return tab.id === canonicalHome!.id;
-      }
-      return true;
-    });
-  }
+  // 主页对话框已整体下线(客户定制):空 tabs 兜底开公众号创作台。
+  const sourceTabs = state.tabs.length > 0 ? state.tabs : [createEntryTab('studio')];
 
   const usedIds = new Set<string>();
   let activeTabId = '';
@@ -498,28 +476,6 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
     navigate(routeForTab(tab));
   }
 
-  function createNewTab() {
-    const normalized = normalizeTabsState(state);
-    const existingHomeTab = normalized.tabs.find(
-      (tab) => tab.kind === 'entry' && tab.view === 'home',
-    );
-    if (existingHomeTab) {
-      setState({
-        ...normalized,
-        activeTabId: existingHomeTab.id,
-      });
-      navigate({ kind: 'home', view: 'home' });
-    } else {
-      const tab = createEntryTab('home');
-      setState({
-        tabs: [...normalized.tabs, tab],
-        activeTabId: tab.id,
-      });
-      navigate({ kind: 'home', view: 'home' });
-    }
-    setTabsMenuOpen(false);
-  }
-
   function closeTab(tabId: string) {
     dismissHoverPreview();
     const normalized = normalizeTabsState(state);
@@ -529,9 +485,10 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
     const nextTabs = normalized.tabs.filter((tab) => tab.id !== tabId);
     let nextState: WorkspaceTabsState;
     if (nextTabs.length === 0) {
-      const homeTab = createEntryTab('home');
-      nextRoute = routeForTab(homeTab);
-      nextState = { tabs: [homeTab], activeTabId: homeTab.id };
+      // 全部关光后兜底开公众号创作台(主页对话框已下线)。
+      const fallbackTab = createEntryTab('studio');
+      nextRoute = routeForTab(fallbackTab);
+      nextState = { tabs: [fallbackTab], activeTabId: fallbackTab.id };
     } else if (normalized.activeTabId !== tabId) {
       nextState = { ...normalized, tabs: nextTabs };
     } else {
@@ -597,15 +554,8 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
         })}
       </div>
       <div className="workspace-tabs-actions" ref={menuRef}>
-        <button
-          type="button"
-          className="workspace-tabs-new-btn"
-          onClick={createNewTab}
-          title="New tab"
-          aria-label="New tab"
-        >
-          <Icon name="plus" size={14} />
-        </button>
+        {/* 「+」新开主页对话 tab 已随主页对话框一起下线(客户定制)——
+            tab 由左侧导航/项目打开自然产生。 */}
         <button
           type="button"
           className={`workspace-tabs-icon-btn${tabsMenuOpen ? ' is-active' : ''}`}

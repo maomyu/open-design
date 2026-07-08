@@ -98,10 +98,9 @@ export function PluginDetailView(props: Props) {
       return;
     }
     setApplied(result);
-    // Navigate to Home so the PluginLoopHome surface picks up the
-    // applied snapshot. Inside an existing project, the ChatComposer
-    // mount of PluginsSection consumes the same ApplyResult.
-    navigate({ kind: 'home', view: 'home' });
+    // 主页对话框已下线(客户定制):应用插件后回落公众号创作台。原语义是
+    // 跳主页让 PluginLoopHome 消费 ApplyResult;要恢复改回 view:'home'。
+    navigate({ kind: 'home', view: 'studio' });
   };
 
   return (
