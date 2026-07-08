@@ -1615,22 +1615,6 @@ export function MediaStudioView(): JSX.Element {
         <SaveStatusBadge state={saveState} savedAt={savedAt} onRetry={() => void flushSave()} />
         <div className={c('headSpacer')} />
         <div className={c('articlePicker')}>
-          {/* 换文章走「文章」列表页(步骤条里已有可视化管理面)——头部只显
-              当前在写哪篇,点击直达列表。 */}
-          {article ? (
-            <button
-              type="button"
-              className={c('btn')}
-              title="点击打开列表切换"
-              onClick={() => {
-                void flushSave();
-                setTab('list');
-              }}
-            >
-              {(article.title || '(无标题)').slice(0, 18)}
-              {(article.title || '').length > 18 ? '…' : ''} <Icon name="chevron-down" size={12} />
-            </button>
-          ) : null}
           <button type="button" className={c('btn')} onClick={() => void handleCreateArticle()}>
             <Icon name="plus" size={14} /> 新建
           </button>
