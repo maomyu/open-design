@@ -504,22 +504,22 @@ export function ShortVideoStudioView(): JSX.Element {
         <SaveStatusBadge state={saveState} savedAt={savedAt} onRetry={() => void flushSave()} />
         <div className={c('headSpacer')} />
         <div className={c('articlePicker')}>
-          <select
-            className={c('select')}
-            value={article?.id ?? ''}
-            onChange={(e) => {
-              // 同步捕获：受控 select 重渲后 DOM 值弹回旧值，异步读会拿错 id。
-              const nextId = e.target.value || null;
-              void flushSave().then(() => selectArticle(nextId));
-            }}
-          >
-            <option value="">（未选择作品）</option>
-            {(articles ?? []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.title || '(未命名)'}
-              </option>
-            ))}
-          </select>
+          {/* 换文章走「文章」列表页(步骤条里已有可视化管理面)——头部只显
+              当前在写哪篇,点击直达列表。 */}
+          {article ? (
+            <button
+              type="button"
+              className={c('btn')}
+              title="点击打开列表切换"
+              onClick={() => {
+                void flushSave();
+                setTab('list');
+              }}
+            >
+              {(article.title || '(未命名)').slice(0, 18)}
+              {(article.title || '').length > 18 ? '…' : ''} <Icon name="chevron-down" size={12} />
+            </button>
+          ) : null}
           <button type="button" className={c('btn')} onClick={() => void handleCreateArticle()}>
             <Icon name="plus" size={14} /> 新建
           </button>

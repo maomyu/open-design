@@ -1615,23 +1615,22 @@ export function MediaStudioView(): JSX.Element {
         <SaveStatusBadge state={saveState} savedAt={savedAt} onRetry={() => void flushSave()} />
         <div className={c('headSpacer')} />
         <div className={c('articlePicker')}>
-          <select
-            className={c('select')}
-            value={article?.id ?? ''}
-            onChange={(e) => {
-              // 同步捕获目标值：受控 select 在 React 重渲后 DOM 值会弹回旧文章，
-              // 异步再读 e.target.value 拿到的是旧 id，导致切换永远不生效。
-              const nextId = e.target.value || null;
-              void flushSave().then(() => selectArticle(nextId));
-            }}
-          >
-            <option value="">（未选择文章）</option>
-            {(articles ?? []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.title || '(无标题)'}
-              </option>
-            ))}
-          </select>
+          {/* 换文章走「文章」列表页(步骤条里已有可视化管理面)——头部只显
+              当前在写哪篇,点击直达列表。 */}
+          {article ? (
+            <button
+              type="button"
+              className={c('btn')}
+              title="点击打开列表切换"
+              onClick={() => {
+                void flushSave();
+                setTab('list');
+              }}
+            >
+              {(article.title || '(无标题)').slice(0, 18)}
+              {(article.title || '').length > 18 ? '…' : ''} <Icon name="chevron-down" size={12} />
+            </button>
+          ) : null}
           <button type="button" className={c('btn')} onClick={() => void handleCreateArticle()}>
             <Icon name="plus" size={14} /> 新建
           </button>
