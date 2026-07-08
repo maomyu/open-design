@@ -110,10 +110,12 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
   {
     id: 'volcengine',
     label: 'Volcengine Ark (Doubao)',
-    hint: 'Seedance 2.0 / Seedream',
+    hint: 'Seedance 2.0 / Seedream 5.0（创作台生图默认 5.0）',
     integrated: true,
     defaultBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     docsUrl: 'https://console.volcengine.com/ark',
+    supportsCustomModel: true,
+    customModelPlaceholder: 'doubao-seedream-5-0-260128 / -5-0-lite-260128 / -4-5-251128',
   },
   {
     id: 'grok',

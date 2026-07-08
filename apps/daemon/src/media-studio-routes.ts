@@ -31,6 +31,7 @@ import type {
 } from '@open-design/contracts';
 import type { PathDeps, RouteDeps } from './server-context.js';
 import { readAppConfig, platformAccountsForPlatform } from './app-config.js';
+import { resolveProviderConfig } from './media-config.js';
 import { getProject, insertConversation, insertProject } from './db.js';
 import {
   dajialaAccountRank,
@@ -458,14 +459,17 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         const arkKey = (keys.ARK_API_KEY ?? keys.VOLC_ARK_API_KEY ?? '').trim();
         if (!arkKey) {
           throw new VolcImageError(
-            '未配置 ARK_API_KEY——去「插件 · 公众号发布」配置里或工作台 .env 补上火山方舟的 API Key（ark.cn-beijing.volces.com 控制台创建）',
+            '未配置火山方舟 API Key——去「设置 → 媒体生成 → Volcengine Ark」填上（ark.cn-beijing.volces.com 控制台创建，注意开通 Seedream 模型权限）',
           );
         }
+        // 设置界面的自定义模型字段可指定精确版本（如 doubao-seedream-4-5-xxxxxx）。
+        const volcCfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine').catch(() => ({} as { model?: string }));
         finalPath = await generateVolcImage({
           prompt: description,
           outFile: path.join(dir, baseName),
           ...(body.style ? { style: body.style } : {}),
           ...(body.ratio ? { ratio: body.ratio } : {}),
+          ...(volcCfg.model ? { model: volcCfg.model } : {}),
           apiKey: arkKey,
         });
       } else if (model === 'gemini') {

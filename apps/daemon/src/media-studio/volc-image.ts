@@ -10,7 +10,12 @@ import path from 'node:path';
 import { composeStylePrompt } from './qwen-image.js';
 
 const ARK_IMAGE_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
-const DEFAULT_MODEL = 'doubao-seedream-4-0-250828';
+// 2026-07-08 从方舟官方文档实锤的可用版本(用户拍板用最新):
+//   doubao-seedream-5-0-260128（默认,质量最高）
+//   doubao-seedream-5-0-lite-260128（快/省,支持联网搜索生图）
+//   doubao-seedream-4-5-251128 / doubao-seedream-4-0-250828
+// 切版本不改代码:「设置→媒体生成→Volcengine Ark」自定义模型字段覆盖。
+const DEFAULT_MODEL = 'doubao-seedream-5-0-260128';
 const TIMEOUT_MS = 120_000;
 
 /** Seedream 用具体像素尺寸；与千问的比例档位一一对应。 */
