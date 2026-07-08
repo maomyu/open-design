@@ -316,6 +316,8 @@ export interface GenerateArticleImageResponse {
   url: string;
   file: string;
   article: MediaArticle;
+  /** 生成过程说明（如：提示词被审查拦截已自动中性化 / 已切 Gemini 备用）。 */
+  note?: string;
 }
 
 // ---- studio AI tasks（每步的智能体动作；执行走既有 /api/runs） ----

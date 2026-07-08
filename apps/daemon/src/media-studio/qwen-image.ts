@@ -100,33 +100,65 @@ async function referenceImageContent(ref: string): Promise<{ image: string }> {
   return { image: `data:${mime};base64,${buf.toString('base64')}` };
 }
 
-/** 阿里云内容安全审查拦截（inappropriate content）——概率性撞线（涉军/制服等
- *  题材尤甚），同参数重抽一次往往就过。 */
+/** 阿里云内容安全审查拦截（inappropriate content）——涉军/制服/机构等元素
+ *  高概率触发。 */
 function isContentBlocked(message: string): boolean {
   return /inappropriate|data_inspection|green/i.test(message);
 }
 
+/** 敏感元素中性化改写表：长词在前（先整体替换再兜底单字词），保住画面
+ *  构图语义、抹掉审查高危词。 */
+const NEUTRAL_REWRITES: Array<[RegExp, string]> = [
+  [/军队文职|部队文职/g, '机关单位办公'],
+  [/军装|军服|迷彩服|作训服/g, '深色职业正装'],
+  [/军官|军人|士兵|战士|文职人员/g, '职场专业人士'],
+  [/军营|营区|部队大院|部队|军队/g, '办公园区'],
+  [/警服|警察|公安|武警/g, '工作人员'],
+  [/国旗|国徽|党旗|党徽|军旗/g, '标识牌'],
+  [/枪|弹药|武器|装备库/g, '工作用具'],
+  [/制服/g, '职业装'],
+];
+
+/** 把提示词里的审查高危元素替换成中性表达；changed=false 表示没词可换。 */
+export function neutralizePrompt(prompt: string): { text: string; changed: boolean } {
+  let text = prompt;
+  for (const [re, to] of NEUTRAL_REWRITES) text = text.replace(re, to);
+  return { text, changed: text !== prompt };
+}
+
+export interface QwenImageResult {
+  file: string;
+  /** true = 原提示词被审查拦截，本图用中性化改写后的提示词生成。 */
+  neutralized: boolean;
+}
+
 /** Generates one image and writes it to outFile (extension adjusted to the
- *  actual content type). Returns the final absolute file path.
- *  两类高频瞬时错误自动自愈：内容审查拦截（概率撞线）重抽一次；
- *  429 限流退避 20 秒最多重试两次。仍失败时给可操作的人话错误。 */
-export async function generateQwenImage(opts: QwenImageOptions): Promise<string> {
-  let contentRetried = false;
+ *  actual content type).
+ *  自愈策略：内容审查拦截 → **自动中性化改写提示词**重试一次（不做同词
+ *  盲重抽）；429 限流 → 退避 20 秒最多重试两次。仍失败给可操作的人话错误。 */
+export async function generateQwenImage(opts: QwenImageOptions): Promise<QwenImageResult> {
+  let neutralizedTried = false;
+  let currentOpts = opts;
   let rateRetries = 0;
   for (;;) {
     try {
-      return await generateQwenImageOnce(opts);
+      const file = await generateQwenImageOnce(currentOpts);
+      return { file, neutralized: neutralizedTried };
     } catch (err) {
       if (!(err instanceof QwenImageError)) throw err;
       if (isContentBlocked(err.message)) {
-        if (!contentRetried) {
-          contentRetried = true;
-          continue;
+        if (!neutralizedTried) {
+          const rewritten = neutralizePrompt(currentOpts.prompt);
+          if (rewritten.changed) {
+            neutralizedTried = true;
+            currentOpts = { ...currentOpts, prompt: rewritten.text };
+            continue;
+          }
         }
         throw new QwenImageError(
-          '生成结果被阿里云内容安全拦截（已自动重试一次仍未过审）。这是模型输出的概率性撞线，' +
-          '不是配置问题——把画面描述改得更中性（少提军装/制服/机构等敏感元素）再试通常就好；' +
-          '或在配置里补 GEMINI_API_KEY 用备用模型自动兜底。',
+          neutralizedTried
+            ? '提示词已自动中性化改写仍被内容安全拦截——请手动换一种画面说法（换场景/换主体），或配 GEMINI_API_KEY 用备用模型兜底。'
+            : '生成结果被阿里云内容安全拦截，且提示词里没有可自动中性化的元素——请换一种画面说法再试，或配 GEMINI_API_KEY 用备用模型兜底。',
         );
       }
       if (/HTTP 429/.test(err.message)) {

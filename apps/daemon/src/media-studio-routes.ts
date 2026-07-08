@@ -450,6 +450,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         }
       }
       let finalPath: string;
+      let note: string | null = null;
       if (model === 'gemini') {
         // 用户显式选 Gemini：直接走 Gemini（不经过千问）。
         finalPath = await generateGeminiImageFallback({
@@ -460,7 +461,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         });
       } else {
         try {
-          finalPath = await generateQwenImage({
+          const result = await generateQwenImage({
             prompt: description,
             outFile: path.join(dir, baseName),
             ...(body.style ? { style: body.style } : {}),
@@ -468,6 +469,10 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
             ...(referenceImage ? { referenceImage } : {}),
             apiKey,
           });
+          finalPath = result.file;
+          if (result.neutralized) {
+            note = '原描述被内容安全拦截，已自动中性化敏感元素后生成（画面主体保留、军队/制服等词替换为中性表达）';
+          }
         } catch (err) {
           // 千问失败自动 Gemini 兜底（有 key 才试）——插件流水线的既有约定。
           const geminiKey = (keys.GEMINI_API_KEY ?? '').trim();
@@ -478,6 +483,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
             ...(body.ratio ? { ratio: body.ratio } : {}),
             env: keys,
           });
+          note = '千问被拦截/失败，本图由 Gemini 备用模型生成';
         }
       }
       const file = path.basename(finalPath);
@@ -495,7 +501,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       }
       if (isCover) patch.coverSource = url;
       const updated = Object.keys(patch).length > 0 ? updateArticle(db, article.id, patch) : article;
-      res.json({ url, file, article: updated });
+      res.json({ url, file, article: updated, ...(note ? { note } : {}) });
     } catch (err) {
       bad(res, 502, err instanceof Error ? err.message : String(err));
     }

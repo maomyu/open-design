@@ -352,6 +352,7 @@ export function NoteStudioView(): JSX.Element {
       return;
     }
     if (result.url) {
+      if (result.note) studioToast.info(result.note);
       editArticle({ extra: { noteImages: [...latestNoteImages(), result.url] } });
       setNotice({ ok: true, text: '已生成并加入图集' });
     }
@@ -383,6 +384,7 @@ export function NoteStudioView(): JSX.Element {
       if ('error' in result) {
         studioToast.err(`第 ${i + 1} 张失败：${result.error}`);
       } else if (result.url) {
+        if (result.note) studioToast.info(`第 ${i + 1} 张：${result.note}`);
         acc = [...acc, result.url];
         editArticle({ extra: { noteImages: acc } });
         okCount += 1;

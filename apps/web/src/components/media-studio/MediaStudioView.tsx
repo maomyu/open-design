@@ -980,6 +980,8 @@ export function MediaStudioView(): JSX.Element {
       ]);
       setCoverGenBusy(false);
       const urls = results.flatMap((r) => ('error' in r ? [] : [r.url]));
+      const genNote = results.map((r) => ('error' in r ? null : r.note)).find(Boolean);
+      if (genNote) studioToast.info(genNote);
       if (urls.length === 0) {
         const first = results[0];
         setImageNotice('error' in first ? first.error : '生成失败');
@@ -1183,6 +1185,7 @@ export function MediaStudioView(): JSX.Element {
         return;
       }
       setArticle(result.article);
+      if (result.note) studioToast.info(result.note);
       setImageNotice(`图 ${opts.marker} 已生成并插入正文（右侧预览可见）`);
     };
     // 对已生成的图：改提示词重生成（原位替换，可一步撤销）。
@@ -1201,6 +1204,7 @@ export function MediaStudioView(): JSX.Element {
         return;
       }
       if (result.url) {
+        if (result.note) studioToast.info(result.note);
         const current = articleRef.current;
         if (!current) return;
         const next = current.bodyMd.replace(img.md, `![${description.slice(0, 40)}](${result.url})`);
