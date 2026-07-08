@@ -88,6 +88,7 @@ import { AccountsView } from './AccountsView';
 import { MediaStudioView } from './media-studio/MediaStudioView';
 import { ShortVideoStudioView } from './media-studio/ShortVideoStudioView';
 import { NoteStudioView } from './media-studio/NoteStudioView';
+import { KnowledgeView } from './media-studio/KnowledgeView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
 import { TasksView } from './TasksView';
@@ -676,6 +677,7 @@ export function EntryShell({
             {view === 'studio' ? <MediaStudioView /> : null}
             {view === 'studio-video' ? <ShortVideoStudioView /> : null}
             {view === 'studio-note' ? <NoteStudioView /> : null}
+            {view === 'knowledge' ? <KnowledgeView /> : null}
             {view === 'design-systems' ? (
               designSystemsLoading ? (
                 <CenteredLoader label={t('common.loading')} />

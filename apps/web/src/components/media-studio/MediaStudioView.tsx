@@ -42,7 +42,7 @@ import {
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
-import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
+import { ArticleListCard, VersionsCard } from './StudioSharedCards';
 import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
@@ -75,7 +75,8 @@ function saveFontDefaults(body: number, heading: number): void {
   else window.localStorage.setItem(FONT_DEFAULTS_KEY, JSON.stringify({ body, heading }));
 }
 
-type StudioTab = 'topics' | 'write' | 'cover' | 'images' | 'publish' | 'list' | 'knowledge';
+// 知识库已升级为左侧导航一级入口(/knowledge,全创作台共用),不再是台内 tab。
+type StudioTab = 'topics' | 'write' | 'cover' | 'images' | 'publish' | 'list';
 
 const TABS: Array<{ id: StudioTab; label: string; step: string; optional?: boolean }> = [
   { id: 'topics', label: '选题', step: '1' },
@@ -1703,15 +1704,6 @@ export function MediaStudioView(): JSX.Element {
         >
           文章
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'knowledge'}
-          className={`${c('tab')}${tab === 'knowledge' ? ` ${c('tabActive')}` : ''}`}
-          onClick={() => setTab('knowledge')}
-        >
-          知识库
-        </button>
       </div>
 
       <div className={c('main')}>
@@ -1736,9 +1728,6 @@ export function MediaStudioView(): JSX.Element {
               }}
               onCreate={() => void handleCreateArticle()}
             />
-          ) : null}
-          {tab === 'knowledge' ? (
-            <KnowledgePanel platform={PLATFORM} accounts={accounts.map((a) => ({ id: a.id, name: a.name }))} />
           ) : null}
           {tab === 'topics' ? renderTopicsTab() : null}
           {tab === 'write' ? renderWriteTab() : null}

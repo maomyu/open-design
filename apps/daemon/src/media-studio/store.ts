@@ -404,23 +404,29 @@ function knowledgeFromRow(r: Row): import('@open-design/contracts').MediaKnowled
   };
 }
 
-export function listKnowledge(db: Database.Database, platform: string) {
+// 知识库是公司级全局资产(2026-07-08 用户拍板):一处维护,公众号/短视频/笔记
+// 所有创作台的 AI 任务都注入同一份。读写在这里强制归一到 'global'——不管调用方
+// (HTTP :platform 段、CLI --platform)传什么平台,都落到/查到同一份全局库,
+// 老入口无需改造也不会写出"孤儿平台"条目。db.ts 迁移已把历史数据归并过来。
+const KNOWLEDGE_PLATFORM = 'global';
+
+export function listKnowledge(db: Database.Database, _platform?: string) {
   const rows = db
     .prepare(`SELECT * FROM media_knowledge WHERE platform = ? ORDER BY updated_at DESC`)
-    .all(platform) as Row[];
+    .all(KNOWLEDGE_PLATFORM) as Row[];
   return rows.map(knowledgeFromRow);
 }
 
 export function createKnowledge(
   db: Database.Database,
-  platform: string,
+  _platform: string,
   input: { name: string; contentMd: string; accountId?: string | null; category?: string },
 ) {
   const id = randomUUID();
   db.prepare(
     `INSERT INTO media_knowledge (id, platform, account_id, name, content_md, category, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, platform, input.accountId ?? null, input.name, input.contentMd, input.category || 'other', Date.now());
+  ).run(id, KNOWLEDGE_PLATFORM, input.accountId ?? null, input.name, input.contentMd, input.category || 'other', Date.now());
   return knowledgeFromRow(db.prepare(`SELECT * FROM media_knowledge WHERE id = ?`).get(id) as Row);
 }
 

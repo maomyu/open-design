@@ -897,7 +897,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         }
       }
 
-      // 知识库注入：平台级 + 绑定账号的条目一并带给 AI（截断防提示词爆炸）。
+      // 知识库注入：公司级全局库(所有创作台同一份) + 绑定账号的条目一并
+      // 带给 AI（截断防提示词爆炸）。
       const knowledgeItems = listKnowledge(db, platform)
         .filter((k) => !k.accountId || k.accountId === (accountId ?? ''))
         .slice(0, 6)

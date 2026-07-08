@@ -37,7 +37,7 @@ import {
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
-import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
+import { ArticleListCard, VersionsCard } from './StudioSharedCards';
 import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
@@ -48,7 +48,8 @@ const c = (key: string): string => (styles as Record<string, string | undefined>
 const PLATFORM = 'short-video';
 const LAST_ARTICLE_KEY = 'open-design:studio:last-video-article';
 
-type VideoTab = 'topics' | 'script' | 'voice' | 'video' | 'publish' | 'list' | 'knowledge';
+// 知识库已升级为左侧导航一级入口(/knowledge,全创作台共用),不再是台内 tab。
+type VideoTab = 'topics' | 'script' | 'voice' | 'video' | 'publish' | 'list';
 
 const SAU_PLATFORMS: Array<{ id: SauPlatformId; label: string }> = [
   { id: 'douyin', label: '抖音' },
@@ -474,7 +475,6 @@ export function ShortVideoStudioView(): JSX.Element {
     video: Boolean(videoPath.trim()),
     publish: article?.status === 'published',
     list: false,
-    knowledge: false,
   };
 
   const TABS: Array<{ id: VideoTab; label: string; step: string; optional?: boolean }> = [
@@ -571,15 +571,6 @@ export function ShortVideoStudioView(): JSX.Element {
         >
           作品
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'knowledge'}
-          className={`${c('tab')}${tab === 'knowledge' ? ` ${c('tabActive')}` : ''}`}
-          onClick={() => setTab('knowledge')}
-        >
-          知识库
-        </button>
       </div>
 
       <div className={c('main')}>
@@ -604,7 +595,6 @@ export function ShortVideoStudioView(): JSX.Element {
               onCreate={() => void handleCreateArticle()}
             />
           ) : null}
-          {tab === 'knowledge' ? <KnowledgePanel platform={PLATFORM} accounts={[]} /> : null}
           {tab === 'topics' ? (
             <TopicsTab
               platform={PLATFORM}
@@ -1047,7 +1037,7 @@ export function ShortVideoStudioView(): JSX.Element {
           ) : null}
         </div>
 
-        {article && tab !== 'topics' && tab !== 'list' && tab !== 'knowledge' ? (
+        {article && tab !== 'topics' && tab !== 'list' ? (
           <div className={c('previewCol')}>
             <span className={c('previewTag')}>
               <Icon name="eye" size={13} /> 作品卡（发布时的样子）

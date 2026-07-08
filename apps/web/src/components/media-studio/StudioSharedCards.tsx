@@ -163,12 +163,6 @@ export function KnowledgePanel({
 
   return (
     <>
-      <div className={c('card')}>
-        <div className={c('cardLabel')}>
-          公司知识库
-          <span className={c('cardHint')}>按公司维度分类挂载——AI 选题/写作时按各类用途自动使用（背书增强说服力、名片用于结尾 CTA 等）</span>
-        </div>
-      </div>
       {KNOWLEDGE_CATEGORIES.map((cat) => {
         const group = itemsOf(cat.id);
         return (

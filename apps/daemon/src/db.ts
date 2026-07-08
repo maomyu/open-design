@@ -324,6 +324,11 @@ function migrate(db: SqliteDb): void {
   if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'category')) {
     db.exec(`ALTER TABLE media_knowledge ADD COLUMN category TEXT`);
   }
+  // 知识库升级为公司级全局资产(2026-07-08 用户拍板):对所有创作台生效,不再
+  // 按平台隔离。历史上按平台挂载的条目归并到 'global'(幂等,归并后零行更新)。
+  if (knowledgeCols.length > 0) {
+    db.exec(`UPDATE media_knowledge SET platform = 'global' WHERE platform != 'global'`);
+  }
   const messageCols = db.prepare(`PRAGMA table_info(messages)`).all() as DbRow[];
   if (!messageCols.some((c: DbRow) => c.name === 'agent_id')) {
     db.exec(`ALTER TABLE messages ADD COLUMN agent_id TEXT`);

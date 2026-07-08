@@ -27,6 +27,7 @@ export type EntryView =
   | 'studio'
   | 'studio-video'
   | 'studio-note'
+  | 'knowledge'
   | 'design-systems'
   | 'integrations';
 
@@ -140,6 +141,17 @@ export function EntryNavRail({
           testId="entry-nav-studio-note"
         >
           <Icon name="image" size={18} />
+        </NavButton>
+        {/* 知识库是公司级资产(2026-07-08 用户拍板):一级入口,一处维护、
+            三个创作台的 AI 全部共用,不再藏在单个创作台里。 */}
+        <NavButton
+          active={view === 'knowledge'}
+          ariaLabel="知识库"
+          label="知识库"
+          onClick={() => onViewChange('knowledge')}
+          testId="entry-nav-knowledge"
+        >
+          <Icon name="layers-filled" size={18} />
         </NavButton>
         <NavButton
           active={view === 'accounts'}

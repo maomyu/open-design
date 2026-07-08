@@ -35,7 +35,7 @@ import {
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
-import { ArticleListCard, KnowledgePanel, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
+import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
 import { useOrphanRun } from './useOrphanRun';
@@ -46,7 +46,8 @@ const c = (key: string): string => (styles as Record<string, string | undefined>
 const PLATFORM = 'note';
 const LAST_ARTICLE_KEY = 'open-design:studio:last-note';
 
-type NoteTab = 'topics' | 'copy' | 'gallery' | 'publish' | 'list' | 'knowledge';
+// 知识库已升级为左侧导航一级入口(/knowledge,全创作台共用),不再是台内 tab。
+type NoteTab = 'topics' | 'copy' | 'gallery' | 'publish' | 'list';
 
 /** sau 支持图文的平台。 */
 const NOTE_PLATFORMS: Array<{ id: string; label: string }> = [
@@ -497,7 +498,6 @@ export function NoteStudioView(): JSX.Element {
     gallery: noteImages.length > 0,
     publish: article?.status === 'published',
     list: false,
-    knowledge: false,
   };
 
   const TABS: Array<{ id: NoteTab; label: string; step: string }> = [
@@ -587,9 +587,6 @@ export function NoteStudioView(): JSX.Element {
         <button type="button" role="tab" aria-selected={tab === 'list'} className={`${c('tab')}${tab === 'list' ? ` ${c('tabActive')}` : ''}`} onClick={() => setTab('list')}>
           笔记
         </button>
-        <button type="button" role="tab" aria-selected={tab === 'knowledge'} className={`${c('tab')}${tab === 'knowledge' ? ` ${c('tabActive')}` : ''}`} onClick={() => setTab('knowledge')}>
-          知识库
-        </button>
       </div>
 
       <div className={c('main')}>
@@ -614,7 +611,6 @@ export function NoteStudioView(): JSX.Element {
               onCreate={() => void handleCreateArticle()}
             />
           ) : null}
-          {tab === 'knowledge' ? <KnowledgePanel platform={PLATFORM} accounts={[]} /> : null}
           {tab === 'topics' ? (
             <TopicsTab
               platform={PLATFORM}
@@ -1049,7 +1045,7 @@ export function NoteStudioView(): JSX.Element {
           ) : null}
         </div>
 
-        {article && tab !== 'topics' && tab !== 'list' && tab !== 'knowledge' ? (
+        {article && tab !== 'topics' && tab !== 'list' ? (
           <div className={c('previewCol')}>
             <span className={c('previewTag')}>
               <Icon name="eye" size={13} /> 笔记卡（发布时的样子）

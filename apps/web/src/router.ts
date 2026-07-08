@@ -19,6 +19,7 @@ export type EntryHomeView =
   | 'studio'
   | 'studio-video'
   | 'studio-note'
+  | 'knowledge'
   | 'design-systems'
   | 'integrations';
 
@@ -114,6 +115,10 @@ export function parseRoute(pathname: string): Route {
     if (parts[1] === 'note') return { kind: 'home', view: 'studio-note' };
     return { kind: 'home', view: 'studio' };
   }
+  // 公司知识库 — 全局一级入口,对所有创作台生效(2026-07-08 用户拍板)。
+  if (parts[0] === 'knowledge') {
+    return { kind: 'home', view: 'knowledge' };
+  }
   if (parts[0] === 'integrations') {
     return { kind: 'home', view: 'integrations' };
   }
@@ -158,6 +163,7 @@ export function buildPath(route: Route): string {
     if (route.view === 'studio') return '/studio';
     if (route.view === 'studio-video') return '/studio/short-video';
     if (route.view === 'studio-note') return '/studio/note';
+    if (route.view === 'knowledge') return '/knowledge';
     if (route.view === 'design-systems') return '/design-systems';
     if (route.view === 'integrations') return '/integrations';
     return '/';
