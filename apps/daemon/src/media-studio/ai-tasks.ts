@@ -50,7 +50,7 @@ export interface ComposeAiTaskInput {
   wordCount?: string;
   account: { name: string; persona?: string; samples?: string[] } | null;
   /** 知识库条目（已按平台+账号筛好、截好断）——写作/脚本/选题时给 AI 当背景。 */
-  knowledge?: Array<{ name: string; contentMd: string }>;
+  knowledge?: Array<{ name: string; contentMd: string; category?: string }>;
   /** topics: 用户在搜索结果里勾选的优先参考文章。 */
   picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
   /** Absolute path of the od CLI entry (dist/cli.js) for PATH-less fallback. */
@@ -80,11 +80,32 @@ function cliBlock(cliPath: string): string {
   ].join('\n');
 }
 
+const KNOWLEDGE_CATEGORY_LABEL: Record<string, string> = {
+  company: '公司介绍（我们是谁——定位、团队、资质背景）',
+  product: '产品/服务（我们卖什么——功能、流程、服务口径）',
+  trust: '信任背书（为什么信我们——资质、奖项、数据、媒体报道）',
+  case: '合作案例（我们做成过什么——客户故事、成果数据）',
+  card: 'AI 名片（对外话术——一句话介绍、联系方式、CTA 口径）',
+  other: '其他资料',
+};
+const KNOWLEDGE_CATEGORY_ORDER = ['company', 'product', 'trust', 'case', 'card', 'other'];
+
 function knowledgeBlock(items: ComposeAiTaskInput['knowledge']): string {
   if (!items || items.length === 0) return '';
-  const lines = ['## 知识库（客户挂载的背景资料——事实、口径、案例以此为准）'];
+  const lines = ['## 公司知识库（客户挂载的背景资料——事实、口径、案例以此为准；写作时按各分类的用途使用，如信任背书用于增强说服力、AI 名片用于结尾 CTA）'];
+  const byCat = new Map<string, typeof items>();
   for (const item of items) {
-    lines.push(`### ${item.name}\n${item.contentMd}`);
+    const cat = (item as { category?: string }).category || 'other';
+    if (!byCat.has(cat)) byCat.set(cat, []);
+    byCat.get(cat)!.push(item);
+  }
+  for (const cat of KNOWLEDGE_CATEGORY_ORDER) {
+    const group = byCat.get(cat);
+    if (!group || group.length === 0) continue;
+    lines.push(`### ${KNOWLEDGE_CATEGORY_LABEL[cat] ?? cat}`);
+    for (const item of group) {
+      lines.push(`#### ${item.name}\n${item.contentMd}`);
+    }
   }
   return lines.join('\n\n');
 }

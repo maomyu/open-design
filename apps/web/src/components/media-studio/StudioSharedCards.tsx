@@ -14,6 +14,7 @@ import {
   revealStudioAssets,
   saveStudioVersion,
 } from '../../providers/media-studio';
+import { studioToast } from './StudioFeedback';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -106,6 +107,16 @@ export function VersionsCard({
 
 // ---- 知识库 ----
 
+/** 公司知识库分类目录——按经营维度组织，AI 写作时按各类用途注入。 */
+const KNOWLEDGE_CATEGORIES: Array<{ id: string; label: string; hint: string; placeholder: string }> = [
+  { id: 'company', label: '公司介绍', hint: '我们是谁——定位、团队、发展历程、资质背景', placeholder: '例：公司成立于 20XX 年，专注于……团队规模/核心成员/办公地点……' },
+  { id: 'product', label: '产品/服务', hint: '卖什么——功能、服务流程、套餐口径', placeholder: '例：核心服务包含哪几档、各自适合谁、服务流程是什么……' },
+  { id: 'trust', label: '信任背书', hint: '为什么信我们——资质、奖项、数据、媒体报道', placeholder: '例：行业资质认证、服务客户数量、成功率数据、获奖记录……' },
+  { id: 'case', label: '合作案例', hint: '做成过什么——客户故事、成果数据', placeholder: '例：某客户合作背景 → 我们做了什么 → 结果数据……' },
+  { id: 'card', label: 'AI 名片', hint: '对外话术——一句话介绍、联系方式、文末 CTA 口径', placeholder: '例：文末引导语固定话术、联系方式的表述方式、品牌一句话介绍……' },
+  { id: 'other', label: '其他', hint: '行业素材、口径备忘等不好归类的资料', placeholder: '粘贴任意背景资料（markdown/纯文本都行）……' },
+];
+
 export function KnowledgePanel({
   platform,
   accounts,
@@ -115,102 +126,129 @@ export function KnowledgePanel({
   accounts: Array<{ id: string; name: string }>;
 }): JSX.Element {
   const [items, setItems] = useState<MediaKnowledge[]>([]);
+  // 当前展开添加表单的分类（一次只开一个）。
+  const [addingCat, setAddingCat] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
   const [accountId, setAccountId] = useState('');
-  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     void fetchStudioKnowledge(platform).then(setItems);
   }, [platform]);
 
+  const itemsOf = (cat: string) =>
+    items.filter((k) => ((k as { category?: string }).category || 'other') === cat);
+
+  const openAdd = (cat: string) => {
+    setAddingCat(cat);
+    setName('');
+    setContent('');
+    setAccountId('');
+  };
+
+  const submit = async () => {
+    if (!addingCat || !name.trim() || !content.trim()) return;
+    const created = await createStudioKnowledge(platform, {
+      name: name.trim(),
+      contentMd: content,
+      category: addingCat,
+      ...(accountId ? { accountId } : {}),
+    });
+    if (created) {
+      setItems((list) => [created, ...list]);
+      setAddingCat(null);
+      studioToast.ok(`「${created.name}」已挂载`);
+    }
+  };
+
   return (
     <>
       <div className={c('card')}>
         <div className={c('cardLabel')}>
-          挂载新资料
-          <span className={c('cardHint')}>产品资料/品牌口径/行业素材——AI 选题和写作时会自动带上（每条截取前 2000 字）</span>
-        </div>
-        <div className={c('row')}>
-          <input
-            className={`${c('input')} ${c('grow')}`}
-            value={name}
-            placeholder="资料名称，例：产品价格与套餐口径"
-            onChange={(e) => setName(e.target.value)}
-          />
-          {accounts.length > 0 ? (
-            <select className={c('select')} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              <option value="">全部账号可用</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  仅 {a.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
-        </div>
-        <textarea
-          className={`${c('textarea')}`}
-          style={{ minHeight: 140 }}
-          value={content}
-          placeholder="粘贴资料内容（markdown/纯文本都行）…"
-          onChange={(e) => setContent(e.target.value)}
-        />
-        <div className={c('row')}>
-          <button
-            type="button"
-            className={`${c('btn')} ${c('btnPrimary')}`}
-            disabled={!name.trim() || !content.trim()}
-            onClick={async () => {
-              const created = await createStudioKnowledge(platform, {
-                name: name.trim(),
-                contentMd: content,
-                ...(accountId ? { accountId } : {}),
-              });
-              if (created) {
-                setItems((list) => [created, ...list]);
-                setName('');
-                setContent('');
-                setNotice(`「${created.name}」已挂载`);
-              }
-            }}
-          >
-            挂载
-          </button>
-          {notice ? <span className={c('saveHint')}>{notice}</span> : null}
+          公司知识库
+          <span className={c('cardHint')}>按公司维度分类挂载——AI 选题/写作时按各类用途自动使用（背书增强说服力、名片用于结尾 CTA 等）</span>
         </div>
       </div>
-      <div className={c('card')}>
-        <div className={c('cardLabel')}>已挂载（{items.length}）</div>
-        {items.length === 0 ? (
-          <div className={c('cardHint')}>还没有资料。挂上第一条，AI 的产出就会贴着你的事实和口径走。</div>
-        ) : (
-          <div className={c('records')}>
-            {items.map((k) => (
-              <div key={k.id} className={c('record')}>
-                <strong>{k.name}</strong>
-                <span className={c('cardHint')}>
-                  {k.contentMd.replace(/\s+/g, '').length} 字
-                  {k.accountId ? ` · 仅 ${accounts.find((a) => a.id === k.accountId)?.name ?? '指定账号'}` : ' · 全部账号'}
-                </span>
-                <span className={c('headSpacer')} />
-                <button
-                  type="button"
-                  className={`${c('btn')} ${c('btnDanger')}`}
-                  onClick={async () => {
-                    if (!window.confirm(`删除资料「${k.name}」？`)) return;
-                    if (await deleteStudioKnowledge(platform, k.id)) {
-                      setItems((list) => list.filter((x) => x.id !== k.id));
-                    }
-                  }}
-                >
-                  删除
-                </button>
+      {KNOWLEDGE_CATEGORIES.map((cat) => {
+        const group = itemsOf(cat.id);
+        return (
+          <div key={cat.id} className={c('card')}>
+            <div className={c('cardLabel')}>
+              {cat.label}（{group.length}）
+              <span className={c('cardHint')}>{cat.hint}</span>
+              <span className={c('headSpacer')} />
+              <button type="button" className={c('btn')} onClick={() => (addingCat === cat.id ? setAddingCat(null) : openAdd(cat.id))}>
+                <Icon name="plus" size={13} /> 添加
+              </button>
+            </div>
+            {addingCat === cat.id ? (
+              <>
+                <div className={c('row')}>
+                  <input
+                    className={`${c('input')} ${c('grow')}`}
+                    value={name}
+                    placeholder={`资料名称，例：${cat.label}-核心口径`}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                  {accounts.length > 0 ? (
+                    <select className={c('select')} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                      <option value="">全部账号可用</option>
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          仅 {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                </div>
+                <textarea
+                  className={c('textarea')}
+                  style={{ minHeight: 120 }}
+                  value={content}
+                  placeholder={cat.placeholder}
+                  onChange={(e) => setContent(e.target.value)}
+                />
+                <div className={c('row')}>
+                  <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={!name.trim() || !content.trim()} onClick={() => void submit()}>
+                    挂载
+                  </button>
+                  <button type="button" className={c('btn')} onClick={() => setAddingCat(null)}>
+                    取消
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {group.length === 0 && addingCat !== cat.id ? (
+              <div className={c('cardHint')}>还没有{cat.label}资料——点右上「添加」挂上第一条。</div>
+            ) : (
+              <div className={c('records')}>
+                {group.map((k) => (
+                  <div key={k.id} className={c('record')}>
+                    <strong>{k.name}</strong>
+                    <span className={c('cardHint')}>
+                      {k.contentMd.replace(/\s+/g, '').length} 字
+                      {k.accountId ? ` · 仅 ${accounts.find((a) => a.id === k.accountId)?.name ?? '指定账号'}` : ' · 全部账号'}
+                    </span>
+                    <span className={c('headSpacer')} />
+                    <button
+                      type="button"
+                      className={`${c('btn')} ${c('btnDanger')}`}
+                      onClick={async () => {
+                        if (!window.confirm(`删除资料「${k.name}」？`)) return;
+                        if (await deleteStudioKnowledge(platform, k.id)) {
+                          setItems((list) => list.filter((x) => x.id !== k.id));
+                        }
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        )}
-      </div>
+        );
+      })}
     </>
   );
 }

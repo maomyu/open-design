@@ -110,6 +110,8 @@ export interface MediaKnowledge {
   accountId: string | null;
   name: string;
   contentMd: string;
+  /** 公司知识分类：company/product/trust/case/card/other（历史数据默认 other）. */
+  category: string;
   updatedAt: number;
 }
 export interface MediaKnowledgeListResponse {
@@ -119,6 +121,8 @@ export interface CreateMediaKnowledgeRequest {
   name: string;
   contentMd: string;
   accountId?: string | null;
+  /** 分类 id（缺省 other）. */
+  category?: string;
 }
 
 export interface UploadStudioAssetRequest {

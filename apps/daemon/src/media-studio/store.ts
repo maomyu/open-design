@@ -399,6 +399,7 @@ function knowledgeFromRow(r: Row): import('@open-design/contracts').MediaKnowled
     accountId: strOrNull(r.account_id),
     name: str(r.name),
     contentMd: str(r.content_md),
+    category: str(r.category) || 'other',
     updatedAt: numOrNull(r.updated_at) ?? 0,
   };
 }
@@ -413,13 +414,13 @@ export function listKnowledge(db: Database.Database, platform: string) {
 export function createKnowledge(
   db: Database.Database,
   platform: string,
-  input: { name: string; contentMd: string; accountId?: string | null },
+  input: { name: string; contentMd: string; accountId?: string | null; category?: string },
 ) {
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO media_knowledge (id, platform, account_id, name, content_md, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, platform, input.accountId ?? null, input.name, input.contentMd, Date.now());
+    `INSERT INTO media_knowledge (id, platform, account_id, name, content_md, category, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, platform, input.accountId ?? null, input.name, input.contentMd, input.category || 'other', Date.now());
   return knowledgeFromRow(db.prepare(`SELECT * FROM media_knowledge WHERE id = ?`).get(id) as Row);
 }
 

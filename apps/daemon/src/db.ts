@@ -320,6 +320,10 @@ function migrate(db: SqliteDb): void {
   if (mediaArticleCols.length > 0 && !mediaArticleCols.some((c: DbRow) => c.name === 'extra_json')) {
     db.exec(`ALTER TABLE media_articles ADD COLUMN extra_json TEXT`);
   }
+  const knowledgeCols = db.prepare(`PRAGMA table_info(media_knowledge)`).all() as DbRow[];
+  if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'category')) {
+    db.exec(`ALTER TABLE media_knowledge ADD COLUMN category TEXT`);
+  }
   const messageCols = db.prepare(`PRAGMA table_info(messages)`).all() as DbRow[];
   if (!messageCols.some((c: DbRow) => c.name === 'agent_id')) {
     db.exec(`ALTER TABLE messages ADD COLUMN agent_id TEXT`);

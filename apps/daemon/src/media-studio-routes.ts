@@ -696,7 +696,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   });
 
   app.post('/api/media-studio/:platform/knowledge', (req, res) => {
-    const body = (req.body ?? {}) as { name?: string; contentMd?: string; accountId?: string | null };
+    const body = (req.body ?? {}) as { name?: string; contentMd?: string; accountId?: string | null; category?: string };
     if (!body.name?.trim()) return bad(res, 400, 'name is required');
     if (!body.contentMd?.trim()) return bad(res, 400, 'contentMd is required');
     res.json({
@@ -704,6 +704,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         name: body.name.trim(),
         contentMd: body.contentMd,
         accountId: body.accountId ?? null,
+        ...(typeof body.category === 'string' && body.category ? { category: body.category } : {}),
       }),
     });
   });

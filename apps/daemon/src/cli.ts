@@ -2473,13 +2473,14 @@ async function runStudio(args) {
       const name = typeof flags.title === 'string' ? flags.title : '';
       const content = await readFileFlag('file');
       if (!name || content === undefined) {
-        console.error('Usage: od studio kb add --title "<名称>" --file <md|-> [--account <accountId>]');
+        console.error('Usage: od studio kb add --title "<名称>" --file <md|-> [--account <accountId>] [--category company|product|trust|case|card|other]');
         process.exit(2);
       }
       const resp = await fetch(`${base}/knowledge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          ...(typeof flags.category === 'string' && flags.category ? { category: flags.category } : {}),
           name,
           contentMd: content,
           ...(typeof flags.account === 'string' && flags.account ? { accountId: flags.account } : {}),
