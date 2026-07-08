@@ -51,6 +51,8 @@ export interface ComposeAiTaskInput {
   account: { name: string; persona?: string; samples?: string[] } | null;
   /** 知识库条目（已按平台+账号筛好、截好断）——写作/脚本/选题时给 AI 当背景。 */
   knowledge?: Array<{ name: string; contentMd: string }>;
+  /** topics: 用户在搜索结果里勾选的优先参考文章。 */
+  picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
   /** Absolute path of the od CLI entry (dist/cli.js) for PATH-less fallback. */
   cliPath: string;
 }
@@ -103,18 +105,35 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
 
   if (kind === 'topics') {
     const direction = note.trim() || '（用户没给方向——先按账号人设推断最合适的领域）';
+    const picked = (input.picked ?? []).slice(0, 8);
+    const pickedBlock = picked.length > 0
+      ? [
+          `## 用户勾选的优先参考文章（${picked.length} 篇——这是用户亲手挑的方向，必须优先深挖）`,
+          ...picked.map((p, i) => {
+            const meta = [p.account, p.readNum ? `阅读 ${p.readNum}` : ''].filter(Boolean).join(' · ');
+            return `${i + 1}. ${p.title}${meta ? `（${meta}）` : ''}${p.url ? `\n   原文：${p.url}` : ''}`;
+          }),
+          `优先动作：对每篇有链接的用 \`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${platform}/article-detail" -H 'Content-Type: application/json' -d '{"url":"<原文链接>"}'\` 抓正文，分析它为什么值得写、读者在关心什么，然后产出**属于本账号的差异化选题**（换角度/补缺口/更聚焦），不是复述原标题。未勾选的热点数据只做背景。`,
+        ].join('\n')
+      : '';
+    const isConvert = picked.length > 0 && !note.trim();
     return {
-      title: `AI 选题 · ${note.trim().slice(0, 18) || '自动'}`,
+      title: picked.length > 0 ? `AI 选题 · ${picked.length} 篇优先参考` : `AI 选题 · ${note.trim().slice(0, 18) || '自动'}`,
       prompt: [
         '# 任务：选题（只做选题，不写正文）',
         `方向/领域：${direction}`,
+        pickedBlock,
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
         '## 怎么做',
-        '1. 先拉双信号热点数据：',
+        picked.length > 0
+          ? `1. **先处理上面用户勾选的优先参考**（抓原文→差异化出题）；需要补充背景再拉热点：`
+          : '1. 先拉双信号热点数据：',
         `   \`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${platform}/topics/radar" -H 'Content-Type: application/json' -d '{"keyword":"<方向关键词>"}'\``,
         '   （⭐双信号=最强选题；🔥爆款=流量验证；🔍搜一搜=搜索需求。接口失败就直接基于方向做判断，别空转重试。）',
-        '2. 结合热点数据把方向细化成 **3-5 个具体选题**：每个都要有明确的切入角度（写给谁/解决什么痛点/落脚点），不要泛泛的大话题。',
+        isConvert
+          ? '2. 每篇勾选文章转化出 **1-2 个差异化选题**（写给谁/解决什么痛点/落脚点明确），总数控制在勾选篇数的 2 倍以内。'
+          : '2. 结合热点数据把方向细化成 **3-5 个具体选题**：每个都要有明确的切入角度（写给谁/解决什么痛点/落脚点），不要泛泛的大话题。',
         '3. 每个选题用 CLI 落库（有原文依据的必须带来源和链接）：',
         `   \`od studio topic-add --title "<选题标题>" --angle "<切入角度>" --source "<来源公众号/平台>" --url "<原文链接>" --heat "<高|中|低>"\``,
         '   **标题参数里只放标题本身**——角度/来源/热度分别放各自参数，绝不把「｜ 角度：xxx」拼进 --title。',

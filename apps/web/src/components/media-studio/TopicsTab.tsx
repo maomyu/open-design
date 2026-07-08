@@ -97,6 +97,14 @@ const SIGNAL_LABEL: Record<MediaTopicHit['signals'][number], string> = {
 
 // ---- 选题导航（独立可用） ----
 
+/** 勾选的优先参考文章（喂给 AI 选题任务的素材形状）。 */
+export interface PickedHit {
+  title: string;
+  url?: string;
+  account?: string;
+  readNum?: number | null;
+}
+
 export interface TopicsTabProps {
   platform: string;
   /** 公众号模式：候选只能由「AI 帮我选题」产出——隐藏手动添加与热榜「存为候选」。 */
@@ -105,7 +113,8 @@ export interface TopicsTabProps {
   onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string }) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onWrite: (topic: MediaTopic) => void;
-  onAiFind: (note: string) => void;
+  /** picked = 用户勾选的优先参考；单篇「AI 转题」= note 空 + picked 一篇。 */
+  onAiFind: (note: string, picked?: PickedHit[]) => void;
   aiBusy: boolean;
 }
 
@@ -122,9 +131,29 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [enabledFeeds, setEnabledFeeds] = useState<Set<TopicFeedKind>>(loadEnabledFeeds);
   const [peers, setPeers] = useState(() => window.localStorage.getItem(PEERS_STORE_KEY) ?? '');
   const [sugWords, setSugWords] = useState<string[]>([]);
+  // 多选优先参考：勾选的文章喂给「AI 帮我选题」优先深挖（跨多轮搜索保留）。
+  const [pickedHits, setPickedHits] = useState<Map<string, MediaTopicHit>>(() => new Map());
   // 选题深挖：类目榜找对标
   const [rankView, setRankView] = useState<RankedAccountRow[] | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
+
+  function togglePick(hit: MediaTopicHit) {
+    const key = hit.url || hit.title;
+    setPickedHits((prev) => {
+      const next = new Map(prev);
+      if (next.has(key)) next.delete(key);
+      else next.set(key, hit);
+      return next;
+    });
+  }
+
+  const toPicked = (list: MediaTopicHit[]): PickedHit[] =>
+    list.map((h) => ({
+      title: h.title,
+      ...(h.url ? { url: h.url } : {}),
+      ...(h.account ? { account: h.account } : {}),
+      ...(h.readNum != null ? { readNum: h.readNum } : {}),
+    }));
 
   async function openRank() {
     setRankBusy(true);
@@ -301,11 +330,20 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             type="button"
             className={c('btn')}
             disabled={aiBusy}
-            onClick={() => onAiFind(direction.trim())}
-            title="智能体结合热点数据把方向细化成 3-5 个可写的选题，自动进候选表"
+            onClick={() => onAiFind(direction.trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
+            title={
+              pickedHits.size > 0
+                ? '优先围绕你勾选的文章深挖出题（抓原文、找差异化角度），其余热点做背景'
+                : '智能体结合热点数据把方向细化成 3-5 个可写的选题，自动进候选表'
+            }
           >
-            <Icon name="sparkles" size={14} /> AI 帮我选题
+            <Icon name="sparkles" size={14} /> AI 帮我选题{pickedHits.size > 0 ? `（${pickedHits.size} 篇优先）` : ''}
           </button>
+          {pickedHits.size > 0 ? (
+            <button type="button" className={c('btn')} title="清空勾选的优先参考" onClick={() => setPickedHits(new Map())}>
+              清空已选
+            </button>
+          ) : null}
         </div>
         {sugWords.length > 0 ? (
           <div className={c('row')} style={{ flexWrap: 'wrap' }}>
@@ -332,6 +370,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           <table className={c('table')}>
             <thead>
               <tr>
+                <th title="勾选=优先参考——AI 帮我选题时优先围绕勾选的文章深挖">选</th>
                 <th>信号</th>
                 <th>标题</th>
                 <th>公众号</th>
@@ -341,8 +380,17 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             </thead>
             <tbody>
               {hits.slice(0, 30).map((hit) => {
+                const pickKey = hit.url || hit.title;
                 return (
-                  <tr key={hit.url || hit.title}>
+                  <tr key={pickKey}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        title="勾选为优先参考"
+                        checked={pickedHits.has(pickKey)}
+                        onChange={() => togglePick(hit)}
+                      />
+                    </td>
                     <td>{signalTag(hit.signals)}</td>
                     <td>
                       {hit.url ? (
@@ -356,6 +404,15 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     <td>{hit.account}</td>
                     <td>{hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—'}</td>
                     <td className={c('tdActions')}>
+                      <button
+                        type="button"
+                        className={c('btn')}
+                        disabled={aiBusy}
+                        title="AI 抓这篇原文分析后，转化出 1-2 个属于你账号的差异化选题进候选（不是照搬标题）"
+                        onClick={() => onAiFind('', toPicked([hit]))}
+                      >
+                        <Icon name="sparkles" size={13} /> AI 转题
+                      </button>{' '}
                       {aiOnly ? null : (
                         <button
                           type="button"

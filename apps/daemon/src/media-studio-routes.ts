@@ -907,6 +907,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         note: String(body.input?.note ?? ''),
         articleType: String(body.input?.articleType ?? ''),
         ...(body.input?.wordCount ? { wordCount: String(body.input.wordCount) } : {}),
+        ...(Array.isArray(body.input?.picked) && body.input.picked.length > 0
+          ? { picked: body.input.picked.slice(0, 8) }
+          : {}),
         account,
         knowledge: knowledgeItems,
         cliPath: path.join(paths.PROJECT_ROOT, 'apps', 'daemon', 'dist', 'cli.js'),

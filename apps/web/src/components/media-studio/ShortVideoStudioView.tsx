@@ -39,7 +39,7 @@ import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type Stu
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
 import { openStudioBrowser } from '../../providers/media-studio';
-import { TopicsTab } from './TopicsTab';
+import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import styles from './MediaStudio.module.css';
 
@@ -297,13 +297,16 @@ export function ShortVideoStudioView(): JSX.Element {
 
   // ---- AI 任务 ----
   const startAiTask = useCallback(
-    async (kind: 'topics' | 'script' | 'revise' | 'review', input?: { note?: string }) => {
+    async (kind: 'topics' | 'script' | 'revise' | 'review', input?: { note?: string; picked?: PickedHit[] }) => {
       await flushSave();
       const current = articleRef.current;
       const created = await createStudioAiTask(PLATFORM, {
         kind,
         ...(kind !== 'topics' && current ? { articleId: current.id } : {}),
-        input: { ...(input?.note ? { note: input.note } : {}) },
+        input: {
+          ...(input?.note ? { note: input.note } : {}),
+          ...(input?.picked && input.picked.length > 0 ? { picked: input.picked } : {}),
+        },
       });
       if ('error' in created) {
         studioToast.err(created.error);
@@ -614,7 +617,7 @@ export function ShortVideoStudioView(): JSX.Element {
                 if (await deleteStudioTopic(PLATFORM, id)) setTopics((list) => list.filter((t) => t.id !== id));
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
-              onAiFind={(note) => void startAiTask('topics', { note })}
+              onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
               aiBusy={aiTask !== null}
             />
           ) : null}

@@ -44,7 +44,7 @@ import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type Stu
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCards';
 import { openStudioBrowser } from '../../providers/media-studio';
-import { TopicsTab } from './TopicsTab';
+import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
 import styles from './MediaStudio.module.css';
@@ -405,7 +405,7 @@ export function MediaStudioView(): JSX.Element {
 
   // ---- AI 任务（每步的智能体动作） ----
   const startAiTask = useCallback(
-    async (kind: StudioAiTaskKind, input?: { note?: string; articleType?: string; wordCount?: string }) => {
+    async (kind: StudioAiTaskKind, input?: { note?: string; articleType?: string; wordCount?: string; picked?: PickedHit[] }) => {
       await flushSave();
       const current = articleRef.current;
       const created = await createStudioAiTask(PLATFORM, {
@@ -415,6 +415,7 @@ export function MediaStudioView(): JSX.Element {
           ...(input?.note ? { note: input.note } : {}),
           ...(input?.articleType ? { articleType: input.articleType } : {}),
           ...(input?.wordCount ? { wordCount: input.wordCount } : {}),
+          ...(input?.picked && input.picked.length > 0 ? { picked: input.picked } : {}),
           ...(current?.accountId ? { accountId: current.accountId } : {}),
         },
       });
@@ -713,7 +714,7 @@ export function MediaStudioView(): JSX.Element {
           }
         }}
         onWrite={(topic) => void handleCreateArticle(topic)}
-        onAiFind={(note) => void startAiTask('topics', { note })}
+        onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
         aiBusy={aiTask !== null}
       />
     );

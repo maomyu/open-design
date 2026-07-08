@@ -389,6 +389,8 @@ export interface StudioAiTaskRequest {
     wordCount?: string;
     /** 绑定账号 id（写作按人设写）. */
     accountId?: string;
+    /** topics: 用户勾选的优先参考文章（AI 优先围绕它们深挖出题）. */
+    picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
   };
 }
 export interface StudioAiTaskResponse {
