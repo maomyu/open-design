@@ -1015,7 +1015,14 @@ export function MediaStudioView(): JSX.Element {
           </div>
           {article.coverSource ? (
             <div className={c('row')}>
-              <img className={c('coverPreview')} src={article.coverSource} alt="当前封面" />
+              <img
+                className={c('coverPreview')}
+                src={article.coverSource}
+                alt="当前封面"
+                title="点击看大图"
+                style={{ cursor: 'zoom-in' }}
+                onClick={() => setImageLightbox(article.coverSource)}
+              />
               <div className={c('row')}>
                 <button type="button" className={c('btn')} onClick={() => void saveCoverToLibrary()}>
                   存入封面库
@@ -1076,7 +1083,14 @@ export function MediaStudioView(): JSX.Element {
                 : null}
               {coverCandidates.map((url) => (
                 <div key={url} className={c('coverCard')}>
-                  <img className={c('coverThumb')} src={url} alt="候选封面" />
+                  <img
+                    className={c('coverThumb')}
+                    src={url}
+                    alt="候选封面"
+                    title="点击看大图"
+                    style={{ cursor: 'zoom-in' }}
+                    onClick={() => setImageLightbox(url)}
+                  />
                   <div className={c('row')}>
                     <button
                       type="button"
@@ -1110,7 +1124,14 @@ export function MediaStudioView(): JSX.Element {
             <div className={c('coverGrid')}>
               {coverSnippets.map((s) => (
                 <div key={s.id} className={c('coverCard')}>
-                  <img className={c('coverThumb')} src={s.contentMd} alt={s.name} />
+                  <img
+                    className={c('coverThumb')}
+                    src={s.contentMd}
+                    alt={s.name}
+                    title="点击看大图"
+                    style={{ cursor: 'zoom-in' }}
+                    onClick={() => setImageLightbox(s.contentMd)}
+                  />
                   <div className={c('row')}>
                     <span className={c('grow')}>{s.name}</span>
                     <button type="button" className={c('btn')} onClick={() => editArticle({ coverSource: s.contentMd })}>

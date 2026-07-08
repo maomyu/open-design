@@ -1063,7 +1063,9 @@ export function NoteStudioView(): JSX.Element {
                 <img
                   src={noteImages[0]}
                   alt="封面"
-                  style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 10 }}
+                  title="点击看大图"
+                  style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 10, cursor: 'zoom-in' }}
+                  onClick={() => setLightboxUrl(noteImages[0]!)}
                 />
               ) : (
                 <div className={c('cardHint')} style={{ aspectRatio: '3 / 4', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1.5px dashed var(--border, #e1e5eb)', borderRadius: 10 }}>
@@ -1073,7 +1075,14 @@ export function NoteStudioView(): JSX.Element {
               {noteImages.length > 1 ? (
                 <div className={c('row')}>
                   {noteImages.slice(1, 7).map((url, i) => (
-                    <img key={url} src={url} alt={`图 ${i + 2}`} style={{ width: 52, aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 6 }} />
+                    <img
+                      key={url}
+                      src={url}
+                      alt={`图 ${i + 2}`}
+                      title="点击看大图"
+                      style={{ width: 52, aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 6, cursor: 'zoom-in' }}
+                      onClick={() => setLightboxUrl(url)}
+                    />
                   ))}
                   {noteImages.length > 7 ? <span className={c('cardHint')}>+{noteImages.length - 7}</span> : null}
                 </div>
