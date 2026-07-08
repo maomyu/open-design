@@ -65,10 +65,11 @@ describe('renderWechatHtml', () => {
     expect(r.html).toContain('&lt;script&gt;');
   });
 
-  it('ships kaiti as the single skin and falls back to it for removed ids', () => {
-    expect(WECHAT_SKINS.map((s) => s.id)).toEqual(['kaiti']);
+  it('ships kaiti + six gzh-design-skill themes and falls back for removed ids', () => {
+    expect(WECHAT_SKINS.map((s) => s.id)).toEqual(['kaiti', 'moyu-green', 'red-white', 'graphite', 'zen', 'ticket', 'olive']);
     for (const skin of WECHAT_SKINS) {
-      const r = renderWechatHtml({ bodyMd: '## 标题\n\n段落', skin: skin.id });
+      // 正文带 **加粗**：strong 用 titleColor，保证每套皮肤的主题色都进产物。
+      const r = renderWechatHtml({ bodyMd: '## 标题\n\n段落 **重点**', skin: skin.id });
       expect(r.skin).toBe(skin.id);
       expect(r.html).toContain(skin.titleColor);
     }

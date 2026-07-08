@@ -60,7 +60,10 @@ GET/POST/DELETE       /api/media-studio/:platform/snippets[/:id]
 - 列表一律手写序号进 `<p>`（`<strong>1. </strong>` / `· `），绝不输出 `<ol>/<ul>/<li>`；
 - 只用微信留得住的标签：`section/p/h2/h3/blockquote/strong/em/span/img/br/a/code`；
 - `<!-- IMAGE_N: 描述 -->` 与 `![alt](src)` 都渲染成居中 `<img>`（本地 src 留给发布器替换）；
-- 4 套皮肤（kaiti/purple/orangeheart/github）从工作台 styles.json 移植为 TS 常量。
+- 皮肤体系（2026-07-08）：kaiti（原默认）+ 6 套移植自开源项目 gzh-design-skill
+  （github.com/isjiamu/gzh-design-skill，设计变量层移植）的主题——摸鱼绿/红白
+  色系/石墨极简/留白禅意/摸鱼票据/橄榄手记；渲染器支持三种章节标题形态
+  （bar 编辑风/highlight 杂志高亮/minimal 细线极简）+ 独立标题色 headingColor。
 
 ## 公众号发布器（apps/daemon/src/media-studio/wechat-publish.ts）
 

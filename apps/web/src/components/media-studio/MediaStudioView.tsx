@@ -146,7 +146,13 @@ function parseImageMarkers(bodyMd: string): ImageMarker[] {
 }
 
 const SKINS: Array<{ id: string; name: string; color: string; hint: string }> = [
-  { id: 'kaiti', name: 'kaiti · 深红棕楷体', color: '#8B1E22', hint: '全账号统一排版（唯一皮肤）' },
+  { id: 'kaiti', name: '深红棕楷体', color: '#8B1E22', hint: '严肃长文（原默认）' },
+  { id: 'moyu-green', name: '摸鱼绿 · 杂志风', color: '#059669', hint: '教程/测评/清单，信息密度高' },
+  { id: 'red-white', name: '红白色系 · 编辑风', color: '#DC2626', hint: '深度分析/观点，力量感' },
+  { id: 'graphite', name: '石墨极简', color: '#52525B', hint: '科技评论/专业观点，克制理性' },
+  { id: 'zen', name: '留白禅意', color: '#4A5D52', hint: '深度随笔/极简生活，呼吸感' },
+  { id: 'ticket', name: '摸鱼票据', color: '#059669', hint: '测评/工具对比，票据质感' },
+  { id: 'olive', name: '橄榄手记 · 内刊风', color: '#ed7b2f', hint: '案例复盘/系统说明，内刊质感' },
 ];
 
 const STATUS_LABEL: Record<MediaArticle['status'], { text: string; chip: string }> = {

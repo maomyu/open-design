@@ -32,6 +32,10 @@ export interface WechatSkin {
   linkColor: string;
   headingFont: string;
   bodyFont: string;
+  /** 章节标题形态：bar=左竖条+虚线底(编辑风) / highlight=渐变半高亮(杂志风) / minimal=细线极简(留白风)。 */
+  headingStyle: 'bar' | 'highlight' | 'minimal';
+  /** 标题文字色（默认同 titleColor；绿色/橙色系主题标题用深色、strong 用主色时分开）。 */
+  headingColor: string;
   codeFont: string;
   h2FontSize: string;
   h3FontSize: string;
@@ -49,6 +53,8 @@ const BASE: Omit<WechatSkin, 'id' | 'name' | 'titleColor' | 'textColor' | 'quote
   highlightBg: '',
   bodyFont: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif",
   codeFont: "'Source Code Pro', Consolas, Menlo, monospace",
+  headingStyle: 'bar' as const,
+  headingColor: '',
   h2FontSize: '20px',
   h3FontSize: '17px',
   bodyFontSize: '15px',
@@ -75,6 +81,117 @@ export const WECHAT_SKINS: WechatSkin[] = [
     letterSpacing: '0.1em',
     containerRadius: '24px',
     containerShadow: 'rgba(0, 0, 0, 0.06) 0px 12px 35px',
+  },
+  {
+    ...BASE,
+    id: 'moyu-green',
+    name: '摸鱼绿 · 杂志风',
+    titleColor: '#059669',
+    headingColor: '#111827',
+    headingStyle: 'highlight' as const,
+    textColor: '#374151',
+    quoteBg: '#F9FAFB',
+    quoteBorder: '#D1D5DB',
+    highlightBg: '#FDE68A',
+    linkColor: '#059669',
+    headingFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFontSize: '14px',
+    lineHeight: '1.9',
+    letterSpacing: '0.5px',
+  },
+  {
+    ...BASE,
+    id: 'red-white',
+    name: '红白色系 · 编辑风',
+    titleColor: '#DC2626',
+    headingColor: '#1C1917',
+    headingStyle: 'bar' as const,
+    textColor: '#374151',
+    quoteBg: '#FEF2F2',
+    quoteBorder: '#FECACA',
+    highlightBg: '#FEE2E2',
+    linkColor: '#DC2626',
+    headingFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFontSize: '15px',
+    lineHeight: '1.8',
+    letterSpacing: '0.5px',
+  },
+  {
+    ...BASE,
+    id: 'graphite',
+    name: '石墨极简',
+    titleColor: '#27272A',
+    headingColor: '#27272A',
+    headingStyle: 'minimal' as const,
+    textColor: '#52525B',
+    quoteBg: '#FAFAFA',
+    quoteBorder: '#E4E4E7',
+    highlightBg: '#F4F4F5',
+    linkColor: '#F97316',
+    headingFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFontSize: '15px',
+    lineHeight: '1.8',
+    letterSpacing: '0.3px',
+  },
+  {
+    ...BASE,
+    id: 'zen',
+    name: '留白禅意',
+    titleColor: '#4A5D52',
+    headingColor: '#2B2B2B',
+    headingStyle: 'minimal' as const,
+    textColor: '#525252',
+    quoteBg: '#EEF3F0',
+    quoteBorder: '#E8E8E8',
+    highlightBg: '#D6E4DC',
+    linkColor: '#4A5D52',
+    headingFont: "'Noto Serif SC', Georgia, 'Times New Roman', serif",
+    bodyFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFontSize: '15px',
+    lineHeight: '1.9',
+    letterSpacing: '0.3px',
+  },
+  {
+    ...BASE,
+    id: 'ticket',
+    name: '摸鱼票据',
+    titleColor: '#059669',
+    headingColor: '#1a1a1a',
+    headingStyle: 'highlight' as const,
+    textColor: '#555555',
+    bgColor: '#fffef8',
+    quoteBg: '#F0FDF4',
+    quoteBorder: '#A7F3D0',
+    highlightBg: '#A7F3D0',
+    linkColor: '#059669',
+    headingFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFont: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFontSize: '14px',
+    lineHeight: '1.9',
+    letterSpacing: '0.5px',
+  },
+  {
+    ...BASE,
+    id: 'olive',
+    name: '橄榄手记 · 内刊风',
+    titleColor: '#ed7b2f',
+    headingColor: '#23251d',
+    headingStyle: 'minimal' as const,
+    textColor: '#4d4f46',
+    bgColor: '#fdfdf8',
+    quoteBg: '#eeefe9',
+    quoteBorder: '#bfc1b7',
+    highlightBg: '#e5e7e0',
+    linkColor: '#ed7b2f',
+    headingFont: "'IBM Plex Sans', -apple-system, system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFont: "'IBM Plex Sans', -apple-system, system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+    bodyFontSize: '14px',
+    lineHeight: '1.9',
+    letterSpacing: '0.5px',
+    containerRadius: '6px',
   },
 ];
 
@@ -143,6 +260,31 @@ function renderInline(raw: string, skin: WechatSkin): string {
 
 function pStyle(skin: WechatSkin): string {
   return `margin: 1.2em 0px;letter-spacing: ${skin.letterSpacing};color: ${skin.textColor};text-align: justify;line-height: ${skin.lineHeight};font-size: ${skin.bodyFontSize};font-family: ${skin.bodyFont};`;
+}
+
+
+function headingColorOf(skin: WechatSkin): string {
+  return skin.headingColor || skin.titleColor;
+}
+
+/** 章节标题（##）按皮肤形态渲染：bar 编辑风 / highlight 杂志高亮 / minimal 细线极简。 */
+function renderHeading(text: string, skin: WechatSkin): string {
+  const color = headingColorOf(skin);
+  if (skin.headingStyle === 'highlight') {
+    return (
+      `<h2 style="margin: 2.2em 0px 0.9em;font-size: ${skin.h2FontSize};font-weight: 900;line-height: 1.5;letter-spacing: ${skin.letterSpacing};font-family: ${skin.headingFont};color: ${color};">` +
+      `<span style="background: linear-gradient(180deg, transparent 62%, ${skin.highlightBg} 62%);padding: 0px 4px;">${text}</span>` +
+      `</h2>`
+    );
+  }
+  if (skin.headingStyle === 'minimal') {
+    return (
+      `<h2 style="margin: 2.6em 0px 1em;padding: 0px 0px 0.55em;border-bottom: 1px solid ${skin.quoteBorder};font-size: ${skin.h2FontSize};font-weight: 700;line-height: 1.5;letter-spacing: ${skin.letterSpacing};font-family: ${skin.headingFont};color: ${color};">${text}</h2>`
+    );
+  }
+  return (
+    `<h2 style="margin: 2em 0px 0.75em;padding: 0px 0px 0.5em 12px;border-left: 4px solid ${skin.titleColor};border-bottom: 1px dashed ${skin.quoteBorder};font-size: ${skin.h2FontSize};font-weight: bold;color: ${color};letter-spacing: ${skin.letterSpacing};font-family: ${skin.headingFont};">${text}</h2>`
+  );
 }
 
 function isMmbiz(src: string): boolean {
@@ -258,11 +400,11 @@ export function renderWechatHtml(input: WechatRenderInput): WechatRenderResult {
       if (level <= 2) {
         if (level === 1) notes.push('正文中的 H1 已降级为小节标题');
         blocks.push(
-          `<h2 style="margin: 2em 0px 0.75em;padding: 0px 0px 0.5em 12px;border-left: 4px solid ${skin.titleColor};border-bottom: 1px dashed ${skin.quoteBorder};font-size: ${skin.h2FontSize};font-weight: bold;color: ${skin.titleColor};letter-spacing: ${skin.letterSpacing};font-family: ${skin.headingFont};">${text}</h2>`,
+          renderHeading(text, skin),
         );
       } else {
         blocks.push(
-          `<h3 style="margin: 1.6em 0px 0.6em;font-size: ${skin.h3FontSize};font-weight: bold;color: ${skin.titleColor};letter-spacing: ${skin.letterSpacing};font-family: ${skin.headingFont};">${text}</h3>`,
+          `<h3 style="margin: 1.6em 0px 0.6em;font-size: ${skin.h3FontSize};font-weight: bold;color: ${headingColorOf(skin)};letter-spacing: ${skin.letterSpacing};font-family: ${skin.headingFont};">${text}</h3>`,
         );
       }
       i += 1;
