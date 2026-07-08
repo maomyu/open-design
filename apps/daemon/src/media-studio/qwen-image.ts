@@ -136,6 +136,19 @@ export interface QwenImageResult {
  *  actual content type).
  *  自愈策略：内容审查拦截 → **自动中性化改写提示词**重试一次（不做同词
  *  盲重抽）；429 限流 → 退避 20 秒最多重试两次。仍失败给可操作的人话错误。 */
+/** 风格前缀拼装（qwen 与火山 Seedream 共用同一套画风约定）。 */
+export function composeStylePrompt(style: string | undefined, prompt: string, character?: string): { fullPrompt: string; negative: string } {
+  let stylePrefix = WHITEBOARD_STYLE;
+  let negative = DEFAULT_NEGATIVE;
+  if (style === 'illustrated') {
+    stylePrefix = ILLUSTRATED_STYLE_WRAPPER.replace('{character}', character || DEFAULT_ILLUSTRATED_CHARACTER);
+  } else if (style === 'clean') {
+    stylePrefix = CLEAN_ILLUSTRATION_STYLE;
+    negative = DEFAULT_NEGATIVE + '，任何文字，字幕，标题，水印，字母，汉字，文字条，logo';
+  }
+  return { fullPrompt: (stylePrefix + prompt).slice(0, 800), negative };
+}
+
 export async function generateQwenImage(opts: QwenImageOptions): Promise<QwenImageResult> {
   let neutralizedTried = false;
   let currentOpts = opts;

@@ -91,6 +91,7 @@ const WORD_COUNTS = ['800-1200', '1500-2000', '2500-3500', '4000 以上'];
 /** 生图模型入口——将来接新模型往这里加一行即可（id 透传给 daemon 分发）。 */
 const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
+  { id: 'volc', label: '火山 · Seedream 4.0' },
   { id: 'gemini', label: 'Gemini（备用）' },
 ];
 

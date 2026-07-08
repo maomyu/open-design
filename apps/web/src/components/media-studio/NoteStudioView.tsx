@@ -61,6 +61,7 @@ const IMAGE_STYLES: Array<{ id: string; label: string }> = [
 ];
 const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
+  { id: 'volc', label: '火山 · Seedream 4.0' },
   { id: 'gemini', label: 'Gemini（备用）' },
 ];
 

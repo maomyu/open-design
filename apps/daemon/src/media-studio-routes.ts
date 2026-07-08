@@ -45,6 +45,7 @@ import {
   dajialaWebSearch,
 } from './media-studio/dajiala.js';
 import { generateGeminiImageFallback, generateQwenImage, QwenImageError } from './media-studio/qwen-image.js';
+import { generateVolcImage, VolcImageError } from './media-studio/volc-image.js';
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
 import { lintContent } from './media-studio/lint.js';
@@ -451,7 +452,23 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       }
       let finalPath: string;
       let note: string | null = null;
-      if (model === 'gemini') {
+      if (model === 'volc') {
+        // 火山方舟 Seedream 4.0：独立钥匙（ARK_API_KEY），审查体系与阿里不同，
+        // 涉军等题材常常能直出。
+        const arkKey = (keys.ARK_API_KEY ?? keys.VOLC_ARK_API_KEY ?? '').trim();
+        if (!arkKey) {
+          throw new VolcImageError(
+            '未配置 ARK_API_KEY——去「插件 · 公众号发布」配置里或工作台 .env 补上火山方舟的 API Key（ark.cn-beijing.volces.com 控制台创建）',
+          );
+        }
+        finalPath = await generateVolcImage({
+          prompt: description,
+          outFile: path.join(dir, baseName),
+          ...(body.style ? { style: body.style } : {}),
+          ...(body.ratio ? { ratio: body.ratio } : {}),
+          apiKey: arkKey,
+        });
+      } else if (model === 'gemini') {
         // 用户显式选 Gemini：直接走 Gemini（不经过千问）。
         finalPath = await generateGeminiImageFallback({
           prompt: description,
