@@ -122,128 +122,161 @@ export function KnowledgePanel({
   accounts,
 }: {
   platform: string;
-  /** 可选：账号列表（公众号有账号概念；短视频传空数组）。 */
+  /** 账号范围下拉的候选（全局页汇总全平台账号并标平台名）。 */
   accounts: Array<{ id: string; name: string }>;
 }): JSX.Element {
   const [items, setItems] = useState<MediaKnowledge[]>([]);
-  // 当前展开添加表单的分类（一次只开一个）。
-  const [addingCat, setAddingCat] = useState<string | null>(null);
+  // 左右布局(2026-07-08 用户拍板):左列分类目录,右列当前分类的说明/表单/条目。
+  const [activeCat, setActiveCat] = useState(KNOWLEDGE_CATEGORIES[0]!.id);
+  const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
   const [accountId, setAccountId] = useState('');
+  // 点条目名展开/收起全文（右列空间足够，看全文不用进别的页面）。
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchStudioKnowledge(platform).then(setItems);
   }, [platform]);
 
-  const itemsOf = (cat: string) =>
-    items.filter((k) => ((k as { category?: string }).category || 'other') === cat);
+  const catOf = (k: MediaKnowledge) => ((k as { category?: string }).category || 'other');
+  const cat = KNOWLEDGE_CATEGORIES.find((x) => x.id === activeCat) ?? KNOWLEDGE_CATEGORIES[0]!;
+  const group = items.filter((k) => catOf(k) === cat.id);
 
-  const openAdd = (cat: string) => {
-    setAddingCat(cat);
+  const pickCat = (id: string) => {
+    setActiveCat(id);
+    setAdding(false);
+    setExpandedId(null);
+  };
+
+  const openAdd = () => {
+    setAdding(true);
     setName('');
     setContent('');
     setAccountId('');
   };
 
   const submit = async () => {
-    if (!addingCat || !name.trim() || !content.trim()) return;
+    if (!name.trim() || !content.trim()) return;
     const created = await createStudioKnowledge(platform, {
       name: name.trim(),
       contentMd: content,
-      category: addingCat,
+      category: cat.id,
       ...(accountId ? { accountId } : {}),
     });
     if (created) {
       setItems((list) => [created, ...list]);
-      setAddingCat(null);
+      setAdding(false);
       studioToast.ok(`「${created.name}」已挂载`);
     }
   };
 
   return (
-    <>
-      {KNOWLEDGE_CATEGORIES.map((cat) => {
-        const group = itemsOf(cat.id);
-        return (
-          <div key={cat.id} className={c('card')}>
-            <div className={c('cardLabel')}>
-              {cat.label}（{group.length}）
-              <span className={c('cardHint')}>{cat.hint}</span>
-              <span className={c('headSpacer')} />
-              <button type="button" className={c('btn')} onClick={() => (addingCat === cat.id ? setAddingCat(null) : openAdd(cat.id))}>
-                <Icon name="plus" size={13} /> 添加
-              </button>
-            </div>
-            {addingCat === cat.id ? (
-              <>
-                <div className={c('row')}>
-                  <input
-                    className={`${c('input')} ${c('grow')}`}
-                    value={name}
-                    placeholder={`资料名称，例：${cat.label}-核心口径`}
-                    onChange={(e) => setName(e.target.value)}
-                  />
-                  {accounts.length > 0 ? (
-                    <select className={c('select')} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-                      <option value="">全部账号可用</option>
-                      {accounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          仅 {a.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                </div>
-                <textarea
-                  className={c('textarea')}
-                  style={{ minHeight: 120 }}
-                  value={content}
-                  placeholder={cat.placeholder}
-                  onChange={(e) => setContent(e.target.value)}
-                />
-                <div className={c('row')}>
-                  <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={!name.trim() || !content.trim()} onClick={() => void submit()}>
-                    挂载
-                  </button>
-                  <button type="button" className={c('btn')} onClick={() => setAddingCat(null)}>
-                    取消
-                  </button>
-                </div>
-              </>
-            ) : null}
-            {group.length === 0 && addingCat !== cat.id ? (
-              <div className={c('cardHint')}>还没有{cat.label}资料——点右上「添加」挂上第一条。</div>
-            ) : (
-              <div className={c('records')}>
-                {group.map((k) => (
-                  <div key={k.id} className={c('record')}>
-                    <strong>{k.name}</strong>
-                    <span className={c('cardHint')}>
-                      {k.contentMd.replace(/\s+/g, '').length} 字
-                      {k.accountId ? ` · 仅 ${accounts.find((a) => a.id === k.accountId)?.name ?? '指定账号'}` : ' · 全部账号'}
-                    </span>
-                    <span className={c('headSpacer')} />
-                    <button
-                      type="button"
-                      className={`${c('btn')} ${c('btnDanger')}`}
-                      onClick={async () => {
-                        if (!window.confirm(`删除资料「${k.name}」？`)) return;
-                        if (await deleteStudioKnowledge(platform, k.id)) {
-                          setItems((list) => list.filter((x) => x.id !== k.id));
-                        }
-                      }}
-                    >
-                      删除
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+    <div className={c('kbLayout')}>
+      <nav className={c('kbSide')} aria-label="知识库分类">
+        {KNOWLEDGE_CATEGORIES.map((x) => {
+          const n = items.filter((k) => catOf(k) === x.id).length;
+          return (
+            <button
+              key={x.id}
+              type="button"
+              className={`${c('kbSideItem')}${x.id === activeCat ? ` ${c('kbSideItemActive')}` : ''}`}
+              aria-current={x.id === activeCat ? 'true' : undefined}
+              onClick={() => pickCat(x.id)}
+            >
+              {x.label}
+              <span className={c('kbCount')}>{n}</span>
+            </button>
+          );
+        })}
+      </nav>
+      <div className={c('kbMain')}>
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            {cat.label}（{group.length}）
+            <span className={c('cardHint')}>{cat.hint}</span>
+            <span className={c('headSpacer')} />
+            <button type="button" className={c('btn')} onClick={() => (adding ? setAdding(false) : openAdd())}>
+              <Icon name="plus" size={13} /> 添加
+            </button>
           </div>
-        );
-      })}
-    </>
+          {adding ? (
+            <>
+              <div className={c('row')}>
+                <input
+                  className={`${c('input')} ${c('grow')}`}
+                  value={name}
+                  placeholder={`资料名称，例：${cat.label}-核心口径`}
+                  onChange={(e) => setName(e.target.value)}
+                />
+                {accounts.length > 0 ? (
+                  <select className={c('select')} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                    <option value="">全部账号可用</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        仅 {a.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </div>
+              <textarea
+                className={c('textarea')}
+                style={{ minHeight: 120 }}
+                value={content}
+                placeholder={cat.placeholder}
+                onChange={(e) => setContent(e.target.value)}
+              />
+              <div className={c('row')}>
+                <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={!name.trim() || !content.trim()} onClick={() => void submit()}>
+                  挂载
+                </button>
+                <button type="button" className={c('btn')} onClick={() => setAdding(false)}>
+                  取消
+                </button>
+              </div>
+            </>
+          ) : null}
+          {group.length === 0 && !adding ? (
+            <div className={c('cardHint')}>还没有{cat.label}资料——点右上「添加」挂上第一条。</div>
+          ) : (
+            <div className={c('records')}>
+              {group.map((k) => (
+                <div key={k.id} className={c('record')}>
+                  <button
+                    type="button"
+                    className={c('kbItemName')}
+                    title={expandedId === k.id ? '收起全文' : '查看全文'}
+                    onClick={() => setExpandedId((cur) => (cur === k.id ? null : k.id))}
+                  >
+                    <Icon name={expandedId === k.id ? 'chevron-down' : 'chevron-right'} size={12} />
+                    {k.name}
+                  </button>
+                  <span className={c('cardHint')}>
+                    {k.contentMd.replace(/\s+/g, '').length} 字
+                    {k.accountId ? ` · 仅 ${accounts.find((a) => a.id === k.accountId)?.name ?? '指定账号'}` : ' · 全部账号'}
+                  </span>
+                  <span className={c('headSpacer')} />
+                  <button
+                    type="button"
+                    className={`${c('btn')} ${c('btnDanger')}`}
+                    onClick={async () => {
+                      if (!window.confirm(`删除资料「${k.name}」？`)) return;
+                      if (await deleteStudioKnowledge(platform, k.id)) {
+                        setItems((list) => list.filter((x) => x.id !== k.id));
+                      }
+                    }}
+                  >
+                    删除
+                  </button>
+                  {expandedId === k.id ? <div className={c('kbItemBody')}>{k.contentMd}</div> : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

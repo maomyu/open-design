@@ -785,6 +785,97 @@
 }
 .feedSrc:hover .feedSrcTip { opacity: 1; transform: translateY(0); }
 
+/* ---- 公司知识库左右布局（/knowledge 全局页,2026-07-08 用户拍板） ---- */
+.kbLayout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  min-height: 0;
+}
+.kbSide {
+  width: 224px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 14px;
+  padding: 8px;
+}
+.kbSideItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 9px;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-strong, #0d0c0a);
+  text-align: left;
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.kbSideItem:hover { background: var(--border-soft, #edf0f4); }
+.kbSideItemActive,
+.kbSideItemActive:hover {
+  background: var(--accent-tint, #fbeee5);
+  color: var(--accent-strong, #b45a3b);
+  font-weight: 600;
+}
+.kbCount {
+  margin-left: auto;
+  min-width: 22px;
+  text-align: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--border-soft, #edf0f4);
+  color: var(--text-soft, #989590);
+  font-size: 11px;
+  font-weight: 600;
+}
+.kbSideItemActive .kbCount { background: rgba(180, 90, 59, 0.14); color: var(--accent-strong, #b45a3b); }
+.kbMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.kbItemName {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-strong, #0d0c0a);
+}
+.kbItemBody {
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--border-soft, #edf0f4);
+  font-size: 12.5px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+@media (max-width: 900px) {
+  .kbLayout { flex-direction: column; }
+  .kbSide { width: 100%; position: static; flex-direction: row; flex-wrap: wrap; }
+  .kbCount { margin-left: 4px; }
+}
+
 /* ---- 选题深挖弹层（评论区 / 榜单） ---- */
 .topicOverlayCard {
   display: flex;
