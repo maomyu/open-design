@@ -1,17 +1,18 @@
 /**
- * Studio API-key resolution — one configuration, multiple consumers.
+ * Studio API-key resolution — one place to configure, everywhere to use.
  *
- * Layer order (low → high):
- *   1. workbench `.env`（历史兜底层）
+ * Layer order (low → high)：
+ *   1. workbench `.env`（历史兜底层，客户早期配置继续生效）
  *   2. 设置 → 媒体生成 provider keys（media-config.json，按厂商统一管理——
  *      dashscope→QWEN_API_KEY、dajiala→DAJIALA_API_KEY、volcengine→ARK_API_KEY、
- *      nanobanana→GEMINI_API_KEY）
- *   3. 插件配置（编辑插件 → 插件配置，显式逐项覆盖，最高优先）
+ *      nanobanana→GEMINI_API_KEY）。**唯一的配置界面**。
+ *
+ * 2026-07-08 用户拍板移除「插件配置」覆盖层：插件动线已被三创作台替代，
+ * 多一层覆盖只会造成「设置里改了为什么不生效」的排查陷阱。
  */
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pluginConfigEnvForPlugin, readAppConfig } from '../app-config.js';
 import { resolveProviderConfig } from '../media-config.js';
 
 /** 设置界面按厂商配置的 key → 创作台使用的环境变量名。 */
@@ -22,7 +23,6 @@ const MEDIA_PROVIDER_KEY_MAP: Array<[providerId: string, envKey: string]> = [
   ['nanobanana', 'GEMINI_API_KEY'],
 ];
 
-const WECHAT_PLUGIN_ID = 'wechat-mp-publish';
 const WORKBENCH_ENV_FILE = path.join(
   process.env.OD_WORKBENCH_DIR || path.join(os.homedir(), '.open-design', 'workbenches'),
   '多媒体自动发布',
@@ -67,14 +67,13 @@ async function mediaConfigKeys(projectRoot: string | undefined): Promise<Record<
   return out;
 }
 
-export async function resolveStudioKeys(dataDir: string, projectRoot?: string): Promise<Record<string, string>> {
-  const [envFile, mediaKeys, prefs] = await Promise.all([
+export async function resolveStudioKeys(_dataDir: string, projectRoot?: string): Promise<Record<string, string>> {
+  const [envFile, mediaKeys] = await Promise.all([
     parseEnvFile(WORKBENCH_ENV_FILE),
     mediaConfigKeys(projectRoot),
-    readAppConfig(dataDir),
   ]);
-  // 设置界面（media-config）盖过 .env 兜底；插件配置显式项最高。
-  return { ...envFile, ...mediaKeys, ...pluginConfigEnvForPlugin(prefs, WECHAT_PLUGIN_ID) };
+  // 设置界面（media-config）盖过 .env 兜底。
+  return { ...envFile, ...mediaKeys };
 }
 
 export function missingKeyError(key: string): string {

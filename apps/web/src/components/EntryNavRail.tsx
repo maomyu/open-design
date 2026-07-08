@@ -159,18 +159,10 @@ export function EntryNavRail({
         >
           <Icon name="folder" size={18} />
         </NavButton>
-        {/* 自动化(tasks)与设计体系入口对客户定制版暂时隐藏(2026-07-04 用户
-            要求"目前用不到")。路由仍保留 —— /automations、/design-systems 直链
-            可达;要恢复入口把 NavButton 加回来即可。 */}
-        <NavButton
-          active={view === 'plugins'}
-          ariaLabel={t('entry.navPlugins')}
-          label={t('entry.navPlugins')}
-          onClick={() => onViewChange('plugins')}
-          testId="entry-nav-plugins"
-        >
-          <Icon name="puzzle" size={18} />
-        </NavButton>
+        {/* 自动化(tasks)、设计体系、插件入口对客户定制版隐藏(2026-07-04 与
+            2026-07-08 用户拍板"目前用不到"——三创作台已替代插件流水线)。
+            路由仍保留 —— /automations、/design-systems、/plugins 直链可达;
+            要恢复入口把 NavButton 加回来即可。 */}
         <NavButton
           active={view === 'integrations'}
           ariaLabel={t('entry.navIntegrations')}
