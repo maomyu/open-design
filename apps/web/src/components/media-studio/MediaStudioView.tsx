@@ -993,7 +993,8 @@ export function MediaStudioView(): JSX.Element {
         setImageNotice('error' in first ? first.error : '生成失败');
         return;
       }
-      setCoverCandidates((prev) => [...urls, ...prev].slice(0, 6));
+      // 去重兜底：同 URL 只留一条（React key 必须唯一）。
+      setCoverCandidates((prev) => [...new Set([...urls, ...prev])].slice(0, 6));
       studioToast.ok(urls.length === 2 ? '2 张候选已生成，对比后点「用这张」' : '生成 1 张候选（另一张失败）');
     };
     const saveCoverToLibrary = async () => {

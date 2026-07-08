@@ -442,7 +442,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const dir = assetsDirFor(article.id);
       await mkdir(dir, { recursive: true });
       const marker = typeof body.marker === 'string' && body.marker ? body.marker : null;
-      const baseName = `img-${(marker ?? 'x').replace(/[^\w-]/g, '')}-${Date.now()}`;
+      // 时间戳后加随机段：双候选并行请求会在同一毫秒落盘，纯 Date.now()
+      // 会同名互相覆盖（一张图丢失 + 前端候选 key 重复）。
+      const baseName = `img-${(marker ?? 'x').replace(/[^\w-]/g, '')}-${Date.now()}-${randomUUID().slice(0, 6)}`;
       // 参考图若是我们自己的资产 URL（本机上传的图），映射回磁盘文件。
       let referenceImage = typeof body.referenceImage === 'string' ? body.referenceImage.trim() : '';
       if (referenceImage.startsWith(STUDIO_ASSET_URL_PREFIX)) {
