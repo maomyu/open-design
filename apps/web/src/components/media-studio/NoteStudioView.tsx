@@ -37,6 +37,7 @@ import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type Stu
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, KnowledgePanel, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { TopicsTab } from './TopicsTab';
+import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
 import { useOrphanRun } from './useOrphanRun';
 import styles from './MediaStudio.module.css';
 
@@ -115,7 +116,7 @@ export function NoteStudioView(): JSX.Element {
   const [galleryBusy, setGalleryBusy] = useState<string | null>(null);
   const [galleryPrompt, setGalleryPrompt] = useState('');
   const [galleryStyle, setGalleryStyle] = useState('illustrated');
-  const [galleryModel, setGalleryModel] = useState('qwen');
+  const [galleryModel, setGalleryModel] = useState(loadPreferredImageModel);
   const [matrix, setMatrix] = useState<Record<string, { on: boolean; account: string; login: LoginState; detail: string }>>(
     () => Object.fromEntries(NOTE_PLATFORMS.map((p) => [p.id, { on: false, account: 'main', login: 'unknown' as LoginState, detail: '' }])),
   );
@@ -755,7 +756,10 @@ export function NoteStudioView(): JSX.Element {
                           </option>
                         ))}
                       </select>
-                      <select className={c('select')} value={galleryModel} onChange={(e) => setGalleryModel(e.target.value)}>
+                      <select className={c('select')} value={galleryModel} onChange={(e) => {
+                          savePreferredImageModel(e.target.value);
+                          setGalleryModel(e.target.value);
+                        }}>
                         {IMAGE_MODELS.map((m) => (
                           <option key={m.id} value={m.id}>
                             {m.label}

@@ -46,6 +46,7 @@ import { ArticleListCard, KnowledgePanel, VersionsCard } from './StudioSharedCar
 import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
+import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -1847,7 +1848,7 @@ function CoverGenerator({
 }): JSX.Element {
   const [desc, setDesc] = useState(initialDescription);
   const [style, setStyle] = useState('whiteboard');
-  const [model, setModel] = useState('qwen');
+  const [model, setModel] = useState(loadPreferredImageModel);
   const [reference, setReference] = useState('');
   useEffect(() => {
     setDesc(initialDescription);
@@ -1893,7 +1894,10 @@ function CoverGenerator({
             </option>
           ))}
         </select>
-        <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
+        <select className={c('select')} value={model} title="生图模型" onChange={(e) => {
+            savePreferredImageModel(e.target.value);
+            setModel(e.target.value);
+          }}>
           {IMAGE_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
@@ -1924,7 +1928,7 @@ function MarkerRow({
 }): JSX.Element {
   const [desc, setDesc] = useState(marker.description);
   const [style, setStyle] = useState('whiteboard');
-  const [model, setModel] = useState('qwen');
+  const [model, setModel] = useState(loadPreferredImageModel);
   return (
     <div className={c('genCard')}>
       <div className={c('row')}>
@@ -1947,7 +1951,10 @@ function MarkerRow({
             </option>
           ))}
         </select>
-        <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
+        <select className={c('select')} value={model} title="生图模型" onChange={(e) => {
+            savePreferredImageModel(e.target.value);
+            setModel(e.target.value);
+          }}>
           {IMAGE_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
@@ -1986,7 +1993,7 @@ function GeneratedImageRow({
 }): JSX.Element {
   const [desc, setDesc] = useState(image.alt || '');
   const [style, setStyle] = useState('whiteboard');
-  const [model, setModel] = useState('qwen');
+  const [model, setModel] = useState(loadPreferredImageModel);
   return (
     <div className={c('genCard')}>
       <button type="button" className={c('genImgBtn')} title="点击看大图" onClick={onPreview}>
@@ -2010,7 +2017,10 @@ function GeneratedImageRow({
             </option>
           ))}
         </select>
-        <select className={c('select')} value={model} title="生图模型" onChange={(e) => setModel(e.target.value)}>
+        <select className={c('select')} value={model} title="生图模型" onChange={(e) => {
+            savePreferredImageModel(e.target.value);
+            setModel(e.target.value);
+          }}>
           {IMAGE_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
               {m.label}
