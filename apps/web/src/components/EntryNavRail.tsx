@@ -8,14 +8,9 @@
 // Language switching and other account-scoped controls live behind the
 // floating settings cog in the top-right corner of the main content.
 
-import { useMemo, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
-import type { Project } from '../types';
-
-// How many recent projects to surface in the rail's Recent list. The list
-// scrolls, so this is just a soft cap to keep the DOM small.
-const RECENT_LIMIT = 12;
 
 export type EntryView =
   | 'home'
@@ -34,9 +29,6 @@ export type EntryView =
 interface Props {
   view: EntryView;
   onViewChange: (view: EntryView) => void;
-  /** Project history, surfaced as a scrollable "Recent" list in the rail. */
-  projects: Project[];
-  onOpenProject: (id: string) => void;
 }
 
 interface NavButtonProps {
@@ -66,18 +58,9 @@ function NavButton({ active, ariaLabel, label, onClick, testId, children }: NavB
   );
 }
 
-export function EntryNavRail({
-  view,
-  onViewChange,
-  projects,
-  onOpenProject,
-}: Props) {
+export function EntryNavRail({ view, onViewChange }: Props) {
   const t = useT();
   const brandLabel = t('app.brand');
-  const recentProjects = useMemo(
-    () => [...projects].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, RECENT_LIMIT),
-    [projects],
-  );
 
   return (
     <nav className="entry-nav-rail" aria-label="Primary">
@@ -175,27 +158,8 @@ export function EntryNavRail({
           <Icon name="link" size={18} />
         </NavButton>
       </div>
-      <div className="entry-nav-rail__recent" aria-label={t('entry.navRecent')}>
-        <div className="entry-nav-rail__recent-label">{t('entry.navRecent')}</div>
-        <div className="entry-nav-rail__recent-list">
-          {recentProjects.length === 0 ? (
-            <div className="entry-nav-rail__recent-empty">—</div>
-          ) : (
-            recentProjects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                className="entry-nav-rail__recent-item"
-                onClick={() => onOpenProject(project.id)}
-                title={project.name}
-                data-testid={`entry-nav-recent-${project.id}`}
-              >
-                {project.name || t('entry.navProjects')}
-              </button>
-            ))
-          )}
-        </div>
-      </div>
+      {/* 「最近」项目列表已移除(2026-07-09 用户拍板"不需要了")——项目
+          入口走导航「项目」页;要恢复参考 git 历史加回 recent 区块。 */}
     </nav>
   );
 }

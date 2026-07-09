@@ -564,12 +564,7 @@ export function EntryShell({
   return (
     <div className="entry-shell entry-shell--no-header">
       <div className="entry">
-        <EntryNavRail
-          view={view}
-          onViewChange={changeView}
-          projects={projects}
-          onOpenProject={onOpenProject}
-        />
+        <EntryNavRail view={view} onViewChange={changeView} />
         <main className="entry-main entry-main--scroll">
           <div className="entry-main__topbar">
             <div className="entry-main__topbar-chips">
