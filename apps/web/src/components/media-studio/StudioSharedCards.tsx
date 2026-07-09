@@ -2,6 +2,7 @@
 // 两个创作台（公众号/短视频）都用；文案内联（客户定制，纯中文交付）。
 import { useEffect, useState } from 'react';
 import type { MediaArticle, MediaArticleSummary, MediaArticleVersion, MediaKnowledge } from '@open-design/contracts';
+import { navigate } from '../../router';
 import { Icon } from '../Icon';
 import {
   createStudioKnowledge,
@@ -378,6 +379,7 @@ export function SafeHandoffCard({
   copyText,
   copyParts,
   hasAssets,
+  accountsOf,
   onMarked,
 }: {
   studioPlatform: string;
@@ -391,10 +393,14 @@ export function SafeHandoffCard({
   copyParts?: (targetId: string) => Array<{ label: string; text: string }>;
   /** 有没有可打开的图集/资产目录。 */
   hasAssets: boolean;
+  /** 账号中心是唯一账号来源(2026-07-09 用户拍板):返回目标平台在「账号」页
+   *  配置的账号名列表。有账号=下拉绑定(像公众号);没有=引导去添加,不再
+   *  出现 'main' 这种内部兜底档案名。 */
+  accountsOf: (platformId: string) => string[];
   onMarked: () => void;
 }): JSX.Element {
   const [target, setTarget] = useState(defaultTarget ?? targets[0]?.id ?? '');
-  const [account, setAccount] = useState('main');
+  const [account, setAccount] = useState('');
   const [done, setDone] = useState<{ copy: boolean; assets: boolean; browser: boolean }>({
     copy: false,
     assets: false,
@@ -402,6 +408,10 @@ export function SafeHandoffCard({
   });
   const [note, setNote] = useState('');
   const targetLabel = targets.find((t) => t.id === target)?.label ?? target;
+  const targetAccounts = accountsOf(target);
+  // 选中账号:显式选择 > 该平台第一个账号。平台切换后失效的选择自动回落。
+  const effectiveAccount = targetAccounts.includes(account) ? account : targetAccounts[0] ?? '';
+  const hasAccount = effectiveAccount !== '';
 
   return (
     <div className={c('card')}>
@@ -417,13 +427,31 @@ export function SafeHandoffCard({
             </option>
           ))}
         </select>
-        <input
-          className={c('input')}
-          style={{ width: 130 }}
-          value={account}
-          title="账号档案名——同平台多账号用不同名字，浏览器档案互相隔离"
-          onChange={(e) => setAccount(e.target.value)}
-        />
+        {hasAccount ? (
+          <select
+            className={c('select')}
+            value={effectiveAccount}
+            title="发布用哪个账号——浏览器档案按账号隔离,登录态互不干扰"
+            onChange={(e) => setAccount(e.target.value)}
+          >
+            {targetAccounts.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <>
+            <span className={c('cardHint')}>还没有{targetLabel}账号</span>
+            <button
+              type="button"
+              className={c('btn')}
+              onClick={() => navigate({ kind: 'home', view: 'accounts' })}
+            >
+              去「账号」页添加
+            </button>
+          </>
+        )}
       </div>
       <div className={c('row')}>
         {/* 一键交接(2026-07-09 用户拍板):账号已绑定专属浏览器档案(登录态
@@ -432,6 +460,8 @@ export function SafeHandoffCard({
         <button
           type="button"
           className={`${c('btn')} ${c('btnPrimary')}`}
+          disabled={!hasAccount}
+          title={hasAccount ? '' : `先去「账号」页添加${targetLabel}账号`}
           onClick={async () => {
             let copied = false;
             try {
@@ -441,7 +471,7 @@ export function SafeHandoffCard({
               /* 剪贴板未授权:继续开后台,提示里说明 */
             }
             const revealed = hasAssets ? await revealStudioAssets(studioPlatform, articleId) : false;
-            const result = await openStudioBrowser({ platform: target, account: account.trim() || 'main' });
+            const result = await openStudioBrowser({ platform: target, account: effectiveAccount });
             if (result.error) {
               setNote(result.error);
               return;
@@ -510,12 +540,14 @@ export function SafeHandoffCard({
         <button
           type="button"
           className={c('btn')}
+          disabled={!hasAccount}
+          title={hasAccount ? '' : `先去「账号」页添加${targetLabel}账号`}
           onClick={async () => {
-            const result = await openStudioBrowser({ platform: target, account: account.trim() || 'main' });
+            const result = await openStudioBrowser({ platform: target, account: effectiveAccount });
             if (result.error) setNote(result.error);
             else {
               setDone((d) => ({ ...d, browser: true }));
-              setNote(`已打开「${targetLabel}」专属浏览器（档案 ${account.trim() || 'main'}）——首次需登录一次，之后长期保持`);
+              setNote(`已打开「${targetLabel} · ${effectiveAccount}」专属浏览器——首次需登录一次，之后长期保持`);
             }
           }}
         >
@@ -525,7 +557,7 @@ export function SafeHandoffCard({
           type="button"
           className={c('btn')}
           onClick={async () => {
-            const result = await markStudioPublished(studioPlatform, articleId, `${targetLabel}（${account.trim() || 'main'}）`);
+            const result = await markStudioPublished(studioPlatform, articleId, hasAccount ? `${targetLabel}（${effectiveAccount}）` : targetLabel);
             if (result.record) {
               setNote(`「${articleTitle || '本篇'}」已标记发布——发布记录可查`);
               onMarked();

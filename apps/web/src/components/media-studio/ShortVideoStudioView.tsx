@@ -41,6 +41,8 @@ import { ArticleListCard, VersionsCard } from './StudioSharedCards';
 import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
+import { usePlatformAccountNames } from './usePlatformAccounts';
+import { navigate } from '../../router';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -157,8 +159,18 @@ export function ShortVideoStudioView(): JSX.Element {
   const [scheduleAt, setScheduleAt] = useState('');
   // 发布矩阵：平台 → { 参与勾选, sau 账号名, 登录态 }
   const [matrix, setMatrix] = useState<Record<string, { on: boolean; account: string; login: LoginState; detail: string }>>(
-    () => Object.fromEntries(SAU_PLATFORMS.map((p) => [p.id, { on: false, account: 'main', login: 'unknown' as LoginState, detail: '' }])),
+    () => Object.fromEntries(SAU_PLATFORMS.map((p) => [p.id, { on: false, account: '', login: 'unknown' as LoginState, detail: '' }])),
   );
+  // 账号中心是唯一账号来源:各平台的账号名列表(没配的平台=空数组)。
+  const platformAccounts = usePlatformAccountNames();
+  useEffect(() => {
+    // 账号列表就绪后,把矩阵里还没选账号的行默认到该平台第一个账号。
+    setMatrix((m) =>
+      Object.fromEntries(
+        Object.entries(m).map(([pid, e]) => [pid, e.account ? e : { ...e, account: platformAccounts[pid]?.[0] ?? '' }]),
+      ),
+    );
+  }, [platformAccounts]);
 
   const articleRef = useRef<MediaArticle | null>(null);
   articleRef.current = article;
@@ -430,12 +442,13 @@ export function ShortVideoStudioView(): JSX.Element {
 
   async function handlePublish() {
     if (!article || publishing) return;
-    const targets = SAU_PLATFORMS.filter((p) => matrix[p.id]?.on).map((p) => ({
+    // 账号来自账号中心绑定;没绑账号的行不进目标(UI 层已引导去添加)。
+    const targets = SAU_PLATFORMS.filter((p) => matrix[p.id]?.on && matrix[p.id]!.account.trim()).map((p) => ({
       platform: p.id,
-      account: matrix[p.id]!.account.trim() || 'main',
+      account: matrix[p.id]!.account.trim(),
     }));
     if (targets.length === 0) {
-      setNotice({ ok: false, text: '先勾选至少一个发布平台' });
+      setNotice({ ok: false, text: '先勾选至少一个发布平台（并确认已绑定账号）' });
       return;
     }
     if (!videoPath.trim()) {
@@ -893,6 +906,19 @@ export function ShortVideoStudioView(): JSX.Element {
                   </div>
                   {SAU_PLATFORMS.map((p) => {
                     const entry = matrix[p.id]!;
+                    const names = platformAccounts[p.id] ?? [];
+                    if (names.length === 0) {
+                      // 没配账号的平台:引导去账号页,不给内部兜底档案名。
+                      return (
+                        <div key={p.id} className={c('row')}>
+                          <strong style={{ minWidth: 96 }}>{p.label}</strong>
+                          <span className={c('cardHint')}>还没有账号</span>
+                          <button type="button" className={c('btn')} onClick={() => navigate({ kind: 'home', view: 'accounts' })}>
+                            去「账号」页添加
+                          </button>
+                        </div>
+                      );
+                    }
                     return (
                       <div key={p.id} className={c('row')}>
                         <label className={c('row')} style={{ minWidth: 96 }}>
@@ -903,12 +929,18 @@ export function ShortVideoStudioView(): JSX.Element {
                           />
                           <strong>{p.label}</strong>
                         </label>
-                        <input
-                          className={c('input')}
-                          style={{ width: 130 }}
+                        <select
+                          className={c('select')}
                           value={entry.account}
+                          title="发布用哪个账号——在「账号」页管理"
                           onChange={(e) => setMatrix((m) => ({ ...m, [p.id]: { ...m[p.id]!, account: e.target.value } }))}
-                        />
+                        >
+                          {names.map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
                         <button
                           type="button"
                           className={c('btn')}
@@ -930,8 +962,9 @@ export function ShortVideoStudioView(): JSX.Element {
                         <button
                           type="button"
                           className={c('btn')}
+                          disabled={!entry.account.trim()}
                           title="打开该账号的专属浏览器（档案隔离），手动上传最防风控"
-                          onClick={() => void openStudioBrowser({ platform: p.id, account: entry.account.trim() || 'main' })}
+                          onClick={() => void openStudioBrowser({ platform: p.id, account: entry.account.trim() })}
                         >
                           专属浏览器
                         </button>
