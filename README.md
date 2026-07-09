@@ -1,5 +1,8 @@
 # Open Design — the open-source Claude Design alternative
 
+> [!NOTE]
+> **WorkBuild** — this repository is a commercial derivative of [open-design](https://github.com/nexu-io/open-design) (Apache-2.0), modified and rebranded. The upstream license is preserved in [LICENSE](LICENSE); bundled templates `design-templates/guizang-ppt` and `design-templates/html-ppt` retain their original MIT licenses.
+
 > **Open Design is the open-source, local-first alternative to [Claude Design][cd].** Web-deployable, BYOK at every layer — **16 coding-agent CLIs** auto-detected on your `PATH` (Claude Code, Codex, Devin for Terminal, Cursor Agent, Gemini CLI, OpenCode, Qwen, Qoder CLI, GitHub Copilot CLI, Hermes, Kimi, Pi, Kiro, Kilo, Mistral Vibe, DeepSeek TUI) become the design engine, driven by **137 composable Skills** and **150 brand-grade Design Systems**. No CLI? An OpenAI-compatible BYOK proxy is the same loop minus the spawn.
 
 > [!IMPORTANT]
