@@ -20,7 +20,7 @@ export interface DraftPayload {
   tags: string[];
   /** 本机文件绝对路径(图集按序/成片)。 */
   filePaths: string[];
-  kind: 'images' | 'video';
+  kind: 'images' | 'video' | 'article';
 }
 
 export interface DraftResult {
@@ -475,10 +475,85 @@ async function injectKuaishou(wv: DraftWebview, draft: DraftPayload, progress: D
     : { ok: true, detail: '内容已填好——没找到「存草稿」按钮,请在面板里手动点一下保存' };
 }
 
+// ---- 知乎(专栏文章) ----
+// 选择器移植自 social-auto-upload/uploader/zhihu_uploader(实测校准):
+// 写作页 zhuanlan.zhihu.com/write;标题 textarea.WriteIndex-titleInput;
+// 正文 DraftJS contenteditable;话题=「添加话题」按钮→搜索框→联想点选。
+// 知乎写作页边写边自动存草稿——没有也不需要「存草稿」按钮,天然契合
+// 只存草稿铁律;发布永远由用户在页面上自己点。
+async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
+  if (await isLoginWall(wv)) {
+    return { ok: false, detail: '知乎还没登录——在面板里登录后再点一次「一键存草稿」' };
+  }
+  progress('1/4 等编辑器就绪…');
+  const ZH_TITLE = "textarea.WriteIndex-titleInput, textarea[placeholder*='标题'], input[placeholder*='标题']";
+  const formReady = await waitFor(wv, ZH_TITLE, 30_000);
+  if (!formReady) {
+    // 注入开始时页面可能还在跳转中(write→signin),此刻补一次登录检测
+    // 才能给准确指引。
+    if (await isLoginWall(wv)) {
+      return { ok: false, detail: '知乎还没登录——在面板里扫码登录后再点一次「一键存草稿」(登录态会长期保持)' };
+    }
+    return { ok: false, detail: '知乎编辑器没等到——确认面板在「写文章」页(工具条地址 zhuanlan.zhihu.com/write)' };
+  }
+
+  progress('2/4 键入标题…');
+  const titleOk =
+    (await typeIntoField(wv, ZH_TITLE, draft.title.slice(0, 100)))
+    || (await fillInput(wv, ZH_TITLE, draft.title.slice(0, 100)));
+
+  progress('3/4 键入正文…');
+  const ZH_EDITOR = "div.public-DraftEditor-content, div[contenteditable='true'][data-contents='true'], [contenteditable='true']";
+  const bodyOk =
+    (await typeIntoField(wv, ZH_EDITOR, draft.body, (pct) => progress(`3/4 键入正文… ${pct}%`)))
+    || (await fillEditor(wv, draft.body));
+  if (!titleOk && !bodyOk) {
+    return { ok: false, detail: '编辑器结构对不上(知乎可能改版了)——文案在剪贴板,请手动粘贴' };
+  }
+
+  if (draft.tags.length > 0) {
+    progress('4/4 添加话题…');
+    for (const tag of draft.tags.slice(0, 3)) {
+      const opened = await clickByText(wv, ['添加话题']);
+      if (!opened) break;
+      await sleep(700);
+      const TOPIC_INPUT = "input[placeholder*='搜索话题'], input[placeholder*='话题']";
+      if (!(await focusByClick(wv, TOPIC_INPUT))) break;
+      await typeText(wv, tag);
+      await sleep(1100);
+      // 联想下拉点选第一个以话题词开头的候选(防御式:知乎候选结构未内测)。
+      const picked = await wvEval<boolean>(
+        wv,
+        `(() => {
+          const want = ${JSON.stringify(tag)};
+          const nodes = [...document.querySelectorAll('button, li, [role="option"], .Popover *')];
+          const el = nodes.find((n) => n.childElementCount <= 2 && (n.textContent || '').trim().startsWith(want) && n.getClientRects().length > 0 && !n.closest('[contenteditable="true"]'));
+          if (!el) return false;
+          el.click();
+          return true;
+        })()`,
+      );
+      if (!picked) break;
+      await sleep(700);
+    }
+  }
+
+  // 知乎写作页自动保存;稍候确认草稿标记出现。
+  await sleep(1800);
+  const savedFlag = await wvEval<boolean>(wv, `/(草稿箱|已保存|自动保存|保存于)/.test(document.body.innerText)`);
+  return {
+    ok: true,
+    detail: savedFlag
+      ? '已写入知乎草稿(写作页自动保存)——在面板里核对,发布自己点'
+      : '内容已键入——知乎写作页会自动存草稿,在面板里核对后自行发布',
+  };
+}
+
 const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgress) => Promise<DraftResult>> = {
   xiaohongshu: injectXiaohongshu,
   douyin: injectDouyin,
   kuaishou: injectKuaishou,
+  zhihu: injectZhihu,
 };
 
 export function draftInjectionSupported(platform: string): boolean {

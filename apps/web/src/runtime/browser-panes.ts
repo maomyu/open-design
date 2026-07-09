@@ -23,6 +23,7 @@ export const BROWSER_PLATFORM_TITLES: Record<string, string> = {
   kuaishou: '快手',
   bilibili: 'B站',
   shipinhao: '视频号',
+  zhihu: '知乎',
 };
 
 /**

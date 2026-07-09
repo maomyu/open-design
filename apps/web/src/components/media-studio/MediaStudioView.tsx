@@ -42,7 +42,8 @@ import {
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
-import { ArticleListCard, VersionsCard } from './StudioSharedCards';
+import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
+import { usePlatformAccountNames } from './usePlatformAccounts';
 import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
@@ -192,6 +193,16 @@ function timeLabel(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 公众号正文 → 知乎可键入正文:剥掉图片标注注释与本地图片 markdown
+ *  (知乎编辑器里它们只会成为噪音文本;配图在知乎页面上手动补)。 */
+function zhihuBodyOf(bodyMd: string): string {
+  return bodyMd
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function MediaStudioView(): JSX.Element {
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
@@ -237,6 +248,8 @@ export function MediaStudioView(): JSX.Element {
   articleRef.current = article;
   const aiTaskRef = useRef<StudioAiTask | null>(null);
   aiTaskRef.current = aiTask;
+  // 知乎分发卡的账号下拉/引导(账号中心是唯一账号来源)。
+  const platformAccounts = usePlatformAccountNames();
   // 页面刷新/热更后仍在跑的后台任务：恢复感知（亮条+驱动轮询+可中止）。
   const { orphan, cancelOrphan } = useOrphanRun(aiTask === null);
   // AI 按钮的 busy 门必须用它——aiTask 在任务结束后仍保留(面板可回看),
@@ -1625,6 +1638,36 @@ export function MediaStudioView(): JSX.Element {
             ) : null}
           </div>
         ) : null}
+        {/* 知乎分发(2026-07-09 用户拍板):公众号长文与知乎专栏文章形态天然
+            对口——安全交接流(应用内浏览器+真实键入,知乎写作页自动存草稿),
+            与小红书同一套防风控模式,不走机器直传。 */}
+        <SafeHandoffCard
+          studioPlatform={PLATFORM}
+          articleId={article.id}
+          articleTitle={article.title}
+          targets={[{ id: 'zhihu', label: '知乎' }]}
+          defaultTarget="zhihu"
+          hasAssets={false}
+          requiresAssets={false}
+          accountsOf={(pid) => platformAccounts[pid] ?? []}
+          copyText={() => `${article.title}\n\n${zhihuBodyOf(article.bodyMd)}`}
+          copyParts={() => [
+            { label: '标题', text: article.title },
+            { label: '正文', text: zhihuBodyOf(article.bodyMd) },
+          ]}
+          buildDraft={async () => ({
+            platform: 'zhihu',
+            kind: 'article',
+            title: article.title,
+            body: zhihuBodyOf(article.bodyMd),
+            tags: [],
+            filePaths: [],
+          })}
+          onMarked={() => {
+            void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
+            void refreshArticles();
+          }}
+        />
         {publishes.length > 0 ? (
           <div className={c('card')}>
             <div className={c('cardLabel')}>发布记录</div>

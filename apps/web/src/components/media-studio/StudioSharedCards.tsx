@@ -382,6 +382,7 @@ export function SafeHandoffCard({
   copyParts,
   hasAssets,
   assetsLabel = '图集文件夹',
+  requiresAssets = true,
   accountsOf,
   buildDraft,
   onMarked,
@@ -399,6 +400,9 @@ export function SafeHandoffCard({
   hasAssets: boolean;
   /** 资产按钮文案（默认「图集文件夹」;短视频台传「成片文件夹」）。 */
   assetsLabel?: string;
+  /** 一键存草稿是否要求素材就绪(默认 true;知乎等文章类传 false——
+   *  正文即全部,无附件)。 */
+  requiresAssets?: boolean;
   /** 账号中心是唯一账号来源(2026-07-09 用户拍板):返回目标平台在「账号」页
    *  配置的账号名列表。有账号=下拉绑定(像公众号);没有=引导去添加,不再
    *  出现 'main' 这种内部兜底档案名。 */
@@ -470,13 +474,13 @@ export function SafeHandoffCard({
           <button
             type="button"
             className={`${c('btn')} ${c('btnPrimary')}`}
-            disabled={!hasAccount || !hasAssets}
+            disabled={!hasAccount || (requiresAssets && !hasAssets)}
             title={
               !hasAccount
                 ? `先去「账号」页添加${targetLabel}账号`
-                : !hasAssets
+                : requiresAssets && !hasAssets
                   ? '稿件素材还没就绪'
-                  : '自动上传素材、填好标题正文并存草稿——发布永远由你自己点'
+                  : '自动填好标题正文并存草稿——发布永远由你自己点'
             }
             onClick={async () => {
               try {

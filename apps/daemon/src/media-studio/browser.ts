@@ -22,6 +22,7 @@ export const PLATFORM_PUBLISH_URLS: Record<string, { label: string; url: string 
   // tencent——两个键都指同一后台,账号页「打开后台」才解析得到 URL。
   shipinhao: { label: '视频号 · 发表动态', url: 'https://channels.weixin.qq.com/platform/post/create' },
   tencent: { label: '视频号 · 发表动态', url: 'https://channels.weixin.qq.com/platform/post/create' },
+  zhihu: { label: '知乎 · 写文章', url: 'https://zhuanlan.zhihu.com/write' },
   'wechat-mp': { label: '公众号后台', url: 'https://mp.weixin.qq.com' },
 };
 

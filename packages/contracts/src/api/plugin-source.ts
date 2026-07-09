@@ -225,7 +225,8 @@ export type MediaPlatformId =
   | 'xiaohongshu'
   | 'kuaishou'
   | 'bilibili'
-  | 'shipinhao';
+  | 'shipinhao'
+  | 'zhihu';
 
 export interface MediaPlatformCredentialKeyDef {
   name: string;
@@ -247,7 +248,7 @@ export interface MediaPlatformDef {
   /** Declared per-account credential keys ('api-credential' platforms only). */
   credentialKeys?: MediaPlatformCredentialKeyDef[];
   /** Content forms this platform accepts via sau. */
-  supports?: Array<'video' | 'note'>;
+  supports?: Array<'video' | 'note' | 'article'>;
 }
 
 export const MEDIA_PLATFORMS: MediaPlatformDef[] = [
@@ -266,6 +267,9 @@ export const MEDIA_PLATFORMS: MediaPlatformDef[] = [
   { id: 'kuaishou', title: '快手', kind: 'sau-login', supports: ['video', 'note'] },
   { id: 'bilibili', title: 'B站', kind: 'sau-login', supports: ['video'] },
   { id: 'shipinhao', title: '视频号', kind: 'sau-login', supports: ['video'] },
+  // 知乎(2026-07-09 用户拍板):专栏文章走应用内浏览器安全交接(真实键入,
+  // 知乎写作页自动存草稿),不走 sau 直传;账号名即浏览器档案名。
+  { id: 'zhihu', title: '知乎', kind: 'sau-login', supports: ['article'] },
 ];
 
 export function mediaPlatformDef(id: string): MediaPlatformDef | null {
