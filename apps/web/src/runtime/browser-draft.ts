@@ -21,6 +21,11 @@ export interface DraftPayload {
   /** 本机文件绝对路径(图集按序/成片)。 */
   filePaths: string[];
   kind: 'images' | 'video' | 'article';
+  /** article 专用:正文按图片位置切分的段序列——文本段真实键入,图片段
+   *  在原位 CDP 插入(知乎正文图 input 常驻,插到光标处)。 */
+  segments?: Array<{ type: 'text'; text: string } | { type: 'image'; path: string }>;
+  /** article 专用:封面图本机绝对路径(知乎「添加文章封面」区)。 */
+  coverPath?: string;
 }
 
 export interface DraftResult {
@@ -293,13 +298,26 @@ async function typeIntoField(
   return true;
 }
 
-async function setFiles(wv: DraftWebview, files: string[]): Promise<{ ok: boolean; reason?: string }> {
+async function setFiles(
+  wv: DraftWebview,
+  files: string[],
+  selector = 'input[type=file]',
+): Promise<{ ok: boolean; reason?: string }> {
   const result = await setHostBrowserFileInput({
     webContentsId: wv.getWebContentsId(),
-    selector: 'input[type=file]',
+    selector,
     files,
   });
   return result.ok ? { ok: true } : { ok: false, reason: result.reason };
+}
+
+/** 编辑器内可见图片数(等待插图完成用)。 */
+async function editorImageCount(wv: DraftWebview): Promise<number> {
+  const n = await wvEval<number>(
+    wv,
+    `(() => { const ed = [...document.querySelectorAll('[contenteditable="true"]')].find((el) => el.getClientRects().length); return ed ? ed.querySelectorAll('img').length : 0; })()`,
+  );
+  return typeof n === 'number' ? n : 0;
 }
 
 /** 小红书的底部按钮是 <xhs-publish-btn> 自定义组件(closed shadow DOM,
@@ -497,6 +515,15 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
     return { ok: false, detail: '知乎编辑器没等到——确认面板在「写文章」页(工具条地址 zhuanlan.zhihu.com/write)' };
   }
 
+  // 封面:知乎「添加文章封面」区的独立 input(.UploadPicture-input,
+  // 2026-07-09 真实页面探测;accept 仅 jpg/jpeg/png)。
+  if (draft.coverPath) {
+    progress('2/4 上传封面…');
+    const coverPut = await setFiles(wv, [draft.coverPath], 'input.UploadPicture-input, input[type=file][accept=".jpeg, .jpg, .png"]');
+    if (coverPut.ok) await sleep(2500);
+    else progress('2/4 封面注入失败(不阻断)——可在页面手动补');
+  }
+
   progress('2/4 键入标题…');
   const titleOk =
     (await typeIntoField(wv, ZH_TITLE, draft.title.slice(0, 100)))
@@ -504,9 +531,43 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
 
   progress('3/4 键入正文…');
   const ZH_EDITOR = "div.public-DraftEditor-content, div[contenteditable='true'][data-contents='true'], [contenteditable='true']";
-  const bodyOk =
-    (await typeIntoField(wv, ZH_EDITOR, draft.body, (pct) => progress(`3/4 键入正文… ${pct}%`)))
-    || (await fillEditor(wv, draft.body));
+  // 知乎正文图片 input 常驻 DOM(multiple,插到当前光标处;真实页面探测):
+  // 区别于文档 input(accept 含 .pdf)与封面 input(非 multiple)。
+  const ZH_BODY_IMG_INPUT = 'input[type=file][accept^="image/"][multiple]';
+  let bodyOk: boolean;
+  const segments = draft.segments?.length
+    ? draft.segments
+    : [{ type: 'text' as const, text: draft.body }];
+  // 分段:文本段真实键入;图片段在光标原位 CDP 插入,等编辑器 img 数+1。
+  const focused = await focusByClick(wv, ZH_EDITOR);
+  if (focused) {
+    await clearFieldByKeys(wv);
+    bodyOk = true;
+    const total = segments.length;
+    for (let i = 0; i < total; i++) {
+      const seg = segments[i]!;
+      if (seg.type === 'text') {
+        await typeText(wv, seg.text, (pct) => progress(`3/4 正文 段${i + 1}/${total}… ${pct}%`));
+      } else {
+        progress(`3/4 插入配图(段${i + 1}/${total})…`);
+        const before = await editorImageCount(wv);
+        const put = await setFiles(wv, [seg.path], ZH_BODY_IMG_INPUT);
+        if (put.ok) {
+          const deadline = Date.now() + 20_000;
+          while (Date.now() < deadline) {
+            if ((await editorImageCount(wv)) > before) break;
+            await sleep(1000);
+          }
+          // 图片插入后光标落在图后新段;稍候再继续键入。
+          await sleep(800);
+        } else {
+          progress(`3/4 配图注入失败(段${i + 1},不阻断)`);
+        }
+      }
+    }
+  } else {
+    bodyOk = await fillEditor(wv, draft.body);
+  }
   if (!titleOk && !bodyOk) {
     return { ok: false, detail: '编辑器结构对不上(知乎可能改版了)——文案在剪贴板,请手动粘贴' };
   }

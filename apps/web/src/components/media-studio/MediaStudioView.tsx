@@ -39,6 +39,7 @@ import {
   renderStudioPreview,
   updateStudioArticle,
   uploadStudioAsset,
+  fetchStudioAssetPaths,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
@@ -194,13 +195,37 @@ function timeLabel(ts: number): string {
 }
 
 /** 公众号正文 → 知乎可键入正文:剥掉图片标注注释与本地图片 markdown
- *  (知乎编辑器里它们只会成为噪音文本;配图在知乎页面上手动补)。 */
+ *  (纯文本用途:剪贴板兜底/分段解析的文本段清洗)。 */
 function zhihuBodyOf(bodyMd: string): string {
   return bodyMd
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** 公众号正文按图片位置切成知乎注入段序列:文本段真实键入,图片段在
+ *  原位插入(URL→本机绝对路径靠 asset-paths 映射;映射不到的图跳过)。 */
+function zhihuSegmentsOf(
+  bodyMd: string,
+  assetPathByUrl: Map<string, string>,
+): Array<{ type: 'text'; text: string } | { type: 'image'; path: string }> {
+  const segments: Array<{ type: 'text'; text: string } | { type: 'image'; path: string }> = [];
+  const cleanText = (t: string) => t.replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n');
+  const re = /!\[[^\]]*\]\(([^)]+)\)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(bodyMd)) != null) {
+    const text = cleanText(bodyMd.slice(last, m.index));
+    if (text.trim()) segments.push({ type: 'text', text });
+    const url = (m[1] ?? '').trim();
+    const abs = assetPathByUrl.get(url) ?? [...assetPathByUrl.entries()].find(([u]) => url.endsWith(u.split('/').pop() ?? ' '))?.[1];
+    if (abs) segments.push({ type: 'image', path: abs });
+    last = re.lastIndex;
+  }
+  const tail = cleanText(bodyMd.slice(last));
+  if (tail.trim()) segments.push({ type: 'text', text: tail });
+  return segments;
 }
 
 export function MediaStudioView(): JSX.Element {
@@ -1655,14 +1680,23 @@ export function MediaStudioView(): JSX.Element {
             { label: '标题', text: article.title },
             { label: '正文', text: zhihuBodyOf(article.bodyMd) },
           ]}
-          buildDraft={async () => ({
-            platform: 'zhihu',
-            kind: 'article',
-            title: article.title,
-            body: zhihuBodyOf(article.bodyMd),
-            tags: [],
-            filePaths: [],
-          })}
+          buildDraft={async () => {
+            // 图片/封面全自动:asset-paths 拿本机绝对路径,正文按图片位置
+            // 切段(原位插入),封面走知乎封面区独立 input。
+            const assets = await fetchStudioAssetPaths(PLATFORM, article.id);
+            const byUrl = new Map(assets.map((a) => [a.url, a.absPath]));
+            const coverPath = article.coverSource ? byUrl.get(article.coverSource) : undefined;
+            return {
+              platform: 'zhihu',
+              kind: 'article' as const,
+              title: article.title,
+              body: zhihuBodyOf(article.bodyMd),
+              tags: [],
+              filePaths: [],
+              segments: zhihuSegmentsOf(article.bodyMd, byUrl),
+              ...(coverPath ? { coverPath } : {}),
+            };
+          }}
           onMarked={() => {
             void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
             void refreshArticles();
