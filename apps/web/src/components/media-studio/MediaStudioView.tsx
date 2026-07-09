@@ -534,13 +534,59 @@ export function MediaStudioView(): JSX.Element {
     }
   }
 
+  /** 本地图片(daemon 资产/本机 URL)转 dataURL 内嵌——复制出去自包含,
+   *  公众号编辑器粘贴时自动转存;公网图(含 mmbiz)保留原 URL 微信自己能抓。 */
+  async function inlineLocalImages(html: string): Promise<{ html: string; plain: string; failed: number }> {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    let failed = 0;
+    await Promise.all(
+      [...div.querySelectorAll('img')].map(async (img) => {
+        const src = img.getAttribute('src') ?? '';
+        if (!src || src.startsWith('data:')) return;
+        if (/^https?:\/\//i.test(src) && !/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(src)) return;
+        try {
+          const resp = await fetch(src);
+          if (!resp.ok) throw new Error(String(resp.status));
+          const blob = await resp.blob();
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(String(fr.result));
+            fr.onerror = () => reject(fr.error as Error);
+            fr.readAsDataURL(blob);
+          });
+          img.setAttribute('src', dataUrl);
+        } catch {
+          failed += 1;
+        }
+      }),
+    );
+    return { html: div.innerHTML, plain: div.textContent ?? '', failed };
+  }
+
+  // 复制「带完整样式和图片」的排版(2026-07-09 用户拍板):写 text/html 富文本,
+  // 粘贴到公众号后台编辑器即还原排版;图片内嵌 base64,编辑器粘贴时自动转存。
   async function handleCopyHtml() {
     if (!previewHtml) return;
     try {
-      await navigator.clipboard.writeText(previewHtml);
-      setRenderNotice('已复制 HTML 到剪贴板');
+      const { html, plain, failed } = await inlineLocalImages(previewHtml);
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+        }),
+      ]);
+      const suffix = failed > 0 ? `(${failed} 张图内嵌失败,粘贴后请补传)` : '(含图)';
+      studioToast.ok(`排版已复制${suffix}——到公众号编辑器直接粘贴`);
+      setRenderNotice(`已复制带样式排版${suffix}`);
     } catch {
-      setRenderNotice('复制失败——浏览器未授权剪贴板');
+      // 老内核不支持 ClipboardItem 时至少给源码,不让按钮无声失败。
+      try {
+        await navigator.clipboard.writeText(previewHtml);
+        setRenderNotice('浏览器不支持富文本复制——已复制 HTML 源码');
+      } catch {
+        setRenderNotice('复制失败——浏览器未授权剪贴板');
+      }
     }
   }
 
@@ -941,8 +987,14 @@ export function MediaStudioView(): JSX.Element {
             <button type="button" className={c('btn')} onClick={() => void handleSaveRender()}>
               保存排版
             </button>
-            <button type="button" className={c('btn')} disabled={!previewHtml} onClick={() => void handleCopyHtml()}>
-              复制 HTML
+            <button
+              type="button"
+              className={c('btn')}
+              disabled={!previewHtml}
+              title="复制带完整样式和图片的排版，到公众号后台编辑器直接粘贴"
+              onClick={() => void handleCopyHtml()}
+            >
+              <Icon name="copy" size={13} /> 复制排版
             </button>
             {renderNotice ? <span className={c('saveHint')}>{renderNotice}</span> : null}
           </div>
@@ -1752,6 +1804,15 @@ export function MediaStudioView(): JSX.Element {
             <span className={c('previewTag')}>
               <Icon name="eye" size={13} /> 实时预览（与发布产物同源）
               <span className={c('headSpacer')} />
+              <button
+                type="button"
+                className={c('previewModeBtn')}
+                disabled={!previewHtml}
+                title="复制带完整样式和图片的排版，到公众号后台编辑器直接粘贴"
+                onClick={() => void handleCopyHtml()}
+              >
+                <Icon name="copy" size={12} /> 复制排版
+              </button>
               <button
                 type="button"
                 className={`${c('previewModeBtn')}${phonePreview ? ` ${c('previewModeBtnActive')}` : ''}`}
