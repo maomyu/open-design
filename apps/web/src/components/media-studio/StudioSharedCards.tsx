@@ -426,6 +426,36 @@ export function SafeHandoffCard({
         />
       </div>
       <div className={c('row')}>
+        {/* 一键交接(2026-07-09 用户拍板):账号已绑定专属浏览器档案(登录态
+            常驻),把 ①复制 ②图集 ③开后台 压成一步——点完直接在右边标签里
+            粘贴+拖图、存草稿。三步按钮保留给想分步操作的场景。 */}
+        <button
+          type="button"
+          className={`${c('btn')} ${c('btnPrimary')}`}
+          onClick={async () => {
+            let copied = false;
+            try {
+              await navigator.clipboard.writeText(copyText(target));
+              copied = true;
+            } catch {
+              /* 剪贴板未授权:继续开后台,提示里说明 */
+            }
+            const revealed = hasAssets ? await revealStudioAssets(studioPlatform, articleId) : false;
+            const result = await openStudioBrowser({ platform: target, account: account.trim() || 'main' });
+            if (result.error) {
+              setNote(result.error);
+              return;
+            }
+            setDone({ copy: copied, assets: revealed, browser: true });
+            setNote(
+              copied
+                ? `已就绪:文案在剪贴板${revealed ? '、图集文件夹已打开' : ''}——到「${targetLabel}」标签里粘贴${revealed ? '+拖图' : ''},存草稿或发布`
+                : `后台已打开;剪贴板未授权,用下面「复制文案」再粘贴`,
+            );
+          }}
+        >
+          <Icon name="sparkles" size={13} /> 一键带稿开后台
+        </button>
         <button
           type="button"
           className={c('btn')}
@@ -479,7 +509,7 @@ export function SafeHandoffCard({
         </button>
         <button
           type="button"
-          className={`${c('btn')} ${c('btnPrimary')}`}
+          className={c('btn')}
           onClick={async () => {
             const result = await openStudioBrowser({ platform: target, account: account.trim() || 'main' });
             if (result.error) setNote(result.error);
