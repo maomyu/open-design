@@ -59,6 +59,7 @@ const IMAGE_STYLES: Array<{ id: string; label: string }> = [
   { id: 'whiteboard', label: '白板手绘（默认）' },
   { id: 'illustrated', label: '暖插画（带文字）' },
   { id: 'clean', label: '纯净插画（无文字）' },
+  { id: 'none', label: '不用模板（纯提示词）' },
 ];
 const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
@@ -697,14 +698,48 @@ export function NoteStudioView(): JSX.Element {
                 ) : null}
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
-                    单张生成 / 上传
-                    <span className={c('cardHint')}>竖图 3:4；也可以直接传本机图</span>
+                    AI 生图 / 上传
+                    <span className={c('cardHint')}>
+                      选风格模板出图稳；选「不用模板」提示词原样直达模型，画风全凭你描述。竖图 3:4，也可直接传本机图
+                    </span>
+                  </div>
+                  <div className={c('row')}>
+                    <select
+                      className={c('select')}
+                      value={galleryStyle}
+                      title="图片风格模板——「不用模板」时画风全由提示词决定"
+                      onChange={(e) => setGalleryStyle(e.target.value)}
+                    >
+                      {IMAGE_STYLES.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className={c('select')}
+                      value={galleryModel}
+                      onChange={(e) => {
+                        savePreferredImageModel(e.target.value);
+                        setGalleryModel(e.target.value);
+                      }}
+                    >
+                      {IMAGE_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className={c('row')}>
                     <input
                       className={`${c('input')} ${c('grow')}`}
                       value={galleryPrompt}
-                      placeholder="画面描述，例：大字封面「美国商标 12-18 个月」+ 时间轴…"
+                      placeholder={
+                        galleryStyle === 'none'
+                          ? '完整画面描述（含画风），例：胶片质感街拍，暖橘色调，一位职场女性在咖啡店窗边看笔记本…'
+                          : '画面描述，例：大字封面「美国商标 12-18 个月」+ 时间轴…'
+                      }
                       onChange={(e) => setGalleryPrompt(e.target.value)}
                     />
                     <button

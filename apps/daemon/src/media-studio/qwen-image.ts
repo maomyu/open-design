@@ -145,6 +145,10 @@ export function composeStylePrompt(style: string | undefined, prompt: string, ch
   } else if (style === 'clean') {
     stylePrefix = CLEAN_ILLUSTRATION_STYLE;
     negative = DEFAULT_NEGATIVE + '，任何文字，字幕，标题，水印，字母，汉字，文字条，logo';
+  } else if (style === 'none') {
+    // 不用风格模板(2026-07-09 用户拍板):提示词原样直达模型,画风全由
+    // 用户描述决定;负面词仍保底(防低质/水印)。
+    stylePrefix = '';
   }
   return { fullPrompt: (stylePrefix + prompt).slice(0, 800), negative };
 }

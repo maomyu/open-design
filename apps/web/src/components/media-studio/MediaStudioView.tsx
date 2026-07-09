@@ -121,6 +121,7 @@ const IMAGE_STYLES: Array<{ id: string; label: string }> = [
   { id: 'whiteboard', label: '白板手绘（默认）' },
   { id: 'illustrated', label: '暖插画（带文字）' },
   { id: 'clean', label: '纯净插画（无文字）' },
+  { id: 'none', label: '不用模板（纯提示词）' },
 ];
 
 /** 正文里的配图标注：<!-- IMAGE_1: 描述, 4:3 --> / <!-- IMAGE_COVER: 描述, 16:9 --> */
