@@ -80,7 +80,7 @@ export function EntryNavRail({ view, onViewChange }: Props) {
           />
           <span className="entry-nav-rail__wordmark">
             <span className="entry-nav-rail__wordmark-name">{brandLabel}</span>
-            <span className="entry-nav-rail__wordmark-sub">{t('app.brandPill')}</span>
+            {/* 「研究预览版」副标已移除(2026-07-09 用户拍板)。 */}
           </span>
         </button>
         <div className="entry-nav-rail__logo-divider" role="separator" aria-hidden="true" />
