@@ -199,20 +199,32 @@ async function clearFieldByKeys(wv: DraftWebview): Promise<void> {
   await sleep(140);
 }
 
-/** 逐字真实键入(char 事件);onProgress 按 10% 步长回报。 */
+/** 逐字真实键入(char 事件);onProgress 按 10% 步长回报。
+ *  必须按「字素」迭代而非 UTF-16 码元:emoji(📌⚠️)是代理对/组合序列,
+ *  按码元拆开发 char 会撕成两个孤立代理,页面渲染成 ��(2026-07-09 用户
+ *  报草稿乱码)。emoji 字素走 insertText 整体插入——真人输入 emoji 也是
+ *  从表情面板「选」而不是「打」,行为模式反而更真实。 */
 async function typeText(wv: DraftWebview, text: string, onProgress?: (percent: number) => void): Promise<void> {
+  const graphemes =
+    typeof Intl !== 'undefined' && 'Segmenter' in Intl
+      ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].map((s) => s.segment)
+      : [...text]; // 兜底:按码点迭代(仍优于码元)
   let lastReported = -1;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === '\n') {
+  for (let i = 0; i < graphemes.length; i++) {
+    const g = graphemes[i]!;
+    if (g === '\n') {
       wv.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
       wv.sendInputEvent({ type: 'char', keyCode: '\r' });
       wv.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+    } else if (g.length === 1 && !/\p{Extended_Pictographic}/u.test(g)) {
+      // 单码元普通字符(汉字/字母/标点)→ 真实键盘 char 事件。
+      wv.sendInputEvent({ type: 'char', keyCode: g });
     } else {
-      wv.sendInputEvent({ type: 'char', keyCode: ch });
+      // emoji/组合字素 → 整体插入到当前焦点(等价表情面板选入)。
+      await wvEval(wv, `document.execCommand('insertText', false, ${JSON.stringify(g)})`);
     }
-    await sleep(humanDelay(ch));
-    const pct = Math.floor(((i + 1) / text.length) * 10) * 10;
+    await sleep(humanDelay(g));
+    const pct = Math.floor(((i + 1) / graphemes.length) * 10) * 10;
     if (onProgress && pct !== lastReported && pct > 0) {
       lastReported = pct;
       onProgress(pct);

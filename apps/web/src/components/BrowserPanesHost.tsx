@@ -173,6 +173,19 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
       const el = ref.current as unknown as DraftWebview | null;
       if (!el) return;
       setDraftState({ phase: 'running', text: '等页面加载…' });
+      // 面板可能停在上次「暂存离开」跳转后的页面——注入前先导回发布页,
+      // 否则第一步(切图文 tab/找上传框)就落空。
+      try {
+        const cur = el.getURL();
+        const wantPath = spec.url.split('?')[0] ?? spec.url;
+        if (wantPath && !cur.startsWith(wantPath)) {
+          await el.executeJavaScript(`location.href = ${JSON.stringify(spec.url)}`);
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      } catch {
+        /* 导航失败继续走加载等待,引擎内部有兜底 */
+      }
+      if (cancelled) return;
       // 等 webview 加载完。注意:加载中 executeJavaScript 可能挂起不返回,
       // 必须超时竞速推进,30s 上限后强行进入注入(引擎内部每步也有兜底)。
       const deadline = Date.now() + 30_000;
