@@ -4,6 +4,7 @@ import type {
   OpenDesignHostBridge,
   OpenDesignHostActionResult,
   OpenDesignHostBrowserProfileRequest,
+  OpenDesignHostSetFileInputRequest,
   OpenDesignHostFailure,
   OpenDesignHostProjectImportResult,
   OpenDesignHostProjectReplaceWorkingDirResult,
@@ -235,6 +236,21 @@ const browser = {
         isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
           ? result.reason
           : 'embedded browser window was not opened';
+      return actionFailure(reason);
+    } catch (error) {
+      return actionFailure(reasonFromError(error));
+    }
+  },
+  // 「一键存草稿」:主进程 CDP 把本机文件塞进后台面板 webview 的
+  // <input type=file>(页面 JS 做不到——浏览器安全模型)。
+  setFileInput: async (request: OpenDesignHostSetFileInputRequest): Promise<OpenDesignHostActionResult> => {
+    try {
+      const result = await ipcRenderer.invoke('od:browser:set-file-input', request);
+      if (isRecord(result) && result.ok === true) return { ok: true };
+      const reason =
+        isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
+          ? result.reason
+          : 'file input injection failed';
       return actionFailure(reason);
     } catch (error) {
       return actionFailure(reasonFromError(error));

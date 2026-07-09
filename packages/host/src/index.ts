@@ -211,11 +211,22 @@ export type OpenDesignHostBrowserProfileRequest = {
   url: string;
 };
 
+export type OpenDesignHostSetFileInputRequest = {
+  /** 目标后台面板 webview 的 webContents id（渲染层 getWebContentsId()）。 */
+  webContentsId: number;
+  /** 文件选择框选择器，默认 input[type=file]。 */
+  selector?: string;
+  /** 本机文件绝对路径列表（图集图片/成片视频）。 */
+  files: string[];
+};
+
 export type OpenDesignHostBridge = {
   // Optional capability: hosts older than the embedded-browser feature do
   // not expose it, and the renderer falls back to its non-embedded path.
   browser?: {
     openProfile(request: OpenDesignHostBrowserProfileRequest): Promise<OpenDesignHostActionResult>;
+    /** Optional (newer hosts): CDP file-input injection for「一键存草稿」. */
+    setFileInput?(request: OpenDesignHostSetFileInputRequest): Promise<OpenDesignHostActionResult>;
   };
   client: OpenDesignHostClient;
   pdf: {
@@ -427,6 +438,26 @@ export async function openHostBrowserProfile(
   if (browser == null) return unavailable("Open Design host embedded browser is not available");
   try {
     return await browser.openProfile(request);
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export function isOpenDesignHostFileInputAvailable(scope: OpenDesignHostGlobalScope = globalThis): boolean {
+  return typeof getOpenDesignHost(scope)?.browser?.setFileInput === "function";
+}
+
+export async function setHostBrowserFileInput(
+  request: OpenDesignHostSetFileInputRequest,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): Promise<OpenDesignHostActionResult> {
+  const host = getOpenDesignHost(scope);
+  const setFileInput = host?.browser?.setFileInput;
+  if (typeof setFileInput !== "function") {
+    return unavailable("host file-input injection is not available (older desktop build)");
+  }
+  try {
+    return await setFileInput(request);
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : String(error));
   }

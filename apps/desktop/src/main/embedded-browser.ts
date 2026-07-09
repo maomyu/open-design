@@ -1,4 +1,4 @@
-import { BrowserWindow, app, ipcMain, session } from "electron";
+import { BrowserWindow, app, ipcMain, session, webContents } from "electron";
 
 /**
  * Embedded multi-profile browser for the media studios' safe-publish flow.
@@ -158,6 +158,57 @@ export function registerEmbeddedBrowserBridge(): void {
   ipcMain.handle(EMBEDDED_BROWSER_IPC_CHANNEL, (_event, request: unknown) =>
     openEmbeddedBrowserProfile(request),
   );
+}
+
+const SET_FILE_INPUT_IPC_CHANNEL = "od:browser:set-file-input";
+
+/**
+ * 「一键存草稿」的文件注入通道(2026-07-09 用户拍板:自动把稿件填进平台
+ * 发布页,免手动上传)。页面 JS 无法设置 <input type=file>(浏览器安全模型),
+ * 唯一正道是 CDP DOM.setFileInputFiles(Playwright 同款)。安全边界:
+ *  - 只服务 <webview> 类型的 webContents(will-attach-webview 已保证所有
+ *    webview 都锁在 od-browser 分区,即应用内后台面板);
+ *  - 文件路径必须是绝对路径(daemon 资产目录/用户成片路径)。
+ */
+export function registerWebviewFileInputBridge(): void {
+  ipcMain.removeHandler(SET_FILE_INPUT_IPC_CHANNEL);
+  ipcMain.handle(SET_FILE_INPUT_IPC_CHANNEL, async (_event, raw: unknown) => {
+    if (!isRecord(raw)) return { ok: false, reason: "invalid set-file-input request" };
+    const webContentsId = typeof raw.webContentsId === "number" ? raw.webContentsId : -1;
+    const selector = typeof raw.selector === "string" && raw.selector.trim() ? raw.selector.trim() : "input[type=file]";
+    const files = Array.isArray(raw.files)
+      ? raw.files.filter((f): f is string => typeof f === "string" && f.startsWith("/"))
+      : [];
+    if (webContentsId < 0 || files.length === 0) {
+      return { ok: false, reason: "缺少 webview id 或文件绝对路径" };
+    }
+    const target = webContents.fromId(webContentsId);
+    if (!target || target.isDestroyed()) return { ok: false, reason: "后台面板不在了——重新打开再试" };
+    if (target.getType() !== "webview") return { ok: false, reason: "只允许注入应用内后台面板" };
+    const dbg = target.debugger;
+    const wasAttached = dbg.isAttached();
+    try {
+      if (!wasAttached) dbg.attach("1.3");
+      const doc = (await dbg.sendCommand("DOM.getDocument")) as { root: { nodeId: number } };
+      const found = (await dbg.sendCommand("DOM.querySelector", {
+        nodeId: doc.root.nodeId,
+        selector,
+      })) as { nodeId: number };
+      if (!found.nodeId) return { ok: false, reason: `页面里没找到文件选择框（${selector}）` };
+      await dbg.sendCommand("DOM.setFileInputFiles", { files, nodeId: found.nodeId });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    } finally {
+      if (!wasAttached && dbg.isAttached()) {
+        try {
+          dbg.detach();
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+  });
 }
 
 /**

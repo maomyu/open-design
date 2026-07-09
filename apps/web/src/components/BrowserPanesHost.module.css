@@ -75,6 +75,30 @@
   text-overflow: ellipsis;
 }
 
+/* 「一键存草稿」注入进度/结果条。 */
+.draftBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  background: var(--accent-tint, #fbeee5);
+  color: var(--accent-strong, #b45a3b);
+  border-bottom: 1px solid var(--border, #e1e5eb);
+  flex-shrink: 0;
+}
+.draftBarOk { background: #e8f5ec; color: #1e7a3c; }
+.draftBarFail { background: #fdecea; color: #b0342c; }
+.draftBarClose {
+  margin-left: auto;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  display: inline-flex;
+  padding: 2px;
+}
+
 .webview {
   flex: 1;
   min-height: 0;

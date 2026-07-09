@@ -807,6 +807,18 @@ export function ShortVideoStudioView(): JSX.Element {
                   hasAssets={Boolean(videoPath.trim())}
                   assetsLabel="成片文件夹"
                   accountsOf={(pid) => platformAccounts[pid] ?? []}
+                  buildDraft={async () => {
+                    const file = videoPath.trim();
+                    if (!file.startsWith('/')) return null;
+                    return {
+                      platform: 'douyin',
+                      title: article.title,
+                      body: article.bodyMd.trim(),
+                      tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
+                      filePaths: [file],
+                      kind: 'video',
+                    };
+                  }}
                   copyText={() => {
                     const tagLine = tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean).map((t) => `#${t}`).join(' ');
                     return `${article.title}${tagLine ? `\n\n${tagLine}` : ''}`;

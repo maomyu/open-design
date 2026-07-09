@@ -22,6 +22,7 @@ import {
   browserPanePartition,
   type BrowserPaneRequest,
 } from '../runtime/browser-panes';
+import { runDraftInjection, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
 import styles from './BrowserPanesHost.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -31,6 +32,9 @@ interface PaneSpec {
   platform: string;
   account: string;
   url: string;
+  /** 「一键存草稿」载荷:面板就绪后消费一次,seq 递增触发重新注入。 */
+  draft?: DraftPayload;
+  draftSeq?: number;
 }
 
 /** Electron <webview> 的导航 API 子集（web 包不依赖 electron 类型）。 */
@@ -55,9 +59,24 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
       if (!req?.platform || !req.url) return;
       setPanes((list) => {
         const key = browserPaneKey(req.platform, req.account);
-        return list.some((p) => p.key === key)
-          ? list
-          : [...list, { key, platform: req.platform, account: req.account, url: req.url }];
+        const existing = list.find((p) => p.key === key);
+        if (existing) {
+          // 已有面板:带 draft 再次打开=对同一面板重新注入(seq 递增触发)。
+          if (!req.draft) return list;
+          return list.map((p) =>
+            p.key === key ? { ...p, draft: req.draft!, draftSeq: (p.draftSeq ?? 0) + 1 } : p,
+          );
+        }
+        return [
+          ...list,
+          {
+            key,
+            platform: req.platform,
+            account: req.account,
+            url: req.url,
+            ...(req.draft ? { draft: req.draft, draftSeq: 1 } : {}),
+          },
+        ];
       });
     };
     const onClosed = (ev: Event) => {
@@ -130,6 +149,50 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
 function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX.Element {
   const ref = useRef<WebviewElement | null>(null);
   const [nav, setNav] = useState({ url: spec.url, canBack: false, canFwd: false, loading: true });
+  // 「一键存草稿」注入状态:idle → running(进度文案) → done/fail(结果)。
+  const [draftState, setDraftState] = useState<{ phase: 'idle' | 'running' | 'done' | 'fail'; text: string }>({
+    phase: 'idle',
+    text: '',
+  });
+  const ranSeqRef = useRef(0);
+
+  useEffect(() => {
+    const seq = spec.draftSeq ?? 0;
+    if (!spec.draft || seq === 0 || seq === ranSeqRef.current) return;
+    ranSeqRef.current = seq;
+    const draft = spec.draft;
+    let cancelled = false;
+    void (async () => {
+      const el = ref.current as unknown as DraftWebview | null;
+      if (!el) return;
+      setDraftState({ phase: 'running', text: '等页面加载…' });
+      // 等 webview 加载完。注意:加载中 executeJavaScript 可能挂起不返回,
+      // 必须超时竞速推进,30s 上限后强行进入注入(引擎内部每步也有兜底)。
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        try {
+          const state = (await Promise.race([
+            el.executeJavaScript('document.readyState'),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+          ])) as string;
+          if (state === 'complete' || state === 'interactive') break;
+        } catch {
+          /* webview 尚未就绪/挂起 */
+        }
+        await new Promise((r) => setTimeout(r, 800));
+        if (cancelled) return;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+      if (cancelled) return;
+      const result = await runDraftInjection(el, draft, (msg) => {
+        if (!cancelled) setDraftState({ phase: 'running', text: msg });
+      });
+      if (!cancelled) setDraftState({ phase: result.ok ? 'done' : 'fail', text: result.detail });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [spec.draft, spec.draftSeq]);
 
   useEffect(() => {
     const el = ref.current;
@@ -195,6 +258,19 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
           <Icon name="external-link" size={13} />
         </button>
       </div>
+      {draftState.phase !== 'idle' ? (
+        <div
+          className={`${c('draftBar')}${draftState.phase === 'done' ? ` ${c('draftBarOk')}` : ''}${draftState.phase === 'fail' ? ` ${c('draftBarFail')}` : ''}`}
+        >
+          {draftState.phase === 'running' ? <Icon name="spinner" size={13} /> : null}
+          <span>{draftState.phase === 'running' ? `自动填稿:${draftState.text}` : draftState.text}</span>
+          {draftState.phase !== 'running' ? (
+            <button type="button" className={c('draftBarClose')} onClick={() => setDraftState({ phase: 'idle', text: '' })}>
+              <Icon name="close" size={11} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <webview
         ref={(el) => {
           ref.current = el as unknown as WebviewElement | null;

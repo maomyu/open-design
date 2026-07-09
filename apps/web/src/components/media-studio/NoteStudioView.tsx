@@ -22,6 +22,7 @@ import {
   deleteStudioTopic,
   fetchStudioArticle,
   fetchStudioArticles,
+  fetchStudioAssetPaths,
   fetchStudioPublishes,
   fetchStudioTopics,
   generateArticleImage,
@@ -861,6 +862,23 @@ export function NoteStudioView(): JSX.Element {
                   defaultTarget="xiaohongshu"
                   hasAssets={noteImages.length > 0}
                   accountsOf={(pid) => platformAccounts[pid] ?? []}
+                  buildDraft={async () => {
+                    // 图集 URL(有序)→本机绝对路径:CDP 注入 file input 用。
+                    const assets = await fetchStudioAssetPaths(PLATFORM, article.id);
+                    const byUrl = new Map(assets.map((a) => [a.url, a.absPath]));
+                    const filePaths = noteImages
+                      .map((u) => byUrl.get(u))
+                      .filter((p): p is string => Boolean(p));
+                    if (filePaths.length === 0) return null;
+                    return {
+                      platform: 'xiaohongshu',
+                      title: article.title,
+                      body: article.bodyMd.trim(),
+                      tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
+                      filePaths,
+                      kind: 'images',
+                    };
+                  }}
                   copyText={() => {
                     const tagLine = tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean).map((t) => `#${t}`).join(' ');
                     return `${article.title}\n\n${article.bodyMd.trim()}${tagLine ? `\n\n${tagLine}` : ''}`;

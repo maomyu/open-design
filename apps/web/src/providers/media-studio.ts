@@ -713,13 +713,15 @@ export async function openStudioBrowser(body: {
   platform: string;
   account: string;
   url?: string;
+  /** 「一键存草稿」:面板打开后自动填稿(仅桌面端应用内面板路径生效)。 */
+  draft?: import('../runtime/browser-draft').DraftPayload;
 }): Promise<{ ok?: boolean; error?: string }> {
   const platform = normalizeBrowserPlatform(body.platform);
   const account = body.account.trim() || 'main';
   if (isOpenDesignHostBrowserAvailable()) {
     const url = body.url ?? (await resolvePlatformBrowserUrl(platform));
     if (url != null) {
-      openBrowserPane({ platform, account, url });
+      openBrowserPane({ platform, account, url, ...(body.draft ? { draft: body.draft } : {}) });
       return { ok: true };
     }
   }
@@ -772,6 +774,23 @@ export async function openStudioBrowserWindow(body: {
     return data;
   } catch {
     return { error: '连不上本地服务（daemon）' };
+  }
+}
+
+/** 图片资产的本机绝对路径(「一键存草稿」CDP 注入用)。 */
+export async function fetchStudioAssetPaths(
+  platform: string,
+  articleId: string,
+): Promise<Array<{ name: string; absPath: string; url: string }>> {
+  try {
+    const resp = await fetch(
+      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/asset-paths`,
+    );
+    if (!resp.ok) return [];
+    const data = (await resp.json().catch(() => ({}))) as { files?: Array<{ name: string; absPath: string; url: string }> };
+    return data.files ?? [];
+  } catch {
+    return [];
   }
 }
 

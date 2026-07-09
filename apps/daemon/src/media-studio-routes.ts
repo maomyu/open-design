@@ -14,7 +14,7 @@
 //   GET/POST/PATCH/DELETE   /api/media-studio/:platform/topics[/:id]
 //   GET/POST/DELETE         /api/media-studio/:platform/snippets[/:id]
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import express from 'express';
 import type { Express } from 'express';
@@ -661,6 +661,23 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     await mkdir(dir, { recursive: true });
     revealInFinder(dir);
     res.json({ ok: true, dir });
+  });
+
+  // 「一键存草稿」:图片资产的本机绝对路径(桌面端 CDP 注入 file input 用)。
+  // 返回 name→absPath,web 侧按图集顺序(extra.noteImages 的 URL)映射组装。
+  app.get('/api/media-studio/:platform/articles/:id/asset-paths', async (req, res) => {
+    const article = getArticle(db, req.params.id);
+    if (!article) return bad(res, 404, 'article not found');
+    const dir = assetsDirFor(article.id);
+    const entries = await readdir(dir).catch(() => [] as string[]);
+    const files = entries
+      .filter((f) => /\.(png|jpe?g|webp)$/i.test(f))
+      .map((name) => ({
+        name,
+        absPath: path.join(dir, name),
+        url: `${STUDIO_ASSET_URL_PREFIX}${encodeURIComponent(article.id)}/${encodeURIComponent(name)}`,
+      }));
+    res.json({ dir, files });
   });
 
   // 安全发布（手动交接）后回来标记：记录 + 状态推进，让列表/复盘有据可查。

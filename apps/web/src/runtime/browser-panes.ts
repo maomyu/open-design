@@ -2,6 +2,7 @@
 // providers(openStudioBrowser 桌面路径)、WorkspaceTabsBar(关标签)与
 // BrowserPanesHost(常驻面板宿主)三方靠这里的事件与工具函数解耦。
 import { navigate } from '../router';
+import type { DraftPayload } from './browser-draft';
 
 export const OPEN_BROWSER_PANE_EVENT = 'od:browser-pane:open';
 export const BROWSER_TAB_CLOSED_EVENT = 'od:browser-pane:closed';
@@ -10,6 +11,8 @@ export interface BrowserPaneRequest {
   platform: string;
   account: string;
   url: string;
+  /** 「一键存草稿」:面板加载完成后自动执行的填稿载荷(一次性)。 */
+  draft?: DraftPayload;
 }
 
 /** 平台中文名（后台标签标题/工具条 chip 共用;客户定制中文直写）。 */

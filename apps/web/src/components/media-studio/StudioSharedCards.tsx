@@ -2,7 +2,9 @@
 // 两个创作台（公众号/短视频）都用；文案内联（客户定制，纯中文交付）。
 import { useEffect, useState } from 'react';
 import type { MediaArticle, MediaArticleSummary, MediaArticleVersion, MediaKnowledge } from '@open-design/contracts';
+import { isOpenDesignHostBrowserAvailable } from '@open-design/host';
 import { navigate } from '../../router';
+import { draftInjectionSupported, type DraftPayload } from '../../runtime/browser-draft';
 import { Icon } from '../Icon';
 import {
   createStudioKnowledge,
@@ -381,6 +383,7 @@ export function SafeHandoffCard({
   hasAssets,
   assetsLabel = '图集文件夹',
   accountsOf,
+  buildDraft,
   onMarked,
 }: {
   studioPlatform: string;
@@ -400,6 +403,9 @@ export function SafeHandoffCard({
    *  配置的账号名列表。有账号=下拉绑定(像公众号);没有=引导去添加,不再
    *  出现 'main' 这种内部兜底档案名。 */
   accountsOf: (platformId: string) => string[];
+  /** 「一键存草稿」的稿件载荷(2026-07-09 用户拍板:自动填进平台发布页,
+   *  免手动上传)。返回 null 表示稿件没准备好(如图集为空)。 */
+  buildDraft?: (targetId: string) => Promise<DraftPayload | null>;
   onMarked: () => void;
 }): JSX.Element {
   const [target, setTarget] = useState(defaultTarget ?? targets[0]?.id ?? '');
@@ -457,12 +463,46 @@ export function SafeHandoffCard({
         )}
       </div>
       <div className={c('row')}>
-        {/* 一键交接(2026-07-09 用户拍板):账号已绑定专属浏览器档案(登录态
-            常驻),把 ①复制 ②图集 ③开后台 压成一步——点完直接在右边标签里
-            粘贴+拖图、存草稿。三步按钮保留给想分步操作的场景。 */}
+        {/* 一键存草稿(2026-07-09 用户拍板):自动把稿件填进平台发布页并点
+            「存草稿」——上传/标题/正文全自动,绝不碰「发布」。文案先上剪贴板
+            兜底,注入失败随时手动接手。仅桌面端+支持的平台显示。 */}
+        {buildDraft && draftInjectionSupported(target) && isOpenDesignHostBrowserAvailable() ? (
+          <button
+            type="button"
+            className={`${c('btn')} ${c('btnPrimary')}`}
+            disabled={!hasAccount || !hasAssets}
+            title={
+              !hasAccount
+                ? `先去「账号」页添加${targetLabel}账号`
+                : !hasAssets
+                  ? '稿件素材还没就绪'
+                  : '自动上传素材、填好标题正文并存草稿——发布永远由你自己点'
+            }
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(copyText(target));
+              } catch {
+                /* 剪贴板兜底失败不阻断 */
+              }
+              const draft = await buildDraft(target);
+              if (!draft) {
+                setNote('稿件没准备好——检查图集/成片后再试');
+                return;
+              }
+              const result = await openStudioBrowser({ platform: target, account: effectiveAccount, draft });
+              if (result.error) setNote(result.error);
+              else {
+                setDone((d) => ({ ...d, browser: true }));
+                setNote(`已开始自动填稿——看「${targetLabel}」面板顶部的进度条;填完记得回来点 ④ 标记完成`);
+              }
+            }}
+          >
+            <Icon name="sparkles" size={13} /> 一键存草稿
+          </button>
+        ) : null}
         <button
           type="button"
-          className={`${c('btn')} ${c('btnPrimary')}`}
+          className={c('btn')}
           disabled={!hasAccount}
           title={hasAccount ? '' : `先去「账号」页添加${targetLabel}账号`}
           onClick={async () => {
