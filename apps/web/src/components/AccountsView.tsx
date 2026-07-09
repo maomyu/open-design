@@ -23,6 +23,7 @@ import {
   savePlatformAccount,
   deletePlatformAccountApi,
 } from '../providers/daemon';
+import { openStudioBrowser } from '../providers/media-studio';
 import './AccountsView.css';
 import './PluginEditView.css';
 
@@ -182,6 +183,22 @@ function PlatformCard({
                 <span className="plugin-edit-view__account-name">{a.name}</span>
                 <code className="plugin-edit-view__account-id">{a.id}</code>
                 <div className="plugin-edit-view__account-actions">
+                  {/* 内置浏览器常驻入口(2026-07-09 用户问"怎么打开"——原先只
+                      藏在三台的发布步骤里)。档案按 平台×账号 隔离,登录态长期
+                      保持;桌面端开内置窗口,网页端降级拉独立 Chrome 档案。
+                      中文直写不进 i18n,与创作台惯例一致(客户定制)。 */}
+                  <button
+                    type="button"
+                    className="plugin-edit-view__step-link"
+                    title="打开该账号的专属浏览器（档案隔离，登录一次长期保持，多号不串）"
+                    onClick={async () => {
+                      const r = await openStudioBrowser({ platform: platform.id, account: a.name });
+                      await onChanged(r.error ? `专属浏览器打开失败：${r.error}` : `已打开「${a.name}」专属浏览器`);
+                    }}
+                  >
+                    <Icon name="external-link" size={12} />
+                    <span>打开后台</span>
+                  </button>
                   <button
                     type="button"
                     className="plugin-edit-view__step-link"
