@@ -31,15 +31,28 @@ function isHttpUrl(raw: string): boolean {
   }
 }
 
+// 必须与 apps/web/src/runtime/browser-panes.ts 的 sanitizeProfileSegment
+// 逐字节一致:应用内标签(渲染层拼 partition)与独立窗(这里拼)要落同一分区。
+// 中文等非 ASCII 账号名清洗是「有损」的(全变 '-' 再剥掉=空),旧实现让所有
+// 中文账号都兜底到 'main' 共用一个登录态(2026-07-09 用户报"不同账号一直
+// 复用第一次登录的号")。有损时附加 FNV-1a 哈希,不同账号名绝不同段;
+// 纯 ASCII 名保持旧值,既有档案不失效。
 function sanitizeProfileSegment(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
-  const segment = raw
-    .trim()
-    .toLowerCase()
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > 200) return null;
+  const lowered = trimmed.toLowerCase();
+  const cleaned = lowered
     .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  if (segment.length === 0 || segment.length > 64) return null;
-  return segment;
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  if (/^[a-z0-9_-]+$/.test(lowered)) return cleaned || null;
+  let h = 0x811c9dc5;
+  for (const ch of trimmed) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${cleaned ? `${cleaned}-` : ""}u${h.toString(16)}`;
 }
 
 // Creator consoles fingerprint the UA; the default one carries

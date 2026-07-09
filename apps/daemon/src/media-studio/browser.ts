@@ -42,8 +42,20 @@ async function findChrome(): Promise<string> {
   throw new BrowserError('没找到 Chrome/Chromium/Edge——安装其中一个后专属浏览器才能用');
 }
 
+// 中文等非 ASCII 段清洗有损(「君文教育」「测试账号」旧实现都变 '____'),
+// 多个中文账号会共用同一个 Chrome 档案目录。有损时附加 FNV-1a 哈希,
+// 不同账号绝不同目录;纯 ASCII 段保持旧值,既有档案不失效。
 function sanitize(part: string): string {
-  return part.replace(/[^\w.-]/g, '_').slice(0, 60) || 'default';
+  const trimmed = part.trim();
+  const cleaned = trimmed.replace(/[^\w.-]/g, '_').slice(0, 40);
+  if (/^[\w.-]*$/.test(trimmed)) return cleaned || 'default';
+  let h = 0x811c9dc5;
+  for (const ch of trimmed) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  const base = cleaned.replace(/_+$/g, '').replace(/^_+/g, '');
+  return `${base ? `${base}_` : ''}u${h.toString(16)}`;
 }
 
 export function profileDirFor(root: string, platform: string, account: string): string {

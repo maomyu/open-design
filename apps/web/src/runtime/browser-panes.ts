@@ -26,15 +26,24 @@ export const BROWSER_PLATFORM_TITLES: Record<string, string> = {
  * 档案段清洗 —— 必须与 apps/desktop/src/main/embedded-browser.ts 的
  * sanitizeProfileSegment 完全一致:同一 平台×账号 在「独立窗」与「应用内
  * 标签」两条路径要落进同一个 persist 分区,登录态才互通。
+ * 中文等非 ASCII 账号名清洗有损(全变 '-' 再剥掉=空),旧实现让所有中文
+ * 账号兜底到 'main' 共用登录态;有损时附加 FNV-1a 哈希,不同账号绝不同段。
  */
 export function sanitizeProfileSegment(raw: string): string | null {
-  const segment = raw
-    .trim()
-    .toLowerCase()
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > 200) return null;
+  const lowered = trimmed.toLowerCase();
+  const cleaned = lowered
     .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  if (segment.length === 0 || segment.length > 64) return null;
-  return segment;
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  if (/^[a-z0-9_-]+$/.test(lowered)) return cleaned || null;
+  let h = 0x811c9dc5;
+  for (const ch of trimmed) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${cleaned ? `${cleaned}-` : ''}u${h.toString(16)}`;
 }
 
 /** webview partition —— 前缀与主进程 PARTITION_PREFIX 锚定。 */
