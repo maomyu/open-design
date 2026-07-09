@@ -36,6 +36,8 @@ export interface DraftWebview extends HTMLElement {
   executeJavaScript(code: string): Promise<unknown>;
   getWebContentsId(): number;
   getURL(): string;
+  /** 真实输入事件(坐标系=webview 视口)——能穿透 closed shadow DOM。 */
+  sendInputEvent(event: { type: string; x: number; y: number; button?: string; clickCount?: number }): void;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -146,12 +148,39 @@ async function setFiles(wv: DraftWebview, files: string[]): Promise<{ ok: boolea
   return result.ok ? { ok: true } : { ok: false, reason: result.reason };
 }
 
+/** 小红书的底部按钮是 <xhs-publish-btn> 自定义组件(closed shadow DOM,
+ *  文本匹配永远找不到):save-text=「暂存离开」在左、submit-text=「发布」
+ *  在右。用真实鼠标事件按坐标点左键位(组件宽度 40% 处,截图实测暂存键
+ *  覆盖 30%-48% 区间);守卫:计算点绝不越过组件中线——右半是「发布」。 */
+async function clickXhsSaveDraftByCoords(wv: DraftWebview): Promise<boolean> {
+  const rect = await wvEval<{ x: number; y: number; w: number; h: number } | null>(
+    wv,
+    `(() => {
+      const el = document.querySelector('xhs-publish-btn');
+      if (!el || el.getAttribute('is-save-draft') !== 'true') return null;
+      if (el.getAttribute('save-disabled') === 'true') return null;
+      el.scrollIntoView({ block: 'center' });
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    })()`,
+  );
+  if (!rect || rect.w < 100) return false;
+  const x = Math.round(rect.x + rect.w * 0.4);
+  const y = Math.round(rect.y + rect.h / 2);
+  if (x >= rect.x + rect.w * 0.5) return false; // 绝不越中线(右半=发布)
+  wv.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+  wv.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  return true;
+}
+
 /** 只点「存草稿」类按钮——白名单文案,绝不含「发布」。按钮可能在图片
- *  处理完/弹层收起后才可点,重试轮询最多 6 次。 */
+ *  处理完/弹层收起后才可点,重试轮询最多 6 次;文本匹配不中时走小红书
+ *  自定义组件的坐标点击路径。 */
 async function clickSaveDraft(wv: DraftWebview): Promise<boolean> {
   for (let i = 0; i < 6; i++) {
     const ok = await clickByText(wv, ['存草稿', '暂存离开', '保存草稿', '保存离开', '存为草稿']);
     if (ok) return true;
+    if (await clickXhsSaveDraftByCoords(wv)) return true;
     await sleep(1200);
   }
   return false;

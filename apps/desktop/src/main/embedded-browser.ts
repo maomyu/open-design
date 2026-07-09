@@ -187,15 +187,21 @@ export function registerWebviewFileInputBridge(): void {
     if (target.getType() !== "webview") return { ok: false, reason: "只允许注入应用内后台面板" };
     const dbg = target.debugger;
     const wasAttached = dbg.isAttached();
+    // CDP 命令在页面 busy 时可能长挂,超时竞速防止渲染层 invoke 永远 pending。
+    const send = async <T>(method: string, params?: Record<string, unknown>): Promise<T> =>
+      (await Promise.race([
+        dbg.sendCommand(method, params),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${method} 超时`)), 10_000)),
+      ])) as T;
     try {
       if (!wasAttached) dbg.attach("1.3");
-      const doc = (await dbg.sendCommand("DOM.getDocument")) as { root: { nodeId: number } };
-      const found = (await dbg.sendCommand("DOM.querySelector", {
+      const doc = await send<{ root: { nodeId: number } }>("DOM.getDocument");
+      const found = await send<{ nodeId: number }>("DOM.querySelector", {
         nodeId: doc.root.nodeId,
         selector,
-      })) as { nodeId: number };
+      });
       if (!found.nodeId) return { ok: false, reason: `页面里没找到文件选择框（${selector}）` };
-      await dbg.sendCommand("DOM.setFileInputFiles", { files, nodeId: found.nodeId });
+      await send("DOM.setFileInputFiles", { files, nodeId: found.nodeId });
       return { ok: true };
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : String(err) };

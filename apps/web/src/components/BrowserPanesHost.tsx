@@ -159,10 +159,17 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
   useEffect(() => {
     const seq = spec.draftSeq ?? 0;
     if (!spec.draft || seq === 0 || seq === ranSeqRef.current) return;
-    ranSeqRef.current = seq;
     const draft = spec.draft;
     let cancelled = false;
-    void (async () => {
+    // 延迟 400ms 才真正启动:React StrictMode(dev)会挂载→清理→重挂,
+    // 假挂载的定时器被 cleanup 清掉,注入只在真挂载跑一次(否则图片
+    // 会被传两遍)。
+    const startTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      ranSeqRef.current = seq;
+      void run();
+    }, 400);
+    async function run() {
       const el = ref.current as unknown as DraftWebview | null;
       if (!el) return;
       setDraftState({ phase: 'running', text: '等页面加载…' });
@@ -188,9 +195,17 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
         if (!cancelled) setDraftState({ phase: 'running', text: msg });
       });
       if (!cancelled) setDraftState({ phase: result.ok ? 'done' : 'fail', text: result.detail });
-    })();
+    }
     return () => {
       cancelled = true;
+      window.clearTimeout(startTimer);
+      // 已经在跑的注入被打断(热更/关面板)时绝不能让进度条永远转圈——
+      // 置为可操作的终态,重点一次「一键存草稿」即可。
+      setDraftState((s) =>
+        s.phase === 'running'
+          ? { phase: 'fail', text: '自动填稿被打断——回发布步再点一次「一键存草稿」即可' }
+          : s,
+      );
     };
   }, [spec.draft, spec.draftSeq]);
 
