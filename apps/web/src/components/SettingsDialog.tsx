@@ -5123,6 +5123,24 @@ function MediaProvidersSection({
       setReloadRunning(false);
     }
   };
+  // 打开媒体生成区时静默对齐 daemon 真实状态:key 在别处被清掉后,本地
+  // 缓存的「已保存」徽标会继续撑门面,误导用户以为 key 还在(2026-07-09
+  // 用户因此没重贴被误删的火山 key)。失败静默——手动「重新读取」仍在。
+  useEffect(() => {
+    if (!onReloadMediaProviders) return;
+    let cancelled = false;
+    void onReloadMediaProviders().then((next) => {
+      if (cancelled || !next) return;
+      setCfg((curr) => mergeDaemonMediaProviders(curr, next, {
+        preserveLocalProviderIds: pendingLocalProviderIds,
+      }));
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // mount-only:打开该分区时对齐一次,不追踪后续依赖变化。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Successful reload acknowledgement lives on the button (✓ Reloaded)
   // for ~2s then disappears. Keeping it as a permanent paragraph under
   // the section header was noise — the user just clicked a button and
