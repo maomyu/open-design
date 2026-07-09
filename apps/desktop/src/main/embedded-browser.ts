@@ -146,3 +146,36 @@ export function registerEmbeddedBrowserBridge(): void {
     openEmbeddedBrowserProfile(request),
   );
 }
+
+/**
+ * 应用内后台标签页（2026-07-09 用户拍板:后台在主窗口内打开,不再弹独立窗）
+ * 的 <webview> 安全闸。渲染层 BrowserPanesHost 用 <webview partition=
+ * "persist:od-browser-<platform>-<account>"> 内嵌第三方创作者后台,与独立窗
+ * 共享同一分区 —— 登录态互通。这里锁死三件事:
+ *  1. 只允许 od-browser 分区的 webview 附加(其余一律拒绝);
+ *  2. 附加参数强制无 preload / 无 node / 沙箱(第三方页面完全不可信);
+ *  3. 会话 UA 去掉 Electron/应用名标记(与独立窗同一套反指纹策略),
+ *     登录弹窗(扫码/OAuth)允许但仅限 http(s),继承同一会话。
+ */
+export function hardenWebviewEmbeddedBrowser(window: BrowserWindow): void {
+  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    const partition = typeof params.partition === "string" ? params.partition : "";
+    if (!partition.startsWith(PARTITION_PREFIX)) {
+      event.preventDefault();
+      return;
+    }
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+  });
+  window.webContents.on("did-attach-webview", (_event, contents) => {
+    // will-attach 已保证走到这里的只有 od-browser 分区。
+    contents.session.setUserAgent(cleanUserAgent());
+    contents.setWindowOpenHandler(({ url: childUrl }) => {
+      if (!isHttpUrl(childUrl)) return { action: "deny" };
+      // 子窗不指定 partition 时继承 opener 会话——登录弹窗落同一档案。
+      return { action: "allow" };
+    });
+  });
+}

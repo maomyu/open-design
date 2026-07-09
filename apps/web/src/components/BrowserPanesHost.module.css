@@ -1,0 +1,104 @@
+/* 应用内后台标签页宿主 —— keep-alive 显隐一律用 visibility(不能
+   display:none,Electron <webview> 会分离 guest 白屏)。 */
+.host {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  visibility: hidden;
+  pointer-events: none;
+}
+.hostActive {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: hidden;
+  pointer-events: none;
+  background: var(--bg, #faf9f7);
+}
+.paneActive {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #e1e5eb);
+  background: var(--panel, #fff);
+  flex-shrink: 0;
+}
+
+.profileChip {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-strong, #b45a3b);
+  background: var(--accent-tint, #fbeee5);
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.navBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 8px;
+  background: var(--panel, #fff);
+  color: var(--text-strong, #0d0c0a);
+  cursor: pointer;
+  transition: background 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.navBtn:hover:not(:disabled) { background: var(--border-soft, #edf0f4); }
+.navBtn:disabled { opacity: 0.4; cursor: default; }
+
+.urlBox {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-soft, #989590);
+  background: var(--border-soft, #edf0f4);
+  border-radius: 8px;
+  padding: 5px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.webview {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  /* Electron <webview> 默认 display:inline;flex 子项要显式撑满。 */
+  display: flex;
+  width: 100%;
+}
+
+.fallback {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-soft, #989590);
+  font-size: 13.5px;
+}
+.fallbackBtn {
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 10px;
+  background: var(--panel, #fff);
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.fallbackBtn:hover { background: var(--border-soft, #edf0f4); }

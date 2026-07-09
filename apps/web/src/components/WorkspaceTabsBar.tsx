@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { navigate, type EntryHomeView, type Route } from '../router';
+import { BROWSER_PLATFORM_TITLES, notifyBrowserTabClosed } from '../runtime/browser-panes';
 import type { Project } from '../types';
 import { Icon, type IconName } from './Icon';
 
@@ -19,6 +20,14 @@ type WorkspaceChromeTab =
       projectId: string;
       conversationId: string | null;
       fileName: string | null;
+      createdAt: number;
+      lastActiveAt: number;
+    }
+  | {
+      id: string;
+      kind: 'browser';
+      platform: string;
+      account: string;
       createdAt: number;
       lastActiveAt: number;
     }
@@ -96,6 +105,16 @@ function tabFromRoute(route: Route, timestamp = Date.now()): WorkspaceChromeTab 
       lastActiveAt: timestamp,
     };
   }
+  if (route.kind === 'browser') {
+    return {
+      id: `browser:${route.platform}:${route.account}:${nowId()}`,
+      kind: 'browser',
+      platform: route.platform,
+      account: route.account,
+      createdAt: timestamp,
+      lastActiveAt: timestamp,
+    };
+  }
   return createEntryTab(route.kind === 'home' ? route.view : 'design-systems', timestamp);
 }
 
@@ -112,6 +131,9 @@ function routeForTab(tab: WorkspaceChromeTab): Route {
     return tab.pluginId
       ? { kind: 'marketplace-detail', pluginId: tab.pluginId }
       : { kind: 'marketplace' };
+  }
+  if (tab.kind === 'browser') {
+    return { kind: 'browser', platform: tab.platform, account: tab.account };
   }
   return { kind: 'home', view: tab.view };
 }
@@ -141,6 +163,22 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
       return { id, kind: 'entry', view, createdAt, lastActiveAt };
     }
   }
+  if (
+    record.kind === 'browser'
+    && typeof record.platform === 'string'
+    && record.platform
+    && typeof record.account === 'string'
+    && record.account
+  ) {
+    return {
+      id,
+      kind: 'browser',
+      platform: record.platform,
+      account: record.account,
+      createdAt,
+      lastActiveAt,
+    };
+  }
   if (record.kind === 'project' && typeof record.projectId === 'string') {
     return {
       id,
@@ -169,6 +207,7 @@ function uniqueIdForTab(tab: WorkspaceChromeTab): string {
   if (tab.kind === 'marketplace') {
     return `marketplace:${tab.pluginId ?? 'index'}:${nowId()}`;
   }
+  if (tab.kind === 'browser') return `browser:${tab.platform}:${tab.account}:${nowId()}`;
   return `entry:${tab.view}:${nowId()}`;
 }
 
@@ -246,6 +285,29 @@ function syncStateToRoute(state: WorkspaceTabsState, route: Route): WorkspaceTab
         activeTabId: nextTab.id,
       });
     }
+  }
+
+  // 1b. 后台标签(应用内浏览器):同一 平台×账号 只开一个——已有就聚焦;
+  // 没有则「追加」新标签(绝不替换当前标签——用户从创作台点「打开后台」,
+  // 创作台标签必须原地保留,后台像浏览器新标签一样长出来)。
+  if (route.kind === 'browser') {
+    const existingBrowserTab = current.tabs.find(
+      (tab) => tab.kind === 'browser' && tab.platform === route.platform && tab.account === route.account,
+    );
+    if (existingBrowserTab) {
+      return normalizeTabsState({
+        ...current,
+        tabs: current.tabs.map((tab) =>
+          tab.id === existingBrowserTab.id ? { ...tab, lastActiveAt: timestamp } : tab,
+        ),
+        activeTabId: existingBrowserTab.id,
+      });
+    }
+    const nextTab = tabFromRoute(route, timestamp);
+    return normalizeTabsState({
+      tabs: [...current.tabs, nextTab],
+      activeTabId: nextTab.id,
+    });
   }
 
   // 2. If we are navigating to a project, and that project tab already exists:
@@ -481,6 +543,9 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
     const normalized = normalizeTabsState(state);
     const closingIndex = normalized.tabs.findIndex((tab) => tab.id === tabId);
     if (closingIndex < 0) return;
+    const closing = normalized.tabs[closingIndex]!;
+    // 后台标签关闭 = 结束该面板的 keep-alive(销毁 webview,下次重新加载)。
+    if (closing.kind === 'browser') notifyBrowserTabClosed(closing.platform, closing.account);
     let nextRoute: Route | null = null;
     const nextTabs = normalized.tabs.filter((tab) => tab.id !== tabId);
     let nextState: WorkspaceTabsState;
@@ -716,6 +781,15 @@ function displayTabFor(
       title: tab.pluginId ? t('workspaceTabs.pluginDetails') : t('workspaceTabs.marketplace'),
       meta: t('entry.navPlugins'),
       icon: 'grid',
+      tab,
+    };
+  }
+  if (tab.kind === 'browser') {
+    return {
+      id: tab.id,
+      title: `${BROWSER_PLATFORM_TITLES[tab.platform] ?? tab.platform} · ${tab.account}`,
+      meta: '平台后台',
+      icon: 'link',
       tab,
     };
   }

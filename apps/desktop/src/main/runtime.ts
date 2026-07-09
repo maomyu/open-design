@@ -15,7 +15,7 @@ import {
 } from "@open-design/sidecar-proto";
 import type { OpenDesignHostActionResult, OpenDesignHostUpdaterActionOptions } from "@open-design/host";
 
-import { registerEmbeddedBrowserBridge } from "./embedded-browser.js";
+import { hardenWebviewEmbeddedBrowser, registerEmbeddedBrowserBridge } from "./embedded-browser.js";
 import { createElectronPdfTarget, exportPdfFromHtml, savePrintReadyDocumentAsPdf } from "./pdf-export.js";
 import type { PrintReadyPdfOptions } from "./pdf-export.js";
 import type { DesktopUpdater } from "./updater.js";
@@ -1226,9 +1226,13 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
       nodeIntegration: false,
       preload: preloadPath,
       sandbox: true,
+      // 应用内后台标签页(BrowserPanesHost)的 <webview> 宿主开关;附加安全
+      // 校验在 hardenWebviewEmbeddedBrowser(分区白名单/剥 preload/干净 UA)。
+      webviewTag: true,
     },
     width: 1280,
   });
+  hardenWebviewEmbeddedBrowser(window);
   installWindowChromeCssHook(window);
   showWindowButtons(window);
   attachDownloadSaveAsDialog(window);

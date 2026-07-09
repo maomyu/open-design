@@ -26,6 +26,7 @@ import type {
   UpdateMediaTopicRequest,
 } from '@open-design/contracts';
 import { isOpenDesignHostBrowserAvailable, openHostBrowserProfile } from '@open-design/host';
+import { BROWSER_PLATFORM_TITLES, openBrowserPane } from '../runtime/browser-panes';
 
 const ROOT = '/api/media-studio';
 
@@ -688,16 +689,7 @@ export async function publishStudioNote(
 
 // ---- 内置多 Profile 浏览器（风控安全发布） ----
 
-const PLATFORM_BROWSER_TITLES: Record<string, string> = {
-  xiaohongshu: '小红书',
-  douyin: '抖音',
-  kuaishou: '快手',
-  bilibili: 'B站',
-  tencent: '视频号',
-  'wechat-mp': '公众号',
-};
-
-async function resolvePlatformBrowserUrl(platform: string): Promise<string | null> {
+export async function resolvePlatformBrowserUrl(platform: string): Promise<string | null> {
   try {
     const resp = await fetch(`${ROOT}/browser/urls`);
     if (!resp.ok) return null;
@@ -712,18 +704,52 @@ async function resolvePlatformBrowserUrl(platform: string): Promise<string | nul
   }
 }
 
+/**
+ * 打开平台后台。桌面端 = 应用内后台标签页(2026-07-09 用户拍板:与创作台
+ * 并列切换,keep-alive 不重载);网页端落回 daemon 拉起的独立 Chrome 档案。
+ * 两条路径共用同一 persist 分区档案,登录态互通。
+ */
 export async function openStudioBrowser(body: {
   platform: string;
   account: string;
   url?: string;
 }): Promise<{ ok?: boolean; error?: string }> {
   const account = body.account.trim() || 'main';
-  // 桌面端优先：应用内置浏览器窗口（session partition 按 平台×账号 持久
-  // 隔离登录态）。不可用或失败时静默落回 daemon 拉起外部 Chrome 档案。
   if (isOpenDesignHostBrowserAvailable()) {
     const url = body.url ?? (await resolvePlatformBrowserUrl(body.platform));
     if (url != null) {
-      const platformLabel = PLATFORM_BROWSER_TITLES[body.platform] ?? body.platform;
+      openBrowserPane({ platform: body.platform, account, url });
+      return { ok: true };
+    }
+  }
+  try {
+    const resp = await fetch(`${ROOT}/browser/open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, account }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!resp.ok) return { error: data.error ?? `打开浏览器失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
+/**
+ * 弹出「独立窗口」形态的后台(老路径):后台面板工具条的双屏按钮、以及
+ * 网页版降级卡片用。与应用内标签同档案,登录态互通。
+ */
+export async function openStudioBrowserWindow(body: {
+  platform: string;
+  account: string;
+  url?: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  const account = body.account.trim() || 'main';
+  if (isOpenDesignHostBrowserAvailable()) {
+    const url = body.url ?? (await resolvePlatformBrowserUrl(body.platform));
+    if (url != null) {
+      const platformLabel = BROWSER_PLATFORM_TITLES[body.platform] ?? body.platform;
       const opened = await openHostBrowserProfile({
         platform: body.platform,
         account,

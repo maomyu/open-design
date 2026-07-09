@@ -25,6 +25,7 @@ import { buildPetTaskCenter } from './components/pet/taskCenter';
 import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
+import { BrowserPanesHost } from './components/BrowserPanesHost';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -1381,7 +1382,11 @@ function AppInner() {
   // EntryView / ProjectView split so the discovery surface stays
   // independent of any active project.
   let appMain: ReactNode;
-  if (route.kind === 'marketplace') {
+  if (route.kind === 'browser') {
+    // 应用内后台标签页:内容由常驻的 BrowserPanesHost 覆盖渲染(keep-alive,
+    // 切走不卸载),这里只留空底。
+    appMain = null;
+  } else if (route.kind === 'marketplace') {
     appMain = <MarketplaceView />;
   } else if (route.kind === 'marketplace-detail') {
     // The old unstyled per-plugin detail page is retired. The product detail
@@ -1555,7 +1560,10 @@ function AppInner() {
           route={route}
           projects={projects}
         />
-        <div className="workspace-shell__body">{appMain}</div>
+        <div className="workspace-shell__body">
+          {appMain}
+          <BrowserPanesHost route={route} />
+        </div>
       </div>
       {clientType === 'desktop' ? null : (
         <PetOverlay
