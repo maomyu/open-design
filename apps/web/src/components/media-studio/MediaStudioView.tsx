@@ -1062,16 +1062,24 @@ export function MediaStudioView(): JSX.Element {
     };
     const saveCoverToLibrary = async () => {
       if (!article.coverSource) return;
-      const name = window.prompt('给这张封面起个名字（存入封面库，后续文章可复用）：', article.title.slice(0, 12));
-      if (!name || !name.trim()) return;
+      // 不用 window.prompt 问名字——Electron 渲染进程不支持 prompt(返回
+      // null),曾导致点击毫无反应(2026-07-09 用户报"存储失败")。默认名=
+      // 文章标题,列表里够辨认,存完即见。
+      const name = (article.title.trim() || '未命名封面').slice(0, 20);
+      if (snippets.some((s) => s.slot === 'cover' && s.contentMd === article.coverSource)) {
+        studioToast.info('这张封面已经在封面库里了');
+        return;
+      }
       const created = await createStudioSnippet(PLATFORM, {
         slot: 'cover',
-        name: name.trim(),
+        name,
         contentMd: article.coverSource,
       });
       if (created) {
         setSnippets((list) => [created, ...list]);
-        setImageNotice(`封面「${created.name}」已存入封面库`);
+        studioToast.ok(`封面「${created.name}」已存入封面库`);
+      } else {
+        studioToast.err('存入封面库失败——稍后重试');
       }
     };
     return (
@@ -1185,12 +1193,18 @@ export function MediaStudioView(): JSX.Element {
             </div>
           ) : null}
         </div>
-        {coverSnippets.length > 0 ? (
-          <div className={c('card')}>
-            <div className={c('cardLabel')}>
-              封面库（{coverSnippets.length}）
-              <span className={c('cardHint')}>沉淀下来的好封面，点「用这张」直接设为当前封面</span>
+        {/* 封面库常驻显示(2026-07-09 用户报"没有入口"):空态给引导而不是
+            整卡隐身,用户才知道有这个能力。 */}
+        <div className={c('card')}>
+          <div className={c('cardLabel')}>
+            封面库（{coverSnippets.length}）
+            <span className={c('cardHint')}>沉淀下来的好封面，点「用这张」直接设为当前封面</span>
+          </div>
+          {coverSnippets.length === 0 ? (
+            <div className={c('cardHint')}>
+              还没有存过封面——生成/上传出满意的封面后，点上面的「存入封面库」沉淀下来，后续文章一键复用。
             </div>
+          ) : (
             <div className={c('coverGrid')}>
               {coverSnippets.map((s) => (
                 <div key={s.id} className={c('coverCard')}>
@@ -1222,8 +1236,8 @@ export function MediaStudioView(): JSX.Element {
                 </div>
               ))}
             </div>
-          </div>
-        ) : null}
+          )}
+        </div>
         {imageNotice ? (
           <div className={`${c('notice')} ${imageNotice.includes('失败') || imageNotice.includes('缺少') ? c('noticeErr') : c('noticeOk')}`}>
             {imageNotice}
