@@ -15,7 +15,6 @@ import type {
 } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
-  checkSauLogin,
   createStudioAiTask,
   createStudioArticle,
   createStudioTopic,
@@ -27,8 +26,6 @@ import {
   fetchStudioTopics,
   generateArticleImage,
   lintStudioArticle,
-  publishStudioNote,
-  startSauLogin,
   updateStudioArticle,
   uploadStudioAsset,
   type StudioLintHit,
@@ -91,8 +88,6 @@ function timeLabel(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-type LoginState = 'unknown' | 'checking' | 'in' | 'out' | 'logging';
-
 export function NoteStudioView(): JSX.Element {
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
@@ -113,26 +108,14 @@ export function NoteStudioView(): JSX.Element {
   const [reviseNote, setReviseNote] = useState('');
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
-  const [publishing, setPublishing] = useState(false);
   const [lintHits, setLintHits] = useState<StudioLintHit[]>([]);
-  const [scheduleAt, setScheduleAt] = useState('');
   const [galleryBusy, setGalleryBusy] = useState<string | null>(null);
   const [galleryPrompt, setGalleryPrompt] = useState('');
   const [galleryStyle, setGalleryStyle] = useState('illustrated');
   const [galleryModel, setGalleryModel] = useState(loadPreferredImageModel);
-  const [matrix, setMatrix] = useState<Record<string, { on: boolean; account: string; login: LoginState; detail: string }>>(
-    () => Object.fromEntries(NOTE_PLATFORMS.map((p) => [p.id, { on: false, account: '', login: 'unknown' as LoginState, detail: '' }])),
-  );
   // 账号中心是唯一账号来源:各平台的账号名列表(没配的平台=空数组)。
+  // 供安全发布卡(带稿开后台)的账号下拉/引导用。
   const platformAccounts = usePlatformAccountNames();
-  useEffect(() => {
-    // 账号列表就绪后,把矩阵里还没选账号的行默认到该平台第一个账号。
-    setMatrix((m) =>
-      Object.fromEntries(
-        Object.entries(m).map(([pid, e]) => [pid, e.account ? e : { ...e, account: platformAccounts[pid]?.[0] ?? '' }]),
-      ),
-    );
-  }, [platformAccounts]);
 
   const articleRef = useRef<MediaArticle | null>(null);
   articleRef.current = article;
@@ -435,74 +418,8 @@ export function NoteStudioView(): JSX.Element {
   }
 
   // ---- 发布 ----
-  async function handleCheckLogin(platformId: string) {
-    const entry = matrix[platformId];
-    if (!entry) return;
-    setMatrix((m) => ({ ...m, [platformId]: { ...m[platformId]!, login: 'checking', detail: '' } }));
-    const result = await checkSauLogin(PLATFORM, { platform: platformId, account: entry.account });
-    setMatrix((m) => ({
-      ...m,
-      [platformId]: {
-        ...m[platformId]!,
-        login: result.error ? 'unknown' : result.loggedIn ? 'in' : 'out',
-        detail: result.error ?? (result.loggedIn ? '' : '未登录——点「扫码登录」'),
-      },
-    }));
-  }
-
-  async function handleLogin(platformId: string) {
-    const entry = matrix[platformId];
-    if (!entry) return;
-    setMatrix((m) => ({ ...m, [platformId]: { ...m[platformId]!, login: 'logging', detail: '已弹出浏览器窗口，扫码后自动继续…' } }));
-    const result = await startSauLogin(PLATFORM, { platform: platformId, account: entry.account });
-    setMatrix((m) => ({
-      ...m,
-      [platformId]: {
-        ...m[platformId]!,
-        login: result.error ? 'unknown' : result.ok ? 'in' : 'out',
-        detail: result.error ?? (result.ok ? '登录成功' : `未完成：${(result.detail ?? '').slice(0, 80)}`),
-      },
-    }));
-  }
-
-  async function handlePublish() {
-    if (!article || publishing) return;
-    // 账号来自账号中心绑定;没绑账号的行不进目标(UI 层已引导去添加)。
-    const targets = NOTE_PLATFORMS.filter((p) => matrix[p.id]?.on && matrix[p.id]!.account.trim()).map((p) => ({
-      platform: p.id,
-      account: matrix[p.id]!.account.trim(),
-    }));
-    if (targets.length === 0) {
-      setNotice({ ok: false, text: '先勾选至少一个发布平台（并确认已绑定账号）' });
-      return;
-    }
-    if (noteImages.length === 0) {
-      setNotice({ ok: false, text: '图集为空——去「图集」生成或上传至少 1 张图' });
-      setTab('gallery');
-      return;
-    }
-    const summary = targets.map((t) => `${NOTE_PLATFORMS.find((p) => p.id === t.platform)?.label}（账号 ${t.account}）`).join('、');
-    const schedule = scheduleAt ? scheduleAt.replace('T', ' ') : '';
-    if (!window.confirm(`确认把笔记「${article.title || '(未命名)'}」（${noteImages.length} 张图）发布到：${summary}？${schedule ? `\n定时：${schedule}` : ''}\n\n这是真实对外发布。`)) return;
-    setPublishing(true);
-    setNotice(null);
-    await flushSave();
-    const result = await publishStudioNote(PLATFORM, article.id, {
-      targets,
-      ...(schedule ? { schedule } : {}),
-    });
-    setPublishing(false);
-    if (result.error) {
-      setNotice({ ok: false, text: result.error });
-    } else {
-      const ok = (result.records ?? []).filter((r) => r.status === 'ok').length;
-      const failed = (result.records ?? []).length - ok;
-      setNotice({ ok: failed === 0, text: `发布完成：成功 ${ok} 个${failed ? `，失败 ${failed} 个（详情见发布记录）` : ''}` });
-      if (result.article) setArticle(result.article);
-      await refreshArticles();
-    }
-    if (article) setPublishes(await fetchStudioPublishes(PLATFORM, article.id));
-  }
+  // 自动发布(sau 直传)已下线(2026-07-09 用户拍板):小红书/抖音只走
+  // 「带稿开后台 → 人工存草稿」。daemon 端点与 od CLI 保留可恢复。
 
   // ---- 步骤完成态 ----
   const stepDone: Record<NoteTab, boolean> = {
@@ -927,108 +844,15 @@ export function NoteStudioView(): JSX.Element {
                     void refreshArticles();
                   }}
                 />
-                <div className={c('card')}>
-                  <div className={c('cardLabel')}>
-                    自动发布（sau 直传）
-                    <span className={c('cardHint')}>⚠️ 小红书对自动化风控严格，容易限流——建议小红书走上面的安全发布，抖音/快手可自动</span>
-                  </div>
-                  {NOTE_PLATFORMS.map((p) => {
-                    const entry = matrix[p.id]!;
-                    const names = platformAccounts[p.id] ?? [];
-                    if (names.length === 0) {
-                      // 没配账号的平台:引导去账号页,不给内部兜底档案名。
-                      return (
-                        <div key={p.id} className={c('row')}>
-                          <strong style={{ minWidth: 96 }}>{p.label}</strong>
-                          <span className={c('cardHint')}>还没有账号</span>
-                          <button type="button" className={c('btn')} onClick={() => navigate({ kind: 'home', view: 'accounts' })}>
-                            去「账号」页添加
-                          </button>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={p.id} className={c('row')}>
-                        <label className={c('row')} style={{ minWidth: 96 }}>
-                          <input
-                            type="checkbox"
-                            checked={entry.on}
-                            onChange={(e) => setMatrix((m) => ({ ...m, [p.id]: { ...m[p.id]!, on: e.target.checked } }))}
-                          />
-                          <strong>{p.label}</strong>
-                        </label>
-                        <select
-                          className={c('select')}
-                          value={entry.account}
-                          title="发布用哪个账号——在「账号」页管理"
-                          onChange={(e) => setMatrix((m) => ({ ...m, [p.id]: { ...m[p.id]!, account: e.target.value } }))}
-                        >
-                          {names.map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          className={c('btn')}
-                          disabled={entry.login === 'checking' || entry.login === 'logging'}
-                          onClick={() => void handleCheckLogin(p.id)}
-                        >
-                          {entry.login === 'checking' ? '检查中…' : '检查登录'}
-                        </button>
-                        {entry.login === 'in' ? <span className={`${c('chip')} ${c('chipGreen')}`}>已登录</span> : null}
-                        {entry.login === 'out' ? (
-                          <>
-                            <span className={`${c('chip')} ${c('chipRed')}`}>未登录</span>
-                            <button type="button" className={c('btn')} onClick={() => void handleLogin(p.id)}>
-                              扫码登录
-                            </button>
-                          </>
-                        ) : null}
-                        {entry.login === 'logging' ? <span className={`${c('chip')} ${c('chipAmber')}`}>等扫码…</span> : null}
-                        {entry.detail ? <span className={c('cardHint')}>{entry.detail.slice(0, 60)}</span> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className={c('card')}>
-                  <div className={c('cardLabel')}>
-                    定时发布（可选）
-                    <span className={c('cardHint')}>空 = 立即发</span>
-                  </div>
-                  <div className={c('row')}>
-                    <input
-                      type="datetime-local"
-                      className={c('input')}
-                      style={{ width: 220 }}
-                      value={scheduleAt}
-                      onChange={(e) => setScheduleAt(e.target.value)}
-                    />
-                    {scheduleAt ? (
-                      <button type="button" className={c('btn')} onClick={() => setScheduleAt('')}>
-                        清除
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
+                {/* 自动发布(sau 直传)与定时发布已下线(2026-07-09 用户拍板):
+                    小红书/抖音只走「带稿开后台 → 人工存草稿」,零自动化指纹。
+                    daemon 端点与 od CLI 保留,要恢复把矩阵卡加回来即可。 */}
                 {lintHits.length > 0 ? (
                   <div className={`${c('notice')} ${c('noticeErr')}`}>
                     文案命中敏感词 {lintHits.length} 处（{lintHits.slice(0, 5).map((h) => h.word).join('、')}
                     {lintHits.length > 5 ? '…' : ''}）——防限流建议回「文案」改掉再发。
                   </div>
                 ) : null}
-                <div className={c('row')}>
-                  <button
-                    type="button"
-                    className={`${c('btn')} ${c('btnPrimary')}`}
-                    disabled={publishing}
-                    onClick={() => void handlePublish()}
-                  >
-                    {publishing ? (scheduleAt ? '排定时…' : '发布中…') : scheduleAt ? '定时发布到已选平台' : '发布到已选平台'}
-                  </button>
-                  <span className={c('saveHint')}>真实对外发布 · 点击后还有一次明细确认</span>
-                </div>
                 {article.status === 'published' ? (
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>

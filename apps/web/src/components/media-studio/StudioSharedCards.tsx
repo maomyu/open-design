@@ -379,6 +379,7 @@ export function SafeHandoffCard({
   copyText,
   copyParts,
   hasAssets,
+  assetsLabel = '图集文件夹',
   accountsOf,
   onMarked,
 }: {
@@ -393,6 +394,8 @@ export function SafeHandoffCard({
   copyParts?: (targetId: string) => Array<{ label: string; text: string }>;
   /** 有没有可打开的图集/资产目录。 */
   hasAssets: boolean;
+  /** 资产按钮文案（默认「图集文件夹」;短视频台传「成片文件夹」）。 */
+  assetsLabel?: string;
   /** 账号中心是唯一账号来源(2026-07-09 用户拍板):返回目标平台在「账号」页
    *  配置的账号名列表。有账号=下拉绑定(像公众号);没有=引导去添加,不再
    *  出现 'main' 这种内部兜底档案名。 */
@@ -527,15 +530,15 @@ export function SafeHandoffCard({
           type="button"
           className={c('btn')}
           disabled={!hasAssets}
-          title={hasAssets ? '' : '还没有图片/资产'}
+          title={hasAssets ? '' : '还没有可打开的文件'}
           onClick={async () => {
             if (await revealStudioAssets(studioPlatform, articleId)) {
               setDone((d) => ({ ...d, assets: true }));
-              setNote('图集文件夹已打开——直接拖进浏览器发布页');
+              setNote(`${assetsLabel}已打开——直接拖进浏览器发布页`);
             }
           }}
         >
-          {done.assets ? '✓ ' : '② '}打开图集文件夹
+          {done.assets ? '✓ ' : '② '}打开{assetsLabel}
         </button>
         <button
           type="button"
