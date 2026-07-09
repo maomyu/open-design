@@ -518,6 +518,11 @@ export function ShortVideoStudioView(): JSX.Element {
           {tab === 'topics' ? (
             <TopicsTab
               platform={PLATFORM}
+              tikhubTargets={[
+                { id: 'douyin', label: '抖音' },
+                { id: 'xiaohongshu', label: '小红书' },
+                { id: 'kuaishou', label: '快手' },
+              ]}
               topics={topics}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);

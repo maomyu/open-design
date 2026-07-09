@@ -2256,6 +2256,7 @@ async function runStudio(args) {
       'daemon-url', 'platform', 'title', 'topic', 'digest', 'skin', 'cover',
       'account', 'header-file', 'body-file', 'footer-file', 'file', 'url', 'source', 'angle', 'heat',
       'keyword', 'feed', 'days', 'desc', 'marker', 'style', 'ratio', 'tags', 'video', 'targets', 'voice',
+      'target', 'mode',
     ],
     boolean: ['json', 'help', 'h', 'as-cover'],
   });
@@ -2263,6 +2264,7 @@ async function runStudio(args) {
     '--daemon-url', '--platform', '--title', '--topic', '--digest', '--skin', '--cover',
     '--account', '--header-file', '--body-file', '--footer-file', '--file', '--url', '--source', '--angle', '--heat',
     '--keyword', '--feed', '--days', '--desc', '--marker', '--style', '--ratio', '--tags', '--video', '--targets', '--voice',
+    '--target', '--mode',
   ]);
   const bare = [];
   for (let i = 0; i < args.length; i++) {
@@ -2282,6 +2284,7 @@ async function runStudio(args) {
   od studio publish <id> --account <accountId>            # 发到公众号草稿箱
   od studio topics [--json] · od studio topic-add --title "<选题>" [--url u] [--source s]
   od studio find --keyword "<方向>" [--feed radar|hot|search|kwdb|sug|peers] [--accounts "号1,号2"] [--days 7] [--json]
+  od studio find --feed tikhub --target douyin|xiaohongshu|kuaishou [--mode hot|search] [--keyword "<词>"] [--json]
   od studio topic-verify --url "<文章链接>" [--json]        # 六维互动数据（转发=传播力）
   od studio topic-comments --url "<文章链接>" [--json]      # 评论区（读者疑问=切入角度）
   od studio account-rank [--type N] [--page N] [--json]     # 公众号榜单（挑对标）
@@ -2586,6 +2589,24 @@ async function runStudio(args) {
   if (sub === 'find') {
     const keyword = typeof flags.keyword === 'string' ? flags.keyword.trim() : '';
     const feed = typeof flags.feed === 'string' ? flags.feed : 'radar';
+    if (feed === 'tikhub') {
+      // TikHub 平台分流(短视频/图文选题):抖音↔抖音接口,小红书↔小红书,快手↔快手。
+      const target = typeof flags.target === 'string' ? flags.target : '';
+      const mode = flags.mode === 'search' ? 'search' : 'hot';
+      const resp = await fetch(`${base}/topics/tikhub-feed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target, mode, ...(keyword ? { keyword } : {}) }),
+      });
+      if (!resp.ok) return fail(resp, `find(tikhub:${target})`);
+      const data = await resp.json();
+      if (flags.json) return out(data);
+      for (const it of data?.items ?? []) {
+        console.log(`🔥 ${it.title}${it.account ? `  —— ${it.account}` : ''}${it.hot ? `  [${it.hot}]` : ''}\n   ${it.url}`);
+      }
+      console.log(`共 ${data?.items?.length ?? 0} 条（tikhub:${target}:${mode}）`);
+      return;
+    }
     const endpoint =
       feed === 'hot' ? 'hot-search'
       : feed === 'search' ? 'web-search'

@@ -26,6 +26,8 @@ import type {
   MediaRenderRequest,
   StudioAiTaskRequest,
   TopicFeedSearchRequest,
+  TikhubFeedRequest,
+  TikhubFeedResponse,
   UpdateMediaArticleRequest,
   UpdateMediaTopicRequest,
 } from '@open-design/contracts';
@@ -45,6 +47,7 @@ import {
   dajialaSugWords,
   dajialaWebSearch,
 } from './media-studio/dajiala.js';
+import { TikhubError, tikhubTopicFeed } from './media-studio/tikhub.js';
 import { generateGeminiImageFallback, generateQwenImage, QwenImageError } from './media-studio/qwen-image.js';
 import { generateVolcImage, VolcImageError } from './media-studio/volc-image.js';
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
@@ -381,6 +384,26 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       sources: ['peer'],
     };
   }));
+
+  // ---- TikHub 选题源(2026-07-09 用户拍板:短视频选题弃大家来,按目标
+  // 平台分流——抖音选题走抖音接口、小红书走小红书、快手走快手)。 ----
+  app.post('/api/media-studio/:platform/topics/tikhub-feed', async (req, res) => {
+    try {
+      const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT);
+      const apiKey = (keys.TIKHUB_API_KEY ?? '').trim();
+      if (!apiKey) return bad(res, 422, missingKeyError('TIKHUB_API_KEY'));
+      const body = (req.body ?? {}) as TikhubFeedRequest;
+      const target = body.target;
+      if (target !== 'douyin' && target !== 'xiaohongshu' && target !== 'kuaishou') {
+        return bad(res, 400, 'target must be douyin, xiaohongshu or kuaishou');
+      }
+      const mode = body.mode === 'search' ? 'search' : 'hot';
+      const items = await tikhubTopicFeed(apiKey, target, mode, body.keyword);
+      res.json({ items, target, mode } satisfies TikhubFeedResponse);
+    } catch (err) {
+      bad(res, err instanceof TikhubError ? 422 : 502, err instanceof Error ? err.message : String(err));
+    }
+  });
 
   // 选题深挖三件套：六维互动验证 / 评论区 / 类目榜（均为大家来直调）。
   const withDajialaKey = (

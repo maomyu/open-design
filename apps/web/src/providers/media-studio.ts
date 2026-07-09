@@ -794,6 +794,25 @@ export async function fetchStudioAssetPaths(
   }
 }
 
+/** TikHub 平台分流选题(抖音↔抖音接口/小红书↔小红书/快手↔快手)。 */
+export async function fetchTikhubFeed(
+  platform: string,
+  body: import('@open-design/contracts').TikhubFeedRequest,
+): Promise<import('@open-design/contracts').TikhubFeedResponse | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/${encodeURIComponent(platform)}/topics/tikhub-feed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!resp.ok) return { error: String(data.error ?? `TikHub 选题失败 (${resp.status})`) };
+    return data as unknown as import('@open-design/contracts').TikhubFeedResponse;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
 export async function revealStudioAssets(platform: string, articleId: string): Promise<boolean> {
   try {
     const resp = await fetch(

@@ -295,6 +295,22 @@ export interface TopicFeedSearchResponse {
   words?: string[];
 }
 
+// ---- TikHub 选题源（短视频/图文,按目标平台分流:抖音↔抖音接口…） ----
+
+export interface TikhubFeedRequest {
+  /** 目标发布平台——选题数据从该平台自己的接口来。 */
+  target: 'douyin' | 'xiaohongshu' | 'kuaishou';
+  /** hot = 平台热榜;search = 平台内关键词搜索。 */
+  mode: 'hot' | 'search';
+  keyword?: string;
+}
+
+export interface TikhubFeedResponse {
+  items: MediaTopicHit[];
+  target: TikhubFeedRequest['target'];
+  mode: TikhubFeedRequest['mode'];
+}
+
 // ---- article images（千问生图直调） ----
 
 export interface GenerateArticleImageRequest {

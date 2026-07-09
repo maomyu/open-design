@@ -19,6 +19,7 @@ import { resolveProviderConfig } from '../media-config.js';
 const MEDIA_PROVIDER_KEY_MAP: Array<[providerId: string, envKey: string]> = [
   ['dashscope', 'QWEN_API_KEY'],
   ['dajiala', 'DAJIALA_API_KEY'],
+  ['tikhub', 'TIKHUB_API_KEY'],
   ['volcengine', 'ARK_API_KEY'],
   ['nanobanana', 'GEMINI_API_KEY'],
 ];

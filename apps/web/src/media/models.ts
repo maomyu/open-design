@@ -31,6 +31,7 @@ export type MediaProviderId =
   | 'openai'
   | 'dashscope'
   | 'dajiala'
+  | 'tikhub'
   | 'volcengine'
   | 'grok'
   | 'hyperframes'
@@ -106,6 +107,14 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     integrated: true,
     defaultBaseUrl: 'https://www.dajiala.com',
     docsUrl: 'https://www.dajiala.com/main/interface',
+  },
+  {
+    id: 'tikhub',
+    label: 'TikHub',
+    hint: '短视频/图文选题数据 · 抖音/小红书/快手 热榜与搜索(按平台分流)',
+    integrated: true,
+    defaultBaseUrl: 'https://api.tikhub.io',
+    docsUrl: 'https://api.tikhub.io/',
   },
   {
     id: 'volcengine',

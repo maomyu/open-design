@@ -9,6 +9,7 @@ import {
   searchTopicFeed,
   type RankedAccountRow,
   type TopicFeedKind,
+  fetchTikhubFeed,
 } from '../../providers/media-studio';
 import { studioToast } from './StudioFeedback';
 import styles from './MediaStudio.module.css';
@@ -116,9 +117,13 @@ export interface TopicsTabProps {
   /** picked = 用户勾选的优先参考；单篇「AI 转题」= note 空 + picked 一篇。 */
   onAiFind: (note: string, picked?: PickedHit[]) => void;
   aiBusy: boolean;
+  /** TikHub 平台分流模式(短视频台,2026-07-09 用户拍板):选题数据按目标
+   *  平台走它自己的接口(抖音↔抖音、小红书↔小红书、快手↔快手),传了此
+   *  prop 数据源区渲染平台 chips+热榜/搜索,不再是大家来(公众号生态)五源。 */
+  tikhubTargets?: Array<{ id: 'douyin' | 'xiaohongshu' | 'kuaishou'; label: string }>;
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets }: TopicsTabProps): JSX.Element {
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
   const [source, setSource] = useState('');
@@ -192,6 +197,36 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   }
 
   const peerList = peers.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+
+  const TIKHUB_TARGET_KEY = 'open-design:studio:tikhub-target';
+  const [tikhubTarget, setTikhubTarget] = useState<'douyin' | 'xiaohongshu' | 'kuaishou'>(() => {
+    const saved = window.localStorage.getItem(TIKHUB_TARGET_KEY);
+    const valid = tikhubTargets?.some((t) => t.id === saved);
+    return (valid ? saved : tikhubTargets?.[0]?.id ?? 'douyin') as 'douyin' | 'xiaohongshu' | 'kuaishou';
+  });
+  const tikhubTargetLabel = tikhubTargets?.find((t) => t.id === tikhubTarget)?.label ?? tikhubTarget;
+
+  async function runTikhub(mode: 'hot' | 'search') {
+    const keyword = direction.trim();
+    if (mode === 'search' && !keyword) {
+      studioToast.info('关键词搜索先填个词');
+      return;
+    }
+    setFeedBusy(true);
+    setFeedNotice(null);
+    const r = await fetchTikhubFeed(platform, {
+      target: tikhubTarget,
+      mode,
+      ...(mode === 'search' && keyword ? { keyword } : {}),
+    });
+    setFeedBusy(false);
+    if ('error' in r) {
+      studioToast.err(r.error);
+      return;
+    }
+    setHits(r.items);
+    setFeedNotice(`${tikhubTargetLabel}${mode === 'hot' ? '热榜' : `「${keyword}」搜索`} 共 ${r.items.length} 条`);
+  }
 
   async function runCombo(keywordOverride?: string) {
     const keyword = (keywordOverride ?? direction).trim();
@@ -275,6 +310,26 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           找热点 · 组合选题雷达
           <span className={c('cardHint')}>{aiOnly ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出' : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}</span>
         </div>
+        {tikhubTargets ? (
+          <div className={c('row')}>
+            <span className={c('cardHint')}>选题平台（数据从该平台自己的接口来）：</span>
+            {tikhubTargets.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`${c('chip')}${t.id === tikhubTarget ? ` ${c('chipBlue')}` : ''}`}
+                style={{ cursor: 'pointer', border: 'none' }}
+                onClick={() => {
+                  setTikhubTarget(t.id);
+                  window.localStorage.setItem(TIKHUB_TARGET_KEY, t.id);
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {tikhubTargets ? null : (
         <div className={c('row')}>
           {FEED_SOURCES.map((s) => (
             <label key={s.id} className={`${c('row')} ${c('feedSrc')}`} style={{ gap: 4, cursor: 'pointer' }}>
@@ -286,7 +341,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             </label>
           ))}
         </div>
-        {enabledFeeds.has('peers') ? (
+        )}
+        {!tikhubTargets && enabledFeeds.has('peers') ? (
           <div className={c('row')}>
             <input
               className={`${c('input')} ${c('grow')}`}
@@ -315,17 +371,40 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             placeholder="方向/领域关键词，例：AI 编程、考研、育儿…"
             onChange={(e) => setDirection(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !feedBusy) void runCombo();
+              if (e.key === 'Enter' && !feedBusy) void (tikhubTargets ? runTikhub('search') : runCombo());
             }}
           />
-          <button
-            type="button"
-            className={`${c('btn')} ${c('btnPrimary')}`}
-            disabled={feedBusy || enabledFeeds.size === 0}
-            onClick={() => void runCombo()}
-          >
-            {feedBusy ? '组合扫描中…' : `开始找题（${enabledFeeds.size} 源）`}
-          </button>
+          {tikhubTargets ? (
+            <>
+              <button
+                type="button"
+                className={`${c('btn')} ${c('btnPrimary')}`}
+                disabled={feedBusy}
+                title={`拉取${tikhubTargetLabel}官方热榜——今天平台上最热的话题`}
+                onClick={() => void runTikhub('hot')}
+              >
+                {feedBusy ? '拉取中…' : `${tikhubTargetLabel}热榜`}
+              </button>
+              <button
+                type="button"
+                className={c('btn')}
+                disabled={feedBusy || !direction.trim()}
+                title={`用关键词在${tikhubTargetLabel}站内搜索爆款内容`}
+                onClick={() => void runTikhub('search')}
+              >
+                搜{tikhubTargetLabel}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className={`${c('btn')} ${c('btnPrimary')}`}
+              disabled={feedBusy || enabledFeeds.size === 0}
+              onClick={() => void runCombo()}
+            >
+              {feedBusy ? '组合扫描中…' : `开始找题（${enabledFeeds.size} 源）`}
+            </button>
+          )}
           <button
             type="button"
             className={c('btn')}
@@ -375,7 +454,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                 <th title="勾选=优先参考——AI 帮我选题时优先围绕勾选的文章深挖">选</th>
                 <th>信号</th>
                 <th>标题</th>
-                <th>公众号</th>
+                <th>{tikhubTargets ? '账号' : '公众号'}</th>
                 <th>数据</th>
                 <th />
               </tr>
