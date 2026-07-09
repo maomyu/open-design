@@ -238,6 +238,9 @@ export function MediaStudioView(): JSX.Element {
   aiTaskRef.current = aiTask;
   // 页面刷新/热更后仍在跑的后台任务：恢复感知（亮条+驱动轮询+可中止）。
   const { orphan, cancelOrphan } = useOrphanRun(aiTask === null);
+  // AI 按钮的 busy 门必须用它——aiTask 在任务结束后仍保留(面板可回看),
+  // 拿 aiTask !== null 当 busy 会让按钮跑过一次就永久禁用(2026-07-09
+  // 用户报「AI 帮我选题点不动」的根因)。
   const effectiveAiRunning = aiRunning || orphan != null;
   const saveTimerRef = useRef<number | null>(null);
   const pendingRef = useRef<{ id: string; patch: UpdateMediaArticleRequest } | null>(null);
@@ -722,7 +725,7 @@ export function MediaStudioView(): JSX.Element {
         }}
         onWrite={(topic) => void handleCreateArticle(topic)}
         onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
-        aiBusy={aiTask !== null}
+        aiBusy={effectiveAiRunning}
       />
     );
   }

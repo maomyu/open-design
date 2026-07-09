@@ -332,12 +332,14 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             disabled={aiBusy}
             onClick={() => onAiFind(direction.trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
             title={
-              pickedHits.size > 0
-                ? '优先围绕你勾选的文章深挖出题（抓原文、找差异化角度），其余热点做背景'
-                : '智能体结合热点数据把方向细化成 3-5 个可写的选题，自动进候选表'
+              aiBusy
+                ? '有 AI 任务正在运行——等它结束（或在底部面板中止）再发起'
+                : pickedHits.size > 0
+                  ? '优先围绕你勾选的文章深挖出题（抓原文、找差异化角度），其余热点做背景'
+                  : '智能体结合热点数据把方向细化成 3-5 个可写的选题，自动进候选表'
             }
           >
-            <Icon name="sparkles" size={14} /> AI 帮我选题{pickedHits.size > 0 ? `（${pickedHits.size} 篇优先）` : ''}
+            <Icon name="sparkles" size={14} /> {aiBusy ? 'AI 任务进行中…' : `AI 帮我选题${pickedHits.size > 0 ? `（${pickedHits.size} 篇优先）` : ''}`}
           </button>
           {pickedHits.size > 0 ? (
             <button type="button" className={c('btn')} title="清空勾选的优先参考" onClick={() => setPickedHits(new Map())}>

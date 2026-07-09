@@ -608,7 +608,7 @@ export function ShortVideoStudioView(): JSX.Element {
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
-              aiBusy={aiTask !== null}
+              aiBusy={effectiveAiRunning}
             />
           ) : null}
 
