@@ -94,7 +94,16 @@ function hitOf(title: string, url: string, extra: { account?: string; hot?: stri
 
 async function douyinHot(key: string): Promise<MediaTopicHit[]> {
   const data = await tikhubFetch(key, '/api/v1/douyin/app/v3/fetch_hot_search_list');
-  const rows = findObjectArray(data, ['word', 'sentence', 'title']);
+  // 真实响应(2026-07-09 实测):data.data.trending_list(5 条顶部看点,
+  // hot_value=0)排在 word_list(51 条主榜,真热度)之前——显式取主榜,
+  // 结构变化时再退回递归查找。
+  const nested = ((data as Record<string, unknown>).data as Record<string, unknown> | undefined)?.data as
+    | Record<string, unknown>
+    | undefined;
+  const wordList = Array.isArray(nested?.word_list)
+    ? (nested.word_list as Array<Record<string, unknown>>).filter((x) => typeof x === 'object' && x != null)
+    : [];
+  const rows = wordList.length > 0 ? wordList : findObjectArray(data, ['word', 'sentence', 'title']);
   return rows
     .map((r) => {
       const title = pick(r, ['word', 'sentence', 'title']);
