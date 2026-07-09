@@ -232,6 +232,53 @@ async function typeText(wv: DraftWebview, text: string, onProgress?: (percent: n
   }
 }
 
+/** 真实回车(keyDown + char\r + keyUp)。 */
+function pressEnter(wv: DraftWebview): void {
+  wv.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+  wv.sendInputEvent({ type: 'char', keyCode: '\r' });
+  wv.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+}
+
+/** 键入一个话题标签并从联想弹层确认成「真话题实体」(2026-07-09 用户报
+ *  标签停留为纯文本)。小红书实测:键入 #词 → tippy 弹层首项默认选中
+ *  (div.tippy-content .item.is-selected) → 回车 → 生成 a.tiptap-topic
+ *  实体(带话题 id/链接+尾随空格)。抖音/快手用同一套路,弹层选择器给
+ *  多个候选;弹层没出现就补空格结束纯文本(不劣化现状)。 */
+async function typeHashtag(wv: DraftWebview, tag: string): Promise<'entity' | 'text'> {
+  await typeText(wv, `#${tag}`);
+  const POPUP_SEL = '.tippy-content .item, [class*="mention"] [class*="item"], [class*="suggestion-list"] li, [class*="topic-list"] li';
+  const deadline = Date.now() + 2500;
+  let popupReady = false;
+  while (Date.now() < deadline) {
+    const found = await wvEval<boolean>(
+      wv,
+      `Boolean([...document.querySelectorAll(${JSON.stringify(POPUP_SEL)})].find((el) => el.getClientRects().length > 0))`,
+    );
+    if (found) {
+      popupReady = true;
+      break;
+    }
+    await sleep(300);
+  }
+  if (popupReady) {
+    await sleep(200 + Math.random() * 200);
+    pressEnter(wv);
+    await sleep(450 + Math.random() * 200);
+    return 'entity';
+  }
+  wv.sendInputEvent({ type: 'char', keyCode: ' ' });
+  await sleep(120);
+  return 'text';
+}
+
+/** 逐个键入话题标签(需焦点已在目标编辑器内、光标在末尾)。 */
+async function typeHashtags(wv: DraftWebview, tags: string[], progress?: (i: number, total: number) => void): Promise<void> {
+  for (let i = 0; i < tags.length; i++) {
+    progress?.(i + 1, tags.length);
+    await typeHashtag(wv, tags[i]!);
+  }
+}
+
 /** 真实键入一个字段:点击聚焦 → 键盘清场 → 逐字输入。 */
 async function typeIntoField(
   wv: DraftWebview,
@@ -321,14 +368,20 @@ async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress
   const titleOk =
     (await typeIntoField(wv, TITLE_SEL, draft.title.slice(0, 20)))
     || (await fillInput(wv, TITLE_SEL, draft.title.slice(0, 20)));
-  const bodyText = `${draft.body}${draft.tags.length ? `\n\n${draft.tags.map((t) => `#${t}`).join(' ')}` : ''}`;
+  // 正文与标签分开:正文逐字键入;标签走「#词+联想弹层回车」确认成
+  // 真话题实体(纯拼在正文里只是文本,不是话题)。
   const bodyOk =
-    (await typeIntoField(wv, '[contenteditable="true"]', bodyText, (pct) => progress(`4/5 键入正文… ${pct}%`)))
-    || (await fillEditor(wv, bodyText));
+    (await typeIntoField(wv, '[contenteditable="true"]', draft.body, (pct) => progress(`4/5 键入正文… ${pct}%`)))
+    || (await fillEditor(wv, draft.body));
   if (!titleOk && !bodyOk) {
     return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴;把这个情况反馈给我们跟修' };
   }
-  // 点页面空白处收话题联想弹层(真实点击),它会挡底部「存草稿」。
+  if (bodyOk && draft.tags.length > 0) {
+    // 光标此刻在正文末尾;空一段再逐个上话题。
+    await typeText(wv, '\n');
+    await typeHashtags(wv, draft.tags, (i, total) => progress(`4/5 话题 ${i}/${total}…`));
+  }
+  // 点页面空白处收残留联想弹层(真实点击),它会挡底部「存草稿」。
   clickAt(wv, 20, 200);
   await sleep(600);
 
@@ -357,16 +410,20 @@ async function injectDouyin(wv: DraftWebview, draft: DraftPayload, progress: Dra
   }
 
   progress('3/4 键入标题/简介…');
-  const text = `${draft.title}${draft.tags.length ? ` ${draft.tags.map((t) => `#${t}`).join(' ')}` : ''}`;
   const DY_TITLE_SEL = 'input[placeholder*="标题"], input[placeholder*="作品标题"]';
   const titleOk =
     (await typeIntoField(wv, DY_TITLE_SEL, draft.title.slice(0, 30)))
     || (await fillInput(wv, DY_TITLE_SEL, draft.title.slice(0, 30)));
   const editorOk =
-    (await typeIntoField(wv, '[contenteditable="true"]', text, (pct) => progress(`3/4 键入简介… ${pct}%`)))
-    || (await fillEditor(wv, text));
+    (await typeIntoField(wv, '[contenteditable="true"]', draft.title, (pct) => progress(`3/4 键入简介… ${pct}%`)))
+    || (await fillEditor(wv, draft.title));
   if (!titleOk && !editorOk) {
     return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴' };
+  }
+  if (editorOk && draft.tags.length > 0) {
+    // 简介末尾逐个话题:#词 + 联想弹层回车确认成真话题实体。
+    await typeText(wv, ' ');
+    await typeHashtags(wv, draft.tags, (i, total) => progress(`3/4 话题 ${i}/${total}…`));
   }
   clickAt(wv, 20, 200);
   await sleep(600);
@@ -397,13 +454,16 @@ async function injectKuaishou(wv: DraftWebview, draft: DraftPayload, progress: D
   }
 
   progress('3/4 键入标题/描述…');
-  const text = `${draft.title}${draft.tags.length ? ` ${draft.tags.map((t) => `#${t}`).join(' ')}` : ''}`;
   const typed =
-    (await typeIntoField(wv, KS_FIELD_SEL, text, (pct) => progress(`3/4 键入描述… ${pct}%`)))
-    || (await fillInput(wv, 'input[placeholder*="标题"], textarea[placeholder*="描述"]', text))
-    || (await fillEditor(wv, text));
+    (await typeIntoField(wv, KS_FIELD_SEL, draft.title, (pct) => progress(`3/4 键入描述… ${pct}%`)))
+    || (await fillInput(wv, 'input[placeholder*="标题"], textarea[placeholder*="描述"]', draft.title))
+    || (await fillEditor(wv, draft.title));
   if (!typed) {
     return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴' };
+  }
+  if (draft.tags.length > 0) {
+    await typeText(wv, ' ');
+    await typeHashtags(wv, draft.tags, (i, total) => progress(`3/4 话题 ${i}/${total}…`));
   }
   clickAt(wv, 20, 200);
   await sleep(600);
