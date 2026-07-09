@@ -135,18 +135,10 @@ export function EntryNavRail({ view, onViewChange }: Props) {
         >
           <Icon name="grid" size={18} />
         </NavButton>
-        <NavButton
-          active={view === 'projects'}
-          ariaLabel={t('entry.navProjects')}
-          label={t('entry.navProjects')}
-          onClick={() => onViewChange('projects')}
-          testId="entry-nav-projects"
-        >
-          <Icon name="folder" size={18} />
-        </NavButton>
-        {/* 自动化(tasks)、设计体系、插件入口对客户定制版隐藏(2026-07-04 与
-            2026-07-08 用户拍板"目前用不到"——三创作台已替代插件流水线)。
-            路由仍保留 —— /automations、/design-systems、/plugins 直链可达;
+        {/* 自动化(tasks)、设计体系、插件、项目入口对客户定制版隐藏
+            (2026-07-04/07-08/07-09 用户拍板"目前用不到"——三创作台已替代
+            插件流水线,项目由 AI 任务自动管理)。路由仍保留 ——
+            /automations、/design-systems、/plugins、/projects 直链可达;
             要恢复入口把 NavButton 加回来即可。 */}
         <NavButton
           active={view === 'integrations'}
