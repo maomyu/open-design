@@ -18,6 +18,9 @@ export const PLATFORM_PUBLISH_URLS: Record<string, { label: string; url: string 
   douyin: { label: '抖音 · 创作者中心', url: 'https://creator.douyin.com/creator-micro/content/upload' },
   kuaishou: { label: '快手 · 创作者中心', url: 'https://cp.kuaishou.com/article/publish/video' },
   bilibili: { label: 'B站 · 投稿', url: 'https://member.bilibili.com/platform/upload/video/frame' },
+  // 视频号有两个 id:内容平台(contracts/账号页)叫 shipinhao,sau 发布链叫
+  // tencent——两个键都指同一后台,账号页「打开后台」才解析得到 URL。
+  shipinhao: { label: '视频号 · 发表动态', url: 'https://channels.weixin.qq.com/platform/post/create' },
   tencent: { label: '视频号 · 发表动态', url: 'https://channels.weixin.qq.com/platform/post/create' },
   'wechat-mp': { label: '公众号后台', url: 'https://mp.weixin.qq.com' },
 };

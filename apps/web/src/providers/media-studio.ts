@@ -26,7 +26,7 @@ import type {
   UpdateMediaTopicRequest,
 } from '@open-design/contracts';
 import { isOpenDesignHostBrowserAvailable, openHostBrowserProfile } from '@open-design/host';
-import { BROWSER_PLATFORM_TITLES, openBrowserPane } from '../runtime/browser-panes';
+import { BROWSER_PLATFORM_TITLES, normalizeBrowserPlatform, openBrowserPane } from '../runtime/browser-panes';
 
 const ROOT = '/api/media-studio';
 
@@ -714,11 +714,12 @@ export async function openStudioBrowser(body: {
   account: string;
   url?: string;
 }): Promise<{ ok?: boolean; error?: string }> {
+  const platform = normalizeBrowserPlatform(body.platform);
   const account = body.account.trim() || 'main';
   if (isOpenDesignHostBrowserAvailable()) {
-    const url = body.url ?? (await resolvePlatformBrowserUrl(body.platform));
+    const url = body.url ?? (await resolvePlatformBrowserUrl(platform));
     if (url != null) {
-      openBrowserPane({ platform: body.platform, account, url });
+      openBrowserPane({ platform, account, url });
       return { ok: true };
     }
   }
@@ -745,13 +746,14 @@ export async function openStudioBrowserWindow(body: {
   account: string;
   url?: string;
 }): Promise<{ ok?: boolean; error?: string }> {
+  const platform = normalizeBrowserPlatform(body.platform);
   const account = body.account.trim() || 'main';
   if (isOpenDesignHostBrowserAvailable()) {
-    const url = body.url ?? (await resolvePlatformBrowserUrl(body.platform));
+    const url = body.url ?? (await resolvePlatformBrowserUrl(platform));
     if (url != null) {
-      const platformLabel = BROWSER_PLATFORM_TITLES[body.platform] ?? body.platform;
+      const platformLabel = BROWSER_PLATFORM_TITLES[platform] ?? platform;
       const opened = await openHostBrowserProfile({
-        platform: body.platform,
+        platform,
         account,
         title: `${platformLabel} · ${account}`,
         url,

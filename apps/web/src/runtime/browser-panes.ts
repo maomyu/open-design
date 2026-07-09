@@ -19,8 +19,16 @@ export const BROWSER_PLATFORM_TITLES: Record<string, string> = {
   xiaohongshu: '小红书',
   kuaishou: '快手',
   bilibili: 'B站',
-  'wechat-channels': '视频号',
+  shipinhao: '视频号',
 };
+
+/**
+ * 平台 id 归一:内容平台(contracts)叫 shipinhao,sau 发布链叫 tencent——
+ * 同一个视频号账号从账号页与短视频台打开必须落同一档案,否则要登两次。
+ */
+export function normalizeBrowserPlatform(platform: string): string {
+  return platform === 'tencent' ? 'shipinhao' : platform;
+}
 
 /**
  * 档案段清洗 —— 必须与 apps/desktop/src/main/embedded-browser.ts 的
