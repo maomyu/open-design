@@ -39,12 +39,10 @@ import {
   renderStudioPreview,
   updateStudioArticle,
   uploadStudioAsset,
-  fetchStudioAssetPaths,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
-import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
-import { usePlatformAccountNames } from './usePlatformAccounts';
+import { ArticleListCard, VersionsCard } from './StudioSharedCards';
 import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
@@ -194,40 +192,6 @@ function timeLabel(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 公众号正文 → 知乎可键入正文:剥掉图片标注注释与本地图片 markdown
- *  (纯文本用途:剪贴板兜底/分段解析的文本段清洗)。 */
-function zhihuBodyOf(bodyMd: string): string {
-  return bodyMd
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/** 公众号正文按图片位置切成知乎注入段序列:文本段真实键入,图片段在
- *  原位插入(URL→本机绝对路径靠 asset-paths 映射;映射不到的图跳过)。 */
-function zhihuSegmentsOf(
-  bodyMd: string,
-  assetPathByUrl: Map<string, string>,
-): Array<{ type: 'text'; text: string } | { type: 'image'; path: string }> {
-  const segments: Array<{ type: 'text'; text: string } | { type: 'image'; path: string }> = [];
-  const cleanText = (t: string) => t.replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n');
-  const re = /!\[[^\]]*\]\(([^)]+)\)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(bodyMd)) != null) {
-    const text = cleanText(bodyMd.slice(last, m.index));
-    if (text.trim()) segments.push({ type: 'text', text });
-    const url = (m[1] ?? '').trim();
-    const abs = assetPathByUrl.get(url) ?? [...assetPathByUrl.entries()].find(([u]) => url.endsWith(u.split('/').pop() ?? ' '))?.[1];
-    if (abs) segments.push({ type: 'image', path: abs });
-    last = re.lastIndex;
-  }
-  const tail = cleanText(bodyMd.slice(last));
-  if (tail.trim()) segments.push({ type: 'text', text: tail });
-  return segments;
-}
-
 export function MediaStudioView(): JSX.Element {
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
@@ -273,8 +237,6 @@ export function MediaStudioView(): JSX.Element {
   articleRef.current = article;
   const aiTaskRef = useRef<StudioAiTask | null>(null);
   aiTaskRef.current = aiTask;
-  // 知乎分发卡的账号下拉/引导(账号中心是唯一账号来源)。
-  const platformAccounts = usePlatformAccountNames();
   // 页面刷新/热更后仍在跑的后台任务：恢复感知（亮条+驱动轮询+可中止）。
   const { orphan, cancelOrphan } = useOrphanRun(aiTask === null);
   // AI 按钮的 busy 门必须用它——aiTask 在任务结束后仍保留(面板可回看),
@@ -1663,45 +1625,6 @@ export function MediaStudioView(): JSX.Element {
             ) : null}
           </div>
         ) : null}
-        {/* 知乎分发(2026-07-09 用户拍板):公众号长文与知乎专栏文章形态天然
-            对口——安全交接流(应用内浏览器+真实键入,知乎写作页自动存草稿),
-            与小红书同一套防风控模式,不走机器直传。 */}
-        <SafeHandoffCard
-          studioPlatform={PLATFORM}
-          articleId={article.id}
-          articleTitle={article.title}
-          targets={[{ id: 'zhihu', label: '知乎' }]}
-          defaultTarget="zhihu"
-          hasAssets={false}
-          requiresAssets={false}
-          accountsOf={(pid) => platformAccounts[pid] ?? []}
-          copyText={() => `${article.title}\n\n${zhihuBodyOf(article.bodyMd)}`}
-          copyParts={() => [
-            { label: '标题', text: article.title },
-            { label: '正文', text: zhihuBodyOf(article.bodyMd) },
-          ]}
-          buildDraft={async () => {
-            // 图片/封面全自动:asset-paths 拿本机绝对路径,正文按图片位置
-            // 切段(原位插入),封面走知乎封面区独立 input。
-            const assets = await fetchStudioAssetPaths(PLATFORM, article.id);
-            const byUrl = new Map(assets.map((a) => [a.url, a.absPath]));
-            const coverPath = article.coverSource ? byUrl.get(article.coverSource) : undefined;
-            return {
-              platform: 'zhihu',
-              kind: 'article' as const,
-              title: article.title,
-              body: zhihuBodyOf(article.bodyMd),
-              tags: [],
-              filePaths: [],
-              segments: zhihuSegmentsOf(article.bodyMd, byUrl),
-              ...(coverPath ? { coverPath } : {}),
-            };
-          }}
-          onMarked={() => {
-            void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
-            void refreshArticles();
-          }}
-        />
         {publishes.length > 0 ? (
           <div className={c('card')}>
             <div className={c('cardLabel')}>发布记录</div>

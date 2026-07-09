@@ -19,6 +19,8 @@ export type EntryHomeView =
   | 'studio'
   | 'studio-video'
   | 'studio-note'
+  | 'studio-zhihu'
+  | 'studio-weibo'
   | 'knowledge'
   | 'design-systems'
   | 'integrations';
@@ -118,6 +120,8 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'studio') {
     if (parts[1] === 'short-video') return { kind: 'home', view: 'studio-video' };
     if (parts[1] === 'note') return { kind: 'home', view: 'studio-note' };
+    if (parts[1] === 'zhihu') return { kind: 'home', view: 'studio-zhihu' };
+    if (parts[1] === 'weibo') return { kind: 'home', view: 'studio-weibo' };
     return { kind: 'home', view: 'studio' };
   }
   // 公司知识库 — 全局一级入口,对所有创作台生效(2026-07-08 用户拍板)。
@@ -176,6 +180,8 @@ export function buildPath(route: Route): string {
     if (route.view === 'studio') return '/studio';
     if (route.view === 'studio-video') return '/studio/short-video';
     if (route.view === 'studio-note') return '/studio/note';
+    if (route.view === 'studio-zhihu') return '/studio/zhihu';
+    if (route.view === 'studio-weibo') return '/studio/weibo';
     if (route.view === 'knowledge') return '/knowledge';
     if (route.view === 'design-systems') return '/design-systems';
     if (route.view === 'integrations') return '/integrations';

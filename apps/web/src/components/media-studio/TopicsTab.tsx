@@ -120,7 +120,7 @@ export interface TopicsTabProps {
   /** TikHub 平台分流模式(短视频台,2026-07-09 用户拍板):选题数据按目标
    *  平台走它自己的接口(抖音↔抖音、小红书↔小红书、快手↔快手),传了此
    *  prop 数据源区渲染平台 chips+热榜/搜索,不再是大家来(公众号生态)五源。 */
-  tikhubTargets?: Array<{ id: 'douyin' | 'xiaohongshu' | 'kuaishou'; label: string }>;
+  tikhubTargets?: Array<{ id: 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo'; label: string }>;
 }
 
 export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets }: TopicsTabProps): JSX.Element {
@@ -199,10 +199,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const peerList = peers.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
 
   const TIKHUB_TARGET_KEY = 'open-design:studio:tikhub-target';
-  const [tikhubTarget, setTikhubTarget] = useState<'douyin' | 'xiaohongshu' | 'kuaishou'>(() => {
+  const [tikhubTarget, setTikhubTarget] = useState<'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo'>(() => {
     const saved = window.localStorage.getItem(TIKHUB_TARGET_KEY);
     const valid = tikhubTargets?.some((t) => t.id === saved);
-    return (valid ? saved : tikhubTargets?.[0]?.id ?? 'douyin') as 'douyin' | 'xiaohongshu' | 'kuaishou';
+    return (valid ? saved : tikhubTargets?.[0]?.id ?? 'douyin') as 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo';
   });
   const tikhubTargetLabel = tikhubTargets?.find((t) => t.id === tikhubTarget)?.label ?? tikhubTarget;
 

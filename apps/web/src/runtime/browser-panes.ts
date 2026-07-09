@@ -24,6 +24,7 @@ export const BROWSER_PLATFORM_TITLES: Record<string, string> = {
   bilibili: 'B站',
   shipinhao: '视频号',
   zhihu: '知乎',
+  weibo: '微博',
 };
 
 /**

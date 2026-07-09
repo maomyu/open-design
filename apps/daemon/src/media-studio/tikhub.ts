@@ -19,7 +19,7 @@ const BASE = 'https://api.tikhub.io';
 
 export class TikhubError extends Error {}
 
-export type TikhubTarget = 'douyin' | 'xiaohongshu' | 'kuaishou';
+export type TikhubTarget = 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo';
 export type TikhubMode = 'hot' | 'search';
 
 async function tikhubFetch(key: string, path: string, init?: { method?: string; body?: unknown }): Promise<unknown> {
@@ -214,6 +214,111 @@ async function ksSearch(key: string, keyword: string): Promise<MediaTopicHit[]> 
     .filter((h): h is MediaTopicHit => h != null);
 }
 
+// ---- 知乎 ----
+
+async function zhihuHot(key: string): Promise<MediaTopicHit[]> {
+  const data = await tikhubFetch(key, '/api/v1/zhihu/web/fetch_hot_list?limit=50');
+  // 真实响应(2026-07-10 实测):主榜在 data.data(30 条,item.target 是问题
+  // 实体:title/id/answer_count;detail_text=「1288 万热度」);头部公益卡在
+  // head_zone,别让它抢先命中。
+  const nested = ((data as Record<string, unknown>).data as Record<string, unknown> | undefined)?.data;
+  const rows = Array.isArray(nested)
+    ? (nested as Array<Record<string, unknown>>).filter((x) => typeof x === 'object' && x != null)
+    : findObjectArray(data, ['title']);
+  return rows
+    .map((r) => {
+      const target = (r.target ?? {}) as Record<string, unknown>;
+      const title = pick(target, ['title']) || pick(r, ['title', 'word']);
+      if (!title) return null;
+      const hot = pick(r, ['detail_text', 'hot_text']);
+      const answers = num(target.answer_count);
+      const qid = num(target.id) != null ? String(num(target.id)) : pick(target, ['id']);
+      const url = qid
+        ? `https://www.zhihu.com/question/${qid}`
+        : `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(title)}`;
+      return hitOf(title, url, {
+        hot: hot || (answers != null ? `${answers} 回答` : null),
+        desc: answers != null ? `${answers} 回答` : null,
+      });
+    })
+    .filter((h): h is MediaTopicHit => h != null);
+}
+
+async function zhihuSearch(key: string, keyword: string): Promise<MediaTopicHit[]> {
+  const data = await tikhubFetch(
+    key,
+    `/api/v1/zhihu/web/fetch_article_search_v3?keyword=${encodeURIComponent(keyword)}&limit=20`,
+  );
+  const rows = findObjectArray(data, ['title', 'excerpt']);
+  return rows
+    .map((r) => {
+      const obj = (r.object ?? r) as Record<string, unknown>;
+      const title = pick(obj, ['title']) || pick(r, ['title']);
+      if (!title) return null;
+      const author = (obj.author ?? {}) as Record<string, unknown>;
+      const voteup = num(obj.voteup_count) ?? num(r.voteup_count);
+      const id = pick(obj, ['id']) || pick(r, ['id']);
+      const url = id ? `https://zhuanlan.zhihu.com/p/${id}` : `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(title)}`;
+      return hitOf(stripEm(title), url, {
+        account: pick(author, ['name', 'nickname']),
+        hot: voteup != null ? `赞 ${voteup}` : null,
+      });
+    })
+    .filter((h): h is MediaTopicHit => h != null);
+}
+
+// ---- 微博 ----
+
+async function weiboHot(key: string): Promise<MediaTopicHit[]> {
+  const data = await tikhubFetch(key, '/api/v1/weibo/web_v2/fetch_hot_search_summary');
+  // 真实响应(2026-07-10 实测):data.data 51 条 {rank, keyword, keyword_url,
+  // heat, tag}。
+  const nested = ((data as Record<string, unknown>).data as Record<string, unknown> | undefined)?.data;
+  const rows = Array.isArray(nested)
+    ? (nested as Array<Record<string, unknown>>).filter((x) => typeof x === 'object' && x != null)
+    : findObjectArray(data, ['keyword', 'word']);
+  return rows
+    .map((r) => {
+      const title = pick(r, ['keyword', 'word', 'note', 'title']);
+      if (!title) return null;
+      const heat = num(r.heat);
+      const url = pick(r, ['keyword_url']) || `https://s.weibo.com/weibo?q=${encodeURIComponent(`#${title}#`)}`;
+      return hitOf(title, url, {
+        hot: heat != null ? String(heat) : pick(r, ['tag']) || null,
+      });
+    })
+    .filter((h): h is MediaTopicHit => h != null);
+}
+
+async function weiboSearch(key: string, keyword: string): Promise<MediaTopicHit[]> {
+  const data = await tikhubFetch(
+    key,
+    `/api/v1/weibo/web/fetch_search?keyword=${encodeURIComponent(keyword)}&page=1`,
+  );
+  const rows = findObjectArray(data, ['text_raw', 'text', 'title']);
+  return rows
+    .map((r) => {
+      const rawText = pick(r, ['text_raw', 'text', 'title']);
+      if (!rawText) return null;
+      const title = stripEm(rawText).replace(/\s+/g, ' ').slice(0, 60);
+      const user = (r.user ?? {}) as Record<string, unknown>;
+      const reposts = num(r.reposts_count);
+      const mid = pick(r, ['mblogid', 'mid', 'id']);
+      const uid = pick(user, ['idstr', 'id']) || (num(user.id) != null ? String(num(user.id)) : '');
+      const url = mid && uid ? `https://weibo.com/${uid}/${mid}` : `https://s.weibo.com/weibo?q=${encodeURIComponent(keyword)}`;
+      return hitOf(title, url, {
+        account: pick(user, ['screen_name', 'name']),
+        hot: reposts != null ? `转 ${reposts}` : null,
+      });
+    })
+    .filter((h): h is MediaTopicHit => h != null);
+}
+
+/** 去掉搜索结果标题里的高亮标记(<em>)。 */
+function stripEm(s: string): string {
+  return s.replace(/<[^>]+>/g, '');
+}
+
 /** 平台分流入口:target 平台 × hot/search 模式 → 统一选题命中。 */
 export async function tikhubTopicFeed(
   key: string,
@@ -228,5 +333,7 @@ export async function tikhubTopicFeed(
   if (target === 'douyin') return mode === 'hot' ? douyinHot(key) : douyinSearch(key, kw);
   if (target === 'xiaohongshu') return mode === 'hot' ? xhsHot(key) : xhsSearch(key, kw);
   if (target === 'kuaishou') return mode === 'hot' ? ksHot(key) : ksSearch(key, kw);
+  if (target === 'zhihu') return mode === 'hot' ? zhihuHot(key) : zhihuSearch(key, kw);
+  if (target === 'weibo') return mode === 'hot' ? weiboHot(key) : weiboSearch(key, kw);
   throw new TikhubError(`不支持的平台: ${String(target)}`);
 }

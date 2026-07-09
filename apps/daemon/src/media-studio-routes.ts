@@ -394,8 +394,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       if (!apiKey) return bad(res, 422, missingKeyError('TIKHUB_API_KEY'));
       const body = (req.body ?? {}) as TikhubFeedRequest;
       const target = body.target;
-      if (target !== 'douyin' && target !== 'xiaohongshu' && target !== 'kuaishou') {
-        return bad(res, 400, 'target must be douyin, xiaohongshu or kuaishou');
+      const okTargets = ['douyin', 'xiaohongshu', 'kuaishou', 'zhihu', 'weibo'];
+      if (!okTargets.includes(target)) {
+        return bad(res, 400, `target must be one of ${okTargets.join(', ')}`);
       }
       const mode = body.mode === 'search' ? 'search' : 'hot';
       const items = await tikhubTopicFeed(apiKey, target, mode, body.keyword);

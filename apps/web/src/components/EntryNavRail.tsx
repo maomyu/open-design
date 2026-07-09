@@ -22,6 +22,8 @@ export type EntryView =
   | 'studio'
   | 'studio-video'
   | 'studio-note'
+  | 'studio-zhihu'
+  | 'studio-weibo'
   | 'knowledge'
   | 'design-systems'
   | 'integrations';
@@ -114,6 +116,26 @@ export function EntryNavRail({ view, onViewChange }: Props) {
           testId="entry-nav-studio-note"
         >
           <Icon name="image" size={18} />
+        </NavButton>
+        {/* 知乎/微博独立台(2026-07-10 用户拍板:按平台性质分台,同构架构,
+            不融进公众号)。 */}
+        <NavButton
+          active={view === 'studio-zhihu'}
+          ariaLabel="知乎"
+          label="知乎"
+          onClick={() => onViewChange('studio-zhihu')}
+          testId="entry-nav-studio-zhihu"
+        >
+          <Icon name="pencil" size={18} />
+        </NavButton>
+        <NavButton
+          active={view === 'studio-weibo'}
+          ariaLabel="微博"
+          label="微博"
+          onClick={() => onViewChange('studio-weibo')}
+          testId="entry-nav-studio-weibo"
+        >
+          <Icon name="send" size={18} />
         </NavButton>
         {/* 知识库是公司级资产(2026-07-08 用户拍板):一级入口,一处维护、
             三个创作台的 AI 全部共用,不再藏在单个创作台里。 */}

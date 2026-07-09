@@ -23,6 +23,7 @@ export const PLATFORM_PUBLISH_URLS: Record<string, { label: string; url: string 
   shipinhao: { label: '视频号 · 发表动态', url: 'https://channels.weixin.qq.com/platform/post/create' },
   tencent: { label: '视频号 · 发表动态', url: 'https://channels.weixin.qq.com/platform/post/create' },
   zhihu: { label: '知乎 · 写文章', url: 'https://zhuanlan.zhihu.com/write' },
+  weibo: { label: '微博 · 发布', url: 'https://weibo.com' },
   'wechat-mp': { label: '公众号后台', url: 'https://mp.weixin.qq.com' },
 };
 

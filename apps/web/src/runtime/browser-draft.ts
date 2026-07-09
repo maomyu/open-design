@@ -547,7 +547,10 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
     for (let i = 0; i < total; i++) {
       const seg = segments[i]!;
       if (seg.type === 'text') {
-        await typeText(wv, seg.text, (pct) => progress(`3/4 正文 段${i + 1}/${total}… ${pct}%`));
+        // 知乎 DraftJS 一次回车即新段落(自带段间距):markdown 的空行分隔
+        // (\n\n)照打会产生空段落——压成单回车(2026-07-10 用户报空行多)。
+        const zhText = seg.text.replace(/\n{2,}/g, '\n');
+        await typeText(wv, zhText, (pct) => progress(`3/4 正文 段${i + 1}/${total}… ${pct}%`));
       } else {
         progress(`3/4 插入配图(段${i + 1}/${total})…`);
         const before = await editorImageCount(wv);
@@ -566,7 +569,7 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
       }
     }
   } else {
-    bodyOk = await fillEditor(wv, draft.body);
+    bodyOk = await fillEditor(wv, draft.body.replace(/\n{2,}/g, '\n'));
   }
   if (!titleOk && !bodyOk) {
     return { ok: false, detail: '编辑器结构对不上(知乎可能改版了)——文案在剪贴板,请手动粘贴' };

@@ -299,7 +299,7 @@ export interface TopicFeedSearchResponse {
 
 export interface TikhubFeedRequest {
   /** 目标发布平台——选题数据从该平台自己的接口来。 */
-  target: 'douyin' | 'xiaohongshu' | 'kuaishou';
+  target: 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo';
   /** hot = 平台热榜;search = 平台内关键词搜索。 */
   mode: 'hot' | 'search';
   keyword?: string;

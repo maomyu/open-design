@@ -156,6 +156,8 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
       || view === 'studio'
       || view === 'studio-video'
       || view === 'studio-note'
+      || view === 'studio-zhihu'
+      || view === 'studio-weibo'
       || view === 'knowledge'
       || view === 'design-systems'
       || view === 'integrations'
@@ -803,6 +805,8 @@ function displayTabFor(
     studio: '公众号',
     'studio-video': '短视频',
     'studio-note': '笔记',
+    'studio-zhihu': '知乎',
+    'studio-weibo': '微博',
     knowledge: '知识库',
     'design-systems': t('entry.navDesignSystems'),
     integrations: t('entry.navIntegrations'),
@@ -817,6 +821,8 @@ function displayTabFor(
     studio: 'edit',
     'studio-video': 'play',
     'studio-note': 'image',
+    'studio-zhihu': 'pencil',
+    'studio-weibo': 'send',
     knowledge: 'layers-filled',
     'design-systems': 'blocks',
     integrations: 'link',
