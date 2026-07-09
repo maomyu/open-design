@@ -13,7 +13,7 @@
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveProviderConfig } from '../media-config.js';
+import { readStoredProviderKey, resolveProviderConfig } from '../media-config.js';
 
 /** 设置界面按厂商配置的 key → 创作台使用的环境变量名。 */
 const MEDIA_PROVIDER_KEY_MAP: Array<[providerId: string, envKey: string]> = [
@@ -58,8 +58,17 @@ async function mediaConfigKeys(projectRoot: string | undefined): Promise<Record<
   await Promise.all(
     MEDIA_PROVIDER_KEY_MAP.map(async ([providerId, envKey]) => {
       try {
-        const cfg = await resolveProviderConfig(projectRoot, providerId);
-        if (cfg.apiKey) out[envKey] = cfg.apiKey;
+        // 设置页(stored)优先于进程环境变量:创作台的 key 统一在「设置→
+        // 媒体生成」维护(用户拍板),不能被 shell 里遗忘的旧 env 压住——
+        // 2026-07-09 实锤:.zshenv 里过期的 TIKHUB_API_KEY 盖掉了设置页
+        // 刚填的新 key,导致 401。resolveProviderConfig(env 优先)仍作兜底,
+        // 纯 env 用户不受影响。
+        const [cfg, storedOnly] = await Promise.all([
+          resolveProviderConfig(projectRoot, providerId),
+          readStoredProviderKey(projectRoot, providerId),
+        ]);
+        const key = storedOnly.apiKey || cfg.apiKey;
+        if (key) out[envKey] = key;
       } catch {
         /* provider unknown / config unreadable → skip */
       }

@@ -5135,7 +5135,25 @@ function MediaProvidersSection({
     return () => window.clearTimeout(handle);
   }, [reloadNotice]);
 
+  // 已存 key 的按需明文(2026-07-09 用户报小眼睛显示为空):保存后常规
+  // GET 只回掩码,输入框没值——点眼睛时按 provider 单查明文只读回显,
+  // 不写进 cfg(不触发"待保存"态)。env 来源 daemon 不回显,保持占位。
+  const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({});
   const toggleApiKeyVisibility = (providerId: string) => {
+    const opening = !visibleApiKeys.has(providerId);
+    if (opening) {
+      const entry = cfg.mediaProviders?.[providerId];
+      if (entry && !entry.apiKey.trim() && entry.apiKeyConfigured && !revealedKeys[providerId]) {
+        void fetch(`/api/media/config/reveal/${encodeURIComponent(providerId)}`)
+          .then((resp) => (resp.ok ? resp.json() : null))
+          .then((data: { apiKey?: string; source?: string } | null) => {
+            if (data?.source === 'stored' && data.apiKey) {
+              setRevealedKeys((m) => ({ ...m, [providerId]: data.apiKey! }));
+            }
+          })
+          .catch(() => {});
+      }
+    }
     setVisibleApiKeys((current) => {
       const next = new Set(current);
       if (next.has(providerId)) {
@@ -5258,7 +5276,7 @@ function MediaProvidersSection({
                 <div className="media-provider-secret-field">
                   <input
                     type={apiKeyVisible ? 'text' : 'password'}
-                    value={entry.apiKey}
+                    value={entry.apiKey || (apiKeyVisible ? revealedKeys[provider.id] ?? '' : '')}
                     placeholder={isSavedState ? t('settings.connectorsReplaceKeyPlaceholder') : t('settings.mediaProviderPlaceholder')}
                     aria-label={`${provider.label} ${t('settings.mediaProviderApiKey')}`}
                     disabled={disabled}

@@ -408,6 +408,25 @@ export async function resolveProviderConfig(projectRoot: string, providerId: str
 }
 
 /**
+ * 小眼睛「查看已存 key」按需明文读取(2026-07-09 用户报小眼睛显示为空)。
+ * 这是本地单机应用,key 本就落在用户磁盘的 media-config.json 里——GET
+ * 常规端点保持掩码(不让明文常驻 DOM),要看时才按 provider 单查。env
+ * 来源的 key 不回显(那是 shell 环境的事,避免意外泄露到界面)。
+ */
+export async function readStoredProviderKey(
+  projectRoot: string,
+  providerId: string,
+): Promise<{ apiKey: string; source: 'stored' | 'env' | 'unset' }> {
+  const stored = await readStored(projectRoot);
+  const entry = stored[providerId] || {};
+  if (typeof entry.apiKey === 'string' && entry.apiKey.length > 0) {
+    return { apiKey: entry.apiKey, source: 'stored' };
+  }
+  if (readEnvKey(providerId)) return { apiKey: '', source: 'env' };
+  return { apiKey: '', source: 'unset' };
+}
+
+/**
  * Read the full config for the GET endpoint. API keys are masked so the
  * frontend can show "••••" + a "configured" indicator without leaking
  * the secret back into the DOM.

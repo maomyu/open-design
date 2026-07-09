@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import type { MediaExecutionPolicy } from '@open-design/contracts';
 import { defaultMediaExecutionPolicy, mediaPolicyDenial } from './media-policy.js';
+import { readStoredProviderKey } from './media-config.js';
 import type { RouteDeps } from './server-context.js';
 import { proxyDispatcherRequestInit } from './connectionTest.js';
 import type { ToolTokenGrant } from './tool-tokens.js';
@@ -169,6 +170,16 @@ export function registerMediaRoutes(app: Express, ctx: RegisterMediaRoutesDeps) 
       res
         .status(500)
         .json({ error: String(err && err.message ? err.message : err) });
+    }
+  });
+
+  // 小眼睛查看已存 key:仅 stored 来源明文返回(本地应用,key 在用户
+  // 自己磁盘上);env 来源只回 source 标记,不回显。
+  app.get('/api/media/config/reveal/:provider', async (req, res) => {
+    try {
+      res.json(await readStoredProviderKey(PROJECT_ROOT, req.params.provider));
+    } catch (err: any) {
+      res.status(500).json({ error: String(err && err.message ? err.message : err) });
     }
   });
 
