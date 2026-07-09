@@ -36,8 +36,17 @@ export interface DraftWebview extends HTMLElement {
   executeJavaScript(code: string): Promise<unknown>;
   getWebContentsId(): number;
   getURL(): string;
-  /** 真实输入事件(坐标系=webview 视口)——能穿透 closed shadow DOM。 */
-  sendInputEvent(event: { type: string; x: number; y: number; button?: string; clickCount?: number }): void;
+  /** 真实输入事件(鼠标坐标系=webview 视口;键盘 char/keyDown/keyUp)——
+   *  走系统级输入管线,isTrusted=true,能穿透 closed shadow DOM。 */
+  sendInputEvent(event: {
+    type: string;
+    x?: number;
+    y?: number;
+    button?: string;
+    clickCount?: number;
+    keyCode?: string;
+    modifiers?: string[];
+  }): void;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -139,6 +148,92 @@ async function fillEditor(wv: DraftWebview, text: string): Promise<boolean> {
   return ok === true;
 }
 
+// ---- 系统级真实键入(2026-07-09 用户拍板:文本也走真实输入管线,连打字
+// 节奏都是真的)。sendInputEvent 产生的鼠标/键盘事件与真人操作同级
+// (isTrusted=true),页面无法区分;合成填充(fillInput/fillEditor)降为兜底。 ----
+
+function humanDelay(ch: string): number {
+  // 快速打字者的节奏:字均 25-85ms 抖动;标点/换行后 120-280ms 停顿(换气)。
+  if (/[。！？!?\n]/.test(ch)) return 120 + Math.random() * 160;
+  if (/[，、；;,.\s]/.test(ch)) return 60 + Math.random() * 90;
+  return 25 + Math.random() * 60;
+}
+
+/** 找到可见元素并滚到视野中央,返回视口矩形。 */
+async function rectOf(wv: DraftWebview, selector: string): Promise<{ x: number; y: number; w: number; h: number } | null> {
+  return wvEval<{ x: number; y: number; w: number; h: number } | null>(
+    wv,
+    `(() => {
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((n) => n.getClientRects().length > 0);
+      if (!el) return null;
+      el.scrollIntoView({ block: 'center' });
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    })()`,
+  );
+}
+
+function clickAt(wv: DraftWebview, x: number, y: number): void {
+  wv.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+  wv.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+}
+
+/** 真实鼠标点击目标元素完成聚焦(不用 el.focus() 合成路径)。 */
+async function focusByClick(wv: DraftWebview, selector: string): Promise<boolean> {
+  const r = await rectOf(wv, selector);
+  if (!r || r.w < 4) return false;
+  // 点前部而非正中心:输入框中央可能盖着 placeholder 联想图标。
+  clickAt(wv, Math.round(r.x + Math.min(r.w / 2, 60)), Math.round(r.y + r.h / 2));
+  await sleep(280 + Math.random() * 160);
+  return true;
+}
+
+/** 全选+删除清空当前聚焦字段——同样走真实键盘(⌘/Ctrl+A → Backspace)。 */
+async function clearFieldByKeys(wv: DraftWebview): Promise<void> {
+  const mod = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform) ? 'cmd' : 'control';
+  wv.sendInputEvent({ type: 'keyDown', keyCode: 'a', modifiers: [mod] });
+  wv.sendInputEvent({ type: 'keyUp', keyCode: 'a', modifiers: [mod] });
+  await sleep(90);
+  wv.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' });
+  wv.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' });
+  await sleep(140);
+}
+
+/** 逐字真实键入(char 事件);onProgress 按 10% 步长回报。 */
+async function typeText(wv: DraftWebview, text: string, onProgress?: (percent: number) => void): Promise<void> {
+  let lastReported = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '\n') {
+      wv.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+      wv.sendInputEvent({ type: 'char', keyCode: '\r' });
+      wv.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+    } else {
+      wv.sendInputEvent({ type: 'char', keyCode: ch });
+    }
+    await sleep(humanDelay(ch));
+    const pct = Math.floor(((i + 1) / text.length) * 10) * 10;
+    if (onProgress && pct !== lastReported && pct > 0) {
+      lastReported = pct;
+      onProgress(pct);
+    }
+  }
+}
+
+/** 真实键入一个字段:点击聚焦 → 键盘清场 → 逐字输入。 */
+async function typeIntoField(
+  wv: DraftWebview,
+  selector: string,
+  text: string,
+  onProgress?: (percent: number) => void,
+): Promise<boolean> {
+  if (!(await focusByClick(wv, selector))) return false;
+  await clearFieldByKeys(wv);
+  await typeText(wv, text, onProgress);
+  await sleep(200);
+  return true;
+}
+
 async function setFiles(wv: DraftWebview, files: string[]): Promise<{ ok: boolean; reason?: string }> {
   const result = await setHostBrowserFileInput({
     webContentsId: wv.getWebContentsId(),
@@ -208,13 +303,21 @@ async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress
     return { ok: false, detail: '图片已提交但编辑表单没等到(可能还在处理)——表单出现后手动粘贴文案即可,文案在剪贴板' };
   }
 
-  progress('4/5 填标题与正文…');
-  const titleOk = await fillInput(wv, 'input[placeholder*="标题"], input[placeholder*="填写标题"]', draft.title.slice(0, 20));
+  progress('4/5 键入标题…');
+  // 真实键入(系统级输入管线,带打字节奏);失败退回合成填充兜底。
+  const TITLE_SEL = 'input[placeholder*="标题"], input[placeholder*="填写标题"]';
+  const titleOk =
+    (await typeIntoField(wv, TITLE_SEL, draft.title.slice(0, 20)))
+    || (await fillInput(wv, TITLE_SEL, draft.title.slice(0, 20)));
   const bodyText = `${draft.body}${draft.tags.length ? `\n\n${draft.tags.map((t) => `#${t}`).join(' ')}` : ''}`;
-  const bodyOk = await fillEditor(wv, bodyText);
+  const bodyOk =
+    (await typeIntoField(wv, '[contenteditable="true"]', bodyText, (pct) => progress(`4/5 键入正文… ${pct}%`)))
+    || (await fillEditor(wv, bodyText));
   if (!titleOk && !bodyOk) {
     return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴;把这个情况反馈给我们跟修' };
   }
+  // 点页面空白处收话题联想弹层(真实点击),它会挡底部「存草稿」。
+  clickAt(wv, 20, 200);
   await sleep(600);
 
   progress('5/5 存草稿…');
@@ -241,13 +344,19 @@ async function injectDouyin(wv: DraftWebview, draft: DraftPayload, progress: Dra
     return { ok: false, detail: '视频已提交但编辑表单没等到——表单出现后手动粘贴标题即可,文案在剪贴板' };
   }
 
-  progress('3/4 填标题/简介…');
+  progress('3/4 键入标题/简介…');
   const text = `${draft.title}${draft.tags.length ? ` ${draft.tags.map((t) => `#${t}`).join(' ')}` : ''}`;
-  const titleOk = await fillInput(wv, 'input[placeholder*="标题"], input[placeholder*="作品标题"]', draft.title.slice(0, 30));
-  const editorOk = await fillEditor(wv, text);
+  const DY_TITLE_SEL = 'input[placeholder*="标题"], input[placeholder*="作品标题"]';
+  const titleOk =
+    (await typeIntoField(wv, DY_TITLE_SEL, draft.title.slice(0, 30)))
+    || (await fillInput(wv, DY_TITLE_SEL, draft.title.slice(0, 30)));
+  const editorOk =
+    (await typeIntoField(wv, '[contenteditable="true"]', text, (pct) => progress(`3/4 键入简介… ${pct}%`)))
+    || (await fillEditor(wv, text));
   if (!titleOk && !editorOk) {
     return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴' };
   }
+  clickAt(wv, 20, 200);
   await sleep(600);
 
   progress('4/4 存草稿…');
@@ -257,9 +366,47 @@ async function injectDouyin(wv: DraftWebview, draft: DraftPayload, progress: Dra
     : { ok: true, detail: '内容已填好——没找到「存草稿」按钮,请在面板里手动点一下保存' };
 }
 
+// ---- 快手(视频) ----
+async function injectKuaishou(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
+  if (await isLoginWall(wv)) {
+    return { ok: false, detail: '快手还没登录——在面板里登录后再点一次「一键存草稿」' };
+  }
+  progress('1/4 上传成片…');
+  const put = await setFiles(wv, draft.filePaths);
+  if (!put.ok) {
+    return { ok: false, detail: `成片注入失败(${put.reason ?? '未知'})——请手动拖入(成片文件夹已可从发布步打开)` };
+  }
+
+  progress('2/4 等编辑表单就绪…');
+  const KS_FIELD_SEL = 'input[placeholder*="标题"], [contenteditable="true"], textarea[placeholder*="描述"]';
+  const formReady = await waitFor(wv, KS_FIELD_SEL, 90_000);
+  if (!formReady) {
+    return { ok: false, detail: '视频已提交但编辑表单没等到——表单出现后手动粘贴标题即可,文案在剪贴板' };
+  }
+
+  progress('3/4 键入标题/描述…');
+  const text = `${draft.title}${draft.tags.length ? ` ${draft.tags.map((t) => `#${t}`).join(' ')}` : ''}`;
+  const typed =
+    (await typeIntoField(wv, KS_FIELD_SEL, text, (pct) => progress(`3/4 键入描述… ${pct}%`)))
+    || (await fillInput(wv, 'input[placeholder*="标题"], textarea[placeholder*="描述"]', text))
+    || (await fillEditor(wv, text));
+  if (!typed) {
+    return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴' };
+  }
+  clickAt(wv, 20, 200);
+  await sleep(600);
+
+  progress('4/4 存草稿…');
+  const saved = await clickSaveDraft(wv);
+  return saved
+    ? { ok: true, detail: '已存到快手草稿——在面板里核对,满意后自己点发布' }
+    : { ok: true, detail: '内容已填好——没找到「存草稿」按钮,请在面板里手动点一下保存' };
+}
+
 const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgress) => Promise<DraftResult>> = {
   xiaohongshu: injectXiaohongshu,
   douyin: injectDouyin,
+  kuaishou: injectKuaishou,
 };
 
 export function draftInjectionSupported(platform: string): boolean {
