@@ -202,7 +202,9 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
         className={c('webview')}
         src={spec.url}
         partition={browserPanePartition(spec.platform, spec.account)}
-        allowpopups
+        // React 类型库把 allowpopups 声明成 boolean,但 react-dom 运行时把它
+        // 当未知属性、布尔值会告警——必须传字符串;Electron 只看属性存在与否。
+        allowpopups={'true' as unknown as boolean}
       />
     </div>
   );
