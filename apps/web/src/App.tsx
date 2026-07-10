@@ -26,6 +26,7 @@ import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
 import { BrowserPanesHost } from './components/BrowserPanesHost';
+import { startHandoffListener } from './runtime/handoff-listener';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -207,6 +208,9 @@ function AppInner() {
       document.documentElement.setAttribute('data-od-app-mounted', '1');
     }
   }, []);
+  // handoff 桥:CLI「od studio handoff」派发的注入 job 由桌面端执行
+  // (监听器内部自判桌面端,网页版空载)。
+  useEffect(() => startHandoffListener(), []);
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   const configRef = useRef(config);
   configRef.current = config;

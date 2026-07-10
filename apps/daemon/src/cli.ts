@@ -2257,14 +2257,18 @@ async function runStudio(args) {
       'account', 'header-file', 'body-file', 'footer-file', 'file', 'url', 'source', 'angle', 'heat',
       'keyword', 'feed', 'days', 'desc', 'marker', 'style', 'ratio', 'tags', 'video', 'targets', 'voice',
       'target', 'mode',
+      // 2026-07-10 全功能 CLI 化:补上历史缺注册的(category/accounts/type/
+      // page 之前有代码用却没进白名单,strict 解析直接抛 unknown flag)。
+      'category', 'accounts', 'type', 'page', 'slot', 'label', 'to', 'note', 'words', 'timeout',
     ],
-    boolean: ['json', 'help', 'h', 'as-cover'],
+    boolean: ['json', 'help', 'h', 'as-cover', 'auto', 'no-wait', 'no-follow'],
   });
   const valueFlags = new Set([
     '--daemon-url', '--platform', '--title', '--topic', '--digest', '--skin', '--cover',
     '--account', '--header-file', '--body-file', '--footer-file', '--file', '--url', '--source', '--angle', '--heat',
     '--keyword', '--feed', '--days', '--desc', '--marker', '--style', '--ratio', '--tags', '--video', '--targets', '--voice',
     '--target', '--mode',
+    '--category', '--accounts', '--type', '--page', '--slot', '--label', '--to', '--note', '--words', '--timeout',
   ]);
   const bare = [];
   for (let i = 0; i < args.length; i++) {
@@ -2274,21 +2278,55 @@ async function runStudio(args) {
   }
   const sub = bare[0];
   if (flags.help || flags.h || !sub) {
-    console.log(`Usage:
-  od studio articles [--platform wechat-mp] [--json]      # 文章列表
-  od studio article <id> [--json]                         # 文章详情
-  od studio create --title "<标题>" [--topic "<选题>"] [--body-file <md|->]
-  od studio set <id> [--title|--digest|--skin|--cover|--account ...] [--header-file|--body-file|--footer-file f]
-  od studio render <id> [--skin kaiti|orangeheart|github]        # 渲染并保存
-  od studio render --file <md|->                          # 自由排版,HTML 到 stdout
-  od studio publish <id> --account <accountId>            # 发到公众号草稿箱
-  od studio topics [--json] · od studio topic-add --title "<选题>" [--url u] [--source s]
-  od studio find --keyword "<方向>" [--feed radar|hot|search|kwdb|sug|peers] [--accounts "号1,号2"] [--days 7] [--json]
-  od studio find --feed tikhub --target douyin|xiaohongshu|kuaishou [--mode hot|search] [--keyword "<词>"] [--json]
-  od studio topic-verify --url "<文章链接>" [--json]        # 六维互动数据（转发=传播力）
-  od studio topic-comments --url "<文章链接>" [--json]      # 评论区（读者疑问=切入角度）
-  od studio account-rank [--type N] [--page N] [--json]     # 公众号榜单（挑对标）
-  od studio image <id> --desc "<场景描述>" [--marker N|COVER] [--style whiteboard|illustrated|clean] [--ratio 4:3] [--as-cover]`);
+    console.log(`od studio — 媒体创作台 CLI(UI 全量能力等价面;智能体驱动全流水线用)
+通用: --platform wechat-mp|zhihu|weibo|note|short-video(缺省 wechat-mp) · --json 机器可读 · 文件旗标支持 "-"=stdin
+完整手册(每平台流水线配方): docs/media-studio-cli.md
+
+【文章】
+  od studio articles [--platform p] [--json]                 # 列表
+  od studio article <id> [--json]                            # 详情
+  od studio create --title "<标题>" [--topic t] [--body-file <md|->]
+  od studio set <id> [--title|--digest|--skin|--cover|--account|--tags|--video ...] [--header-file|--body-file|--footer-file f]
+  od studio rm <id>                                          # 删除
+  od studio import <id> --to zhihu|weibo [--platform 源]      # 跨平台导入(默认从公众号)
+  od studio versions <id> · od studio version-save <id> [--label l] · od studio restore <id> <versionId>
+
+【选题】
+  od studio topics [--json] · topic-add --title t [--angle a] [--url u] [--source s] [--heat 高|中|低]
+  od studio find --keyword "<方向>" [--feed radar|hot|search|kwdb|sug|peers] [--accounts "号1,号2"] [--days 7]
+  od studio find --feed tikhub --target douyin|xiaohongshu|kuaishou|zhihu|weibo [--mode hot|search] [--keyword w]
+  od studio topic-verify --url u · topic-comments --url u · account-rank [--type N] [--page N]
+  od studio fetch --url "<原文链接>"                          # 抓原文转 markdown(素材)
+
+【AI 任务】(与界面「AI 帮我…」同一引擎;跑完产物自动落库)
+  od studio ai <topics|write|revise|ai-check|script|research|review> [文章id]
+     [--platform p] [--note "补充要求"] [--type 文章类型] [--words 1500-2000] [--account 账号id]
+     [--no-follow 不等直接返回] [--timeout 秒=1800] [--json]
+
+【配图/封面/配音】
+  od studio image <id> --desc "<场景>" [--marker N|COVER] [--style whiteboard|illustrated|clean] [--ratio 4:3] [--as-cover]
+  od studio upload <id> --file <图片路径>                     # 传本地图进文章资产,返回 url
+  od studio upload-video <id> --file <mp4路径>               # 传成片(短视频台)
+  od studio assets <id>                                      # 资产的本机绝对路径
+  od studio tts <id> [--voice S_xxx]                         # 口播配音(短视频台)
+
+【排版/检查】
+  od studio render <id> [--skin kaiti|orangeheart|github] · render --file <md|->(HTML→stdout)
+  od studio skins · od studio lint <id>                      # 皮肤列表 · 敏感词预检
+  od studio snippets [list] · snippets add --title n --file <md|-> [--slot header|footer|cover] · snippets rm <id>
+
+【发布】
+  od studio publish <id> --account <accountId>               # 公众号→草稿箱(API 直发)
+  od studio handoff <id> --target zhihu|weibo|xiaohongshu|douyin|kuaishou
+     [--account 账号名] [--auto 直发] [--no-wait] [--timeout 秒=300]
+     # 浏览器注入发布:需 WorkBuild 桌面应用在运行(登录态在桌面端);缺省填到发送前一步
+  od studio publishes <id> · mark-published <id> [--label 平台名]   # 发布记录 · 手动补记
+  od studio publish-note <id> --targets xiaohongshu:main,... · publish-video <id> --targets douyin:main,... [--video f]
+  od studio sau check|login <平台:账号>                       # sau cookie 档案(矩阵直传老路径)
+  od studio browser open --target <平台> [--account 名] · browser urls   # 独立 Chrome 档案(网页版逃生口)
+
+【知识库】(全平台共享,AI 任务自动注入)
+  od studio kb list · kb add --title n --file <md|-> [--category company|product|trust|case|card|other] [--account id] · kb rm <id>`);
     return;
   }
   const platform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'wechat-mp';
@@ -2590,7 +2628,7 @@ async function runStudio(args) {
     const keyword = typeof flags.keyword === 'string' ? flags.keyword.trim() : '';
     const feed = typeof flags.feed === 'string' ? flags.feed : 'radar';
     if (feed === 'tikhub') {
-      // TikHub 平台分流(短视频/图文选题):抖音↔抖音接口,小红书↔小红书,快手↔快手。
+      // TikHub 平台分流:抖音/小红书/快手/知乎/微博 各查各的平台接口。
       const target = typeof flags.target === 'string' ? flags.target : '';
       const mode = flags.mode === 'search' ? 'search' : 'hot';
       const resp = await fetch(`${base}/topics/tikhub-feed`, {
@@ -2694,6 +2732,366 @@ async function runStudio(args) {
     if (!resp.ok) return fail(resp, 'generate image');
     const data = await resp.json();
     return out(data, `已生成 ${data?.url}${typeof flags.marker === 'string' && flags.marker ? `（已替换标注 IMAGE_${flags.marker}）` : ''}`);
+  }
+  if (sub === 'rm') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio rm <id>'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!resp.ok) return fail(resp, 'delete article');
+    return out(await resp.json(), `deleted ${id}`);
+  }
+  if (sub === 'import') {
+    // 跨平台导入(镜像 UI「从公众号导入」):复制 title/topic/bodyMd(+封面/
+    // 摘要),资产 URL 指向源文章目录,handoff 组稿时会按 URL 合并映射。
+    const id = bare[1];
+    const to = typeof flags.to === 'string' ? flags.to.trim() : '';
+    if (!id || !to) { console.error('Usage: od studio import <id> --to zhihu|weibo [--platform 源平台=wechat-mp]'); process.exit(2); }
+    const srcResp = await fetch(`${base}/articles/${encodeURIComponent(id)}`);
+    if (!srcResp.ok) return fail(srcResp, 'read source article');
+    const src = (await srcResp.json())?.article ?? {};
+    const toBase = `${root}/${encodeURIComponent(to)}`;
+    const createResp = await fetch(`${toBase}/articles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: src.title, topic: src.topic, bodyMd: src.bodyMd }),
+    });
+    if (!createResp.ok) return fail(createResp, 'import create');
+    const created = (await createResp.json())?.article ?? {};
+    if (src.coverSource || src.digest) {
+      await fetch(`${toBase}/articles/${encodeURIComponent(created.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(src.coverSource ? { coverSource: src.coverSource } : {}),
+          ...(src.digest ? { digest: src.digest } : {}),
+        }),
+      });
+    }
+    return out({ article: created }, `imported → ${to} ${created.id}  ${created.title ?? ''}`);
+  }
+  if (sub === 'version-save') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio version-save <id> [--label "<说明>"]'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/versions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(typeof flags.label === 'string' && flags.label ? { label: flags.label } : {}),
+    });
+    if (!resp.ok) return fail(resp, 'version-save');
+    const data = await resp.json();
+    return out(data, `saved version ${data?.version?.id ?? ''}`);
+  }
+  if (sub === 'fetch') {
+    const url = typeof flags.url === 'string' ? flags.url.trim() : '';
+    if (!url) { console.error('Usage: od studio fetch --url "<原文链接>"'); process.exit(2); }
+    const resp = await fetch(`${base}/article-detail`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!resp.ok) return fail(resp, 'fetch article');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    console.log(`# ${data?.title ?? '(无标题)'}${data?.account ? `  —— ${data.account}` : ''}\n`);
+    process.stdout.write(String(data?.markdown ?? '') + '\n');
+    return;
+  }
+  if (sub === 'assets') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio assets <id> [--json]'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/asset-paths`);
+    if (!resp.ok) return fail(resp, 'assets');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    for (const f of data?.files ?? []) console.log(`${f.absPath}\t${f.url}`);
+    return;
+  }
+  if (sub === 'upload') {
+    const id = bare[1];
+    const file = typeof flags.file === 'string' ? flags.file : '';
+    if (!id || !file) { console.error('Usage: od studio upload <id> --file <图片路径>'); process.exit(2); }
+    const { readFile } = await import('node:fs/promises');
+    const pathMod = await import('node:path');
+    const buf = await readFile(file);
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/upload-asset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: pathMod.basename(file), dataBase64: buf.toString('base64') }),
+    });
+    if (!resp.ok) return fail(resp, 'upload');
+    const data = await resp.json();
+    return out(data, `uploaded ${data?.url}`);
+  }
+  if (sub === 'upload-video') {
+    const id = bare[1];
+    const file = typeof flags.file === 'string' ? flags.file : '';
+    if (!id || !file) { console.error('Usage: od studio upload-video <id> --file <mp4路径>'); process.exit(2); }
+    const { readFile } = await import('node:fs/promises');
+    const pathMod = await import('node:path');
+    const buf = await readFile(file);
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/upload-video`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'x-file-name': encodeURIComponent(pathMod.basename(file)),
+      },
+      body: buf,
+    });
+    if (!resp.ok) return fail(resp, 'upload-video');
+    const data = await resp.json();
+    return out(data, `uploaded ${data?.path}(已写入 extra.videoPath)`);
+  }
+  if (sub === 'skins') {
+    const resp = await fetch(`${base}/skins`);
+    if (!resp.ok) return fail(resp, 'skins');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    for (const s of data?.skins ?? []) console.log(`${s.id}  ${s.name}  ${s.color}`);
+    return;
+  }
+  if (sub === 'lint') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio lint <id> [--json]'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/lint`, { method: 'POST' });
+    if (!resp.ok) return fail(resp, 'lint');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    const hits = data?.hits ?? [];
+    if (hits.length === 0) { console.log('未命中敏感词'); return; }
+    for (const h of hits) console.log(`⚠ ${h.word}  [${h.category}] ×${h.count}  …${h.context}…`);
+    console.log(`共 ${hits.length} 处(警示不阻断;防限流建议改掉再发)`);
+    return;
+  }
+  if (sub === 'snippets') {
+    const action = bare[1] ?? 'list';
+    if (action === 'list') {
+      const resp = await fetch(`${base}/snippets`);
+      if (!resp.ok) return fail(resp, 'snippets list');
+      const data = await resp.json();
+      if (flags.json) return out(data);
+      for (const s of data?.snippets ?? []) console.log(`${s.id}  [${s.slot}]  ${s.name}  ${String(s.contentMd ?? '').length} 字`);
+      return;
+    }
+    if (action === 'add') {
+      const name = typeof flags.title === 'string' ? flags.title : '';
+      const content = await readFileFlag('file');
+      if (!name || content === undefined) {
+        console.error('Usage: od studio snippets add --title "<名称>" --file <md|-> [--slot header|footer|cover]');
+        process.exit(2);
+      }
+      const resp = await fetch(`${base}/snippets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          contentMd: content,
+          slot: typeof flags.slot === 'string' && flags.slot ? flags.slot : 'header',
+        }),
+      });
+      if (!resp.ok) return fail(resp, 'snippets add');
+      const data = await resp.json();
+      return out(data, `added snippet ${data?.snippet?.id ?? ''}`);
+    }
+    if (action === 'rm') {
+      const id = bare[2];
+      if (!id) { console.error('Usage: od studio snippets rm <id>'); process.exit(2); }
+      const resp = await fetch(`${base}/snippets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!resp.ok) return fail(resp, 'snippets rm');
+      return out(await resp.json(), `removed ${id}`);
+    }
+    console.error('Usage: od studio snippets [list] | add --title n --file <md|-> [--slot s] | rm <id>');
+    process.exit(2);
+  }
+  if (sub === 'publishes') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio publishes <id> [--json]'); process.exit(2); }
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/publishes`);
+    if (!resp.ok) return fail(resp, 'publishes');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    for (const p of data?.publishes ?? []) {
+      console.log(`${p.status === 'ok' ? '✓' : '✗'} ${new Date(p.createdAt).toLocaleString()}  ${p.accountName}${p.error ? `  ${String(p.error).slice(0, 100)}` : ''}`);
+    }
+    return;
+  }
+  if (sub === 'mark-published') {
+    const id = bare[1];
+    if (!id) { console.error('Usage: od studio mark-published <id> [--label "<平台/说明>"]'); process.exit(2); }
+    const label = typeof flags.label === 'string' && flags.label ? flags.label
+      : typeof flags.target === 'string' && flags.target ? flags.target : '手动发布';
+    const resp = await fetch(`${base}/articles/${encodeURIComponent(id)}/mark-published`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetLabel: label }),
+    });
+    if (!resp.ok) return fail(resp, 'mark-published');
+    return out(await resp.json(), `marked published: ${id}(${label})`);
+  }
+  if (sub === 'sau') {
+    const action = bare[1];
+    const pair = bare[2] ?? '';
+    const [sp, sa] = pair.split(':');
+    if ((action !== 'check' && action !== 'login') || !sp || !sa) {
+      console.error('Usage: od studio sau check|login <平台:账号>  (如 douyin:main;login 弹二维码,5 分钟超时)');
+      process.exit(2);
+    }
+    const resp = await fetch(`${root}/${encodeURIComponent(platform)}/sau/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: { platform: sp.trim(), account: sa.trim() } }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { console.error(`sau ${action} failed: ${data?.error ?? resp.status}`); process.exit(1); }
+    if (flags.json) return out(data);
+    console.log(action === 'check' ? `${data?.loggedIn ? '✓ 已登录' : '✗ 未登录'}  ${data?.detail ?? ''}` : `${data?.detail ?? 'ok'}`);
+    return;
+  }
+  if (sub === 'browser') {
+    const action = bare[1];
+    if (action === 'urls') {
+      const resp = await fetch(`${root}/browser/urls`);
+      if (!resp.ok) return fail(resp, 'browser urls');
+      const data = await resp.json();
+      if (flags.json) return out(data);
+      for (const [pid, v] of Object.entries(data?.urls ?? {})) console.log(`${pid}\t${(v as { label?: string; url?: string }).label ?? ''}\t${(v as { url?: string }).url ?? ''}`);
+      return;
+    }
+    if (action === 'open') {
+      const target = typeof flags.target === 'string' && flags.target ? flags.target : '';
+      if (!target) { console.error('Usage: od studio browser open --target <平台> [--account 名] [--url u]'); process.exit(2); }
+      const resp = await fetch(`${root}/browser/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: target,
+          account: typeof flags.account === 'string' && flags.account ? flags.account : 'main',
+          ...(typeof flags.url === 'string' && flags.url ? { url: flags.url } : {}),
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) { console.error(`browser open failed: ${data?.error ?? resp.status}`); process.exit(1); }
+      return out(data, '已拉起独立档案浏览器(登录态与桌面端面板分区不互通,注入发布请用 handoff)');
+    }
+    console.error('Usage: od studio browser open --target <平台> [--account 名] | browser urls');
+    process.exit(2);
+  }
+  if (sub === 'ai') {
+    // 与界面「AI 帮我…」同一引擎:ai-task 端点组 prompt+会话 → /api/runs 起跑。
+    // 智能体在 run 里用 od studio set/topic-add 把产物写回创作台(库即交付)。
+    const kind = bare[1];
+    const KINDS = ['topics', 'write', 'revise', 'ai-check', 'script', 'research', 'review'];
+    if (!kind || !KINDS.includes(kind)) {
+      console.error(`Usage: od studio ai <${KINDS.join('|')}> [文章id] [--platform p] [--note "补充"] [--type 类型] [--words 1500-2000] [--account id] [--no-follow] [--timeout 秒]`);
+      process.exit(2);
+    }
+    const articleId = bare[2];
+    const input = {
+      ...(typeof flags.note === 'string' && flags.note ? { note: flags.note } : {}),
+      ...(typeof flags.type === 'string' && flags.type ? { articleType: flags.type } : {}),
+      ...(typeof flags.words === 'string' && flags.words ? { wordCount: flags.words } : {}),
+      ...(typeof flags.account === 'string' && flags.account ? { accountId: flags.account } : {}),
+    };
+    const taskResp = await fetch(`${base}/ai-task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, ...(articleId ? { articleId } : {}), ...(Object.keys(input).length ? { input } : {}) }),
+    });
+    const task = await taskResp.json().catch(() => ({}));
+    if (!taskResp.ok) { console.error(`ai-task failed: ${task?.error ?? taskResp.status}`); process.exit(1); }
+    const daemonBase = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
+    const runResp = await fetch(`${daemonBase}/api/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: task.projectId, conversationId: task.conversationId, message: task.prompt }),
+    });
+    const runData = await runResp.json().catch(() => ({}));
+    if (!runResp.ok) { console.error(`start run failed: ${runResp.status} ${JSON.stringify(runData)}`); process.exit(1); }
+    const runId = runData.runId;
+    if (flags['no-follow']) {
+      return out({ runId, conversationId: task.conversationId, title: task.title },
+        `started ${runId}  ${task.title}(跑完用 od studio article/topics 看产物;od run info ${runId} 看状态)`);
+    }
+    if (!flags.json) console.log(`[ai] ${task.title}  run=${runId}(等待完成…)`);
+    const timeoutSec = Number(typeof flags.timeout === 'string' && flags.timeout ? flags.timeout : 1800);
+    const deadline = Date.now() + Math.max(60, timeoutSec) * 1000;
+    let lastNote = Date.now();
+    let status = 'running';
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const info = await fetch(`${daemonBase}/api/runs/${encodeURIComponent(runId)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      status = info?.run?.status ?? info?.status ?? status;
+      if (status === 'succeeded' || status === 'failed' || status === 'canceled') break;
+      if (!flags.json && Date.now() - lastNote > 20_000) {
+        console.log(`[ai] 仍在跑(${Math.round((Date.now() - (deadline - timeoutSec * 1000)) / 1000)}s)…`);
+        lastNote = Date.now();
+      }
+    }
+    if (status !== 'succeeded' && status !== 'failed' && status !== 'canceled') {
+      console.error(`[ai] 等待超时(${timeoutSec}s)——run 仍在跑:od run info ${runId} / od run watch ${runId}`);
+      process.exit(1);
+    }
+    let summary = '';
+    if (articleId && (kind === 'write' || kind === 'revise' || kind === 'ai-check' || kind === 'script')) {
+      const a = await fetch(`${base}/articles/${encodeURIComponent(articleId)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      if (a?.article) summary = `  标题「${a.article.title}」 正文 ${String(a.article.bodyMd ?? '').length} 字`;
+    }
+    if (flags.json) return out({ runId, status, conversationId: task.conversationId });
+    console.log(`[ai] ${status === 'succeeded' ? '完成' : status}${summary}`);
+    if (kind === 'topics') console.log('看产物: od studio topics');
+    process.exit(status === 'succeeded' ? 0 : 1);
+  }
+  if (sub === 'handoff') {
+    // 浏览器注入发布(桥):daemon 建 job → 桌面端认领执行 → 这里长轮询进度。
+    // 缺省只填到发送前一步;--auto 才真实点击平台「发布/发送」直发。
+    const id = bare[1];
+    const target = typeof flags.target === 'string' ? flags.target.trim() : '';
+    if (!id || !target) {
+      console.error('Usage: od studio handoff <文章id> --target zhihu|weibo|xiaohongshu|douyin|kuaishou [--account 名] [--auto] [--no-wait] [--timeout 秒=300]');
+      process.exit(2);
+    }
+    const createResp = await fetch(`${root}/handoff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        platform: target,
+        articleId: id,
+        ...(typeof flags.account === 'string' && flags.account ? { account: flags.account } : {}),
+        ...(flags.auto ? { autoPublish: true } : {}),
+      }),
+    });
+    const created = await createResp.json().catch(() => ({}));
+    if (!createResp.ok) {
+      console.error(`handoff failed: ${created?.error ?? createResp.status}`);
+      process.exit(createResp.status === 409 ? 4 : 1);
+    }
+    const job = created.job;
+    if (flags['no-wait']) return out({ job }, `job ${job.id} 已派发——进度在桌面端「${target}」面板顶部;查终态: GET ${root}/handoff/${job.id}`);
+    if (!flags.json) console.log(`[handoff] job ${job.id} → ${target}${flags.auto ? '(直发)' : '(填到发送前一步)'}`);
+    const timeoutSec = Number(typeof flags.timeout === 'string' && flags.timeout ? flags.timeout : 300);
+    const deadline = Date.now() + Math.max(30, timeoutSec) * 1000;
+    let cursor = 0;
+    while (Date.now() < deadline) {
+      const resp = await fetch(`${root}/handoff/${encodeURIComponent(job.id)}/wait?since=${cursor}&timeoutMs=25000`).catch(() => null);
+      if (!resp || !resp.ok) { console.error('[handoff] job 状态查询失败(daemon 断了?)'); process.exit(3); }
+      const snap = await resp.json();
+      for (const line of snap?.job?.progress ?? []) {
+        if (!flags.json) console.log(`  · ${line}`);
+      }
+      cursor = snap?.cursor ?? cursor;
+      const st = snap?.job?.status;
+      if (st === 'done') {
+        if (flags.json) return out({ job: { ...snap.job, progress: undefined } });
+        console.log(`✓ ${snap.job.detail ?? '完成'}`);
+        return;
+      }
+      if (st === 'error') {
+        if (flags.json) { out({ job: { ...snap.job, progress: undefined } }); process.exit(1); }
+        console.error(`✗ ${snap.job.detail ?? '失败'}`);
+        process.exit(1);
+      }
+    }
+    console.error(`[handoff] 等待超时(${timeoutSec}s)——注入可能仍在桌面端跑,看「${target}」面板顶部进度条`);
+    process.exit(1);
   }
   console.error(`unknown studio subcommand: ${sub} (try: od studio --help)`);
   process.exit(2);

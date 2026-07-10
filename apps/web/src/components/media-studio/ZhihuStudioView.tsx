@@ -23,13 +23,13 @@ import {
   deleteStudioTopic,
   fetchStudioArticle,
   fetchStudioArticles,
-  fetchStudioAssetPaths,
   fetchStudioPublishes,
   fetchStudioTopics,
   generateArticleImage,
   updateStudioArticle,
   uploadStudioAsset,
 } from '../../providers/media-studio';
+import { buildStudioDraft, strippedBodyOf } from './draft-builders';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
@@ -59,51 +59,6 @@ function timeLabel(ts: number): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** 正文清洗(纯文本用途:剪贴板/分段文本段):剥图片标注注释与图片 markdown。 */
-function zhihuBodyOf(bodyMd: string): string {
-  return bodyMd
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/** 正文按图片位置切成注入段序列(文本段真实键入,图片段原位插入)。 */
-function zhihuSegmentsOf(
-  bodyMd: string,
-  assetPathByUrl: Map<string, string>,
-): Array<{ type: 'text'; text: string } | { type: 'image'; path: string }> {
-  const segments: Array<{ type: 'text'; text: string } | { type: 'image'; path: string }> = [];
-  const cleanText = (t: string) => t.replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n');
-  const re = /!\[[^\]]*\]\(([^)]+)\)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(bodyMd)) != null) {
-    const text = cleanText(bodyMd.slice(last, m.index));
-    if (text.trim()) segments.push({ type: 'text', text });
-    const url = (m[1] ?? '').trim();
-    const abs = assetPathByUrl.get(url) ?? [...assetPathByUrl.entries()].find(([u]) => url.endsWith(u.split('/').pop() ?? ' '))?.[1];
-    if (abs) segments.push({ type: 'image', path: abs });
-    last = re.lastIndex;
-  }
-  const tail = cleanText(bodyMd.slice(last));
-  if (tail.trim()) segments.push({ type: 'text', text: tail });
-  return segments;
-}
-
-/** 正文里引用到的所有资产文章 id(导入的文章图片仍指向源文章目录)。 */
-function assetArticleIdsOf(bodyMd: string, selfId: string): string[] {
-  const ids = new Set<string>([selfId]);
-  for (const m of bodyMd.matchAll(/\/api\/media-studio\/assets\/([^/]+)\//g)) {
-    try {
-      ids.add(decodeURIComponent(m[1] ?? ''));
-    } catch {
-      /* skip broken url */
-    }
-  }
-  return [...ids].filter(Boolean);
 }
 
 export function ZhihuStudioView(): JSX.Element {
@@ -802,29 +757,12 @@ export function ZhihuStudioView(): JSX.Element {
                   requiresAssets={false}
                   allowAutoPublish
                   accountsOf={(pid) => platformAccounts[pid] ?? []}
-                  copyText={() => `${article.title}\n\n${zhihuBodyOf(article.bodyMd)}`}
+                  copyText={() => `${article.title}\n\n${strippedBodyOf(article.bodyMd)}`}
                   copyParts={() => [
                     { label: '标题', text: article.title },
-                    { label: '正文', text: zhihuBodyOf(article.bodyMd) },
+                    { label: '正文', text: strippedBodyOf(article.bodyMd) },
                   ]}
-                  buildDraft={async () => {
-                    // 图片/封面全自动:正文可能引用导入源文章的资产目录,按
-                    // URL 内文章 id 合并映射。
-                    const ids = assetArticleIdsOf(article.bodyMd + '\n' + article.coverSource, article.id);
-                    const maps = await Promise.all(ids.map((id) => fetchStudioAssetPaths(PLATFORM, id)));
-                    const byUrl = new Map(maps.flat().map((a) => [a.url, a.absPath]));
-                    const coverPath = article.coverSource ? byUrl.get(article.coverSource) : undefined;
-                    return {
-                      platform: 'zhihu',
-                      kind: 'article' as const,
-                      title: article.title,
-                      body: zhihuBodyOf(article.bodyMd),
-                      tags: [],
-                      filePaths: [],
-                      segments: zhihuSegmentsOf(article.bodyMd, byUrl),
-                      ...(coverPath ? { coverPath } : {}),
-                    };
-                  }}
+                  buildDraft={(target) => buildStudioDraft(target, article)}
                   onMarked={() => {
                     void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
                     void refreshArticles();

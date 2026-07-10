@@ -22,7 +22,6 @@ import {
   deleteStudioTopic,
   fetchStudioArticle,
   fetchStudioArticles,
-  fetchStudioAssetPaths,
   fetchStudioPublishes,
   fetchStudioTopics,
   generateArticleImage,
@@ -31,6 +30,7 @@ import {
   uploadStudioAsset,
   type StudioLintHit,
 } from '../../providers/media-studio';
+import { buildStudioDraft } from './draft-builders';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
@@ -862,23 +862,7 @@ export function NoteStudioView(): JSX.Element {
                   defaultTarget="xiaohongshu"
                   hasAssets={noteImages.length > 0}
                   accountsOf={(pid) => platformAccounts[pid] ?? []}
-                  buildDraft={async () => {
-                    // 图集 URL(有序)→本机绝对路径:CDP 注入 file input 用。
-                    const assets = await fetchStudioAssetPaths(PLATFORM, article.id);
-                    const byUrl = new Map(assets.map((a) => [a.url, a.absPath]));
-                    const filePaths = noteImages
-                      .map((u) => byUrl.get(u))
-                      .filter((p): p is string => Boolean(p));
-                    if (filePaths.length === 0) return null;
-                    return {
-                      platform: 'xiaohongshu',
-                      title: article.title,
-                      body: article.bodyMd.trim(),
-                      tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
-                      filePaths,
-                      kind: 'images',
-                    };
-                  }}
+                  buildDraft={(target) => buildStudioDraft(target, article)}
                   copyText={() => {
                     const tagLine = tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean).map((t) => `#${t}`).join(' ');
                     return `${article.title}\n\n${article.bodyMd.trim()}${tagLine ? `\n\n${tagLine}` : ''}`;

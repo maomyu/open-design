@@ -420,3 +420,51 @@ export interface StudioAiTaskResponse {
   prompt: string;
   title: string;
 }
+
+/** 浏览器注入发布可用的平台（桌面端 webview 注入器白名单）。 */
+export type StudioHandoffPlatform = 'zhihu' | 'weibo' | 'xiaohongshu' | 'douyin' | 'kuaishou';
+
+export type StudioHandoffStatus = 'pending' | 'claimed' | 'running' | 'done' | 'error';
+
+/** 浏览器注入发布派发 job：CLI `od studio handoff` → daemon 总线 →
+ *  桌面端 web 认领执行（webview 注入），进度/终态回写到 job。 */
+export interface StudioHandoffJob {
+  id: string;
+  platform: StudioHandoffPlatform;
+  articleId: string;
+  /** 文章所属创作台平台（articleId 的查询键，如 zhihu/weibo/note/short-video）。 */
+  articlePlatform: string;
+  /** 目标账号名；空 = 桌面端按账号中心该平台第一个绑定账号解析。 */
+  account?: string;
+  /** true = 填稿后真实点击平台「发布/发送」直发；false = 只填到发送前一步。 */
+  autoPublish: boolean;
+  status: StudioHandoffStatus;
+  /** 注入进度行（追加式；wait 按 since 游标取增量）。 */
+  progress: string[];
+  /** 终态说明（done=成功详情 / error=失败原因+人工接手指引）。 */
+  detail?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateStudioHandoffRequest {
+  platform: StudioHandoffPlatform;
+  articleId: string;
+  account?: string;
+  autoPublish?: boolean;
+}
+
+export interface StudioHandoffJobResponse {
+  job: StudioHandoffJob;
+}
+
+/** wait 长轮询响应：progress 为自 `since` 起的增量，cursor 是下次 since。 */
+export interface StudioHandoffWaitResponse {
+  job: StudioHandoffJob;
+  cursor: number;
+}
+
+export interface StudioHandoffCompleteRequest {
+  ok: boolean;
+  detail: string;
+}

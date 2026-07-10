@@ -28,6 +28,7 @@ import {
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
+import { buildStudioDraft, strippedBodyOf } from './draft-builders';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { weiboPreviewDoc } from './zhihu-preview';
 import { useOrphanRun } from './useOrphanRun';
@@ -52,15 +53,6 @@ function timeLabel(ts: number): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** 正文清洗(剪贴板用途):剥图片标注注释与图片 markdown。 */
-function weiboBodyOf(bodyMd: string): string {
-  return bodyMd
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 export function WeiboStudioView(): JSX.Element {
@@ -574,19 +566,12 @@ export function WeiboStudioView(): JSX.Element {
                   requiresAssets={false}
                   allowAutoPublish
                   accountsOf={(pid) => platformAccounts[pid] ?? []}
-                  copyText={() => `${article.title}\n\n${weiboBodyOf(article.bodyMd)}`}
+                  copyText={() => `${article.title}\n\n${strippedBodyOf(article.bodyMd)}`}
                   copyParts={() => [
                     { label: '标题', text: article.title },
-                    { label: '正文', text: weiboBodyOf(article.bodyMd) },
+                    { label: '正文', text: strippedBodyOf(article.bodyMd) },
                   ]}
-                  buildDraft={async () => ({
-                    platform: 'weibo',
-                    kind: 'article' as const,
-                    title: article.title,
-                    body: weiboBodyOf(article.bodyMd),
-                    tags: [],
-                    filePaths: [],
-                  })}
+                  buildDraft={(target) => buildStudioDraft(target, article)}
                   oneClickLabel="一键填发布框"
                   onMarked={() => {
                     void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);

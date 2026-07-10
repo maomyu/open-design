@@ -13,6 +13,8 @@ export interface BrowserPaneRequest {
   url: string;
   /** 「一键存草稿」:面板加载完成后自动执行的填稿载荷(一次性)。 */
   draft?: DraftPayload;
+  /** handoff 桥 job id(CLI 派发):注入进度/终态回写 daemon。 */
+  draftJobId?: string;
 }
 
 /** 平台中文名（后台标签标题/工具条 chip 共用;客户定制中文直写）。 */

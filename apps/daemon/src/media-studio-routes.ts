@@ -23,8 +23,10 @@ import type {
   CreateMediaSnippetRequest,
   CreateMediaTopicRequest,
   GenerateArticleImageRequest,
+  CreateStudioHandoffRequest,
   MediaRenderRequest,
   StudioAiTaskRequest,
+  StudioHandoffCompleteRequest,
   TopicFeedSearchRequest,
   TikhubFeedRequest,
   TikhubFeedResponse,
@@ -54,6 +56,7 @@ import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js'
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
 import { lintContent } from './media-studio/lint.js';
 import { BrowserError, openProfileBrowser, PLATFORM_PUBLISH_URLS, revealInFinder } from './media-studio/browser.js';
+import { createHandoffBus, HANDOFF_PLATFORMS, HandoffError, isHandoffPlatform } from './media-studio/handoff-jobs.js';
 import { sauCheck, sauLogin, sauUploadNote, sauUploadVideo, SauError } from './media-studio/sau.js';
 import { scriptToSpeech, synthesizeVoice, TtsError } from './media-studio/volc-tts.js';
 import {
@@ -675,6 +678,99 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
 
   app.get('/api/media-studio/browser/urls', (_req, res) => {
     res.json({ urls: PLATFORM_PUBLISH_URLS });
+  });
+
+  // ---- 浏览器注入发布派发桥（CLI「od studio handoff」→ 桌面端执行） ----
+  // 注入引擎在桌面端 webview 里(登录分区 daemon 够不着),这里只做派发与
+  // 状态回传:create 建 job + SSE 广播,web 认领执行并回写进度/终态,CLI
+  // wait 长轮询取增量。详见 media-studio/handoff-jobs.ts 顶部注释。
+  const handoffBus = createHandoffBus();
+
+  app.post('/api/media-studio/handoff', (req, res) => {
+    const body = (req.body ?? {}) as CreateStudioHandoffRequest;
+    if (!isHandoffPlatform(body.platform)) {
+      return bad(res, 400, `platform 必须是 ${HANDOFF_PLATFORMS.join('|')}`);
+    }
+    const articleId = String(body.articleId ?? '').trim();
+    if (!articleId) return bad(res, 400, '缺少 articleId');
+    const article = getArticle(db, articleId);
+    if (!article) return bad(res, 404, 'article not found');
+    try {
+      const job = handoffBus.create({
+        platform: body.platform,
+        articleId,
+        articlePlatform: article.platform,
+        ...(typeof body.account === 'string' && body.account.trim()
+          ? { account: body.account.trim() }
+          : {}),
+        autoPublish: body.autoPublish === true,
+      });
+      res.json({ job });
+    } catch (err) {
+      if (err instanceof HandoffError) return bad(res, 409, err.message);
+      bad(res, 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  // 桌面端 web 的订阅口:job 一个一个以 `job` 事件推下来(连上先补发 pending)。
+  app.get('/api/media-studio/handoff/events', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    });
+    res.write(': connected\n\n');
+    const unsubscribe = handoffBus.subscribe((job) => {
+      res.write(`event: job\ndata: ${JSON.stringify(job)}\n\n`);
+    });
+    const keepalive = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 30_000);
+    req.on('close', () => {
+      clearInterval(keepalive);
+      unsubscribe();
+    });
+  });
+
+  app.post('/api/media-studio/handoff/:id/claim', (req, res) => {
+    const job = handoffBus.claim(req.params.id);
+    if (!job) {
+      const existing = handoffBus.get(req.params.id);
+      if (!existing) return bad(res, 404, 'job not found');
+      return bad(res, 409, `job 已被认领(${existing.status})`);
+    }
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/handoff/:id/progress', (req, res) => {
+    const message = String((req.body ?? {}).message ?? '').trim();
+    if (!message) return bad(res, 400, '缺少 message');
+    const job = handoffBus.progress(req.params.id, message);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/handoff/:id/complete', (req, res) => {
+    const body = (req.body ?? {}) as StudioHandoffCompleteRequest;
+    const job = handoffBus.complete(req.params.id, body.ok === true, String(body.detail ?? ''));
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/handoff/:id', (req, res) => {
+    const job = handoffBus.get(req.params.id);
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  // CLI 的长轮询口:?since=N 取进度增量;终态/有增量立即返回,否则挂到
+  // timeoutMs(上限 25s,样式对齐 /api/media/tasks/:id/wait)。
+  app.get('/api/media-studio/handoff/:id/wait', async (req, res) => {
+    const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
+    const timeoutMs = Number.isFinite(Number(req.query.timeoutMs)) ? Number(req.query.timeoutMs) : 25_000;
+    const snap = await handoffBus.wait(req.params.id, since, timeoutMs);
+    if (!snap) return bad(res, 404, 'job not found');
+    res.json(snap);
   });
 
   // 打开文章的资产目录（图集/封面拖拽进浏览器发布页用）。

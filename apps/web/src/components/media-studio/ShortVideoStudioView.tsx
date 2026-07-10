@@ -35,6 +35,7 @@ import {
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
+import { buildStudioDraft } from './draft-builders';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -812,18 +813,7 @@ export function ShortVideoStudioView(): JSX.Element {
                   hasAssets={Boolean(videoPath.trim())}
                   assetsLabel="成片文件夹"
                   accountsOf={(pid) => platformAccounts[pid] ?? []}
-                  buildDraft={async () => {
-                    const file = videoPath.trim();
-                    if (!file.startsWith('/')) return null;
-                    return {
-                      platform: 'douyin',
-                      title: article.title,
-                      body: article.bodyMd.trim(),
-                      tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
-                      filePaths: [file],
-                      kind: 'video',
-                    };
-                  }}
+                  buildDraft={(target) => buildStudioDraft(target, article)}
                   copyText={() => {
                     const tagLine = tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean).map((t) => `#${t}`).join(' ');
                     return `${article.title}${tagLine ? `\n\n${tagLine}` : ''}`;

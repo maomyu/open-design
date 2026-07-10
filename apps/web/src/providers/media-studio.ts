@@ -715,13 +715,21 @@ export async function openStudioBrowser(body: {
   url?: string;
   /** 「一键存草稿」:面板打开后自动填稿(仅桌面端应用内面板路径生效)。 */
   draft?: import('../runtime/browser-draft').DraftPayload;
+  /** handoff 桥 job id:带上后注入进度/终态回写 daemon(CLI 在等)。 */
+  draftJobId?: string;
 }): Promise<{ ok?: boolean; error?: string }> {
   const platform = normalizeBrowserPlatform(body.platform);
   const account = body.account.trim() || 'main';
   if (isOpenDesignHostBrowserAvailable()) {
     const url = body.url ?? (await resolvePlatformBrowserUrl(platform));
     if (url != null) {
-      openBrowserPane({ platform, account, url, ...(body.draft ? { draft: body.draft } : {}) });
+      openBrowserPane({
+        platform,
+        account,
+        url,
+        ...(body.draft ? { draft: body.draft } : {}),
+        ...(body.draftJobId ? { draftJobId: body.draftJobId } : {}),
+      });
       return { ok: true };
     }
   }
@@ -775,6 +783,36 @@ export async function openStudioBrowserWindow(body: {
   } catch {
     return { error: '连不上本地服务（daemon）' };
   }
+}
+
+// ---- handoff 桥(CLI「od studio handoff」派发的注入 job) ----
+
+/** 认领派发 job(多桌面窗口先到先得)。false = 别的窗口抢到了/job 没了。 */
+export async function claimHandoffJob(jobId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ROOT}/handoff/${encodeURIComponent(jobId)}/claim`, { method: 'POST' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** 注入进度回写(fire-and-forget:回写失败不影响注入本身)。 */
+export function reportHandoffProgress(jobId: string, message: string): void {
+  void fetch(`${ROOT}/handoff/${encodeURIComponent(jobId)}/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  }).catch(() => undefined);
+}
+
+/** 注入终态回写(done/error;fire-and-forget)。 */
+export function completeHandoffJob(jobId: string, ok: boolean, detail: string): void {
+  void fetch(`${ROOT}/handoff/${encodeURIComponent(jobId)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ok, detail }),
+  }).catch(() => undefined);
 }
 
 /** 图片资产的本机绝对路径(「一键存草稿」CDP 注入用)。 */

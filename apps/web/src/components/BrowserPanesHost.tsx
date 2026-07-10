@@ -13,7 +13,12 @@ import { useEffect, useRef, useState } from 'react';
 import { isOpenDesignHostBrowserAvailable } from '@open-design/host';
 import type { Route } from '../router';
 import { Icon } from './Icon';
-import { openStudioBrowserWindow, resolvePlatformBrowserUrl } from '../providers/media-studio';
+import {
+  completeHandoffJob,
+  openStudioBrowserWindow,
+  reportHandoffProgress,
+  resolvePlatformBrowserUrl,
+} from '../providers/media-studio';
 import {
   BROWSER_PLATFORM_TITLES,
   BROWSER_TAB_CLOSED_EVENT,
@@ -35,6 +40,8 @@ interface PaneSpec {
   /** 「一键存草稿」载荷:面板就绪后消费一次,seq 递增触发重新注入。 */
   draft?: DraftPayload;
   draftSeq?: number;
+  /** handoff 桥 job id(CLI 派发):注入进度/终态回写 daemon。 */
+  draftJobId?: string;
 }
 
 /** Electron <webview> 的导航 API 子集（web 包不依赖 electron 类型）。 */
@@ -64,7 +71,9 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
           // 已有面板:带 draft 再次打开=对同一面板重新注入(seq 递增触发)。
           if (!req.draft) return list;
           return list.map((p) =>
-            p.key === key ? { ...p, draft: req.draft!, draftSeq: (p.draftSeq ?? 0) + 1 } : p,
+            p.key === key
+              ? { ...p, draft: req.draft!, draftSeq: (p.draftSeq ?? 0) + 1, draftJobId: req.draftJobId }
+              : p,
           );
         }
         return [
@@ -75,6 +84,7 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
             account: req.account,
             url: req.url,
             ...(req.draft ? { draft: req.draft, draftSeq: 1 } : {}),
+            ...(req.draftJobId ? { draftJobId: req.draftJobId } : {}),
           },
         ];
       });
@@ -160,6 +170,9 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     const seq = spec.draftSeq ?? 0;
     if (!spec.draft || seq === 0 || seq === ranSeqRef.current) return;
     const draft = spec.draft;
+    // handoff 桥(CLI 派发)时进度/终态同步回写 daemon;UI 按钮路径 jobId 为空。
+    const jobId = spec.draftJobId;
+    let started = false;
     let cancelled = false;
     // 延迟 400ms 才真正启动:React StrictMode(dev)会挂载→清理→重挂,
     // 假挂载的定时器被 cleanup 清掉,注入只在真挂载跑一次(否则图片
@@ -171,8 +184,13 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     }, 400);
     async function run() {
       const el = ref.current as unknown as DraftWebview | null;
-      if (!el) return;
+      if (!el) {
+        if (jobId) completeHandoffJob(jobId, false, '面板 webview 未就绪——重试一次 handoff');
+        return;
+      }
+      started = true;
       setDraftState({ phase: 'running', text: '等页面加载…' });
+      if (jobId) reportHandoffProgress(jobId, '面板已开,等页面加载…');
       // 面板可能停在上次「暂存离开」跳转后的页面——注入前先导回发布页,
       // 否则第一步(切图文 tab/找上传框)就落空。
       try {
@@ -206,14 +224,20 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
       if (cancelled) return;
       const result = await runDraftInjection(el, draft, (msg) => {
         if (!cancelled) setDraftState({ phase: 'running', text: msg });
+        if (jobId) reportHandoffProgress(jobId, msg);
       });
       if (!cancelled) setDraftState({ phase: result.ok ? 'done' : 'fail', text: result.detail });
+      if (jobId) completeHandoffJob(jobId, result.ok, result.detail);
     }
     return () => {
       cancelled = true;
       window.clearTimeout(startTimer);
       // 已经在跑的注入被打断(热更/关面板)时绝不能让进度条永远转圈——
-      // 置为可操作的终态,重点一次「一键存草稿」即可。
+      // 置为可操作的终态,重点一次「一键存草稿」即可。CLI 派发的 job 同步
+      // 收尾,别让 od 那头长轮询干等到 TTL。
+      if (started && jobId) {
+        completeHandoffJob(jobId, false, '注入被打断(面板关闭/应用热更)——重试一次 handoff');
+      }
       setDraftState((s) =>
         s.phase === 'running'
           ? { phase: 'fail', text: '自动填稿被打断——回发布步再点一次「一键存草稿」即可' }
