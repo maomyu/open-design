@@ -571,6 +571,7 @@ export function WeiboStudioView(): JSX.Element {
                   defaultTarget="weibo"
                   hasAssets={false}
                   requiresAssets={false}
+                  allowAutoPublish
                   accountsOf={(pid) => platformAccounts[pid] ?? []}
                   copyText={() => `${article.title}\n\n${weiboBodyOf(article.bodyMd)}`}
                   copyParts={() => [

@@ -800,6 +800,7 @@ export function ZhihuStudioView(): JSX.Element {
                   defaultTarget="zhihu"
                   hasAssets={false}
                   requiresAssets={false}
+                  allowAutoPublish
                   accountsOf={(pid) => platformAccounts[pid] ?? []}
                   copyText={() => `${article.title}\n\n${zhihuBodyOf(article.bodyMd)}`}
                   copyParts={() => [

@@ -26,6 +26,9 @@ export interface DraftPayload {
   segments?: Array<{ type: 'text'; text: string } | { type: 'image'; path: string }>;
   /** article 专用:封面图本机绝对路径(知乎「添加文章封面」区)。 */
   coverPath?: string;
+  /** 一键发布(2026-07-10 用户拍板+二次确认授权):填稿后真实点击平台的
+   *  「发布/发送」按钮直发。缺省 false=只填到发送前一步(草稿/发布框)。 */
+  autoPublish?: boolean;
 }
 
 export interface DraftResult {
@@ -345,6 +348,26 @@ async function clickXhsSaveDraftByCoords(wv: DraftWebview): Promise<boolean> {
   return true;
 }
 
+/** 按精确文本找按钮并「真实鼠标坐标点击」(用于一键发布的发布/发送键——
+ *  真实点击 isTrusted=true,与真人无异)。只点精确匹配的白名单文案。 */
+async function clickRealByText(wv: DraftWebview, texts: string[]): Promise<boolean> {
+  const rect = await wvEval<{ x: number; y: number; w: number; h: number } | null>(
+    wv,
+    `(() => {
+      const wants = ${JSON.stringify(texts)};
+      const nodes = [...document.querySelectorAll('button, [role="button"], a, span, div')];
+      for (const want of wants) {
+        const el = nodes.find((n) => (n.textContent || '').trim() === want && n.getClientRects().length > 0 && !(n.disabled));
+        if (el) { el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height }; }
+      }
+      return null;
+    })()`,
+  );
+  if (!rect || rect.w < 4) return false;
+  clickAt(wv, Math.round(rect.x), Math.round(rect.y));
+  return true;
+}
+
 /** 只点「存草稿」类按钮——白名单文案,绝不含「发布」。按钮可能在图片
  *  处理完/弹层收起后才可点,重试轮询最多 6 次;文本匹配不中时走小红书
  *  自定义组件的坐标点击路径。 */
@@ -604,6 +627,24 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
 
   // 知乎写作页自动保存;稍候确认草稿标记出现。
   await sleep(1800);
+
+  if (draft.autoPublish) {
+    progress('发布中…');
+    // 知乎「发布」= 一键直发(无二级弹层,实测);真实坐标点击。
+    const clicked = await clickRealByText(wv, ['发布']);
+    if (!clicked) {
+      return { ok: false, detail: '没找到「发布」按钮——内容已键入,请在面板里手动点发布' };
+    }
+    await sleep(3500);
+    const published = await wvEval<boolean>(wv, `/zhihu\\.com\\/p\\/\\d+(?!.*edit)/.test(location.href) || /发布成功|已发布/.test(document.body.innerText)`);
+    return {
+      ok: true,
+      detail: published
+        ? '已发布到知乎——文章已公开,可在你的主页查看'
+        : '已点发布——请在面板里确认是否发布成功',
+    };
+  }
+
   const savedFlag = await wvEval<boolean>(wv, `/(草稿箱|已保存|自动保存|保存于)/.test(document.body.innerText)`);
   return {
     ok: true,
@@ -639,7 +680,23 @@ async function injectWeibo(wv: DraftWebview, draft: DraftPayload, progress: Draf
   if (!typed) {
     return { ok: false, detail: '发布框键入失败——文案在剪贴板,请手动粘贴' };
   }
-  // 绝不点「发送」——停在发送前一步。
+
+  if (draft.autoPublish) {
+    progress('发送中…');
+    await sleep(800);
+    const clicked = await clickRealByText(wv, ['发送']);
+    if (!clicked) {
+      return { ok: false, detail: '没找到「发送」按钮——内容已填好,请在面板里手动点发送' };
+    }
+    await sleep(3000);
+    const sent = await wvEval<boolean>(wv, `(() => { const ta = [...document.querySelectorAll('textarea')].find((n) => (n.getAttribute('placeholder')||'').includes('新鲜事')); return !ta || !ta.value.trim(); })()`);
+    return {
+      ok: true,
+      detail: sent ? '已发送到微博——已公开,可在你的主页查看' : '已点发送——请在面板里确认',
+    };
+  }
+
+  // 非直发:停在发送前一步。
   return {
     ok: true,
     detail: '内容已填进微博发布框(停在发送前)——微博没有草稿箱,核对后你自己点「发送」',

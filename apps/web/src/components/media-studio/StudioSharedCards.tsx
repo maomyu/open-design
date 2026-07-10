@@ -386,6 +386,7 @@ export function SafeHandoffCard({
   accountsOf,
   buildDraft,
   oneClickLabel = '一键存草稿',
+  allowAutoPublish = false,
   onMarked,
 }: {
   studioPlatform: string;
@@ -413,6 +414,9 @@ export function SafeHandoffCard({
   buildDraft?: (targetId: string) => Promise<DraftPayload | null>;
   /** 一键按钮文案覆盖(缺省「一键存草稿」;微博无草稿箱→「一键填发布框」)。 */
   oneClickLabel?: string;
+  /** 一键发布(2026-07-10 用户授权):允许直发的平台传 true,显示「一键
+   *  发布」按钮(自动填稿+点平台发布/发送键)。不可逆,带内联二次确认。 */
+  allowAutoPublish?: boolean;
   onMarked: () => void;
 }): JSX.Element {
   const [target, setTarget] = useState(defaultTarget ?? targets[0]?.id ?? '');
@@ -422,6 +426,8 @@ export function SafeHandoffCard({
     assets: false,
     browser: false,
   });
+  // 一键发布二次确认:第一次点变确认态(4 秒复位),第二次点才直发。
+  const [confirmPublish, setConfirmPublish] = useState(false);
   const [note, setNote] = useState('');
   const targetLabel = targets.find((t) => t.id === target)?.label ?? target;
   const targetAccounts = accountsOf(target);
@@ -505,6 +511,39 @@ export function SafeHandoffCard({
             }}
           >
             <Icon name="sparkles" size={13} /> {oneClickLabel}
+          </button>
+        ) : null}
+        {/* 一键发布(2026-07-10 用户授权):直发不可逆,内联二次确认——第一次
+            点变红色确认态,第二次点才自动填稿+点平台发布/发送键。 */}
+        {buildDraft && allowAutoPublish && draftInjectionSupported(target) && isOpenDesignHostBrowserAvailable() ? (
+          <button
+            type="button"
+            className={`${c('btn')} ${confirmPublish ? c('btnDanger') : ''}`}
+            disabled={!hasAccount || (requiresAssets && !hasAssets)}
+            title={
+              !hasAccount
+                ? `先去「账号」页添加${targetLabel}账号`
+                : '自动填稿后直接点平台的发布键——公开不可撤回,请先在预览里核对好'
+            }
+            onClick={async () => {
+              if (!confirmPublish) {
+                setConfirmPublish(true);
+                setNote(`⚠️ 直发不可撤回——确认把「${articleTitle || '本篇'}」发布到「${targetLabel} · ${effectiveAccount}」，再点一次「确认发布」`);
+                window.setTimeout(() => setConfirmPublish(false), 4000);
+                return;
+              }
+              setConfirmPublish(false);
+              const draft = await buildDraft(target);
+              if (!draft) {
+                setNote('稿件没准备好——检查后再试');
+                return;
+              }
+              const result = await openStudioBrowser({ platform: target, account: effectiveAccount, draft: { ...draft, autoPublish: true } });
+              if (result.error) setNote(result.error);
+              else setNote(`已开始自动发布——看「${targetLabel}」面板顶部进度条到底`);
+            }}
+          >
+            <Icon name="send" size={13} /> {confirmPublish ? '确认发布 ⚠️' : '一键发布'}
           </button>
         ) : null}
         <button
