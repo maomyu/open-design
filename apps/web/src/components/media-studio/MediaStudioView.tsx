@@ -334,6 +334,28 @@ export function MediaStudioView(): JSX.Element {
     void flushSave();
   }, [flushSave]);
 
+  // 账号绑定 = 用户拥有的状态：选了就记住（存文章 + 存偏好），除非用户
+  // 手动再改，任何后台刷新都不许动它（2026-07-11 用户报：绑定完切页面
+  // 就变回未绑定）。偏好还兜底新文章的默认账号。
+  const bindAccount = useCallback(
+    (id: string | null) => {
+      editArticle({ accountId: id });
+      saveStudioPref('account:wechat-mp', id ?? '', '');
+    },
+    [editArticle],
+  );
+
+  // 新/未绑定文章按上次选择自动绑定（用户明确选过才种；没选过保持原状，
+  // 「未绑定」选项仍可用）。一篇只种一次。
+  const accountSeededRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!article?.id || accounts.length === 0 || accountSeededRef.current === article.id) return;
+    accountSeededRef.current = article.id;
+    if (article.accountId) return; // 已有绑定，不动
+    const pref = loadStudioPref('account:wechat-mp', '');
+    if (pref && accounts.some((a) => a.id === pref)) editArticle({ accountId: pref });
+  }, [article?.id, accounts, editArticle]);
+
 
   // AI 任务计时：跑多久一目了然（配合阶段自报，「有没有在执行」不再靠猜）。
   useEffect(() => {
@@ -451,7 +473,8 @@ export function MediaStudioView(): JSX.Element {
       if (current) {
         void fetchStudioArticle(PLATFORM, current.id).then((a) => {
           if (a && articleRef.current?.id === a.id && !pendingRef.current && a.updatedAt !== articleRef.current?.updatedAt) {
-            setArticle(a);
+            // 后台轮询只接收 agent 写回的正文等，绝不动用户选的账号绑定。
+            setArticle((prev) => (prev && prev.id === a.id ? { ...a, accountId: prev.accountId ?? a.accountId } : a));
           }
         });
       }
@@ -470,7 +493,10 @@ export function MediaStudioView(): JSX.Element {
       const current = articleRef.current;
       if (current) {
         void fetchStudioArticle(PLATFORM, current.id).then((a) => {
-          if (a && articleRef.current?.id === a.id) setArticle(a);
+          // 同轮询：回填 agent 产物，但账号绑定归用户，不被刷新覆盖。
+          if (a && articleRef.current?.id === a.id) {
+            setArticle((prev) => (prev && prev.id === a.id ? { ...a, accountId: prev.accountId ?? a.accountId } : a));
+          }
           // 兜底告警：写作类任务「完成」但正文仍空 = agent 没执行写回
           //（曾发生把稿子写成本地文件交差）。明确告诉用户而不是静默。
           const t = aiTaskRef.current;
@@ -488,8 +514,11 @@ export function MediaStudioView(): JSX.Element {
     await flushSave();
     const created = await createStudioArticle(PLATFORM, {
       ...(fromTopic ? { fromTopicId: fromTopic.id, title: fromTopic.title, topic: fromTopic.title } : {}),
-      // 账号（人设）在创建时就绑定——AI 写作从第一版就按人设写。
-      ...(accounts[0] ? { accountId: accounts[0].id } : {}),
+      // 账号（人设）在创建时就绑定——AI 写作从第一版就按人设写。默认取
+      // 用户上次选择的账号，没有再落到第一个。
+      ...((loadStudioPref('account:wechat-mp', '') || accounts[0]?.id)
+        ? { accountId: loadStudioPref('account:wechat-mp', '') || accounts[0]!.id }
+        : {}),
     });
     if (!created) return;
     await refreshArticles();
@@ -1532,7 +1561,7 @@ export function MediaStudioView(): JSX.Element {
               <select
                 className={c('select')}
                 value={effectiveAccount?.id ?? ''}
-                onChange={(e) => editArticle({ accountId: e.target.value })}
+                onChange={(e) => bindAccount(e.target.value || null)}
               >
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -1682,7 +1711,7 @@ export function MediaStudioView(): JSX.Element {
             className={c('select')}
             value={article.accountId ?? ''}
             title="这篇文章属于哪个公众号——AI 按它的人设写作、发布用它的凭证"
-            onChange={(e) => editArticle({ accountId: e.target.value || null })}
+            onChange={(e) => bindAccount(e.target.value || null)}
           >
             <option value="">（未绑定账号）</option>
             {accounts.map((a) => (
