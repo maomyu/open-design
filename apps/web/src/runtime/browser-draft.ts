@@ -244,6 +244,43 @@ async function clearFieldByKeys(wv: DraftWebview): Promise<void> {
   await sleep(140);
 }
 
+/** 确定性清空字段(2026-07-10 微博直发实测:重复 handoff 时旧残留没被
+ *  Cmd+A 清掉,直发出去内容拼了两遍)。合成键盘快捷键在部分站点静默失效,
+ *  这里直接走 DOM:input/textarea 用原生 value setter(触发 React/Vue 的
+ *  input 事件),contenteditable 全选后 execCommand 删除。键盘清空保留为
+ *  第二道保险。 */
+async function clearFieldBySelector(wv: DraftWebview, selector: string): Promise<void> {
+  await wvEval(
+    wv,
+    `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return false;
+      if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+        if (!el.value) return true;
+        const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (setter && setter.set) setter.set.call(el, '');
+        else el.value = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+      if (el.isContentEditable) {
+        if (!(el.textContent || '').trim()) return true;
+        el.focus();
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.execCommand('delete');
+        return true;
+      }
+      return false;
+    })()`,
+  );
+  await sleep(120);
+}
+
 /** 逐字真实键入(char 事件);onProgress 按 10% 步长回报。
  *  必须按「字素」迭代而非 UTF-16 码元:emoji(📌⚠️)是代理对/组合序列,
  *  按码元拆开发 char 会撕成两个孤立代理,页面渲染成 ��(2026-07-09 用户
@@ -332,6 +369,9 @@ async function typeIntoField(
   onProgress?: (percent: number) => void,
 ): Promise<boolean> {
   if (!(await focusByClick(wv, selector))) return false;
+  // 双保险清空:DOM 确定性清空(主) + 键盘全选删除(兜底)——残留内容直发
+  // 出去比失败更糟。
+  await clearFieldBySelector(wv, selector);
   await clearFieldByKeys(wv);
   await typeText(wv, text, onProgress);
   await sleep(200);
@@ -624,6 +664,8 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
   let bodyOk = false;
   const focused = await focusByClick(wv, ZH_EDITOR);
   if (focused) {
+    // 双保险清空(同 typeIntoField):重复 handoff 时旧正文必须清干净。
+    await clearFieldBySelector(wv, ZH_EDITOR);
     await clearFieldByKeys(wv);
     const total = segments.length;
     for (let i = 0; i < total; i++) {
