@@ -27,14 +27,14 @@ import {
   fetchStudioPublishes,
   fetchStudioTopics,
   generateArticleImage,
-  renderStudioPreview,
   updateStudioArticle,
   uploadStudioAsset,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
-import { CoverGenerator, previewDoc } from './MediaStudioView';
+import { CoverGenerator } from './MediaStudioView';
+import { zhihuPreviewDoc } from './zhihu-preview';
 import { loadPreferredImageModel } from './image-model-pref';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
@@ -126,7 +126,6 @@ export function ZhihuStudioView(): JSX.Element {
   const [importList, setImportList] = useState<MediaArticleSummary[] | null>(null);
   const platformAccounts = usePlatformAccountNames();
   // 封面/配图/实时预览(2026-07-10 用户拍板:和公众号一致)。
-  const [previewHtml, setPreviewHtml] = useState('');
   const [coverGenBusy, setCoverGenBusy] = useState(false);
   const [coverCandidates, setCoverCandidates] = useState<string[]>([]);
   const [imageBusy, setImageBusy] = useState(false);
@@ -287,21 +286,8 @@ export function ZhihuStudioView(): JSX.Element {
     [refreshArticles],
   );
 
-  // ---- 实时预览:正文 markdown → HTML(复用公众号渲染端点,图文可见,
-  // 含从公众号导入的图片);防抖 450ms。 ----
-  useEffect(() => {
-    const body = article?.bodyMd ?? '';
-    if (!body.trim()) {
-      setPreviewHtml('');
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void renderStudioPreview({ platform: PLATFORM, bodyMd: body }).then((r) => {
-        if (r) setPreviewHtml(r.html);
-      });
-    }, 450);
-    return () => window.clearTimeout(timer);
-  }, [article?.bodyMd]);
+  // ---- 实时预览:知乎自己的文章版式(2026-07-10 用户拍板:不套公众号),
+  // 纯前端 markdown→知乎 HTML,含封面/正文配图/文末话题,导入的图片可见。 ----
 
   // ---- 封面:生成 2 张候选 / 上传 / 选用(coverSource,和公众号一致)。 ----
   async function generateCover(desc: string, style: string, ref: string, model: string) {
@@ -881,7 +867,11 @@ export function ZhihuStudioView(): JSX.Element {
                 className={c('previewFrame')}
                 sandbox=""
                 title="知乎文章预览"
-                srcDoc={previewDoc(article?.title ?? '', previewHtml)}
+                srcDoc={zhihuPreviewDoc({
+                  title: article?.title ?? '',
+                  bodyMd: article?.bodyMd ?? '',
+                  ...(article?.coverSource ? { coverUrl: article.coverSource } : {}),
+                })}
               />
             </div>
           </div>
