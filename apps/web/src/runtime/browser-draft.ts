@@ -167,14 +167,19 @@ function humanDelay(ch: string): number {
   return 25 + Math.random() * 60;
 }
 
-/** 找到可见元素并滚到视野中央,返回视口矩形。 */
+/** 找到可见元素并滚到视野中央,返回视口矩形。scrollIntoView 后布局可能
+ *  未稳(负坐标),先滚再等一拍读 rect。 */
 async function rectOf(wv: DraftWebview, selector: string): Promise<{ x: number; y: number; w: number; h: number } | null> {
+  await wvEval(
+    wv,
+    `(() => { const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((n) => n.getClientRects().length > 0); if (el) el.scrollIntoView({ block: 'center' }); })()`,
+  );
+  await sleep(350);
   return wvEval<{ x: number; y: number; w: number; h: number } | null>(
     wv,
     `(() => {
       const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((n) => n.getClientRects().length > 0);
       if (!el) return null;
-      el.scrollIntoView({ block: 'center' });
       const r = el.getBoundingClientRect();
       return { x: r.x, y: r.y, w: r.width, h: r.height };
     })()`,
@@ -186,13 +191,44 @@ function clickAt(wv: DraftWebview, x: number, y: number): void {
   wv.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
 }
 
-/** 真实鼠标点击目标元素完成聚焦(不用 el.focus() 合成路径)。 */
+/** JS 合成聚焦(坐标点击落空时的兜底):focus + 光标置末尾。 */
+async function focusBySelector(wv: DraftWebview, selector: string): Promise<boolean> {
+  const ok = await wvEval<boolean>(
+    wv,
+    `(() => {
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((n) => n.getClientRects().length > 0);
+      if (!el) return false;
+      el.focus();
+      try {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch { /* input/textarea 无 selection API,focus 足够 */ }
+      return document.activeElement === el || el.contains(document.activeElement);
+    })()`,
+  );
+  return ok === true;
+}
+
+/** 真实鼠标点击目标元素完成聚焦;元素在视口外(负坐标)或点击没落上时,
+ *  退回 JS 合成聚焦(2026-07-10 知乎正文 y=-304 视口外导致键入落空)。 */
 async function focusByClick(wv: DraftWebview, selector: string): Promise<boolean> {
   const r = await rectOf(wv, selector);
-  if (!r || r.w < 4) return false;
+  if (!r || r.w < 4) return focusBySelector(wv, selector);
+  // 元素在视口外(负坐标/超出下方):坐标点击无效,直接合成聚焦。
+  if (r.y < 8 || r.y > 2000) return focusBySelector(wv, selector);
   // 点前部而非正中心:输入框中央可能盖着 placeholder 联想图标。
   clickAt(wv, Math.round(r.x + Math.min(r.w / 2, 60)), Math.round(r.y + r.h / 2));
   await sleep(280 + Math.random() * 160);
+  // 校验真的聚焦上了,没有就合成兜底。
+  const focused = await wvEval<boolean>(
+    wv,
+    `(() => { const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((n) => n.getClientRects().length > 0); return Boolean(el) && (document.activeElement === el || el.contains(document.activeElement)); })()`,
+  );
+  if (!focused) return focusBySelector(wv, selector);
   return true;
 }
 
