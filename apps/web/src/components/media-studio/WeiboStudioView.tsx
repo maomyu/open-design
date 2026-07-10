@@ -29,6 +29,7 @@ import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type Stu
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { TopicsTab, type PickedHit } from './TopicsTab';
+import { weiboPreviewDoc } from './zhihu-preview';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
 import styles from './MediaStudio.module.css';
@@ -620,6 +621,21 @@ export function WeiboStudioView(): JSX.Element {
             <NextStepBar hint="稿件就绪,去发布——带稿开微博后台" label="去发布" onGo={() => setTab('publish')} />
           ) : null}
         </div>
+        {tab === 'write' && article ? (
+          <div className={c('previewCol')}>
+            <span className={c('previewTag')}>
+              <Icon name="eye" size={13} /> 实时预览（微博发布效果）
+            </span>
+            <div className={c('previewShell')}>
+              <iframe
+                className={c('previewFrame')}
+                sandbox=""
+                title="微博预览"
+                srcDoc={weiboPreviewDoc({ title: article.title, bodyMd: article.bodyMd })}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {aiTask ? (

@@ -95,7 +95,8 @@ function renderBody(md: string): string {
 
 /** 完整知乎预览文档(iframe srcDoc)。 */
 export function zhihuPreviewDoc(opts: { title: string; bodyMd: string; coverUrl?: string; tags?: string[] }): string {
-  const bodyHtml = renderBody(opts.bodyMd);
+  // 预览标题层级与实际发布对齐:知乎正文标题统一 h2(见 markdownToZhihuHtml)。
+  const bodyHtml = renderBody(opts.bodyMd).replace(/<(\/?)h[34]>/g, '<$1h2>');
   const cover = opts.coverUrl
     ? `<div class="cover"><img src="${esc(opts.coverUrl)}" alt=""/></div>`
     : '';
@@ -130,5 +131,44 @@ export function zhihuPreviewDoc(opts: { title: string; bodyMd: string; coverUrl?
   ${opts.title ? `<h1 class="__title">${esc(opts.title)}</h1>` : ''}
   <div class="content">${bodyHtml}</div>
   ${tagBar}
+  </div></body></html>`;
+}
+
+/** 微博预览:微博发布卡样式(2026-07-10 用户报缺预览)。正文纯文本(微博
+ *  发布框不支持富文本),#话题# 蓝色,图片方格。标题并进正文首行(微博
+ *  普通微博无独立标题)。 */
+export function weiboPreviewDoc(opts: { title: string; bodyMd: string; imageUrls?: string[]; tags?: string[] }): string {
+  const plain = opts.bodyMd
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/[#*>`]/g, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+  const titleLine = opts.title ? `${esc(opts.title)}\n` : '';
+  const tagText = (opts.tags ?? []).filter(Boolean).map((t) => `#${esc(t)}#`).join(' ');
+  // 正文里的话题词着色(#词#)。
+  const bodyText = esc(titleLine + plain).replace(/#([^#\n]{1,20})#/g, '<span class="tp">#$1#</span>');
+  const imgs = (opts.imageUrls ?? []).filter(Boolean);
+  const imgGrid = imgs.length
+    ? `<div class="imgs">${imgs.slice(0, 9).map((u) => `<div class="cell"><img src="${esc(u)}" alt=""/></div>`).join('')}</div>`
+    : '';
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+  body{margin:0;background:#f2f2f5;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI',sans-serif;}
+  .card{max-width:480px;margin:16px auto;background:#fff;border-radius:8px;padding:18px 16px;}
+  .head{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .avatar{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#ff8200,#ffb300);}
+  .name{font-size:15px;font-weight:600;color:#f6641e;}
+  .meta{font-size:12px;color:#999;}
+  .text{font-size:16px;line-height:1.7;color:#1a1a1a;white-space:pre-wrap;word-break:break-word;}
+  .tp{color:#eb7350;}
+  .imgs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:12px;}
+  .cell{aspect-ratio:1;overflow:hidden;border-radius:4px;background:#f2f2f5;}
+  .cell img{width:100%;height:100%;object-fit:cover;display:block;}
+  ${tagText ? '' : ''}
+  </style></head><body>
+  <div class="card">
+    <div class="head"><div class="avatar"></div><div><div class="name">微博用户</div><div class="meta">刚刚 · 来自 WorkBuild</div></div></div>
+    <div class="text">${bodyText}${tagText ? ` <span class="tp">${tagText}</span>` : ''}</div>
+    ${imgGrid}
   </div></body></html>`;
 }
