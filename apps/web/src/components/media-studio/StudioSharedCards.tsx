@@ -385,6 +385,7 @@ export function SafeHandoffCard({
   requiresAssets = true,
   accountsOf,
   buildDraft,
+  oneClickLabel = '一键存草稿',
   onMarked,
 }: {
   studioPlatform: string;
@@ -410,6 +411,8 @@ export function SafeHandoffCard({
   /** 「一键存草稿」的稿件载荷(2026-07-09 用户拍板:自动填进平台发布页,
    *  免手动上传)。返回 null 表示稿件没准备好(如图集为空)。 */
   buildDraft?: (targetId: string) => Promise<DraftPayload | null>;
+  /** 一键按钮文案覆盖(缺省「一键存草稿」;微博无草稿箱→「一键填发布框」)。 */
+  oneClickLabel?: string;
   onMarked: () => void;
 }): JSX.Element {
   const [target, setTarget] = useState(defaultTarget ?? targets[0]?.id ?? '');
@@ -501,7 +504,7 @@ export function SafeHandoffCard({
               }
             }}
           >
-            <Icon name="sparkles" size={13} /> 一键存草稿
+            <Icon name="sparkles" size={13} /> {oneClickLabel}
           </button>
         ) : null}
         <button

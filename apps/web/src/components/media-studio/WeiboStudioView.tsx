@@ -577,6 +577,15 @@ export function WeiboStudioView(): JSX.Element {
                     { label: '标题', text: article.title },
                     { label: '正文', text: weiboBodyOf(article.bodyMd) },
                   ]}
+                  buildDraft={async () => ({
+                    platform: 'weibo',
+                    kind: 'article' as const,
+                    title: article.title,
+                    body: weiboBodyOf(article.bodyMd),
+                    tags: [],
+                    filePaths: [],
+                  })}
+                  oneClickLabel="一键填发布框"
                   onMarked={() => {
                     void fetchStudioPublishes(PLATFORM, article.id).then(setPublishes);
                     void refreshArticles();
