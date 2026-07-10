@@ -90,10 +90,12 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             用户拍板)——动线全部从创作台开工,项目由运行自动创建;主页 /home
             直链仍可达,要恢复把 NavButton 加回、logo onClick 改回 'home'。 */}
         {/* 创作台（客户定制,中文文案不进 i18n;spec: specs/current/media-studio.md） */}
+        {/* 「文章」入口(2026-07-10 用户拍板):公众号/知乎/微博同属文章形态,
+            收进一个入口,内部平台切换(短视频/笔记是别的形态,各自独立)。 */}
         <NavButton
-          active={view === 'studio'}
-          ariaLabel="公众号"
-          label="公众号"
+          active={view === 'studio' || view === 'studio-zhihu' || view === 'studio-weibo'}
+          ariaLabel="文章"
+          label="文章"
           onClick={() => onViewChange('studio')}
           testId="entry-nav-studio"
         >
@@ -116,26 +118,6 @@ export function EntryNavRail({ view, onViewChange }: Props) {
           testId="entry-nav-studio-note"
         >
           <Icon name="image" size={18} />
-        </NavButton>
-        {/* 知乎/微博独立台(2026-07-10 用户拍板:按平台性质分台,同构架构,
-            不融进公众号)。 */}
-        <NavButton
-          active={view === 'studio-zhihu'}
-          ariaLabel="知乎"
-          label="知乎"
-          onClick={() => onViewChange('studio-zhihu')}
-          testId="entry-nav-studio-zhihu"
-        >
-          <Icon name="pencil" size={18} />
-        </NavButton>
-        <NavButton
-          active={view === 'studio-weibo'}
-          ariaLabel="微博"
-          label="微博"
-          onClick={() => onViewChange('studio-weibo')}
-          testId="entry-nav-studio-weibo"
-        >
-          <Icon name="send" size={18} />
         </NavButton>
         {/* 知识库是公司级资产(2026-07-08 用户拍板):一级入口,一处维护、
             三个创作台的 AI 全部共用,不再藏在单个创作台里。 */}

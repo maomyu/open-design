@@ -613,11 +613,45 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
   };
 }
 
+// ---- 微博(首页发布框) ----
+// 真实页面探测(已登录 weibo.com):首页顶部 textarea[placeholder*="新鲜事"]
+// 是普通微博发布框,旁边「发送」按钮。铁律:微博发布框没有「存草稿」,
+// 所以只真实键入到发布框、绝不点「发送」——把内容备好停在发送前一步,
+// 用户核对后自己点发送(对外动作永远人工)。
+async function injectWeibo(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
+  if (await isLoginWall(wv)) {
+    return { ok: false, detail: '微博还没登录——在面板里登录后再点一次' };
+  }
+  progress('1/2 定位发布框…');
+  const WB_BOX = 'textarea[placeholder*="新鲜事"], textarea[placeholder*="分享"], .Form_input textarea, textarea';
+  const ready = await waitFor(wv, WB_BOX, 20_000);
+  if (!ready) {
+    return { ok: false, detail: '没找到微博发布框——确认面板停在 weibo.com 首页;文案在剪贴板可手动粘贴' };
+  }
+
+  progress('2/2 键入正文…');
+  // 微博正文=标题+正文合并(普通微博无独立标题),话题以 #词# 形式内联。
+  const tagLine = draft.tags.length ? ' ' + draft.tags.map((t) => `#${t}#`).join(' ') : '';
+  const text = `${draft.title ? draft.title + '\n' : ''}${draft.body}${tagLine}`.replace(/\n{2,}/g, '\n');
+  const typed =
+    (await typeIntoField(wv, WB_BOX, text, (pct) => progress(`2/2 键入正文… ${pct}%`)))
+    || (await fillInput(wv, WB_BOX, text));
+  if (!typed) {
+    return { ok: false, detail: '发布框键入失败——文案在剪贴板,请手动粘贴' };
+  }
+  // 绝不点「发送」——停在发送前一步。
+  return {
+    ok: true,
+    detail: '内容已填进微博发布框(停在发送前)——微博没有草稿箱,核对后你自己点「发送」',
+  };
+}
+
 const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgress) => Promise<DraftResult>> = {
   xiaohongshu: injectXiaohongshu,
   douyin: injectDouyin,
   kuaishou: injectKuaishou,
   zhihu: injectZhihu,
+  weibo: injectWeibo,
 };
 
 export function draftInjectionSupported(platform: string): boolean {

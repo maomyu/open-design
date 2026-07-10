@@ -85,12 +85,10 @@ import { InlineModelSwitcher } from './InlineModelSwitcher';
 import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
 import { AccountsView } from './AccountsView';
-import { MediaStudioView } from './media-studio/MediaStudioView';
+import { ArticleStudioShell } from './media-studio/ArticleStudioShell';
 import { ShortVideoStudioView } from './media-studio/ShortVideoStudioView';
 import { NoteStudioView } from './media-studio/NoteStudioView';
 import { KnowledgeView } from './media-studio/KnowledgeView';
-import { ZhihuStudioView } from './media-studio/ZhihuStudioView';
-import { WeiboStudioView } from './media-studio/WeiboStudioView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
 import { TasksView } from './TasksView';
@@ -671,11 +669,11 @@ export function EntryShell({
               />
             ) : null}
             {view === 'accounts' ? <AccountsView /> : null}
-            {view === 'studio' ? <MediaStudioView /> : null}
+            {view === 'studio' ? <ArticleStudioShell /> : null}
+            {view === 'studio-zhihu' ? <ArticleStudioShell initial="zhihu" /> : null}
+            {view === 'studio-weibo' ? <ArticleStudioShell initial="weibo" /> : null}
             {view === 'studio-video' ? <ShortVideoStudioView /> : null}
             {view === 'studio-note' ? <NoteStudioView /> : null}
-            {view === 'studio-zhihu' ? <ZhihuStudioView /> : null}
-            {view === 'studio-weibo' ? <WeiboStudioView /> : null}
             {view === 'knowledge' ? <KnowledgeView /> : null}
             {view === 'design-systems' ? (
               designSystemsLoading ? (

@@ -146,7 +146,9 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
   const lastActiveAt = typeof record.lastActiveAt === 'number' ? record.lastActiveAt : createdAt;
   if (!id) return null;
   if (record.kind === 'entry') {
-    const view = record.view;
+    // 知乎/微博并入「文章」入口(2026-07-10 用户拍板):历史独立 view 标签
+    // 归一为 studio,平台切换现在是外壳内部状态,不再有独立标签。
+    const view = record.view === 'studio-zhihu' || record.view === 'studio-weibo' ? 'studio' : record.view;
     // 'home' 不在白名单:主页对话框已下线,历史存下的主页 tab 直接丢弃。
     if (
       view === 'projects'
@@ -215,7 +217,24 @@ function uniqueIdForTab(tab: WorkspaceChromeTab): string {
 
 function normalizeTabsState(state: WorkspaceTabsState): WorkspaceTabsState {
   // 主页对话框已整体下线(客户定制):空 tabs 兜底开公众号创作台。
-  const sourceTabs = state.tabs.length > 0 ? state.tabs : [createEntryTab('studio')];
+  const sourceTabs0 = state.tabs.length > 0 ? state.tabs : [createEntryTab('studio')];
+  // entry 标签按 view 去重:导航入口是单例,同 view 不该有多个标签
+  // (知乎/微博归并「文章」后,历史遗留的重复 studio 标签在此清掉)。
+  // 优先保留当前活动标签所在的那个。
+  const seenViews = new Set<string>();
+  const activeView = sourceTabs0.find((t) => t.id === state.activeTabId && t.kind === 'entry');
+  const orderForDedup = activeView ? [activeView, ...sourceTabs0.filter((t) => t !== activeView)] : sourceTabs0;
+  const keepIds = new Set<string>();
+  for (const tab of orderForDedup) {
+    if (tab.kind !== 'entry') {
+      keepIds.add(tab.id);
+      continue;
+    }
+    if (seenViews.has(tab.view)) continue;
+    seenViews.add(tab.view);
+    keepIds.add(tab.id);
+  }
+  const sourceTabs = sourceTabs0.filter((t) => keepIds.has(t.id));
 
   const usedIds = new Set<string>();
   let activeTabId = '';
@@ -802,11 +821,11 @@ function displayTabFor(
     tasks: t('entry.navTasks'),
     plugins: t('entry.navPlugins'),
     accounts: t('entry.navAccounts'),
-    studio: '公众号',
+    studio: '文章',
     'studio-video': '短视频',
     'studio-note': '笔记',
-    'studio-zhihu': '知乎',
-    'studio-weibo': '微博',
+    'studio-zhihu': '文章',
+    'studio-weibo': '文章',
     knowledge: '知识库',
     'design-systems': t('entry.navDesignSystems'),
     integrations: t('entry.navIntegrations'),
