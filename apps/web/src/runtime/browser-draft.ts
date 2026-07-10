@@ -10,6 +10,7 @@
 //  3. 选择器按当前平台页面结构编写(2026-07),平台改版后可能需要跟修——
 //     这是所有"填稿工具"的共同宿命,失败路径已兜底。
 import { setHostBrowserFileInput } from '@open-design/host';
+import { markdownToZhihuHtml } from '../components/media-studio/zhihu-preview';
 
 export interface DraftPayload {
   /** 目标平台 id(xiaohongshu/douyin/...)。 */
@@ -350,6 +351,29 @@ async function setFiles(
   return result.ok ? { ok: true } : { ok: false, reason: result.reason };
 }
 
+/** 把富文本 HTML「粘贴」进 contenteditable(2026-07-10 用户报知乎 markdown
+ *  显示字面符号+逐字键入长文抢焦点)。给编辑器一个带 text/html 的 paste
+ *  事件——知乎 DraftJS 解析成真富文本(实测 h2/加粗/列表全对),且一次完成
+ *  不再逐字键入几分钟,主窗口不被长时间占用。DraftJS 从当前光标处插入,
+ *  所以文本段与图片段可交替(图片段仍走 CDP 上传本地文件)。 */
+async function pasteHtmlAtCursor(wv: DraftWebview, html: string, plain: string): Promise<boolean> {
+  const ok = await wvEval<boolean>(
+    wv,
+    `(() => {
+      const ed = [...document.querySelectorAll('[contenteditable="true"]')].find((n) => n.getClientRects().length > 0);
+      if (!ed) return false;
+      ed.focus();
+      const dt = new DataTransfer();
+      dt.setData('text/html', ${JSON.stringify(html)});
+      dt.setData('text/plain', ${JSON.stringify(plain)});
+      const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+      ed.dispatchEvent(ev);
+      return true;
+    })()`,
+  );
+  return ok === true;
+}
+
 /** 编辑器内可见图片数(等待插图完成用)。 */
 async function editorImageCount(wv: DraftWebview): Promise<number> {
   const n = await wvEval<number>(
@@ -588,28 +612,28 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
     (await typeIntoField(wv, ZH_TITLE, draft.title.slice(0, 100)))
     || (await fillInput(wv, ZH_TITLE, draft.title.slice(0, 100)));
 
-  progress('3/4 键入正文…');
+  progress('3/4 写入正文…');
   const ZH_EDITOR = "div.public-DraftEditor-content, div[contenteditable='true'][data-contents='true'], [contenteditable='true']";
-  // 知乎正文图片 input 常驻 DOM(multiple,插到当前光标处;真实页面探测):
-  // 区别于文档 input(accept 含 .pdf)与封面 input(非 multiple)。
   const ZH_BODY_IMG_INPUT = 'input[type=file][accept^="image/"][multiple]';
-  let bodyOk: boolean;
   const segments = draft.segments?.length
     ? draft.segments
     : [{ type: 'text' as const, text: draft.body }];
-  // 分段:文本段真实键入;图片段在光标原位 CDP 插入,等编辑器 img 数+1。
+  // 正文改用「HTML 粘贴」(2026-07-10 用户报 markdown 显字面符号+逐字长文
+  // 抢焦点):文本段 markdown→知乎 HTML 一次 paste(DraftJS 解析成真富文本,
+  // 标题/加粗/列表全对,几秒完成不抢焦点);图片段仍走 CDP 原位上传本地文件。
+  let bodyOk = false;
   const focused = await focusByClick(wv, ZH_EDITOR);
   if (focused) {
     await clearFieldByKeys(wv);
-    bodyOk = true;
     const total = segments.length;
     for (let i = 0; i < total; i++) {
       const seg = segments[i]!;
       if (seg.type === 'text') {
-        // 知乎 DraftJS 一次回车即新段落(自带段间距):markdown 的空行分隔
-        // (\n\n)照打会产生空段落——压成单回车(2026-07-10 用户报空行多)。
-        const zhText = seg.text.replace(/\n{2,}/g, '\n');
-        await typeText(wv, zhText, (pct) => progress(`3/4 正文 段${i + 1}/${total}… ${pct}%`));
+        progress(`3/4 正文 段${i + 1}/${total}…`);
+        const html = markdownToZhihuHtml(seg.text);
+        const pasted = await pasteHtmlAtCursor(wv, html, seg.text.replace(/[#*>`]/g, ''));
+        if (pasted) bodyOk = true;
+        await sleep(600);
       } else {
         progress(`3/4 插入配图(段${i + 1}/${total})…`);
         const before = await editorImageCount(wv);
@@ -620,7 +644,6 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
             if ((await editorImageCount(wv)) > before) break;
             await sleep(1000);
           }
-          // 图片插入后光标落在图后新段;稍候再继续键入。
           await sleep(800);
         } else {
           progress(`3/4 配图注入失败(段${i + 1},不阻断)`);
@@ -628,7 +651,7 @@ async function injectZhihu(wv: DraftWebview, draft: DraftPayload, progress: Draf
       }
     }
   } else {
-    bodyOk = await fillEditor(wv, draft.body.replace(/\n{2,}/g, '\n'));
+    bodyOk = await pasteHtmlAtCursor(wv, markdownToZhihuHtml(draft.body), draft.body.replace(/[#*>`]/g, ''));
   }
   if (!titleOk && !bodyOk) {
     return { ok: false, detail: '编辑器结构对不上(知乎可能改版了)——文案在剪贴板,请手动粘贴' };

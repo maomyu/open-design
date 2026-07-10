@@ -24,6 +24,14 @@ function inline(md: string): string {
   return s;
 }
 
+/** markdown → 知乎 DraftJS 可粘贴的 HTML 片段(标题/段落/列表/引用/加粗/
+ *  链接;图片剔除——本地图片走 CDP 单独插入)。发布注入用。
+ *  知乎专栏正文标题只有一级(编辑器「标题」=h2),所以 #/##/### 统一压成
+ *  h2(实测 h2 被 DraftJS 解析,h3/h4 样式对不上)。 */
+export function markdownToZhihuHtml(md: string): string {
+  return renderBody(md.replace(/!\[[^\]]*\]\([^)]*\)/g, '')).replace(/<(\/?)h[34]>/g, '<$1h2>');
+}
+
 /** markdown → 知乎版式 HTML 片段。图片单独成块(居中圆角)。 */
 function renderBody(md: string): string {
   const clean = md.replace(/<!--[\s\S]*?-->/g, '');
