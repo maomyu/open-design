@@ -47,6 +47,7 @@ import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
+import { loadStudioPref, saveStudioPref } from './studio-prefs';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -216,7 +217,7 @@ export function MediaStudioView(): JSX.Element {
   const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
   const aiAnchorRef = useRef<HTMLDivElement | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
-  const [aiWordCount, setAiWordCount] = useState('1500-2000');
+  const [aiWordCount, setAiWordCount] = useState(() => loadStudioPref('wordcount:wechat-mp', '1500-2000'));
   const [reviseNote, setReviseNote] = useState('');
   const [imageBusy, setImageBusy] = useState<string | null>(null);
   const [snippetDraft, setSnippetDraft] = useState<{ slot: 'header' | 'footer'; name: string } | null>(null);
@@ -796,7 +797,7 @@ export function MediaStudioView(): JSX.Element {
             <span className={c('cardHint')}>一键全流程：先调研素材 → 按人设写（信息服务风格）→ 自动清 AI 腔；选个目标字数即可</span>
           </div>
           <div className={c('row')}>
-            <select className={c('select')} value={aiWordCount} title="目标字数" onChange={(e) => setAiWordCount(e.target.value)}>
+            <select className={c('select')} value={aiWordCount} title="目标字数" onChange={(e) => { setAiWordCount(e.target.value); saveStudioPref('wordcount:wechat-mp', e.target.value, '1500-2000'); }}>
               {WORD_COUNTS.map((t) => (
                 <option key={t} value={t}>
                   {t} 字

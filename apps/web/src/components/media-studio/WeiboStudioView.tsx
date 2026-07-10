@@ -29,6 +29,7 @@ import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type Stu
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { buildStudioDraft, strippedBodyOf } from './draft-builders';
+import { loadStudioPref, saveStudioPref } from './studio-prefs';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { weiboPreviewDoc } from './zhihu-preview';
 import { useOrphanRun } from './useOrphanRun';
@@ -69,7 +70,7 @@ export function WeiboStudioView(): JSX.Element {
   const [aiElapsed, setAiElapsed] = useState(0);
   const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
   const [reviseNote, setReviseNote] = useState('');
-  const [aiWordCount, setAiWordCount] = useState('100-140');
+  const [aiWordCount, setAiWordCount] = useState(() => loadStudioPref('wordcount:weibo', '100-140'));
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [importList, setImportList] = useState<MediaArticleSummary[] | null>(null);
@@ -502,7 +503,7 @@ export function WeiboStudioView(): JSX.Element {
                     onChange={(e) => editArticle({ bodyMd: e.target.value })}
                   />
                   <div className={c('row')}>
-                    <select className={c('select')} value={aiWordCount} onChange={(e) => setAiWordCount(e.target.value)}>
+                    <select className={c('select')} value={aiWordCount} onChange={(e) => { setAiWordCount(e.target.value); saveStudioPref('wordcount:weibo', e.target.value, '100-140'); }}>
                       {['100-140', '300-500', '800-1200'].map((w) => (
                         <option key={w} value={w}>
                           {w} 字

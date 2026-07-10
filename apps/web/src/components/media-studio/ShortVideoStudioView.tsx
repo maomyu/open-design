@@ -36,6 +36,7 @@ import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type Stu
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { buildStudioDraft } from './draft-builders';
+import { loadStudioPref, saveStudioPref } from './studio-prefs';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -250,6 +251,26 @@ export function ShortVideoStudioView(): JSX.Element {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     void flushSave();
   }, [flushSave]);
+
+  // 新文章按上次选择种默认（用户报：主发平台/语气/时长选完不该每次重置）。
+  // 后端脚本任务读 extra，所以要真种进 extra 而非仅改显示；只在用户确有
+  // 非默认偏好、且该文章还没自己的选择时种，避免给每篇文章无谓写库。
+  const svSeededRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!article?.id || svSeededRef.current === article.id) return;
+    svSeededRef.current = article.id;
+    const e = (article.extra ?? {}) as Record<string, unknown>;
+    const patch: Record<string, string> = {};
+    const seed = (field: string, key: string, dflt: string) => {
+      if (str(e[field])) return; // 该文章已有自己的选择
+      const pref = loadStudioPref(key, dflt);
+      if (pref !== dflt) patch[field] = pref; // 仅当用户有真实非默认偏好
+    };
+    seed('targetPlatform', 'sv-platform', '抖音');
+    seed('tone', 'sv-tone', '真诚口播');
+    seed('duration', 'sv-duration', '30s');
+    if (Object.keys(patch).length) editArticle({ extra: patch });
+  }, [article?.id, editArticle]);
 
 
   // AI 任务计时：跑多久一目了然（配合阶段自报，「有没有在执行」不再靠猜）。
@@ -551,8 +572,8 @@ export function ShortVideoStudioView(): JSX.Element {
                   <div className={c('row')}>
                     <select
                       className={c('select')}
-                      value={str(extra.targetPlatform) || '抖音'}
-                      onChange={(e) => editArticle({ extra: { targetPlatform: e.target.value } })}
+                      value={str(extra.targetPlatform) || loadStudioPref('sv-platform', '抖音')}
+                      onChange={(e) => { editArticle({ extra: { targetPlatform: e.target.value } }); saveStudioPref('sv-platform', e.target.value, '抖音'); }}
                     >
                       {SAU_PLATFORMS.map((p) => (
                         <option key={p.id} value={p.label}>
@@ -562,8 +583,8 @@ export function ShortVideoStudioView(): JSX.Element {
                     </select>
                     <select
                       className={c('select')}
-                      value={str(extra.tone) || '真诚口播'}
-                      onChange={(e) => editArticle({ extra: { tone: e.target.value } })}
+                      value={str(extra.tone) || loadStudioPref('sv-tone', '真诚口播')}
+                      onChange={(e) => { editArticle({ extra: { tone: e.target.value } }); saveStudioPref('sv-tone', e.target.value, '真诚口播'); }}
                     >
                       {TONES.map((t) => (
                         <option key={t} value={t}>
@@ -573,8 +594,8 @@ export function ShortVideoStudioView(): JSX.Element {
                     </select>
                     <select
                       className={c('select')}
-                      value={str(extra.duration) || '30s'}
-                      onChange={(e) => editArticle({ extra: { duration: e.target.value } })}
+                      value={str(extra.duration) || loadStudioPref('sv-duration', '30s')}
+                      onChange={(e) => { editArticle({ extra: { duration: e.target.value } }); saveStudioPref('sv-duration', e.target.value, '30s'); }}
                     >
                       {DURATIONS.map((d) => (
                         <option key={d} value={d}>

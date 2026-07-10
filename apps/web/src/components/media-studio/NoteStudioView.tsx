@@ -36,6 +36,7 @@ import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './St
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
+import { loadStudioPref, saveStudioPref } from './studio-prefs';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
 import { navigate } from '../../router';
@@ -113,7 +114,12 @@ export function NoteStudioView(): JSX.Element {
   const [lintHits, setLintHits] = useState<StudioLintHit[]>([]);
   const [galleryBusy, setGalleryBusy] = useState<string | null>(null);
   const [galleryPrompt, setGalleryPrompt] = useState('');
-  const [galleryStyle, setGalleryStyle] = useState('illustrated');
+  const [galleryStyle, setGalleryStyleRaw] = useState(() => loadStudioPref('gallery-style', 'illustrated'));
+  // 记住上次选的图片风格模板当默认（用户报：选完不该每次重置）。
+  const setGalleryStyle = (v: string) => {
+    setGalleryStyleRaw(v);
+    saveStudioPref('gallery-style', v, 'illustrated');
+  };
   const [galleryModel, setGalleryModel] = useState(loadPreferredImageModel);
   // 账号中心是唯一账号来源:各平台的账号名列表(没配的平台=空数组)。
   // 供安全发布卡(带稿开后台)的账号下拉/引导用。

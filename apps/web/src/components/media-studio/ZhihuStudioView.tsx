@@ -36,6 +36,7 @@ import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCa
 import { CoverGenerator } from './MediaStudioView';
 import { zhihuPreviewDoc } from './zhihu-preview';
 import { loadPreferredImageModel } from './image-model-pref';
+import { loadStudioPref, saveStudioPref } from './studio-prefs';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -75,7 +76,7 @@ export function ZhihuStudioView(): JSX.Element {
   const [aiElapsed, setAiElapsed] = useState(0);
   const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
   const [reviseNote, setReviseNote] = useState('');
-  const [aiWordCount, setAiWordCount] = useState('1500-2000');
+  const [aiWordCount, setAiWordCount] = useState(() => loadStudioPref('wordcount:zhihu', '1500-2000'));
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [importList, setImportList] = useState<MediaArticleSummary[] | null>(null);
@@ -572,7 +573,7 @@ export function ZhihuStudioView(): JSX.Element {
                     onChange={(e) => editArticle({ bodyMd: e.target.value })}
                   />
                   <div className={c('row')}>
-                    <select className={c('select')} value={aiWordCount} onChange={(e) => setAiWordCount(e.target.value)}>
+                    <select className={c('select')} value={aiWordCount} onChange={(e) => { setAiWordCount(e.target.value); saveStudioPref('wordcount:zhihu', e.target.value, '1500-2000'); }}>
                       {['800-1200', '1500-2000', '2500-3500'].map((w) => (
                         <option key={w} value={w}>
                           {w} 字
