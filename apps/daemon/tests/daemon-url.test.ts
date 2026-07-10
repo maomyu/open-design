@@ -46,6 +46,9 @@ describe("resolveDaemonUrl", () => {
     const url = await resolveDaemonUrl({
       env: {
         [SIDECAR_ENV.IPC_PATH]: path.join(ipcBaseDir, "missing.sock"),
+        // Pin the scan base to an empty dir: without this, the namespace scan
+        // would find a real dev daemon on contributor machines and flake.
+        [SIDECAR_ENV.IPC_BASE]: path.join(ipcBaseDir, "empty-scan-base"),
       },
       timeoutMs: 200,
     });
@@ -88,4 +91,71 @@ describe("resolveDaemonUrl", () => {
       await ipc?.close();
     }
   });
+
+  const statusHandler = (url: string) => (message: unknown) => {
+    if (
+      message != null &&
+      typeof message === "object" &&
+      (message as { type?: unknown }).type === SIDECAR_MESSAGES.STATUS
+    ) {
+      return { pid: 4242, state: "running", updatedAt: new Date().toISOString(), url };
+    }
+    throw new Error("unexpected message");
+  };
+
+  // 零配置自发现:客户 shell 里没有任何 OD_* 环境变量,npm 装的 od/workbuild
+  // 靠扫描固定 IPC base 找到桌面端(打包版)daemon。POSIX socket 语义,win 走
+  // 命名管道枚举(此处跳过)。
+  it.skipIf(process.platform === "win32")(
+    "discovers a live daemon by scanning the IPC base when no env vars are set",
+    async () => {
+      const scanBase = fs.mkdtempSync(path.join(os.tmpdir(), "od-scan-base-"));
+      fs.mkdirSync(path.join(scanBase, "release-mac"), { recursive: true });
+      let ipc: JsonIpcServerHandle | null = null;
+      try {
+        ipc = await createJsonIpcServer({
+          socketPath: path.join(scanBase, "release-mac", "daemon.sock"),
+          handler: statusHandler("http://127.0.0.1:61001"),
+        });
+        const url = await resolveDaemonUrl({
+          env: { [SIDECAR_ENV.IPC_BASE]: scanBase },
+          timeoutMs: 1000,
+        });
+        expect(url).toBe("http://127.0.0.1:61001");
+      } finally {
+        await ipc?.close();
+        fs.rmSync(scanBase, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "prefers the default (dev) namespace over other namespaces when both are live",
+    async () => {
+      const scanBase = fs.mkdtempSync(path.join(os.tmpdir(), "od-scan-order-"));
+      fs.mkdirSync(path.join(scanBase, "default"), { recursive: true });
+      fs.mkdirSync(path.join(scanBase, "aaa-packaged"), { recursive: true });
+      let devIpc: JsonIpcServerHandle | null = null;
+      let packagedIpc: JsonIpcServerHandle | null = null;
+      try {
+        devIpc = await createJsonIpcServer({
+          socketPath: path.join(scanBase, "default", "daemon.sock"),
+          handler: statusHandler("http://127.0.0.1:61002"),
+        });
+        packagedIpc = await createJsonIpcServer({
+          socketPath: path.join(scanBase, "aaa-packaged", "daemon.sock"),
+          handler: statusHandler("http://127.0.0.1:61003"),
+        });
+        const url = await resolveDaemonUrl({
+          env: { [SIDECAR_ENV.IPC_BASE]: scanBase },
+          timeoutMs: 1000,
+        });
+        expect(url).toBe("http://127.0.0.1:61002"); // default 先于字典序更小的其它命名空间
+      } finally {
+        await devIpc?.close();
+        await packagedIpc?.close();
+        fs.rmSync(scanBase, { recursive: true, force: true });
+      }
+    },
+  );
 });

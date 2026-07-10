@@ -25,6 +25,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "cli-pack": "tsx scripts/build-cli-package.ts",
     "daemon": "pnpm run build && node dist/cli.js --no-open",
     "dev": "pnpm run build && node dist/cli.js --no-open",
     "start": "pnpm run build && node dist/cli.js",
@@ -59,6 +60,7 @@
     "@types/express": "5.0.6",
     "@types/multer": "2.1.0",
     "@types/node": "20.19.39",
+    "esbuild": "0.28.0",
     "typescript": "5.9.3",
     "vitest": "4.1.6"
   },

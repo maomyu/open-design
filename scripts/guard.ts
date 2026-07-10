@@ -100,6 +100,9 @@ const residualAllowedExactPaths = new Set([
 
 const residualAllowedPathPrefixes = [
   "apps/daemon/dist/",
+  // Generated customer-install npm package (single-file CLI bundle + tarball);
+  // produced by `pnpm --filter @open-design/daemon cli-pack`, git-ignored.
+  "apps/daemon/dist-cli/",
   "apps/web/.next/",
   "apps/web/out/",
   "generated/",

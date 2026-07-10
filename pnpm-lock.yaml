@@ -116,6 +116,9 @@ importers:
       '@types/node':
         specifier: 20.19.39
         version: 20.19.39
+      esbuild:
+        specifier: 0.28.0
+        version: 0.28.0
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -1641,11 +1644,6 @@ packages:
 
   '@posthog/types@1.374.2':
     resolution: {integrity: sha512-ZghQSFMi+HFJNPvPjBoyY/jWQ+q6mSQVtWQxOHMSbBidUZjsyYbxYxBFbHy2qWLNe4mEpX+Wqir2Q4I/4AVvJQ==}
-
-  '@powerformer/vela-cli-darwin-arm64@0.0.3':
-    resolution: {integrity: sha512-tNFNiYVMfp64SHojvpcVV8zIw5RHgaqu8tLcI7SZdk1zS3dAv1gZ20ayebBpxWWAoj2wNMsuA6W006mRRRyjdQ==}
-    cpu: [arm64]
-    os: [darwin]
 
   '@powerformer/vela-cli@0.0.3':
     resolution: {integrity: sha512-ZUrFNFJ/2gvSmQbXLPqRZCeeOR/bNyj0pxhJwKHxiAbGQWVNlTDFy9lDzyID3gD+UH3VMZacmbvSPQyhuRyxAQ==}
@@ -6043,12 +6041,7 @@ snapshots:
 
   '@posthog/types@1.374.2': {}
 
-  '@powerformer/vela-cli-darwin-arm64@0.0.3':
-    optional: true
-
   '@powerformer/vela-cli@0.0.3':
-    optionalDependencies:
-      '@powerformer/vela-cli-darwin-arm64': 0.0.3
     optional: true
 
   '@rollup/pluginutils@5.3.0(rollup@4.60.2)':

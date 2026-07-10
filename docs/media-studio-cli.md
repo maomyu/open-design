@@ -2,9 +2,23 @@
 
 `od studio` 是媒体创作台的完整 CLI 面：界面上能做的每一步（选题→写作→配图→排版→发布→复盘）都有对应子命令，且与界面调用**同一批 `/api/media-studio/*` 端点**——CLI 写入的产物界面实时可见，反之亦然。外部智能体（Claude Code、hermes-agent、自定义 bot）按本手册即可无界面驱动全流水线。
 
+## 安装
+
+**开发机（本仓库）**：`npm link`（仓库根）把 `od` 挂到全局；或直接 `node apps/daemon/dist/cli.js`。
+
+**客户装机（npm 包）**：`pnpm --filter @open-design/daemon cli-pack` 产出
+`apps/daemon/dist-cli/workbuild-cli-<版本>.tgz`（单文件瘦客户端，双命令名 `workbuild`/`od`）。
+客户机器装好 Node ≥18 后一条命令：
+
+```bash
+npm install -g ./workbuild-cli-<版本>.tgz
+```
+
+装完零配置即用：CLI 自动扫描固定 IPC 端点找到本机在跑的 daemon（桌面端自带）。客户典型形态 = Node/npm + 智能体（如 Claude Code）+ WorkBuild 桌面端，智能体对话与桌面端手动操作并行不冲突。
+
 ## 约定
 
-- **daemon 定位**：环境变量 `OD_DAEMON_URL`（创作台 AI 任务的子进程已自动注入）；没有时走 IPC 发现，最后落 `http://127.0.0.1:7456`。手动指定：`--daemon-url http://127.0.0.1:17456`。
+- **daemon 定位**（依次）：`--daemon-url` → 环境变量 `OD_DAEMON_URL`（创作台 AI 任务的子进程已自动注入）→ `OD_SIDECAR_IPC_PATH` 指定的 IPC 端点 → **自动扫描** `/tmp/open-design/ipc/*/daemon.sock`（Windows 为命名管道；default 命名空间优先）→ 最后落 `http://127.0.0.1:7456`。
 - **平台**：`--platform wechat-mp|zhihu|weibo|note|short-video`，缺省 `wechat-mp`。文章、选题、知识库按平台分库（知识库例外：全平台共享）。
 - **机器可读**：所有查询/写入子命令支持 `--json`。
 - **长文本进出**：`--body-file/--header-file/--footer-file/--file` 都接受文件路径或 `-`（stdin）。
