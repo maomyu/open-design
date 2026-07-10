@@ -173,7 +173,7 @@ function escapeHtml(s: string): string {
 }
 
 /** 预览外壳：手机宽度白底 + 标题区，内容就是 daemon 渲染的 <section> 片段。 */
-function previewDoc(title: string, fragment: string): string {
+export function previewDoc(title: string, fragment: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   body{margin:0;background:#ededed;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI',sans-serif;}
   .wrap{max-width:414px;margin:0 auto;background:#fff;min-height:100vh;padding:22px 16px 48px;box-sizing:border-box;}
@@ -1893,7 +1893,7 @@ export function MediaStudioView(): JSX.Element {
 
 // ---- 配图子组件 ----
 
-function CoverGenerator({
+export function CoverGenerator({
   initialDescription,
   busy,
   onGenerate,

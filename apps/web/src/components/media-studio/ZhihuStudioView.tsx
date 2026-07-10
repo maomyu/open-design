@@ -26,11 +26,16 @@ import {
   fetchStudioAssetPaths,
   fetchStudioPublishes,
   fetchStudioTopics,
+  generateArticleImage,
+  renderStudioPreview,
   updateStudioArticle,
+  uploadStudioAsset,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
+import { CoverGenerator, previewDoc } from './MediaStudioView';
+import { loadPreferredImageModel } from './image-model-pref';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -41,7 +46,7 @@ const c = (key: string): string => (styles as Record<string, string | undefined>
 const PLATFORM = 'zhihu';
 const LAST_ARTICLE_KEY = 'open-design:studio:last-zhihu-article';
 
-type ZhihuTab = 'topics' | 'write' | 'publish' | 'list';
+type ZhihuTab = 'topics' | 'write' | 'cover' | 'images' | 'publish' | 'list';
 
 const STATUS_LABEL: Record<MediaArticle['status'], { text: string; chip: string }> = {
   writing: { text: '创作中', chip: 'chipAmber' },
@@ -120,6 +125,13 @@ export function ZhihuStudioView(): JSX.Element {
   const [importOpen, setImportOpen] = useState(false);
   const [importList, setImportList] = useState<MediaArticleSummary[] | null>(null);
   const platformAccounts = usePlatformAccountNames();
+  // 封面/配图/实时预览(2026-07-10 用户拍板:和公众号一致)。
+  const [previewHtml, setPreviewHtml] = useState('');
+  const [coverGenBusy, setCoverGenBusy] = useState(false);
+  const [coverCandidates, setCoverCandidates] = useState<string[]>([]);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imagePrompt, setImagePrompt] = useState('');
+  const [imageNotice, setImageNotice] = useState<string | null>(null);
 
   const articleRef = useRef<MediaArticle | null>(null);
   articleRef.current = article;
@@ -275,6 +287,70 @@ export function ZhihuStudioView(): JSX.Element {
     [refreshArticles],
   );
 
+  // ---- 实时预览:正文 markdown → HTML(复用公众号渲染端点,图文可见,
+  // 含从公众号导入的图片);防抖 450ms。 ----
+  useEffect(() => {
+    const body = article?.bodyMd ?? '';
+    if (!body.trim()) {
+      setPreviewHtml('');
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void renderStudioPreview({ platform: PLATFORM, bodyMd: body }).then((r) => {
+        if (r) setPreviewHtml(r.html);
+      });
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [article?.bodyMd]);
+
+  // ---- 封面:生成 2 张候选 / 上传 / 选用(coverSource,和公众号一致)。 ----
+  async function generateCover(desc: string, style: string, ref: string, model: string) {
+    if (!article) return;
+    setCoverGenBusy(true);
+    setImageNotice(null);
+    const req = {
+      description: desc,
+      style,
+      model,
+      ratio: '16:9',
+      asCover: false,
+      ...(ref.trim() ? { referenceImage: ref.trim() } : {}),
+    };
+    const results = await Promise.all([
+      generateArticleImage(PLATFORM, article.id, req),
+      generateArticleImage(PLATFORM, article.id, req),
+    ]);
+    setCoverGenBusy(false);
+    const urls = results.flatMap((r) => ('error' in r ? [] : [r.url]));
+    if (urls.length === 0) {
+      const first = results[0];
+      setImageNotice('error' in first ? first.error : '生成失败');
+      return;
+    }
+    setCoverCandidates((prev) => [...new Set([...urls, ...prev])].slice(0, 6));
+  }
+
+  /** 单张配图:AI 生成/上传 → 追加 ![](url) 到正文末尾(发布时原位插入)。 */
+  async function addBodyImage(url: string) {
+    const current = articleRef.current;
+    if (!current) return;
+    const sep = current.bodyMd.endsWith('\n') ? '' : '\n';
+    editArticle({ bodyMd: `${current.bodyMd}${sep}\n![](${url})\n` });
+    setImageNotice('配图已插入正文末尾——可在正文里把它挪到合适位置');
+  }
+  async function generateBodyImage(desc: string) {
+    if (!article || !desc.trim()) return;
+    setImageBusy(true);
+    setImageNotice(null);
+    const result = await generateArticleImage(PLATFORM, article.id, { description: desc.trim(), style: 'none', model: loadPreferredImageModel(), ratio: '4:3' });
+    setImageBusy(false);
+    if ('error' in result) {
+      setImageNotice(result.error);
+      return;
+    }
+    if (result.url) await addBodyImage(result.url);
+  }
+
   async function handleCreateArticle(topic?: MediaTopic) {
     await flushSave();
     const created = await createStudioArticle(PLATFORM, {
@@ -335,15 +411,21 @@ export function ZhihuStudioView(): JSX.Element {
   const stepDone: Record<ZhihuTab, boolean> = {
     topics: topics.some((t) => t.status === 'used'),
     write: Boolean(article && article.title.trim() && article.bodyMd.trim()),
+    cover: Boolean(article?.coverSource),
+    images: false,
     publish: article?.status === 'published',
     list: false,
   };
 
-  const TABS: Array<{ id: ZhihuTab; label: string; step: string }> = [
+  const TABS: Array<{ id: ZhihuTab; label: string; step: string; optional?: boolean }> = [
     { id: 'topics', label: '选题', step: '1' },
     { id: 'write', label: '写作', step: '2' },
-    { id: 'publish', label: '发布', step: '3' },
+    { id: 'cover', label: '封面', step: '3', optional: true },
+    { id: 'images', label: '配图', step: '4', optional: true },
+    { id: 'publish', label: '发布', step: '5' },
   ];
+  // 写作/封面/配图 tab 显示右侧实时预览。
+  const showPreview = (tab === 'write' || tab === 'cover' || tab === 'images') && Boolean(article);
 
   const activeStatus = article ? STATUS_LABEL[article.status] : null;
   const zhihuAccounts = platformAccounts[PLATFORM] ?? [];
@@ -440,6 +522,7 @@ export function ZhihuStudioView(): JSX.Element {
           >
             <span className={c('tabStep')}>{item.step}</span>
             {item.label}
+            {item.optional ? <span className={c('tabStep')}>·选</span> : null}
             {stepDone[item.id] ? <Icon name="check" size={12} /> : null}
           </button>
         ))}
@@ -597,6 +680,127 @@ export function ZhihuStudioView(): JSX.Element {
             )
           ) : null}
 
+          {tab === 'cover' && article ? (
+            <>
+              <div className={c('card')}>
+                <div className={c('cardLabel')}>
+                  当前封面（16:9 · 知乎文章封面）
+                  <span className={c('cardHint')}>{article.coverSource ? '' : '还没有封面——生成或上传一张，发布时自动上到知乎封面区'}</span>
+                </div>
+                {article.coverSource ? (
+                  <div className={c('row')}>
+                    <img className={c('coverPreview')} src={article.coverSource} alt="当前封面" />
+                    <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => editArticle({ coverSource: '' })}>
+                      移除
+                    </button>
+                  </div>
+                ) : null}
+                <div className={c('row')}>
+                  <label className={c('btn')} style={{ cursor: 'pointer' }}>
+                    <Icon name="upload" size={14} /> 用本机图片作封面
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) return;
+                        void (async () => {
+                          setImageNotice('上传中…');
+                          const result = await uploadStudioAsset(PLATFORM, article.id, file);
+                          if (result.error) setImageNotice(result.error);
+                          else if (result.url) {
+                            editArticle({ coverSource: result.url });
+                            setImageNotice('本机图片已设为封面');
+                          }
+                        })();
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className={c('card')}>
+                <div className={c('cardLabel')}>生成封面</div>
+                <CoverGenerator
+                  initialDescription={article.title}
+                  busy={coverGenBusy}
+                  onGenerate={(desc, style, ref, model) => void generateCover(desc, style, ref, model)}
+                  onUploadReference={async (file) => {
+                    const result = await uploadStudioAsset(PLATFORM, article.id, file);
+                    return result.error ? null : result.url ?? null;
+                  }}
+                />
+                {coverCandidates.length > 0 ? (
+                  <div className={c('coverGrid')}>
+                    {coverCandidates.map((url) => (
+                      <div key={url} className={c('coverCard')}>
+                        <img className={c('coverThumb')} src={url} alt="候选封面" />
+                        <div className={c('row')}>
+                          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => { editArticle({ coverSource: url }); setImageNotice('已设为封面'); }}>
+                            用这张
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              {imageNotice ? <div className={`${c('notice')} ${c('noticeOk')}`}>{imageNotice}</div> : null}
+            </>
+          ) : null}
+
+          {tab === 'images' && article ? (
+            <div className={c('card')}>
+              <div className={c('cardLabel')}>
+                正文配图
+                <span className={c('cardHint')}>AI 生成或上传，插入正文（发布时按位置原位插到知乎正文）</span>
+              </div>
+              <div className={c('row')}>
+                <input
+                  className={`${c('input')} ${c('grow')}`}
+                  value={imagePrompt}
+                  placeholder="画面描述，例：一位职场女性在咖啡店窗边看笔记本，暖色调…"
+                  onChange={(e) => setImagePrompt(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className={`${c('btn')} ${c('btnPrimary')}`}
+                  disabled={imageBusy || !imagePrompt.trim()}
+                  onClick={() => void generateBodyImage(imagePrompt).then(() => setImagePrompt(''))}
+                >
+                  {imageBusy ? '生成中…' : '生成并插入'}
+                </button>
+                <label className={c('btn')} style={{ cursor: 'pointer' }}>
+                  <Icon name="upload" size={14} /> 上传
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      void (async () => {
+                        setImageBusy(true);
+                        const result = await uploadStudioAsset(PLATFORM, article.id, file);
+                        setImageBusy(false);
+                        if (result.error) setImageNotice(result.error);
+                        else if (result.url) await addBodyImage(result.url);
+                      })();
+                    }}
+                  />
+                </label>
+              </div>
+              {imageNotice ? <div className={c('cardHint')}>{imageNotice}</div> : null}
+              <div className={c('cardHint')}>提示:插入的图片以 markdown 出现在正文里,可在「写作」正文框里调整位置。</div>
+            </div>
+          ) : null}
+
+          {tab === 'write' && stepDone.write ? (
+            <NextStepBar hint="正文完成，可选加封面/配图，或直接去发布" label="去封面" onGo={() => setTab('cover')} />
+          ) : null}
+
           {tab === 'publish' ? (
             !article ? (
               emptyCta('发布属于某篇文章——先去「写作」新建。')
@@ -663,10 +867,25 @@ export function ZhihuStudioView(): JSX.Element {
           {tab === 'topics' && stepDone.topics ? (
             <NextStepBar hint="选题已用,去写作出稿" label="去写作" onGo={() => setTab('write')} />
           ) : null}
-          {tab === 'write' && stepDone.write ? (
-            <NextStepBar hint="稿件就绪,去发布——一键存草稿到知乎" label="去发布" onGo={() => setTab('publish')} />
+          {tab === 'cover' && article?.coverSource ? (
+            <NextStepBar hint="封面已就绪;配图可选,也可以直接去发布" label="去发布" onGo={() => setTab('publish')} />
           ) : null}
         </div>
+        {showPreview ? (
+          <div className={c('previewCol')}>
+            <span className={c('previewTag')}>
+              <Icon name="eye" size={13} /> 实时预览（图文效果，含导入的图片）
+            </span>
+            <div className={c('previewShell')}>
+              <iframe
+                className={c('previewFrame')}
+                sandbox=""
+                title="知乎文章预览"
+                srcDoc={previewDoc(article?.title ?? '', previewHtml)}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {aiTask ? (
