@@ -385,6 +385,21 @@ export function ZhihuStudioView(): JSX.Element {
       <div className={c('head')}>
         <h1 className={c('title')}>知乎创作台</h1>
         {activeStatus ? <span className={`${c('chip')} ${c(activeStatus.chip)}`}>{activeStatus.text}</span> : null}
+        {article && zhihuAccounts.length > 0 ? (
+          <select
+            className={c('select')}
+            value={article.accountId ?? ''}
+            title="这篇文章发到哪个知乎账号——发布用它的登录档案"
+            onChange={(e) => editArticle({ accountId: e.target.value || null })}
+          >
+            <option value="">（未绑定账号）</option>
+            {zhihuAccounts.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <SaveStatusBadge state={saveState} savedAt={savedAt} onRetry={() => void flushSave()} />
         <div className={c('headSpacer')} />
         <div className={c('articlePicker')}>
@@ -519,23 +534,6 @@ export function ZhihuStudioView(): JSX.Element {
                     placeholder="文章标题"
                     onChange={(e) => editArticle({ title: e.target.value })}
                   />
-                  {zhihuAccounts.length > 0 ? (
-                    <div className={c('row')}>
-                      <span className={c('cardHint')}>发布账号:</span>
-                      <select
-                        className={c('select')}
-                        value={article.accountId ?? ''}
-                        onChange={(e) => editArticle({ accountId: e.target.value || null })}
-                      >
-                        <option value="">（未绑定）</option>
-                        {zhihuAccounts.map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : null}
                 </div>
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
