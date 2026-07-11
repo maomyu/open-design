@@ -101,17 +101,6 @@ import { KNOWN_PROVIDERS } from '../state/config';
 import type { KnownProvider } from '../state/config';
 import { testApiProvider } from '../providers/connection-test';
 import { fetchProviderModels } from '../providers/provider-models';
-import {
-  cancelVelaLogin,
-  fetchVelaLoginStatus,
-  startVelaLogin,
-  type VelaLoginStatus,
-} from '../providers/daemon';
-import { AmrAccountControl } from './AmrLoginPill';
-import {
-  AMR_LOGIN_POLL_INTERVAL_MS,
-  amrLoginPollOutcome,
-} from './amrLoginPolling';
 
 // The topbar chips (GitHub star, model switcher, Use everywhere)
 // collapse into the settings dropdown when the viewport gets
@@ -787,13 +776,10 @@ function OnboardingView({
   const t = useT();
   const analytics = useAnalytics();
   const [step, setStep] = useState(0);
-  const [runtime, setRuntime] = useState<'amr' | 'local' | 'byok' | null>(null);
+  const [runtime, setRuntime] = useState<'local' | 'byok' | null>(null);
   const [designSource, setDesignSource] = useState<'github' | 'upload' | 'prompt' | null>(null);
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [cliScanStatus, setCliScanStatus] = useState<'idle' | 'scanning' | 'done'>('idle');
-  const [amrStatus, setAmrStatus] = useState<VelaLoginStatus | null>(null);
-  const [amrLoginPending, setAmrLoginPending] = useState(false);
-  const [amrLoginError, setAmrLoginError] = useState(false);
   const [visibleAgentIds, setVisibleAgentIds] = useState<string[]>([]);
   const [providerTestState, setProviderTestState] = useState<
     | { status: 'idle' }
@@ -828,8 +814,6 @@ function OnboardingView({
   }, [profile]);
   const agentRevealTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const cliScanTokenRef = useRef(0);
-  const amrLoginPollCancelledRef = useRef(false);
-  const amrAgentRefreshAttemptedRef = useRef(false);
   const apiProtocol = config.apiProtocol ?? 'anthropic';
   const providerTestInputKey = [
     apiProtocol,
@@ -872,50 +856,15 @@ function OnboardingView({
   const visibleAgents = agents.filter(
     (agent) => agent.available && agent.id !== 'amr' && visibleAgentIds.includes(agent.id),
   );
-  const amrAgent = agents.find((agent) => agent.id === 'amr' && agent.available) ?? null;
-  const showAmrCloudOption = amrAgent !== null || agents.length === 0;
-  const amrSignedIn = amrStatus?.loggedIn === true;
-  const amrSelectedAndSignedOut = runtime === 'amr' && !amrSignedIn;
   const selectedAgent = visibleAgents.find((agent) => agent.id === config.agentId) ?? null;
   const selectedAgentChoice = selectedAgent ? (config.agentModels?.[selectedAgent.id] ?? {}) : {};
 
   useEffect(() => {
     return () => {
-      amrLoginPollCancelledRef.current = true;
       agentRevealTimersRef.current.forEach((timer) => clearTimeout(timer));
       agentRevealTimersRef.current = [];
     };
   }, []);
-
-  useEffect(() => {
-    if (!amrAgent || runtime !== null) return;
-    setRuntime('amr');
-    onModeChange('daemon');
-    onAgentChange('amr');
-  }, [amrAgent, onAgentChange, onModeChange, runtime]);
-
-  useEffect(() => {
-    if (amrAgent || amrAgentRefreshAttemptedRef.current) return;
-    amrAgentRefreshAttemptedRef.current = true;
-    void Promise.resolve(onRefreshAgents()).catch(() => undefined);
-  }, [amrAgent, onRefreshAgents]);
-
-  useEffect(() => {
-    if (!amrAgent) return;
-    let cancelled = false;
-    void fetchVelaLoginStatus().then((next) => {
-      if (!cancelled && next) setAmrStatus(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [amrAgent]);
-
-  useEffect(() => {
-    if (runtime === 'amr') return;
-    amrLoginPollCancelledRef.current = true;
-    setAmrLoginPending(false);
-  }, [runtime]);
 
   // Onboarding step exposure. Design-system intake used to live here
   // as step 3, but it is temporarily removed from first-run
@@ -967,7 +916,6 @@ function OnboardingView({
   const onboardingStartedAtRef = useRef<number>(Date.now());
   const lifecycleReportedRef = useRef(false);
   function currentRuntimeType(): TrackingOnboardingRuntimeType {
-    if (runtime === 'amr') return 'amr_cloud';
     if (runtime === 'local') return 'local_cli';
     if (runtime === 'byok') return 'byok';
     return 'none';
@@ -1087,10 +1035,9 @@ function OnboardingView({
     });
   }
 
-  const steps = [
-    t('settings.onboardingStepConnect'),
-    t('settings.onboardingStepProfile'),
-  ];
+  // 单页欢迎（2026-07-11 用户拍板）：只留「连接」一步；「关于你」画像页
+  // 移除——客户产品不需要用户角色问卷。
+  const steps = [t('settings.onboardingStepConnect')];
   const isLastStep = step === steps.length - 1;
 
   const runtimeItems: Array<{
@@ -1169,49 +1116,6 @@ function OnboardingView({
       },
     },
   ];
-  const roleOptions = [
-    { value: 'pm', label: t('settings.onboardingRolePm') },
-    { value: 'designer', label: t('settings.onboardingRoleDesigner') },
-    { value: 'engineer', label: t('settings.onboardingRoleEngineer') },
-    { value: 'marketing', label: t('settings.onboardingRoleMarketing') },
-    { value: 'growth', label: t('settings.onboardingRoleGrowth') },
-    { value: 'ops', label: t('settings.onboardingRoleOps') },
-    { value: 'founder', label: t('settings.onboardingRoleFounder') },
-    { value: 'student', label: t('settings.onboardingRoleStudent') },
-    { value: 'other', label: t('settings.onboardingRoleOther') },
-  ];
-  const orgSizeOptions = [
-    { value: 'solo', label: t('settings.onboardingOrgSolo') },
-    { value: 'team', label: t('settings.onboardingOrgTeam') },
-    { value: 'startup', label: t('settings.onboardingOrgStartup') },
-    { value: 'growth', label: t('settings.onboardingOrgGrowth') },
-    { value: 'midmarket', label: t('settings.onboardingOrgMidMarket') },
-    { value: 'enterprise', label: t('settings.onboardingOrgEnterprise') },
-  ];
-  const useCaseOptions = [
-    { value: 'product', label: t('settings.onboardingUseProduct') },
-    { value: 'design-system', label: t('settings.onboardingUseDesignSystem') },
-    { value: 'prototype', label: t('settings.onboardingUsePrototype') },
-    { value: 'landing', label: t('settings.onboardingUseLanding') },
-    { value: 'marketing', label: t('settings.onboardingUseMarketing') },
-    { value: 'ads', label: t('settings.onboardingUseAds') },
-    { value: 'dashboard', label: t('settings.onboardingUseDashboard') },
-    { value: 'deck', label: t('settings.onboardingUseDeck') },
-    { value: 'engineering', label: t('settings.onboardingUseEngineering') },
-    { value: 'agency', label: t('settings.onboardingUseAgency') },
-  ];
-  const sourceOptions = [
-    { value: 'github', label: t('settings.onboardingSourceGithub') },
-    { value: 'friend', label: t('settings.onboardingSourceFriend') },
-    { value: 'social', label: t('settings.onboardingSourceSocial') },
-    { value: 'product-hunt', label: t('settings.onboardingSourceProductHunt') },
-    { value: 'community', label: t('settings.onboardingSourceCommunity') },
-    { value: 'youtube', label: t('settings.onboardingSourceYoutube') },
-    { value: 'blog', label: t('settings.onboardingSourceBlog') },
-    { value: 'ai-tool', label: t('settings.onboardingSourceAiTool') },
-    { value: 'search', label: t('settings.onboardingSourceSearch') },
-    { value: 'event', label: t('settings.onboardingSourceEvent') },
-  ];
   const byokProviderOptions = [
     { value: '', label: t('settings.customProvider') },
     ...KNOWN_PROVIDERS.filter((provider) => provider.protocol === apiProtocol).map((provider) => ({
@@ -1287,22 +1191,7 @@ function OnboardingView({
     setStep((current) => current - 1);
   }
   function handlePrimaryAction() {
-    if (step === 0 && amrSelectedAndSignedOut) {
-      void handleAmrSignInToContinue();
-      return;
-    }
     if (isLastStep) {
-      // Emit the About-you survey snapshot FIRST, before the
-      // continue/complete pair. This is the bombproof carrier for the
-      // user's role / org size / use case / discovery source picks:
-      // per-dropdown clicks are racy on a fast Finish-setup (the user
-      // can pick all four dropdowns and click Finish inside one ~3s
-      // window, and PostHog's posthog-js client may not flush the
-      // individual rows before the route change unmounts the analytics
-      // provider). The snapshot click + the survey fields on
-      // `onboarding_complete_result` give the funnel two independent
-      // paths for the same data.
-      emitAboutYouSubmit();
       emitOnboardingClick('continue', 'continue');
       // Last-step Continue without a DS generation = "completed
       // without design system". The Generate path inside the
@@ -1315,67 +1204,6 @@ function OnboardingView({
     }
     emitOnboardingClick('continue', 'continue');
     setStep((current) => current + 1);
-  }
-
-  async function handleAmrSignInToContinue() {
-    if (amrLoginPending) return;
-    amrLoginPollCancelledRef.current = false;
-    setAmrLoginError(false);
-    setAmrLoginPending(true);
-    try {
-      const currentStatus = await fetchVelaLoginStatus();
-      if (currentStatus) setAmrStatus(currentStatus);
-      if (currentStatus?.loggedIn) {
-        setStep((current) => current + 1);
-        return;
-      }
-      const loginResult = await startVelaLogin();
-      if (!loginResult.ok && !loginResult.alreadyRunning) {
-        setAmrLoginError(true);
-        return;
-      }
-      if (await pollAmrLoginCompletion()) {
-        setStep((current) => current + 1);
-      }
-    } finally {
-      setAmrLoginPending(false);
-    }
-  }
-
-  async function pollAmrLoginCompletion(): Promise<boolean> {
-    const startedAt = Date.now();
-    while (!amrLoginPollCancelledRef.current) {
-      await new Promise((resolve) =>
-        window.setTimeout(resolve, AMR_LOGIN_POLL_INTERVAL_MS),
-      );
-      if (amrLoginPollCancelledRef.current) return false;
-      const nextStatus = await fetchVelaLoginStatus();
-      if (nextStatus) setAmrStatus(nextStatus);
-      const outcome = amrLoginPollOutcome(nextStatus, startedAt);
-      if (outcome === 'signed-in') return true;
-      if (outcome === 'stopped' || outcome === 'timed-out') {
-        if (outcome === 'timed-out') void cancelVelaLogin();
-        setAmrLoginError(true);
-        return false;
-      }
-    }
-    return false;
-  }
-
-  // Survey snapshot. Reads `profileRef.current` rather than `profile`
-  // because Finish-setup may fire within the same render commit as the
-  // user's last dropdown pick, before React has rebound the closure to
-  // the latest state. `'unknown'` covers an untouched field on the
-  // About-you step (the spec keeps the wire type open-string so a new
-  // role / use-case option doesn't force a contract bump).
-  function emitAboutYouSubmit(): void {
-    const snapshot = profileRef.current;
-    emitOnboardingClick('about_you_submit', 'continue', {
-      role: snapshot.role || 'unknown',
-      organization_size: snapshot.orgSize || 'unknown',
-      use_cases: snapshot.useCase.length > 0 ? snapshot.useCase : ['unknown'],
-      discovery_source: snapshot.source || 'unknown',
-    });
   }
 
   async function scanCliAgents() {
@@ -1548,13 +1376,9 @@ function OnboardingView({
     }
   }
 
-  const primaryActionLabel = step === 0 && amrSelectedAndSignedOut
-    ? t('settings.amrSignInToContinue')
-    : step === 1
-      ? t('settings.onboardingContinue')
-    : isLastStep
-      ? t('settings.onboardingFinish')
-      : t('settings.onboardingContinue');
+  const primaryActionLabel = isLastStep
+    ? t('settings.onboardingFinish')
+    : t('settings.onboardingContinue');
 
   return (
     <section className="onboarding-view" aria-labelledby="onboarding-title">
@@ -1565,16 +1389,18 @@ function OnboardingView({
         <h1 id="onboarding-title">{t('settings.welcomeTitle')}</h1>
         {t('settings.welcomeSubtitle') ? <p>{t('settings.welcomeSubtitle')}</p> : null}
       </header>
-      <ol className="onboarding-view__steps" aria-label={t('settings.welcomeTitle')}>
-        {steps.map((label, index) => (
-          <li key={label} className={index === step ? 'is-active' : index < step ? 'is-done' : ''}>
-            <span>{index + 1}</span>
-            <button type="button" onClick={() => setStep(index)}>
-              {label}
-            </button>
-          </li>
-        ))}
-      </ol>
+      {steps.length > 1 ? (
+        <ol className="onboarding-view__steps" aria-label={t('settings.welcomeTitle')}>
+          {steps.map((label, index) => (
+            <li key={label} className={index === step ? 'is-active' : index < step ? 'is-done' : ''}>
+              <span>{index + 1}</span>
+              <button type="button" onClick={() => setStep(index)}>
+                {label}
+              </button>
+            </li>
+          ))}
+        </ol>
+      ) : null}
       <div className="onboarding-view__body">
         <div className="onboarding-view__content">
           {step === 0 ? (
@@ -1584,54 +1410,6 @@ function OnboardingView({
                 body={t('settings.onboardingConnectBody')}
               />
               <div className="onboarding-view__runtime-stack">
-                {showAmrCloudOption ? (
-                  <div className="onboarding-view__amr-cloud-card">
-                    <OnboardingChoiceCard
-                      icon="orbit"
-                      agentIconId="amr"
-                      title={t('settings.amrCloud')}
-                      body={t('settings.onboardingExecutionBody')}
-                      benefits={[
-                        t('settings.onboardingAmrCloudBenefitOfficial'),
-                        t('settings.onboardingAmrCloudBenefitReady'),
-                        t('settings.onboardingAmrCloudBenefitModels'),
-                        t('settings.onboardingAmrCloudBenefitPricing'),
-                      ]}
-                      badge={t('settings.onboardingRecommended')}
-                      officialLabel={t('settings.onboardingAmrCloudOfficialBadge')}
-                      statusSlot={
-                        runtime === 'amr' ? (
-                          <AmrAccountControl
-                            status={
-                              amrLoginError
-                                ? 'error'
-                                : amrSignedIn
-                                  ? 'signed-in'
-                                  : amrLoginPending
-                                    ? 'signing-in'
-                                    : 'signed-out'
-                            }
-                            compact
-                            email={
-                              amrSignedIn
-                                ? amrStatus?.user?.email || t('settings.amrSignedIn')
-                                : ''
-                            }
-                            showSignInAction={false}
-                            signInDisabled={amrLoginPending}
-                          />
-                        ) : null
-                      }
-                      featured
-                      selected={runtime === 'amr'}
-                      onClick={() => {
-                        setRuntime('amr');
-                        onModeChange('daemon');
-                        onAgentChange('amr');
-                      }}
-                    />
-                  </div>
-                ) : null}
                 <div className="onboarding-view__alternatives">
                   {runtimeItems.map((item) => (
                     <OnboardingChoiceCard
@@ -1704,85 +1482,6 @@ function OnboardingView({
                     onFetchModels={() => void fetchProviderModelsInline()}
                   />
                 ) : null}
-              </div>
-            </div>
-          ) : null}
-
-          {step === 1 ? (
-            <div className="onboarding-view__panel">
-              <OnboardingPanelHeader
-                title={t('settings.onboardingProfileTitle')}
-                body={t('settings.onboardingProfileBody')}
-              />
-              <div className="onboarding-view__form-grid">
-                <OnboardingDropdown
-                  label={t('settings.onboardingRoleLabel')}
-                  placeholder={t('settings.onboardingSelectPlaceholder')}
-                  value={profile.role}
-                  options={roleOptions}
-                  onChange={(value) => {
-                    if (typeof value === 'string' && value) {
-                      emitOnboardingClick('role', 'select_option', {
-                        role: value,
-                      });
-                    }
-                    setProfile((current) => ({ ...current, role: value }));
-                  }}
-                />
-                <OnboardingDropdown
-                  label={t('settings.onboardingOrgSizeLabel')}
-                  placeholder={t('settings.onboardingSelectPlaceholder')}
-                  value={profile.orgSize}
-                  options={orgSizeOptions}
-                  onChange={(value) => {
-                    if (typeof value === 'string' && value) {
-                      emitOnboardingClick('organization_size', 'select_option', {
-                        organization_size: value,
-                      });
-                    }
-                    setProfile((current) => ({ ...current, orgSize: value }));
-                  }}
-                />
-                <OnboardingDropdown
-                  label={t('settings.onboardingUseCaseLabel')}
-                  placeholder={t('settings.onboardingSelectMultiplePlaceholder')}
-                  value={profile.useCase}
-                  options={useCaseOptions}
-                  multiple
-                  onChange={(value) => {
-                    if (!Array.isArray(value)) return;
-                    // Multi-select: emit one click per newly added
-                    // value (delta), not per render of the whole
-                    // selection. The dashboard then sees one row per
-                    // use_case chosen. Compare against `profileRef`
-                    // not `profile` — rapid picks can fire onChange
-                    // before React commits the previous pick, so a
-                    // closure-captured `profile.useCase` is one tick
-                    // behind and re-emits the prior pick on every
-                    // subsequent change.
-                    const previousSet = new Set(profileRef.current.useCase);
-                    for (const v of value) {
-                      if (!previousSet.has(v)) {
-                        emitOnboardingClick('use_case', 'select_option', { use_case: v });
-                      }
-                    }
-                    setProfile((current) => ({ ...current, useCase: value }));
-                  }}
-                />
-                <OnboardingDropdown
-                  label={t('settings.onboardingSourceLabel')}
-                  placeholder={t('settings.onboardingSelectPlaceholder')}
-                  value={profile.source}
-                  options={sourceOptions}
-                  onChange={(value) => {
-                    if (typeof value === 'string' && value) {
-                      emitOnboardingClick('hear_about_us', 'select_option', {
-                        discovery_source: value,
-                      });
-                    }
-                    setProfile((current) => ({ ...current, source: value }));
-                  }}
-                />
               </div>
             </div>
           ) : null}
@@ -1900,7 +1599,6 @@ function OnboardingView({
                 type="button"
                 className="onboarding-view__primary"
                 onClick={handlePrimaryAction}
-                disabled={amrLoginPending}
               >
                 <span>{primaryActionLabel}</span>
               </button>
