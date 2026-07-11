@@ -37,6 +37,7 @@ import { CoverGenerator } from './MediaStudioView';
 import { zhihuPreviewDoc } from './zhihu-preview';
 import { loadPreferredImageModel } from './image-model-pref';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
+import { hasFeature, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -63,9 +64,14 @@ function timeLabel(ts: number): string {
 }
 
 export function ZhihuStudioView(): JSX.Element {
+  const license = useLicense();
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<ZhihuTab>('write');
+  // 授权裁剪后的 tab 回落。
+  useEffect(() => {
+    if ((tab === 'cover' || tab === 'images') && !hasFeature(license, 'cap.image')) setTab('write');
+  }, [tab, license]);
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -362,8 +368,10 @@ export function ZhihuStudioView(): JSX.Element {
   const TABS: Array<{ id: ZhihuTab; label: string; step: string; optional?: boolean }> = [
     { id: 'topics', label: '选题', step: '1' },
     { id: 'write', label: '写作', step: '2' },
-    { id: 'cover', label: '封面', step: '3', optional: true },
-    { id: 'images', label: '配图', step: '4', optional: true },
+    // 授权裁剪:封面/配图跟 cap.image(发布 tab 保留——含手动复制路径)。
+    ...(hasFeature(license, 'cap.image')
+      ? ([{ id: 'cover', label: '封面', step: '3', optional: true }, { id: 'images', label: '配图', step: '4', optional: true }] as const)
+      : []),
     { id: 'publish', label: '发布', step: '5' },
   ];
   // 写作/封面/配图 tab 显示右侧实时预览。
@@ -572,42 +580,46 @@ export function ZhihuStudioView(): JSX.Element {
                     placeholder="正文内容;可以「从公众号导入」后按知乎读者口味改写…"
                     onChange={(e) => editArticle({ bodyMd: e.target.value })}
                   />
-                  <div className={c('row')}>
-                    <select className={c('select')} value={aiWordCount} onChange={(e) => { setAiWordCount(e.target.value); saveStudioPref('wordcount:zhihu', e.target.value, '1500-2000'); }}>
-                      {['800-1200', '1500-2000', '2500-3500'].map((w) => (
-                        <option key={w} value={w}>
-                          {w} 字
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className={`${c('btn')} ${c('btnPrimary')}`}
-                      disabled={effectiveAiRunning}
-                      onClick={() => void startAiTask('write', { wordCount: aiWordCount })}
-                    >
-                      <Icon name="sparkles" size={14} /> {effectiveAiRunning ? 'AI 任务进行中…' : 'AI 写一版'}
-                    </button>
-                  </div>
-                  <div className={c('row')}>
-                    <input
-                      className={`${c('input')} ${c('grow')}`}
-                      value={reviseNote}
-                      placeholder="改稿指令，例：开头改成提问式，第二节加个案例…"
-                      onChange={(e) => setReviseNote(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className={c('btn')}
-                      disabled={effectiveAiRunning || !reviseNote.trim()}
-                      onClick={() => {
-                        void startAiTask('revise', { note: reviseNote.trim() });
-                        setReviseNote('');
-                      }}
-                    >
-                      按我说的改
-                    </button>
-                  </div>
+                  {hasFeature(license, 'cap.ai') ? (
+                    <>
+                      <div className={c('row')}>
+                        <select className={c('select')} value={aiWordCount} onChange={(e) => { setAiWordCount(e.target.value); saveStudioPref('wordcount:zhihu', e.target.value, '1500-2000'); }}>
+                          {['800-1200', '1500-2000', '2500-3500'].map((w) => (
+                            <option key={w} value={w}>
+                              {w} 字
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className={`${c('btn')} ${c('btnPrimary')}`}
+                          disabled={effectiveAiRunning}
+                          onClick={() => void startAiTask('write', { wordCount: aiWordCount })}
+                        >
+                          <Icon name="sparkles" size={14} /> {effectiveAiRunning ? 'AI 任务进行中…' : 'AI 写一版'}
+                        </button>
+                      </div>
+                      <div className={c('row')}>
+                        <input
+                          className={`${c('input')} ${c('grow')}`}
+                          value={reviseNote}
+                          placeholder="改稿指令，例：开头改成提问式，第二节加个案例…"
+                          onChange={(e) => setReviseNote(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={effectiveAiRunning || !reviseNote.trim()}
+                          onClick={() => {
+                            void startAiTask('revise', { note: reviseNote.trim() });
+                            setReviseNote('');
+                          }}
+                        >
+                          按我说的改
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
                 <VersionsCard
                   platform={PLATFORM}

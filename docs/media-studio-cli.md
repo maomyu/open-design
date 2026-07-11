@@ -113,3 +113,15 @@ od studio handoff → daemon 建 job(内存,TTL) → SSE 广播 → 桌面端认
 | `ai <kind>` | 各台「AI 帮我…」按钮 |
 
 账号中心（增删平台账号）用 `od account --help`；生图/生视频底层能力用 `od media --help`。
+
+## 功能授权（定制版）
+
+产品支持按客户签发「功能授权」——未授权的功能对客户不渲染，且 daemon 强制
+（`/api/media-studio/*` 未授权返回 403 `FEATURE_NOT_LICENSED`）。
+
+- **无授权文件 = 全功能**（开发机/CI/存量安装零影响）。
+- 授权文件 `license.json` 放在 daemon 数据目录（与 `app-config.json` 同级）。
+- 客户侧命令：`workbuild license show` / `workbuild license import <file>` / `workbuild license reload`。
+- 到期后：写操作 403（`LICENSE_EXPIRED`），GET 读端点放行——锁功能、留数据。
+
+签发在运营方侧（私钥不进仓库/产品），见《定制版签发操作单》。

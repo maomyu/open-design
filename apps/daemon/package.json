@@ -26,6 +26,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "cli-pack": "tsx scripts/build-cli-package.ts",
+    "license-tool": "tsx scripts/license-tool.ts",
     "daemon": "pnpm run build && node dist/cli.js --no-open",
     "dev": "pnpm run build && node dist/cli.js --no-open",
     "start": "pnpm run build && node dist/cli.js",

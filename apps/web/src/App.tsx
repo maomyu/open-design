@@ -27,6 +27,7 @@ import { ProjectView } from './components/ProjectView';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
 import { BrowserPanesHost } from './components/BrowserPanesHost';
 import { startHandoffListener } from './runtime/handoff-listener';
+import { fetchLicenseInfo, LicenseContext, UNLOCKED_LICENSE, type LicenseInfo } from './state/license';
 import {
   DesignSystemCreationFlow,
   DesignSystemDetailView,
@@ -212,6 +213,12 @@ function AppInner() {
   // (监听器内部自判桌面端,网页版空载)。
   useEffect(() => startHandoffListener(), []);
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
+  // 功能授权(定制版):启动拉一次,None/失败=全功能。裁剪只是体验层,
+  // daemon 才是强制点。
+  const [license, setLicense] = useState<LicenseInfo>(UNLOCKED_LICENSE);
+  useEffect(() => {
+    void fetchLicenseInfo().then(setLicense);
+  }, []);
   const configRef = useRef(config);
   configRef.current = config;
   const latestPersistedConfigRef = useRef(config);
@@ -1555,11 +1562,20 @@ function AppInner() {
     );
   }
   return (
-    <>
+    <LicenseContext.Provider value={license}>
       <div
-        className={`workspace-shell workspace-shell--${clientType}`}
+        className={`workspace-shell workspace-shell--${clientType}${
+          license.status === 'expired' || license.status === 'invalid' ? ' has-license-banner' : ''
+        }`}
         data-client-type={clientType}
       >
+        {license.status === 'expired' || license.status === 'invalid' ? (
+          <div className="license-expired-banner" role="alert">
+            {license.status === 'expired'
+              ? `套餐已到期（${license.expiresAt ?? ''}）——功能已锁定，数据仍可查看导出。请联系服务商续费。`
+              : `授权无效：${license.reason ?? '未知原因'}——请联系服务商。`}
+          </div>
+        ) : null}
         <WorkspaceTabsBar
           route={route}
           projects={projects}
@@ -1641,7 +1657,7 @@ function AppInner() {
           }}
         />
       ) : null}
-    </>
+    </LicenseContext.Provider>
   );
 }
 

@@ -37,6 +37,7 @@ import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './St
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { buildStudioDraft } from './draft-builders';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
+import { hasFeature, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -121,6 +122,7 @@ function ScriptTimeline({ bodyMd }: { bodyMd: string }): JSX.Element | null {
 }
 
 export function ShortVideoStudioView(): JSX.Element {
+  const license = useLicense();
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<VideoTab>('script');
@@ -422,7 +424,8 @@ export function ShortVideoStudioView(): JSX.Element {
   const TABS: Array<{ id: VideoTab; label: string; step: string; optional?: boolean }> = [
     { id: 'topics', label: '选题', step: '1' },
     { id: 'script', label: '脚本', step: '2' },
-    { id: 'voice', label: '配音', step: '3', optional: true },
+    // 授权裁剪:配音跟 cap.tts。
+    ...(hasFeature(license, 'cap.tts') ? ([{ id: 'voice', label: '配音', step: '3', optional: true }] as const) : []),
     { id: 'video', label: '成片', step: '4' },
     { id: 'publish', label: '发布', step: '5' },
   ];
@@ -564,6 +567,7 @@ export function ShortVideoStudioView(): JSX.Element {
               emptyCta('还没有作品。从「选题」挑一个开始，或新建一个空白作品。')
             ) : (
               <>
+                {hasFeature(license, 'cap.ai') ? (
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
                     AI 写脚本
@@ -627,6 +631,7 @@ export function ShortVideoStudioView(): JSX.Element {
                     </button>
                   </div>
                 </div>
+                ) : null}
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
                     标题

@@ -48,6 +48,7 @@ import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
+import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -194,9 +195,15 @@ function timeLabel(ts: number): string {
 }
 
 export function MediaStudioView(): JSX.Element {
+  const license = useLicense();
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<StudioTab>('write');
+  // 授权裁剪后的 tab 回落:当前停在被裁掉的步骤时回写作。
+  useEffect(() => {
+    if ((tab === 'cover' || tab === 'images') && !hasFeature(license, 'cap.image')) setTab('write');
+    if (tab === 'publish' && !hasFeature(license, 'cap.publish')) setTab('write');
+  }, [tab, license]);
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [snippets, setSnippets] = useState<MediaSnippet[]>([]);
   const [accounts, setAccounts] = useState<AccountProfileView[]>([]);
@@ -820,6 +827,7 @@ export function MediaStudioView(): JSX.Element {
     }
     return (
       <>
+        {hasFeature(license, 'cap.ai') ? (
         <div className={c('card')}>
           <div className={c('cardLabel')}>
             AI 写作
@@ -880,6 +888,7 @@ export function MediaStudioView(): JSX.Element {
             </button>
           </div>
         </div>
+        ) : null}
         <div className={c('card')}>
           <div className={c('cardLabel')}>
             标题
@@ -1768,7 +1777,14 @@ export function MediaStudioView(): JSX.Element {
       ) : null}
 
       <div className={c('tabs')} role="tablist" aria-label="创作台导航">
-        {TABS.map((item) => {
+        {TABS.filter((item) =>
+          // 功能授权裁剪:封面/配图跟 cap.image,发布跟 cap.publish。
+          item.id === 'cover' || item.id === 'images'
+            ? hasFeature(license, 'cap.image')
+            : item.id === 'publish'
+              ? hasFeature(license, 'cap.publish')
+              : true,
+        ).map((item) => {
           // 步骤完成态：让用户一眼看到这篇文章走到哪一步了。
           const done =
             item.id === 'write'

@@ -29,6 +29,20 @@
   background: var(--bg-app);
   overflow: hidden;
 }
+/* 授权到期/无效横幅占独立一行(2026-07-11)——第一子元素 auto 行,
+   标签栏 36px,主体 1fr。无横幅时保持原 2 行布局。 */
+.workspace-shell.has-license-banner {
+  grid-template-rows: auto 36px minmax(0, 1fr);
+}
+.license-expired-banner {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  color: #7a2318;
+  background: #fdecea;
+  border-bottom: 1px solid #f5c6bd;
+}
 .workspace-shell__body {
   min-width: 0;
   min-height: 0;

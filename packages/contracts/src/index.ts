@@ -13,6 +13,7 @@ export * from './api/files.js';
 export * from './api/host-tools.js';
 export * from './api/finalize.js';
 export * from './api/handoff.js';
+export * from './api/license.js';
 export * from './api/live-artifacts.js';
 export * from './api/media.js';
 export * from './api/mcp.js';

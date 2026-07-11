@@ -30,6 +30,7 @@ import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './St
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { buildStudioDraft, strippedBodyOf } from './draft-builders';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
+import { hasFeature, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { weiboPreviewDoc } from './zhihu-preview';
 import { useOrphanRun } from './useOrphanRun';
@@ -57,6 +58,7 @@ function timeLabel(ts: number): string {
 }
 
 export function WeiboStudioView(): JSX.Element {
+  const license = useLicense();
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<WeiboTab>('write');
@@ -502,42 +504,46 @@ export function WeiboStudioView(): JSX.Element {
                     placeholder="微博正文;可「从公众号导入」长文再压缩成微博体…"
                     onChange={(e) => editArticle({ bodyMd: e.target.value })}
                   />
-                  <div className={c('row')}>
-                    <select className={c('select')} value={aiWordCount} onChange={(e) => { setAiWordCount(e.target.value); saveStudioPref('wordcount:weibo', e.target.value, '100-140'); }}>
-                      {['100-140', '300-500', '800-1200'].map((w) => (
-                        <option key={w} value={w}>
-                          {w} 字
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className={`${c('btn')} ${c('btnPrimary')}`}
-                      disabled={effectiveAiRunning}
-                      onClick={() => void startAiTask('write', { wordCount: aiWordCount })}
-                    >
-                      <Icon name="sparkles" size={14} /> {effectiveAiRunning ? 'AI 任务进行中…' : 'AI 写一版'}
-                    </button>
-                  </div>
-                  <div className={c('row')}>
-                    <input
-                      className={`${c('input')} ${c('grow')}`}
-                      value={reviseNote}
-                      placeholder="改稿指令，例：开头改成提问式，第二节加个案例…"
-                      onChange={(e) => setReviseNote(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className={c('btn')}
-                      disabled={effectiveAiRunning || !reviseNote.trim()}
-                      onClick={() => {
-                        void startAiTask('revise', { note: reviseNote.trim() });
-                        setReviseNote('');
-                      }}
-                    >
-                      按我说的改
-                    </button>
-                  </div>
+                  {hasFeature(license, 'cap.ai') ? (
+                    <>
+                      <div className={c('row')}>
+                        <select className={c('select')} value={aiWordCount} onChange={(e) => { setAiWordCount(e.target.value); saveStudioPref('wordcount:weibo', e.target.value, '100-140'); }}>
+                          {['100-140', '300-500', '800-1200'].map((w) => (
+                            <option key={w} value={w}>
+                              {w} 字
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className={`${c('btn')} ${c('btnPrimary')}`}
+                          disabled={effectiveAiRunning}
+                          onClick={() => void startAiTask('write', { wordCount: aiWordCount })}
+                        >
+                          <Icon name="sparkles" size={14} /> {effectiveAiRunning ? 'AI 任务进行中…' : 'AI 写一版'}
+                        </button>
+                      </div>
+                      <div className={c('row')}>
+                        <input
+                          className={`${c('input')} ${c('grow')}`}
+                          value={reviseNote}
+                          placeholder="改稿指令，例：开头改成提问式，第二节加个案例…"
+                          onChange={(e) => setReviseNote(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={effectiveAiRunning || !reviseNote.trim()}
+                          onClick={() => {
+                            void startAiTask('revise', { note: reviseNote.trim() });
+                            setReviseNote('');
+                          }}
+                        >
+                          按我说的改
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
                 <VersionsCard
                   platform={PLATFORM}

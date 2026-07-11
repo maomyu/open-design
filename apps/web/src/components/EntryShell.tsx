@@ -98,6 +98,7 @@ import {
   SUGGESTED_MODELS_BY_PROTOCOL,
 } from '../state/apiProtocols';
 import { KNOWN_PROVIDERS } from '../state/config';
+import { licensedViewOrFallback, useLicense } from '../state/license';
 import type { KnownProvider } from '../state/config';
 import { testApiProvider } from '../providers/connection-test';
 import { fetchProviderModels } from '../providers/provider-models';
@@ -377,7 +378,11 @@ export function EntryShell({
   // to /design-systems lands on that section. We derive the active
   // view from the route rather than keeping it in component state.
   const route = useRoute();
-  const view: EntryViewKind = route.kind === 'home' ? route.view : 'home';
+  const rawView: EntryViewKind = route.kind === 'home' ? route.view : 'home';
+  // 功能授权裁剪(2026-07-11):未授权的视图(直链/旧标签复活进来的)落到
+  // 第一个已授权模块——客户永远看不到没买的界面。无授权文件 = 不裁。
+  const license = useLicense();
+  const view: EntryViewKind = licensedViewOrFallback(rawView, license);
   const [previewSystemId, setPreviewSystemId] = useState<string | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newProjectInitialTab, setNewProjectInitialTab] =

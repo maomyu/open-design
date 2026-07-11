@@ -11,6 +11,7 @@
 import { type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
+import { anyArticlePlatform, anyPublishingModule, hasFeature, useLicense } from '../state/license';
 
 export type EntryView =
   | 'home'
@@ -62,6 +63,7 @@ function NavButton({ active, ariaLabel, label, onClick, testId, children }: NavB
 
 export function EntryNavRail({ view, onViewChange }: Props) {
   const t = useT();
+  const license = useLicense();
   const brandLabel = t('app.brand');
 
   return (
@@ -90,69 +92,84 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             用户拍板)——动线全部从创作台开工,项目由运行自动创建;主页 /home
             直链仍可达,要恢复把 NavButton 加回、logo onClick 改回 'home'。 */}
         {/* 创作台（客户定制,中文文案不进 i18n;spec: specs/current/media-studio.md） */}
+        {/* 功能授权裁剪(2026-07-11):未授权的模块导航不渲染——客户看不到
+            没买的能力。无授权文件时 hasFeature 恒真(全功能)。 */}
         {/* 「文章」入口(2026-07-10 用户拍板):公众号/知乎/微博同属文章形态,
             收进一个入口,内部平台切换(短视频/笔记是别的形态,各自独立)。 */}
-        <NavButton
-          active={view === 'studio' || view === 'studio-zhihu' || view === 'studio-weibo'}
-          ariaLabel="文章"
-          label="文章"
-          onClick={() => onViewChange('studio')}
-          testId="entry-nav-studio"
-        >
-          <Icon name="edit" size={18} />
-        </NavButton>
-        <NavButton
-          active={view === 'studio-video'}
-          ariaLabel="短视频"
-          label="短视频"
-          onClick={() => onViewChange('studio-video')}
-          testId="entry-nav-studio-video"
-        >
-          <Icon name="play" size={18} />
-        </NavButton>
-        <NavButton
-          active={view === 'studio-note'}
-          ariaLabel="笔记"
-          label="笔记"
-          onClick={() => onViewChange('studio-note')}
-          testId="entry-nav-studio-note"
-        >
-          <Icon name="image" size={18} />
-        </NavButton>
+        {anyArticlePlatform(license) ? (
+          <NavButton
+            active={view === 'studio' || view === 'studio-zhihu' || view === 'studio-weibo'}
+            ariaLabel="文章"
+            label="文章"
+            onClick={() => onViewChange('studio')}
+            testId="entry-nav-studio"
+          >
+            <Icon name="edit" size={18} />
+          </NavButton>
+        ) : null}
+        {hasFeature(license, 'short-video') ? (
+          <NavButton
+            active={view === 'studio-video'}
+            ariaLabel="短视频"
+            label="短视频"
+            onClick={() => onViewChange('studio-video')}
+            testId="entry-nav-studio-video"
+          >
+            <Icon name="play" size={18} />
+          </NavButton>
+        ) : null}
+        {hasFeature(license, 'note') ? (
+          <NavButton
+            active={view === 'studio-note'}
+            ariaLabel="笔记"
+            label="笔记"
+            onClick={() => onViewChange('studio-note')}
+            testId="entry-nav-studio-note"
+          >
+            <Icon name="image" size={18} />
+          </NavButton>
+        ) : null}
         {/* 知识库是公司级资产(2026-07-08 用户拍板):一级入口,一处维护、
             三个创作台的 AI 全部共用,不再藏在单个创作台里。 */}
-        <NavButton
-          active={view === 'knowledge'}
-          ariaLabel="知识库"
-          label="知识库"
-          onClick={() => onViewChange('knowledge')}
-          testId="entry-nav-knowledge"
-        >
-          <Icon name="layers-filled" size={18} />
-        </NavButton>
-        <NavButton
-          active={view === 'accounts'}
-          ariaLabel={t('entry.navAccounts')}
-          label={t('entry.navAccounts')}
-          onClick={() => onViewChange('accounts')}
-          testId="entry-nav-accounts"
-        >
-          <Icon name="grid" size={18} />
-        </NavButton>
+        {hasFeature(license, 'kb') ? (
+          <NavButton
+            active={view === 'knowledge'}
+            ariaLabel="知识库"
+            label="知识库"
+            onClick={() => onViewChange('knowledge')}
+            testId="entry-nav-knowledge"
+          >
+            <Icon name="layers-filled" size={18} />
+          </NavButton>
+        ) : null}
+        {/* 账号 = 有任一发布模块才有意义(绑定发布账号用)。 */}
+        {anyPublishingModule(license) ? (
+          <NavButton
+            active={view === 'accounts'}
+            ariaLabel={t('entry.navAccounts')}
+            label={t('entry.navAccounts')}
+            onClick={() => onViewChange('accounts')}
+            testId="entry-nav-accounts"
+          >
+            <Icon name="grid" size={18} />
+          </NavButton>
+        ) : null}
         {/* 自动化(tasks)、设计体系、插件、项目入口对客户定制版隐藏
             (2026-07-04/07-08/07-09 用户拍板"目前用不到"——三创作台已替代
             插件流水线,项目由 AI 任务自动管理)。路由仍保留 ——
             /automations、/design-systems、/plugins、/projects 直链可达;
             要恢复入口把 NavButton 加回来即可。 */}
-        <NavButton
-          active={view === 'integrations'}
-          ariaLabel={t('entry.navIntegrations')}
-          label={t('entry.navIntegrations')}
-          onClick={() => onViewChange('integrations')}
-          testId="entry-nav-integrations"
-        >
-          <Icon name="link" size={18} />
-        </NavButton>
+        {hasFeature(license, 'integrations') ? (
+          <NavButton
+            active={view === 'integrations'}
+            ariaLabel={t('entry.navIntegrations')}
+            label={t('entry.navIntegrations')}
+            onClick={() => onViewChange('integrations')}
+            testId="entry-nav-integrations"
+          >
+            <Icon name="link" size={18} />
+          </NavButton>
+        ) : null}
       </div>
       {/* 「最近」项目列表已移除(2026-07-09 用户拍板"不需要了")——项目
           入口走导航「项目」页;要恢复参考 git 历史加回 recent 区块。 */}

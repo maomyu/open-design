@@ -18,6 +18,7 @@ import {
   saveStudioVersion,
 } from '../../providers/media-studio';
 import { studioToast } from './StudioFeedback';
+import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -419,6 +420,7 @@ export function SafeHandoffCard({
   allowAutoPublish?: boolean;
   onMarked: () => void;
 }): JSX.Element {
+  const license = useLicense();
   const [target, setTarget] = useState(defaultTarget ?? targets[0]?.id ?? '');
   const [account, setAccount] = useState('');
   const [done, setDone] = useState<{ copy: boolean; assets: boolean; browser: boolean }>({
@@ -477,7 +479,7 @@ export function SafeHandoffCard({
         {/* 一键存草稿(2026-07-09 用户拍板):自动把稿件填进平台发布页并点
             「存草稿」——上传/标题/正文全自动,绝不碰「发布」。文案先上剪贴板
             兜底,注入失败随时手动接手。仅桌面端+支持的平台显示。 */}
-        {buildDraft && draftInjectionSupported(target) && isOpenDesignHostBrowserAvailable() ? (
+        {buildDraft && draftInjectionSupported(target) && isOpenDesignHostBrowserAvailable() && hasFeature(license, 'cap.handoff') ? (
           <button
             type="button"
             className={`${c('btn')} ${c('btnPrimary')}`}
@@ -513,7 +515,7 @@ export function SafeHandoffCard({
         ) : null}
         {/* 一键发布(2026-07-10 用户授权,点一次直发无确认):自动填稿+真实
             点击平台发布/发送键。 */}
-        {buildDraft && allowAutoPublish && draftInjectionSupported(target) && isOpenDesignHostBrowserAvailable() ? (
+        {buildDraft && allowAutoPublish && draftInjectionSupported(target) && isOpenDesignHostBrowserAvailable() && hasFeature(license, 'cap.handoff') ? (
           <button
             type="button"
             className={c('btn')}

@@ -12,6 +12,7 @@ import {
   fetchTikhubFeed,
 } from '../../providers/media-studio';
 import { studioToast } from './StudioFeedback';
+import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -124,6 +125,7 @@ export interface TopicsTabProps {
 }
 
 export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets }: TopicsTabProps): JSX.Element {
+  const license = useLicense();
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
   const [source, setSource] = useState('');
@@ -405,21 +407,23 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               {feedBusy ? '组合扫描中…' : `开始找题（${enabledFeeds.size} 源）`}
             </button>
           )}
-          <button
-            type="button"
-            className={c('btn')}
-            disabled={aiBusy}
-            onClick={() => onAiFind(direction.trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
-            title={
-              aiBusy
-                ? '有 AI 任务正在运行——等它结束（或在底部面板中止）再发起'
-                : pickedHits.size > 0
-                  ? '优先围绕你勾选的文章深挖出题（抓原文、找差异化角度），其余热点做背景'
-                  : '智能体结合热点数据把方向细化成 3-5 个可写的选题，自动进候选表'
-            }
-          >
-            <Icon name="sparkles" size={14} /> {aiBusy ? 'AI 任务进行中…' : `AI 帮我选题${pickedHits.size > 0 ? `（${pickedHits.size} 篇优先）` : ''}`}
-          </button>
+          {hasFeature(license, 'cap.ai') ? (
+            <button
+              type="button"
+              className={c('btn')}
+              disabled={aiBusy}
+              onClick={() => onAiFind(direction.trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
+              title={
+                aiBusy
+                  ? '有 AI 任务正在运行——等它结束（或在底部面板中止）再发起'
+                  : pickedHits.size > 0
+                    ? '优先围绕你勾选的文章深挖出题（抓原文、找差异化角度），其余热点做背景'
+                    : '智能体结合热点数据把方向细化成 3-5 个可写的选题，自动进候选表'
+              }
+            >
+              <Icon name="sparkles" size={14} /> {aiBusy ? 'AI 任务进行中…' : `AI 帮我选题${pickedHits.size > 0 ? `（${pickedHits.size} 篇优先）` : ''}`}
+            </button>
+          ) : null}
           {pickedHits.size > 0 ? (
             <button type="button" className={c('btn')} title="清空勾选的优先参考" onClick={() => setPickedHits(new Map())}>
               清空已选

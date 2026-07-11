@@ -232,6 +232,7 @@ const SUBCOMMAND_MAP = {
   files: runFiles,
   conversation: runConversation,
   daemon: runDaemon,
+  license: runLicense,
   atoms: runAtoms,
   skills: runSkills,
   'design-systems': runDesignSystems,
@@ -2250,6 +2251,61 @@ async function runPluginConfig(rest) {
 
 // `od studio` — Media Studio（媒体创作台）: layered articles + deterministic
 // render/publish. Mirrors the 公众号创作台 UI (spec: specs/current/media-studio.md).
+// `od license` — 功能授权(定制版):查看/导入/重载。签发在运营方侧
+// (apps/daemon/scripts/license-tool.ts),这里只是客户机的查询与装载面。
+async function runLicense(args) {
+  const sub = args.find((a) => !a.startsWith('-'));
+  const flags = parseFlags(args.filter((a) => a !== sub), { string: ['daemon-url'], boolean: ['json', 'help', 'h'] });
+  if (flags.help || flags.h || !sub || !['show', 'import', 'reload'].includes(sub)) {
+    console.log(`Usage:
+  od license show [--json]        # 当前套餐状态(客户名/功能/到期日)
+  od license import <license.json> # 导入授权文件(验签通过才生效,续费用)
+  od license reload                # 重读数据目录里的授权文件`);
+    process.exit(sub ? 0 : 2);
+  }
+  const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
+  const printStatus = (data) => {
+    if (flags.json) return process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+    if (data.status === 'none') return console.log('未安装授权文件——当前为全功能模式');
+    const label = data.status === 'valid' ? '✓ 有效' : data.status === 'expired' ? '✗ 已到期' : '✗ 无效';
+    console.log(`${label}  ${data.customer ?? ''}${data.edition ? `(${data.edition})` : ''}`);
+    if (data.expiresAt) console.log(`到期: ${data.expiresAt}`);
+    if (data.features) console.log(`功能(${data.features.length}): ${data.features.join(', ')}`);
+    if (data.reason) console.log(`原因: ${data.reason}`);
+  };
+  if (sub === 'show') {
+    const resp = await fetch(`${base}/api/license`);
+    if (!resp.ok) { console.error(`license show failed: ${resp.status}`); process.exit(1); }
+    return printStatus(await resp.json());
+  }
+  if (sub === 'reload') {
+    const resp = await fetch(`${base}/api/license/reload`, { method: 'POST' });
+    if (!resp.ok) { console.error(`license reload failed: ${resp.status}`); process.exit(1); }
+    return printStatus(await resp.json());
+  }
+  // import <file>
+  const file = args.filter((a) => !a.startsWith('-'))[1];
+  if (!file) { console.error('Usage: od license import <license.json>'); process.exit(2); }
+  const { readFile } = await import('node:fs/promises');
+  let body;
+  try {
+    body = JSON.parse(await readFile(file, 'utf8'));
+  } catch (err) {
+    console.error(`读取授权文件失败: ${err?.message ?? err}`);
+    process.exit(1);
+  }
+  const resp = await fetch(`${base}/api/license/import`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    console.error(`导入失败: ${data?.error?.message ?? resp.status}`);
+    process.exit(1);
+  }
+  console.log('授权已导入并生效:');
+  return printStatus(data);
+}
+
 async function runStudio(args) {
   const flags = parseFlags(args, {
     string: [

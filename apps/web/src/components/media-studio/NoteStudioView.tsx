@@ -31,6 +31,7 @@ import {
   type StudioLintHit,
 } from '../../providers/media-studio';
 import { buildStudioDraft } from './draft-builders';
+import { hasFeature, useLicense } from '../../state/license';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
@@ -92,6 +93,7 @@ function timeLabel(ts: number): string {
 }
 
 export function NoteStudioView(): JSX.Element {
+  const license = useLicense();
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<NoteTab>('copy');
@@ -572,6 +574,7 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('还没有笔记。从「选题」挑一个开始，或新建一篇。')
             ) : (
               <>
+                {hasFeature(license, 'cap.ai') ? (
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
                     AI 写笔记
@@ -600,6 +603,7 @@ export function NoteStudioView(): JSX.Element {
                     </button>
                   </div>
                 </div>
+                ) : null}
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
                     标题

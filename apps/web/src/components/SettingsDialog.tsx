@@ -51,6 +51,7 @@ import {
   syncMediaProvidersToDaemon,
 } from '../state/config';
 import type { KnownProvider } from '../state/config';
+import { useLicense } from '../state/license';
 import { navigate as navigateRoute, useRoute } from '../router';
 import {
   API_KEY_PLACEHOLDERS,
@@ -823,6 +824,7 @@ export function SettingsDialog({
 }: Props) {
   const { t, locale, setLocale } = useI18n();
   const analytics = useAnalytics();
+  const license = useLicense();
   const [cfg, setCfg] = useState<AppConfig>(initial);
   const [pendingMediaProviderEditIds, setPendingMediaProviderEditIds] = useState<
     ReadonlySet<string>
@@ -3632,6 +3634,29 @@ export function SettingsDialog({
 
           {activeSection === 'about' ? (
             <section className="settings-section">
+              {license.status !== 'none' ? (
+                <dl className="settings-about-list" style={{ marginBottom: 16 }}>
+                  <div>
+                    <dt>套餐</dt>
+                    <dd>
+                      {license.status === 'valid' ? '有效' : license.status === 'expired' ? '已到期' : '无效'}
+                      {license.customer ? ` · ${license.customer}` : ''}
+                    </dd>
+                  </div>
+                  {license.expiresAt ? (
+                    <div>
+                      <dt>到期</dt>
+                      <dd>{license.expiresAt}</dd>
+                    </div>
+                  ) : null}
+                  {license.features ? (
+                    <div>
+                      <dt>已开通功能</dt>
+                      <dd>{license.features.size} 项</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              ) : null}
               {appVersionInfo ? (
                 <dl className="settings-about-list">
                   <div className="settings-about-version-row">

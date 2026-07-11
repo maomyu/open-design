@@ -317,6 +317,7 @@ import {
   setToken,
 } from './mcp-tokens.js';
 import { accountCredentialKeysFromManifest, accountPlatformFromManifest, agentCliEnvForAgent, applyExclusiveCredentialRule, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, platformAccountsForPlatform, readAppConfig, readPluginEnvKnobs, resolvePlatformAccountCredentials, writeAppConfig } from './app-config.js';
+import { licenseFilePath, licenseGuard, licenseStatusResponse, loadLicenseState, verifyLicenseFile, type LicenseStateRef } from './license.js';
 import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
@@ -5541,6 +5542,39 @@ export async function startServer({
   });
   registerPluginEditRoutes(app, { db, http: httpDeps, paths: pathDeps });
   registerAccountRoutes(app, { http: httpDeps, paths: pathDeps });
+  // 功能授权强制(定制版):挂在 media-studio 之前——daemon 是唯一强制点,
+  // UI 隐藏只是体验层。无授权文件时 licenseGuard 直接放行。
+  const licenseRef: LicenseStateRef = { current: await loadLicenseState(RUNTIME_DATA_DIR) };
+  if (licenseRef.current.status !== 'none') {
+    const lp = licenseRef.current.payload;
+    console.log(
+      `[od] license: ${licenseRef.current.status}${lp ? ` · ${lp.customer} · ${lp.features.length} features · expires ${lp.expiresAt}` : ''}${licenseRef.current.reason ? ` (${licenseRef.current.reason})` : ''}`,
+    );
+  }
+  app.use('/api/media-studio', licenseGuard(licenseRef));
+  app.get('/api/license', (_req, res) => {
+    res.json(licenseStatusResponse(licenseRef.current));
+  });
+  app.post('/api/license/reload', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    licenseRef.current = await loadLicenseState(RUNTIME_DATA_DIR);
+    res.json(licenseStatusResponse(licenseRef.current));
+  });
+  app.post('/api/license/import', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    // 先验签再落盘:坏文件不许覆盖好授权。
+    const verified = verifyLicenseFile(req.body);
+    if (!verified.ok) {
+      return res.status(400).json({ error: { code: 'LICENSE_INVALID', message: verified.reason } });
+    }
+    await fs.promises.writeFile(licenseFilePath(RUNTIME_DATA_DIR), JSON.stringify(req.body, null, 2), 'utf8');
+    licenseRef.current = await loadLicenseState(RUNTIME_DATA_DIR);
+    res.json(licenseStatusResponse(licenseRef.current));
+  });
   registerMediaStudioRoutes(app, { db, paths: pathDeps });
   registerPluginDraftRoutes(app, { db, http: httpDeps, paths: pathDeps });
   registerDeploymentCheckRoutes(app, { db, http: httpDeps, deploy: deployDeps });
