@@ -58,6 +58,11 @@ function articleFromRow(r: Row): MediaArticle {
 }
 
 function summaryFromRow(r: Row): MediaArticleSummary {
+  // 子平台:短视频台按平台分视图用(= extra.targetPlatform)。只在 SELECT
+  // 带了 extra_json 时可解出;不带则为空(其它创作台不需要)。
+  const subPlatform = r.extra_json !== undefined
+    ? str((parseExtra(r.extra_json) as { targetPlatform?: unknown }).targetPlatform)
+    : '';
   return {
     id: str(r.id),
     platform: str(r.platform),
@@ -68,12 +73,13 @@ function summaryFromRow(r: Row): MediaArticleSummary {
     status: (str(r.status) || 'writing') as MediaArticleSummary['status'],
     updatedAt: numOrNull(r.updated_at) ?? 0,
     createdAt: numOrNull(r.created_at) ?? 0,
+    ...(subPlatform ? { subPlatform } : {}),
   };
 }
 
 export function listArticles(db: Database.Database, platform: string): MediaArticleSummary[] {
   const rows = db
-    .prepare(`SELECT id, platform, account_id, title, topic, skin, status, updated_at, created_at
+    .prepare(`SELECT id, platform, account_id, title, topic, skin, status, extra_json, updated_at, created_at
               FROM media_articles WHERE platform = ? ORDER BY updated_at DESC`)
     .all(platform) as Row[];
   return rows.map(summaryFromRow);
@@ -93,7 +99,7 @@ export function createArticle(
   const id = randomUUID();
   let topic = typeof input.topic === 'string' ? input.topic : null;
   let title = str(input.title);
-  const extra: Record<string, unknown> = {};
+  const extra: Record<string, unknown> = { ...(input.extra ?? {}) };
   if (input.fromTopicId) {
     const t = db.prepare(`SELECT * FROM media_topics WHERE id = ?`).get(input.fromTopicId) as Row | undefined;
     if (t) {

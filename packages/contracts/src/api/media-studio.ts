@@ -62,6 +62,9 @@ export interface MediaArticleSummary {
   status: MediaArticleStatus;
   updatedAt: number;
   createdAt: number;
+  /** 子平台（短视频台按平台分视图用；= extra.targetPlatform，如「抖音」）。
+   *  其它创作台为空。2026-07-12 短视频平台化重构。 */
+  subPlatform?: string;
 }
 
 export interface MediaTopic {
@@ -178,6 +181,8 @@ export interface CreateMediaArticleRequest {
   headerMd?: string;
   bodyMd?: string;
   footerMd?: string;
+  /** 创建即写入 extra（短视频台按平台建作品时种 targetPlatform）。 */
+  extra?: Record<string, unknown>;
 }
 export interface UpdateMediaArticleRequest {
   title?: string;

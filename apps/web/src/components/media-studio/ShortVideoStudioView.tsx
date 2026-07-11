@@ -121,8 +121,12 @@ function ScriptTimeline({ bodyMd }: { bodyMd: string }): JSX.Element | null {
   );
 }
 
-export function ShortVideoStudioView(): JSX.Element {
+export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauPlatformId } = {}): JSX.Element {
   const license = useLicense();
+  // 平台化(2026-07-12):外壳传入当前短视频平台;每平台是本单池按 targetPlatform
+  // 切出的视图(数据不迁移)。缺省抖音兼容(独立打开视图时)。
+  const svPlatformLabel = SAU_PLATFORMS.find((p) => p.id === svPlatform)?.label ?? '抖音';
+  const lastArticleKey = `${LAST_ARTICLE_KEY}:${svPlatform ?? 'douyin'}`;
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<VideoTab>('script');
@@ -166,34 +170,37 @@ export function ShortVideoStudioView(): JSX.Element {
   const tags = str(extra.tags);
 
   // ---- 数据加载 ----
+  // 按当前平台过滤单池:匹配 subPlatform;无 subPlatform 的旧作品归到抖音
+  // (第一个平台,不丢)。
   const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
-    const list = (await fetchStudioArticles(PLATFORM)) ?? [];
+    const all = (await fetchStudioArticles(PLATFORM)) ?? [];
+    const list = all.filter((a) => (a.subPlatform || '抖音') === svPlatformLabel);
     setArticles(list);
     return list;
-  }, []);
+  }, [svPlatformLabel]);
 
   const selectArticle = useCallback(async (id: string | null) => {
     if (id) {
       const a = await fetchStudioArticle(PLATFORM, id);
       setArticle(a);
-      if (a) window.localStorage.setItem(LAST_ARTICLE_KEY, a.id);
+      if (a) window.localStorage.setItem(lastArticleKey, a.id);
     } else {
       setArticle(null);
-      window.localStorage.removeItem(LAST_ARTICLE_KEY);
+      window.localStorage.removeItem(lastArticleKey);
     }
     setNotice(null);
-  }, []);
+  }, [lastArticleKey]);
 
   useEffect(() => {
     void (async () => {
       const list = await refreshArticles();
-      const remembered = window.localStorage.getItem(LAST_ARTICLE_KEY);
+      const remembered = window.localStorage.getItem(lastArticleKey);
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
       if (pick) await selectArticle(pick.id);
       else setTab('topics');
       setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
     })();
-  }, [refreshArticles, selectArticle]);
+  }, [refreshArticles, selectArticle, lastArticleKey]);
 
   // ---- 自动保存（与公众号创作台同款机制） ----
   const flushSave = useCallback(async () => {
@@ -254,21 +261,22 @@ export function ShortVideoStudioView(): JSX.Element {
     void flushSave();
   }, [flushSave]);
 
-  // 新文章按上次选择种默认（用户报：主发平台/语气/时长选完不该每次重置）。
-  // 后端脚本任务读 extra，所以要真种进 extra 而非仅改显示；只在用户确有
-  // 非默认偏好、且该文章还没自己的选择时种，避免给每篇文章无谓写库。
+  // 新/未标注文章种默认(2026-07-12 平台化后:targetPlatform 由外壳当前平台
+  // 决定而非偏好;语气/时长仍按上次选择种)。后端脚本任务读 extra,所以真
+  // 种进 extra。一篇只种一次。
   const svSeededRef = useRef<string | null>(null);
   useEffect(() => {
     if (!article?.id || svSeededRef.current === article.id) return;
     svSeededRef.current = article.id;
     const e = (article.extra ?? {}) as Record<string, unknown>;
     const patch: Record<string, string> = {};
+    // targetPlatform:该文章还没标注 → 归当前平台(外壳切的那个)。
+    if (!str(e.targetPlatform)) patch.targetPlatform = svPlatformLabel;
     const seed = (field: string, key: string, dflt: string) => {
       if (str(e[field])) return; // 该文章已有自己的选择
       const pref = loadStudioPref(key, dflt);
       if (pref !== dflt) patch[field] = pref; // 仅当用户有真实非默认偏好
     };
-    seed('targetPlatform', 'sv-platform', '抖音');
     seed('tone', 'sv-tone', '真诚口播');
     seed('duration', 'sv-duration', '30s');
     if (Object.keys(patch).length) editArticle({ extra: patch });
@@ -372,11 +380,13 @@ export function ShortVideoStudioView(): JSX.Element {
     await flushSave();
     const created = await createStudioArticle(PLATFORM, {
       ...(fromTopic ? { fromTopicId: fromTopic.id, title: fromTopic.title, topic: fromTopic.title } : {}),
+      // 平台化:新作品直接归属当前平台(种进 targetPlatform,列表按它过滤)。
+      extra: { targetPlatform: svPlatformLabel },
     });
     if (!created) return;
     await refreshArticles();
     setArticle(created);
-    window.localStorage.setItem(LAST_ARTICLE_KEY, created.id);
+    window.localStorage.setItem(lastArticleKey, created.id);
     setTab('script');
     if (fromTopic) setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
   }
@@ -571,20 +581,10 @@ export function ShortVideoStudioView(): JSX.Element {
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
                     AI 写脚本
-                    <span className={c('cardHint')}>按主发平台调性 + 语气 + 时长出稿（标题备选/口播稿/标签/封面文字一次到位）</span>
+                    <span className={c('cardHint')}>按「{svPlatformLabel}」调性 + 语气 + 时长出稿（标题备选/口播稿/标签/封面文字一次到位）</span>
                   </div>
                   <div className={c('row')}>
-                    <select
-                      className={c('select')}
-                      value={str(extra.targetPlatform) || loadStudioPref('sv-platform', '抖音')}
-                      onChange={(e) => { editArticle({ extra: { targetPlatform: e.target.value } }); saveStudioPref('sv-platform', e.target.value, '抖音'); }}
-                    >
-                      {SAU_PLATFORMS.map((p) => (
-                        <option key={p.id} value={p.label}>
-                          主发 {p.label}
-                        </option>
-                      ))}
-                    </select>
+                    {/* 主发平台由顶部切换器决定,这里不再选(2026-07-12 平台化)。 */}
                     <select
                       className={c('select')}
                       value={str(extra.tone) || loadStudioPref('sv-tone', '真诚口播')}
@@ -835,7 +835,7 @@ export function ShortVideoStudioView(): JSX.Element {
                   articleId={article.id}
                   articleTitle={article.title}
                   targets={SAU_PLATFORMS}
-                  defaultTarget="douyin"
+                  defaultTarget={svPlatform ?? 'douyin'}
                   hasAssets={Boolean(videoPath.trim())}
                   assetsLabel="成片文件夹"
                   accountsOf={(pid) => platformAccounts[pid] ?? []}

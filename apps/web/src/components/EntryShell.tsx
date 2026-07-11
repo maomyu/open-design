@@ -86,7 +86,7 @@ import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
 import { AccountsView } from './AccountsView';
 import { ArticleStudioShell } from './media-studio/ArticleStudioShell';
-import { ShortVideoStudioView } from './media-studio/ShortVideoStudioView';
+import { ShortVideoStudioShell } from './media-studio/ShortVideoStudioShell';
 import { NoteStudioView } from './media-studio/NoteStudioView';
 import { KnowledgeView } from './media-studio/KnowledgeView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
@@ -666,7 +666,7 @@ export function EntryShell({
             {view === 'studio' ? <ArticleStudioShell /> : null}
             {view === 'studio-zhihu' ? <ArticleStudioShell initial="zhihu" /> : null}
             {view === 'studio-weibo' ? <ArticleStudioShell initial="weibo" /> : null}
-            {view === 'studio-video' ? <ShortVideoStudioView /> : null}
+            {view === 'studio-video' ? <ShortVideoStudioShell /> : null}
             {view === 'studio-note' ? <NoteStudioView /> : null}
             {view === 'knowledge' ? <KnowledgeView /> : null}
             {view === 'design-systems' ? (
