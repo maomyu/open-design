@@ -405,9 +405,21 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           找热点 · 组合选题雷达
           <span className={c('cardHint')}>{aiOnly ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出' : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}</span>
         </div>
-        {nativeFeed ? (
-          <div className={c('row')}>
-            <span className={c('cardHint')}>选题来源（{nativeFeed.label}·登录态直取，最准最实时）：</span>
+        {nativeFeed && nativeFeed.sources.some((s) => !s.needsKeyword) ? (
+          <div className={c('row')} style={{ flexWrap: 'wrap' }}>
+            <span className={c('cardHint')}>看{nativeFeed.label}全站在热什么（免填词，与下面的关键词无关）：</span>
+            {nativeFeed.sources.filter((s) => !s.needsKeyword).map((s, i) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`${c('btn')}${i === 0 ? ` ${c('btnPrimary')}` : ''}`}
+                disabled={feedBusy}
+                title={`直接拉取${nativeFeed.label}「${s.label}」——看全站热点，不用填关键词`}
+                onClick={() => void runNative(s.id)}
+              >
+                {feedBusy ? '拉取中…' : s.label}
+              </button>
+            ))}
           </div>
         ) : tikhubTargets ? (
           <div className={c('row')}>
@@ -467,7 +479,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           <input
             className={`${c('input')} ${c('grow')}`}
             value={direction}
-            placeholder="方向/领域关键词，例：AI 编程、考研、育儿…"
+            placeholder={nativeFeed ? '填方向词 → 点「联想词/搜索」，例：军队文职、考研…' : '方向/领域关键词，例：AI 编程、考研、育儿…'}
             onChange={(e) => setDirection(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !feedBusy) {
@@ -480,13 +492,13 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           />
           {nativeFeed ? (
             <>
-              {nativeFeed.sources.map((s, i) => (
+              {nativeFeed.sources.filter((s) => s.needsKeyword).map((s) => (
                 <button
                   key={s.id}
                   type="button"
-                  className={`${c('btn')}${i === 0 ? ` ${c('btnPrimary')}` : ''}`}
-                  disabled={feedBusy || (s.needsKeyword && !direction.trim())}
-                  title={s.needsKeyword ? `用上面的方向词在${nativeFeed.label}取「${s.label}」` : `直接拉取${nativeFeed.label}「${s.label}」`}
+                  className={c('btn')}
+                  disabled={feedBusy || !direction.trim()}
+                  title={`用左边的方向词在${nativeFeed.label}取「${s.label}」`}
                   onClick={() => void runNative(s.id)}
                 >
                   {feedBusy ? '拉取中…' : s.label}
