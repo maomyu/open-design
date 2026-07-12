@@ -15,7 +15,7 @@ import {
 } from "@open-design/sidecar-proto";
 import type { OpenDesignHostActionResult, OpenDesignHostUpdaterActionOptions } from "@open-design/host";
 
-import { hardenWebviewEmbeddedBrowser, registerBrowserSessionFetchBridge, registerEmbeddedBrowserBridge, registerWebviewFileInputBridge } from "./embedded-browser.js";
+import { hardenWebviewEmbeddedBrowser, registerBrowserSessionFetchBridge, registerContentWebviewTabBridge, registerEmbeddedBrowserBridge, registerWebviewFileInputBridge } from "./embedded-browser.js";
 import { createElectronPdfTarget, exportPdfFromHtml, savePrintReadyDocumentAsPdf } from "./pdf-export.js";
 import type { PrintReadyPdfOptions } from "./pdf-export.js";
 import type { DesktopUpdater } from "./updater.js";
@@ -1054,6 +1054,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
   registerEmbeddedBrowserBridge();
   registerWebviewFileInputBridge();
   registerBrowserSessionFetchBridge();
+  registerContentWebviewTabBridge();
   ipcMain.handle("shell:open-external", async (_event, url: string) => {
     if (!isHttpUrl(url)) return false;
     try {

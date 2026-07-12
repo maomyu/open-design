@@ -9,13 +9,19 @@
 // 无「弹独立窗」按钮（用户明确不要独立窗）；关闭统一走标签栏的 X（closeTab →
 // closeWebTab → 本宿主销毁对应 webview）。
 import { useEffect, useRef, useState } from 'react';
-import { isOpenDesignHostBrowserAvailable } from '@open-design/host';
+import {
+  hostRegisterContentWebview,
+  hostUnregisterContentWebview,
+  isOpenDesignHostBrowserAvailable,
+  subscribeHostOpenBrowserTab,
+} from '@open-design/host';
 import type { Route } from '../router';
 import { Icon } from './Icon';
 import { BROWSER_PLATFORM_TITLES } from '../runtime/browser-panes';
 import {
   OPEN_WEB_TAB_EVENT,
   WEB_TAB_CLOSED_EVENT,
+  openWebTab,
   updateWebTabTitle,
   webTabLabelFromUrl,
   type WebTabInfo,
@@ -33,6 +39,7 @@ interface WebviewElement extends HTMLElement {
   reload(): void;
   getURL(): string;
   getTitle(): string;
+  getWebContentsId(): number;
 }
 
 export function WebTabsHost({ route }: { route: Route }): JSX.Element | null {
@@ -53,9 +60,15 @@ export function WebTabsHost({ route }: { route: Route }): JSX.Element | null {
     };
     window.addEventListener(OPEN_WEB_TAB_EVENT, onOpen);
     window.addEventListener(WEB_TAB_CLOSED_EVENT, onClosed);
+    // 网页内点开的新页(主进程从内容 webview 弹窗回推)→ 开新内容标签,用它带来的
+    // 登录分区(与来源页同一会话)。本组件常驻(App 无条件挂载),订阅始终在线。
+    const unsubOpenTab = subscribeHostOpenBrowserTab(({ url, partition }) => {
+      if (url) openWebTab({ url, partition });
+    });
     return () => {
       window.removeEventListener(OPEN_WEB_TAB_EVENT, onOpen);
       window.removeEventListener(WEB_TAB_CLOSED_EVENT, onClosed);
+      unsubOpenTab();
     };
   }, []);
 
@@ -98,19 +111,33 @@ function WebTab({ spec, active }: { spec: WebTabInfo; active: boolean }): JSX.El
         /* 标题读取失败无所谓,标签栏回落 url host */
       }
     };
+    // webview 就绪后登记为「内容标签」:主进程据此把它页面内的弹窗(点开的新页)
+    // 回推成新标签,而非弹原生窗口。卸载(关标签/热更)时注销。
+    let registeredId: number | null = null;
+    const onReady = () => {
+      try {
+        registeredId = el.getWebContentsId();
+        hostRegisterContentWebview(registeredId, spec.partition);
+      } catch {
+        /* 拿不到 id 就算了,大不了退回原生弹窗 */
+      }
+    };
     el.addEventListener('did-navigate', sync);
     el.addEventListener('did-navigate-in-page', sync);
     el.addEventListener('did-start-loading', onStart);
     el.addEventListener('did-stop-loading', sync);
     el.addEventListener('page-title-updated', onTitle);
+    el.addEventListener('dom-ready', onReady);
     return () => {
       el.removeEventListener('did-navigate', sync);
       el.removeEventListener('did-navigate-in-page', sync);
       el.removeEventListener('did-start-loading', onStart);
       el.removeEventListener('did-stop-loading', sync);
       el.removeEventListener('page-title-updated', onTitle);
+      el.removeEventListener('dom-ready', onReady);
+      if (registeredId != null) hostUnregisterContentWebview(registeredId);
     };
-  }, [spec.id]);
+  }, [spec.id, spec.partition]);
 
   const label = spec.platform
     ? `${BROWSER_PLATFORM_TITLES[spec.platform] ?? spec.platform}${spec.account ? ` · ${spec.account}` : ''}`

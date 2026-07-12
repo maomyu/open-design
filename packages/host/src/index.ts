@@ -234,6 +234,12 @@ export type OpenDesignHostSessionFetchResult =
   | { ok: true; status: number; body: string }
   | { ok: false; reason: string };
 
+/** 主进程回推的「开新内容标签」载荷：网页内点开的新页 url + 其登录分区。 */
+export type OpenDesignHostOpenTabPayload = {
+  url: string;
+  partition: string;
+};
+
 export type OpenDesignHostBridge = {
   // Optional capability: hosts older than the embedded-browser feature do
   // not expose it, and the renderer falls back to its non-embedded path.
@@ -243,6 +249,12 @@ export type OpenDesignHostBridge = {
     setFileInput?(request: OpenDesignHostSetFileInputRequest): Promise<OpenDesignHostActionResult>;
     /** Optional (newer hosts): 用登录态分区 session 直取只读接口（知乎原生选题）. */
     sessionFetch?(request: OpenDesignHostSessionFetchRequest): Promise<OpenDesignHostSessionFetchResult>;
+    /** Optional (newer hosts): 登记一个「内容标签」webview——其页面内弹窗(target=
+     *  _blank/window.open)不再弹原生窗口,改由主进程回推 onOpenBrowserTab 开新标签。 */
+    registerContentWebview?(webContentsId: number, partition: string): void;
+    unregisterContentWebview?(webContentsId: number): void;
+    /** Optional (newer hosts): 订阅主进程回推的「开新内容标签」请求(网页内点开的新页)。 */
+    onOpenBrowserTab?(listener: (payload: OpenDesignHostOpenTabPayload) => void): () => void;
   };
   client: OpenDesignHostClient;
   pdf: {
@@ -481,6 +493,32 @@ export async function setHostBrowserFileInput(
 
 export function isOpenDesignHostSessionFetchAvailable(scope: OpenDesignHostGlobalScope = globalThis): boolean {
   return typeof getOpenDesignHost(scope)?.browser?.sessionFetch === "function";
+}
+
+/** 登记「内容标签」webview：其页面内弹窗改回推 onOpenBrowserTab（旧 host 静默无效）。 */
+export function hostRegisterContentWebview(
+  webContentsId: number,
+  partition: string,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): void {
+  getOpenDesignHost(scope)?.browser?.registerContentWebview?.(webContentsId, partition);
+}
+
+export function hostUnregisterContentWebview(
+  webContentsId: number,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): void {
+  getOpenDesignHost(scope)?.browser?.unregisterContentWebview?.(webContentsId);
+}
+
+/** 订阅主进程回推的「开新内容标签」请求。旧 host 返回 no-op 退订。 */
+export function subscribeHostOpenBrowserTab(
+  listener: (payload: OpenDesignHostOpenTabPayload) => void,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): () => void {
+  const onOpenBrowserTab = getOpenDesignHost(scope)?.browser?.onOpenBrowserTab;
+  if (typeof onOpenBrowserTab !== "function") return () => undefined;
+  return onOpenBrowserTab(listener);
 }
 
 export async function hostBrowserSessionFetch(

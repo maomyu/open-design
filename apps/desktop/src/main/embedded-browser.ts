@@ -13,10 +13,21 @@ import { BrowserWindow, app, ipcMain, session, webContents } from "electron";
 
 const EMBEDDED_BROWSER_IPC_CHANNEL = "od:browser:open-profile";
 const PARTITION_PREFIX = "persist:od-browser-";
+const REGISTER_CONTENT_WEBVIEW_CHANNEL = "od:browser:register-content-webview";
+const UNREGISTER_CONTENT_WEBVIEW_CHANNEL = "od:browser:unregister-content-webview";
+const OPEN_BROWSER_TAB_CHANNEL = "od:browser:open-tab";
 
 type EmbeddedBrowserOpenResult = { ok: true } | { ok: false; reason: string };
 
 const windowsByProfile = new Map<string, BrowserWindow>();
+
+/**
+ * 「内容标签」webview 的 webContents id → 登录分区。渲染层 WebTabsHost 每开一个
+ * 网页内容标签就登记；其页面内弹窗(target=_blank/window.open)不再弹原生窗口,
+ * 改回推渲染层开新标签。后台面板 webview 不登记 → 弹窗仍走原生窗口(登录扫码/
+ * OAuth 不受影响)。
+ */
+const contentWebviewPartitions = new Map<number, string>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null && !Array.isArray(value);
@@ -259,6 +270,28 @@ export function registerBrowserSessionFetchBridge(): void {
 }
 
 /**
+ * 「内容标签」webview 登记桥(2026-07-12 用户拍板:网页内点开的新页也以标签在当前
+ * 工具内打开,不弹原生窗口)。渲染层 WebTabsHost 每开一个网页内容标签就登记其
+ * webContents id + 分区;卸载时注销。见 hardenWebviewEmbeddedBrowser 的弹窗处理。
+ */
+export function registerContentWebviewTabBridge(): void {
+  ipcMain.removeAllListeners(REGISTER_CONTENT_WEBVIEW_CHANNEL);
+  ipcMain.removeAllListeners(UNREGISTER_CONTENT_WEBVIEW_CHANNEL);
+  ipcMain.on(REGISTER_CONTENT_WEBVIEW_CHANNEL, (_event, raw: unknown) => {
+    if (!isRecord(raw)) return;
+    const id = typeof raw.webContentsId === "number" ? raw.webContentsId : NaN;
+    const partition = typeof raw.partition === "string" ? raw.partition : "";
+    if (!Number.isInteger(id) || !partition.startsWith(PARTITION_PREFIX)) return;
+    contentWebviewPartitions.set(id, partition);
+  });
+  ipcMain.on(UNREGISTER_CONTENT_WEBVIEW_CHANNEL, (_event, raw: unknown) => {
+    if (!isRecord(raw)) return;
+    const id = typeof raw.webContentsId === "number" ? raw.webContentsId : NaN;
+    if (Number.isInteger(id)) contentWebviewPartitions.delete(id);
+  });
+}
+
+/**
  * 应用内后台标签页（2026-07-09 用户拍板:后台在主窗口内打开,不再弹独立窗）
  * 的 <webview> 安全闸。渲染层 BrowserPanesHost 用 <webview partition=
  * "persist:od-browser-<platform>-<account>"> 内嵌第三方创作者后台,与独立窗
@@ -285,6 +318,16 @@ export function hardenWebviewEmbeddedBrowser(window: BrowserWindow): void {
     contents.session.setUserAgent(cleanUserAgent());
     contents.setWindowOpenHandler(({ url: childUrl }) => {
       if (!isHttpUrl(childUrl)) return { action: "deny" };
+      // 「内容标签」webview 的页面内弹窗(target=_blank/window.open)→ 不弹原生窗口,
+      // 回推渲染层开一个新的应用内内容标签(用同一登录分区)。后台面板 webview
+      // 未登记 → 落到下面 allow,登录扫码/OAuth 弹窗仍走原生窗口,行为不变。
+      const contentPartition = contentWebviewPartitions.get(contents.id);
+      if (contentPartition != null) {
+        if (!window.isDestroyed()) {
+          window.webContents.send(OPEN_BROWSER_TAB_CHANNEL, { url: childUrl, partition: contentPartition });
+        }
+        return { action: "deny" };
+      }
       // 子窗不指定 partition 时继承 opener 会话——登录弹窗落同一档案。
       return { action: "allow" };
     });

@@ -7,6 +7,7 @@ import type {
   OpenDesignHostSetFileInputRequest,
   OpenDesignHostSessionFetchRequest,
   OpenDesignHostSessionFetchResult,
+  OpenDesignHostOpenTabPayload,
   OpenDesignHostFailure,
   OpenDesignHostProjectImportResult,
   OpenDesignHostProjectReplaceWorkingDirResult,
@@ -273,6 +274,20 @@ const browser = {
     } catch (error) {
       return { ok: false, reason: reasonFromError(error) };
     }
+  },
+  // 网页内容标签:登记 webview,其页面内弹窗改由主进程回推开新标签(见 onOpenBrowserTab)。
+  registerContentWebview: (webContentsId: number, partition: string): void => {
+    ipcRenderer.send('od:browser:register-content-webview', { webContentsId, partition });
+  },
+  unregisterContentWebview: (webContentsId: number): void => {
+    ipcRenderer.send('od:browser:unregister-content-webview', { webContentsId });
+  },
+  onOpenBrowserTab: (listener: (payload: OpenDesignHostOpenTabPayload) => void): (() => void) => {
+    const handler = (_event: unknown, payload: OpenDesignHostOpenTabPayload): void => listener(payload);
+    ipcRenderer.on('od:browser:open-tab', handler);
+    return () => {
+      ipcRenderer.removeListener('od:browser:open-tab', handler);
+    };
   },
 };
 
