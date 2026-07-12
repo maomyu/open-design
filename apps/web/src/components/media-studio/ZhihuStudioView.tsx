@@ -28,6 +28,7 @@ import {
   generateArticleImage,
   updateStudioArticle,
   uploadStudioAsset,
+  topicLinkOpener,
 } from '../../providers/media-studio';
 import { buildStudioDraft, strippedBodyOf } from './draft-builders';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
@@ -541,6 +542,7 @@ export function ZhihuStudioView(): JSX.Element {
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
               aiBusy={effectiveAiRunning}
+              onOpenLink={topicLinkOpener(PLATFORM, nativeZhihuAccount)}
             />
           ) : null}
 

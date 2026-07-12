@@ -885,3 +885,19 @@ export async function markStudioPublished(
 }
 
 export { errorMessage as studioErrorMessage };
+
+/**
+ * 选题台文章链接的「在内置浏览器打开」回调（2026-07-12 用户要：打开文章都走内置
+ * 浏览器，别弹到系统 Chrome/Safari）。桌面端用该 平台×账号 的登录态分区在应用内
+ * 打开——读全文不被登出墙挡、留在 app 内。网页端（无内置浏览器）返回 undefined，
+ * 链接保持 `<a target="_blank">` 的系统新标签行为。
+ */
+export function topicLinkOpener(
+  platform: string,
+  account: string,
+): ((url: string) => void) | undefined {
+  if (!isOpenDesignHostBrowserAvailable()) return undefined;
+  return (url) => {
+    void openStudioBrowserWindow({ platform, account: account || 'main', url });
+  };
+}

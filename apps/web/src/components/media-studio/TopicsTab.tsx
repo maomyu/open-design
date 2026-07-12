@@ -129,9 +129,11 @@ export interface TopicsTabProps {
     sources: Array<{ id: string; label: string; needsKeyword: boolean }>;
     run: (sourceId: string, keyword?: string) => Promise<MediaTopicHit[] | { error: string }>;
   };
+  /** 传了则文章链接(热点/候选原文)改在内置浏览器打开(桌面端);不传保持系统新标签。 */
+  onOpenLink?: (url: string) => void;
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, nativeFeed }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, nativeFeed, onOpenLink }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
@@ -530,7 +532,18 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     <td>{signalTag(hit.signals)}</td>
                     <td>
                       {hit.url ? (
-                        <a className={c('link')} href={hit.url} target="_blank" rel="noreferrer">
+                        <a
+                          className={c('link')}
+                          href={hit.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => {
+                            if (onOpenLink && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+                              e.preventDefault();
+                              onOpenLink(hit.url);
+                            }
+                          }}
+                        >
                           {hit.title}
                         </a>
                       ) : (
@@ -631,7 +644,18 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                   <td>{t.angle || '—'}</td>
                   <td>
                     {t.url ? (
-                      <a className={c('link')} href={t.url} target="_blank" rel="noreferrer">
+                      <a
+                        className={c('link')}
+                        href={t.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => {
+                          if (onOpenLink && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+                            e.preventDefault();
+                            onOpenLink(t.url!);
+                          }
+                        }}
+                      >
                         {t.source || '原文'}
                       </a>
                     ) : (

@@ -43,7 +43,7 @@ import {
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, VersionsCard } from './StudioSharedCards';
-import { openStudioBrowser } from '../../providers/media-studio';
+import { openStudioBrowser, topicLinkOpener } from '../../providers/media-studio';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
@@ -810,6 +810,7 @@ export function MediaStudioView(): JSX.Element {
         onWrite={(topic) => void handleCreateArticle(topic)}
         onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
         aiBusy={effectiveAiRunning}
+        onOpenLink={topicLinkOpener(PLATFORM, article?.accountId ?? accounts[0]?.id ?? '')}
       />
     );
   }

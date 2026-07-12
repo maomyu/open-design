@@ -24,6 +24,7 @@ import {
   fetchStudioPublishes,
   fetchStudioTopics,
   updateStudioArticle,
+  topicLinkOpener,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
@@ -451,6 +452,7 @@ export function WeiboStudioView(): JSX.Element {
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
               aiBusy={effectiveAiRunning}
+              onOpenLink={topicLinkOpener(PLATFORM, article?.accountId || weiboAccounts[0] || '')}
             />
           ) : null}
 
