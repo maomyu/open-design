@@ -1,0 +1,24 @@
+# ── 核心 ──
+requests>=2.31            # HTTP 调用 TikHub / 极致了 / 火山 / 飞书
+httpx>=0.27               # 异步采集（可选）
+python-dotenv>=1.0        # .env 加载
+pydantic>=2.6             # 数据模型/校验
+APScheduler>=3.10         # 定时调度（替代 n8n）
+tenacity>=8.2             # 超时重试 / 限流退避
+
+# ── 数据 / 缓存 / 向量 ──
+SQLAlchemy>=2.0           # 本地 SQLite 缓存
+chromadb>=0.5             # 素材向量库（RAG 召回）
+
+# ── 封面渲染 ──
+Pillow>=10.2              # 中文标题程序叠字
+opencv-python-headless>=4.9   # 版式/裁切校验（可选）
+
+# ── ASR（按最终选型二选一，先占位）──
+# volcengine-python-sdk    # 火山 ASR
+# openai                   # 兼容 whisper / 第三方 ASR
+
+# ── 工具 ──
+loguru>=0.7               # 结构化日志
+tqdm>=4.66
+truststore>=0.10

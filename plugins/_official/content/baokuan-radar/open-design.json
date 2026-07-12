@@ -1,0 +1,10 @@
+{
+  "$schema": "https://open-design.ai/schemas/plugin.v1.json",
+  "specVersion": "1.0.0",
+  "name": "baokuan-radar",
+  "title": "爆款雷达（真实数据选题）",
+  "title_i18n": { "zh-CN": "爆款雷达（真实数据选题）", "en": "Viral Radar (real-data topics)" },
+  "version": "0.1.0",
+  "description": "用爆款引擎做真实数据选题:按关键词全网采集真实爆款(抖音/小红书/B站/快手/公众号/视频号)→ 两阶段双通道评分(流量爆款分+精准意向分)→ 视频号解密+口播ASR → 输出排好序的选题候选(带真实点赞/评分/推荐承接服务),喂给短视频/文章工作流的『选题』步骤。替代AI猜选题。",
+  "od": { "mode": "prototype", "category": "content-creative" }
+}
