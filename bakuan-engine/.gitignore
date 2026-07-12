@@ -5,3 +5,6 @@ __pycache__/
 *.sqlite
 .pytest_cache/
 output/
+data/
+*.png
+*.json.bak
