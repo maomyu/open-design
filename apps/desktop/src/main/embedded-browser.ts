@@ -217,6 +217,47 @@ export function registerWebviewFileInputBridge(): void {
   });
 }
 
+const SESSION_FETCH_IPC_CHANNEL = "od:browser:session-fetch";
+
+/**
+ * 用平台×账号登录态分区的 session 直取一个只读 http(s) 接口（知乎原生选题：
+ * 热榜/热搜/联想/搜索）。主进程带该分区 cookie 请求，绕开 webview UI——
+ * daemon 没有用户 cookie,走不了这条。安全边界:
+ *  - 只 GET,只 http(s);
+ *  - 用与后台面板同一分区(sanitizeProfileSegment 同规则),不新建/不泄露;
+ *  - 10s 超时;body 截断上限防超大响应。
+ */
+export function registerBrowserSessionFetchBridge(): void {
+  ipcMain.removeHandler(SESSION_FETCH_IPC_CHANNEL);
+  ipcMain.handle(SESSION_FETCH_IPC_CHANNEL, async (_event, raw: unknown) => {
+    if (!isRecord(raw)) return { ok: false, reason: "invalid session-fetch request" };
+    const platform = sanitizeProfileSegment(raw.platform);
+    const account = sanitizeProfileSegment(raw.account) ?? "main";
+    const url = typeof raw.url === "string" ? raw.url : "";
+    if (platform == null) return { ok: false, reason: "invalid platform" };
+    if (!isHttpUrl(url)) return { ok: false, reason: "session-fetch only allows http(s)" };
+    const partition = `${PARTITION_PREFIX}${platform}-${account}`;
+    const extraHeaders = isRecord(raw.headers) ? (raw.headers as Record<string, string>) : {};
+    const headers: Record<string, string> = {
+      accept: "application/json, text/plain, */*",
+      referer: "https://www.zhihu.com/",
+      "user-agent": cleanUserAgent(),
+      ...extraHeaders,
+    };
+    try {
+      const resp = await Promise.race([
+        session.fromPartition(partition).fetch(url, { method: "GET", headers }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("session-fetch 超时")), 10_000)),
+      ]);
+      const text = await resp.text();
+      // 4MB 上限:选题接口响应远小于此,超限视为异常页(风控拦截页等)。
+      return { ok: true, status: resp.status, body: text.slice(0, 4 * 1024 * 1024) };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
+}
+
 /**
  * 应用内后台标签页（2026-07-09 用户拍板:后台在主窗口内打开,不再弹独立窗）
  * 的 <webview> 安全闸。渲染层 BrowserPanesHost 用 <webview partition=

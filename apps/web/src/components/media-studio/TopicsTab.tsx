@@ -122,9 +122,16 @@ export interface TopicsTabProps {
    *  平台走它自己的接口(抖音↔抖音、小红书↔小红书、快手↔快手),传了此
    *  prop 数据源区渲染平台 chips+热榜/搜索,不再是大家来(公众号生态)五源。 */
   tikhubTargets?: Array<{ id: 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo'; label: string }>;
+  /** 平台原生选题源(2026-07-12 知乎：登录态直取热榜/热搜/联想/搜索,替 TikHub)。
+   *  传了此 prop，数据源区渲染原生源按钮；结果同样进候选表(MediaTopicHit)。 */
+  nativeFeed?: {
+    label: string;
+    sources: Array<{ id: string; label: string; needsKeyword: boolean }>;
+    run: (sourceId: string, keyword?: string) => Promise<MediaTopicHit[] | { error: string }>;
+  };
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, nativeFeed }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
@@ -207,6 +214,26 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     return (valid ? saved : tikhubTargets?.[0]?.id ?? 'douyin') as 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo';
   });
   const tikhubTargetLabel = tikhubTargets?.find((t) => t.id === tikhubTarget)?.label ?? tikhubTarget;
+
+  async function runNative(sourceId: string) {
+    if (!nativeFeed) return;
+    const meta = nativeFeed.sources.find((s) => s.id === sourceId);
+    const keyword = direction.trim();
+    if (meta?.needsKeyword && !keyword) {
+      studioToast.info('先填个方向词再搜');
+      return;
+    }
+    setFeedBusy(true);
+    setFeedNotice(null);
+    const r = await nativeFeed.run(sourceId, keyword);
+    setFeedBusy(false);
+    if ('error' in r) {
+      studioToast.err(r.error);
+      return;
+    }
+    setHits(r);
+    setFeedNotice(`${nativeFeed.label} · ${meta?.label ?? sourceId} 共 ${r.length} 条`);
+  }
 
   async function runTikhub(mode: 'hot' | 'search') {
     const keyword = direction.trim();
@@ -312,7 +339,11 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           找热点 · 组合选题雷达
           <span className={c('cardHint')}>{aiOnly ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出' : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}</span>
         </div>
-        {tikhubTargets ? (
+        {nativeFeed ? (
+          <div className={c('row')}>
+            <span className={c('cardHint')}>选题来源（{nativeFeed.label}·登录态直取，最准最实时）：</span>
+          </div>
+        ) : tikhubTargets ? (
           <div className={c('row')}>
             <span className={c('cardHint')}>选题平台（数据从该平台自己的接口来）：</span>
             {tikhubTargets.map((t) => (
@@ -331,7 +362,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             ))}
           </div>
         ) : null}
-        {tikhubTargets ? null : (
+        {nativeFeed || tikhubTargets ? null : (
         <div className={c('row')}>
           {FEED_SOURCES.map((s) => (
             <label key={s.id} className={`${c('row')} ${c('feedSrc')}`} style={{ gap: 4, cursor: 'pointer' }}>
@@ -344,7 +375,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           ))}
         </div>
         )}
-        {!tikhubTargets && enabledFeeds.has('peers') ? (
+        {!tikhubTargets && !nativeFeed && enabledFeeds.has('peers') ? (
           <div className={c('row')}>
             <input
               className={`${c('input')} ${c('grow')}`}
@@ -373,10 +404,30 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             placeholder="方向/领域关键词，例：AI 编程、考研、育儿…"
             onChange={(e) => setDirection(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !feedBusy) void (tikhubTargets ? runTikhub('search') : runCombo());
+              if (e.key === 'Enter' && !feedBusy) {
+                if (nativeFeed) {
+                  const searchSrc = nativeFeed.sources.find((s) => s.needsKeyword);
+                  if (searchSrc) void runNative(searchSrc.id);
+                } else void (tikhubTargets ? runTikhub('search') : runCombo());
+              }
             }}
           />
-          {tikhubTargets ? (
+          {nativeFeed ? (
+            <>
+              {nativeFeed.sources.map((s, i) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`${c('btn')}${i === 0 ? ` ${c('btnPrimary')}` : ''}`}
+                  disabled={feedBusy || (s.needsKeyword && !direction.trim())}
+                  title={s.needsKeyword ? `用上面的方向词在${nativeFeed.label}取「${s.label}」` : `直接拉取${nativeFeed.label}「${s.label}」`}
+                  onClick={() => void runNative(s.id)}
+                >
+                  {feedBusy ? '拉取中…' : s.label}
+                </button>
+              ))}
+            </>
+          ) : tikhubTargets ? (
             <>
               <button
                 type="button"
@@ -487,7 +538,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                       )}
                     </td>
                     <td>{hit.account}</td>
-                    <td>{hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—'}</td>
+                    <td>{hit.hot ? hit.hot : hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—'}</td>
                     <td className={c('tdActions')}>
                       <button
                         type="button"

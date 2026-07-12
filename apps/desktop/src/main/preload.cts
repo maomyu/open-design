@@ -5,6 +5,8 @@ import type {
   OpenDesignHostActionResult,
   OpenDesignHostBrowserProfileRequest,
   OpenDesignHostSetFileInputRequest,
+  OpenDesignHostSessionFetchRequest,
+  OpenDesignHostSessionFetchResult,
   OpenDesignHostFailure,
   OpenDesignHostProjectImportResult,
   OpenDesignHostProjectReplaceWorkingDirResult,
@@ -254,6 +256,22 @@ const browser = {
       return actionFailure(reason);
     } catch (error) {
       return actionFailure(reasonFromError(error));
+    }
+  },
+  // 知乎原生选题:用登录态分区 session 直取知乎接口(主进程带 cookie)。
+  sessionFetch: async (request: OpenDesignHostSessionFetchRequest): Promise<OpenDesignHostSessionFetchResult> => {
+    try {
+      const result = await ipcRenderer.invoke('od:browser:session-fetch', request);
+      if (isRecord(result) && result.ok === true && typeof result.status === 'number' && typeof result.body === 'string') {
+        return { ok: true, status: result.status, body: result.body };
+      }
+      const reason =
+        isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
+          ? result.reason
+          : 'session fetch failed';
+      return { ok: false, reason };
+    } catch (error) {
+      return { ok: false, reason: reasonFromError(error) };
     }
   },
 };

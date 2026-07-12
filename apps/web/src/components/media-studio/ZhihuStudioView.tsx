@@ -39,6 +39,8 @@ import { loadPreferredImageModel } from './image-model-pref';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
 import { hasFeature, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
+import { fetchZhihuTopics, ZHIHU_SOURCES } from '../../runtime/zhihu-topics';
+import { isOpenDesignHostSessionFetchAvailable } from '@open-design/host';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
 import styles from './MediaStudio.module.css';
@@ -379,6 +381,8 @@ export function ZhihuStudioView(): JSX.Element {
 
   const activeStatus = article ? STATUS_LABEL[article.status] : null;
   const zhihuAccounts = platformAccounts[PLATFORM] ?? [];
+  // 知乎原生选题(登录态直取)用哪个账号:优先这篇文章绑定的,否则第一个已建知乎账号。
+  const nativeZhihuAccount = article?.accountId || zhihuAccounts[0] || '';
 
   function emptyCta(text: string) {
     return (
@@ -516,6 +520,16 @@ export function ZhihuStudioView(): JSX.Element {
               platform={PLATFORM}
               aiOnly
               tikhubTargets={[{ id: 'zhihu', label: '知乎' }]}
+              {...(nativeZhihuAccount && isOpenDesignHostSessionFetchAvailable()
+                ? {
+                    nativeFeed: {
+                      label: '知乎',
+                      sources: ZHIHU_SOURCES.map((s) => ({ id: s.id, label: s.label, needsKeyword: s.needsKeyword })),
+                      run: (sourceId, keyword) =>
+                        fetchZhihuTopics(nativeZhihuAccount, sourceId as (typeof ZHIHU_SOURCES)[number]['id'], keyword ?? ''),
+                    },
+                  }
+                : {})}
               topics={topics}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);

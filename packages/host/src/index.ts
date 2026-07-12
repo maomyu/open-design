@@ -220,6 +220,20 @@ export type OpenDesignHostSetFileInputRequest = {
   files: string[];
 };
 
+/** 用平台×账号的登录态分区 session 直取一个只读 http(s) 接口（知乎原生选题用）。
+ *  主进程带该分区 cookie 请求，绕开 webview UI。 */
+export type OpenDesignHostSessionFetchRequest = {
+  account: string;
+  platform: string;
+  url: string;
+  /** 追加请求头（accept/referer/user-agent 由主进程兜底填）。 */
+  headers?: Record<string, string>;
+};
+
+export type OpenDesignHostSessionFetchResult =
+  | { ok: true; status: number; body: string }
+  | { ok: false; reason: string };
+
 export type OpenDesignHostBridge = {
   // Optional capability: hosts older than the embedded-browser feature do
   // not expose it, and the renderer falls back to its non-embedded path.
@@ -227,6 +241,8 @@ export type OpenDesignHostBridge = {
     openProfile(request: OpenDesignHostBrowserProfileRequest): Promise<OpenDesignHostActionResult>;
     /** Optional (newer hosts): CDP file-input injection for「一键存草稿」. */
     setFileInput?(request: OpenDesignHostSetFileInputRequest): Promise<OpenDesignHostActionResult>;
+    /** Optional (newer hosts): 用登录态分区 session 直取只读接口（知乎原生选题）. */
+    sessionFetch?(request: OpenDesignHostSessionFetchRequest): Promise<OpenDesignHostSessionFetchResult>;
   };
   client: OpenDesignHostClient;
   pdf: {
@@ -460,6 +476,25 @@ export async function setHostBrowserFileInput(
     return await setFileInput(request);
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export function isOpenDesignHostSessionFetchAvailable(scope: OpenDesignHostGlobalScope = globalThis): boolean {
+  return typeof getOpenDesignHost(scope)?.browser?.sessionFetch === "function";
+}
+
+export async function hostBrowserSessionFetch(
+  request: OpenDesignHostSessionFetchRequest,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): Promise<OpenDesignHostSessionFetchResult> {
+  const sessionFetch = getOpenDesignHost(scope)?.browser?.sessionFetch;
+  if (typeof sessionFetch !== "function") {
+    return { ok: false, reason: "host session-fetch is not available (older desktop build)" };
+  }
+  try {
+    return await sessionFetch(request);
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
