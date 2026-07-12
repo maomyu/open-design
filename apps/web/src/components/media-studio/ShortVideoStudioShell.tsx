@@ -6,11 +6,12 @@
 // (ShortVideoStudioView 接 platform prop 过滤/建作/发布)。切平台=key 变=
 // 重挂载,各平台独立当前作品(与文章台切平台同语义)。
 //
-// 授权 sv.* 的 per-pill 裁剪留到下个阶段(feature 位待接),本期 pills 全显示,
-// 整个短视频台仍由 'short-video' 授权控制(见 EntryNavRail / EntryShell)。
+// 授权裁剪(2026-07-12):未购买的短视频平台 pill 不渲染(每平台一个 sv.*);
+// 无授权文件=全平台显示。整台是否出现由「任一 sv.*」决定(见 EntryNavRail)。
 import { useState } from 'react';
 import type { SauPlatformId } from '@open-design/contracts';
 import { ShortVideoStudioView } from './ShortVideoStudioView';
+import { hasShortVideoPlatform, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -27,32 +28,41 @@ const SV_PLATFORMS: Array<{ id: SauPlatformId; label: string }> = [
 const STORE_KEY = 'open-design:studio:video-platform';
 
 export function ShortVideoStudioShell(): JSX.Element {
+  const license = useLicense();
+  const licensed = SV_PLATFORMS.filter((p) => hasShortVideoPlatform(license, p.id));
+  const allowed = (id: string | null | undefined): id is SauPlatformId =>
+    licensed.some((p) => p.id === id);
   const [platform, setPlatform] = useState<SauPlatformId>(() => {
     const saved = window.localStorage.getItem(STORE_KEY);
-    return SV_PLATFORMS.some((p) => p.id === saved) ? (saved as SauPlatformId) : 'douyin';
+    if (allowed(saved)) return saved;
+    return licensed[0]?.id ?? 'douyin';
   });
   const pick = (id: SauPlatformId) => {
     setPlatform(id);
     window.localStorage.setItem(STORE_KEY, id);
   };
+  // license 异步到达后当前平台可能越权——落回第一个授权平台。
+  const effective = allowed(platform) ? platform : (licensed[0]?.id ?? 'douyin');
   return (
     <div className={c('articleShell')}>
-      <div className={c('articleSwitch')}>
-        <span className={c('articleSwitchLabel')}>短视频平台</span>
-        {SV_PLATFORMS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className={`${c('articleSwitchBtn')}${p.id === platform ? ` ${c('articleSwitchBtnActive')}` : ''}`}
-            aria-pressed={p.id === platform}
-            onClick={() => pick(p.id)}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
+      {licensed.length > 1 ? (
+        <div className={c('articleSwitch')}>
+          <span className={c('articleSwitchLabel')}>短视频平台</span>
+          {licensed.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`${c('articleSwitchBtn')}${p.id === effective ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+              aria-pressed={p.id === effective}
+              onClick={() => pick(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {/* key=平台:切平台重挂载,各平台独立当前作品/自动保存。 */}
-      <ShortVideoStudioView key={platform} platform={platform} />
+      <ShortVideoStudioView key={effective} platform={effective} />
     </div>
   );
 }

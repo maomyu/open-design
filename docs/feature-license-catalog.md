@@ -4,7 +4,7 @@
 > 先对照本表，再同步下方「五处同步点」，否则产品和授权会漂移（客户买了却
 > 用不了 / 没买却能用）。维护纪律见文末。
 
-最后更新：2026-07-12
+最后更新：2026-07-12（授权颗粒度全面平台化落地）
 
 ---
 
@@ -15,43 +15,42 @@
 
 | 功能 id | 中文 | 层 | 状态 | 对应界面 | daemon 强制点 |
 |---|---|---|---|---|---|
-| `article.wechat-mp` | 公众号文章 | 平台 | ✅已实现 | 文章台·公众号 | `/:wechat-mp/*` |
-| `article.zhihu` | 知乎文章 | 平台 | ✅已实现 | 文章台·知乎 | `/:zhihu/*` |
-| `article.weibo` | 微博文章 | 平台 | ✅已实现 | 文章台·微博 | `/:weibo/*` |
-| `sv.douyin` | 抖音短视频 | 平台 | 🔲待落地 | 短视频台·抖音 | 待接（现 `short-video`） |
-| `sv.kuaishou` | 快手短视频 | 平台 | 🔲待落地 | 短视频台·快手 | 待接 |
-| `sv.shipinhao` | 视频号短视频 | 平台 | 🔲待落地 | 短视频台·视频号 | 待接 |
-| `sv.bilibili` | B站短视频 | 平台 | 🔲待落地 | 短视频台·B站 | 待接 |
-| `sv.xiaohongshu` | 小红书视频 | 平台 | 🔲待落地 | 短视频台·小红书 | 待接 |
-| `note.xiaohongshu` | 小红书图文笔记 | 平台 | 🔲待落地 | 笔记台 | 待接（现 `note`） |
+| `article.wechat-mp` | 公众号文章 | 平台 | ✅已实现 | 文章台·公众号 | `/wechat-mp/*` |
+| `article.zhihu` | 知乎文章 | 平台 | ✅已实现 | 文章台·知乎 | `/zhihu/*` |
+| `article.weibo` | 微博文章 | 平台 | ✅已实现 | 文章台·微博 | `/weibo/*` |
+| `sv.douyin` | 抖音短视频 | 平台 | ✅已实现 | 短视频台·抖音 pill | handoff/发布目标=douyin |
+| `sv.kuaishou` | 快手短视频 | 平台 | ✅已实现 | 短视频台·快手 pill | handoff/发布目标=kuaishou |
+| `sv.shipinhao` | 视频号短视频 | 平台 | ✅已实现 | 短视频台·视频号 pill | handoff/发布目标=tencent |
+| `sv.bilibili` | B站短视频 | 平台 | ✅已实现 | 短视频台·B站 pill | handoff/发布目标=bilibili |
+| `sv.xiaohongshu` | 小红书视频 | 平台 | ✅已实现 | 短视频台·小红书 pill | handoff/发布目标=xiaohongshu(视频) |
+| `note.xiaohongshu` | 小红书图文笔记 | 平台 | ✅已实现 | 笔记台 | `/note/*` |
 | `integrations` | 集成 | 平台 | ✅已实现 | 集成 | — |
-| `cap.ai` | AI 选题/写作/改写（含知识库） | 能力 | ✅已实现 | 各台 AI 卡 + 知识库 | `/ai-task` |
+| `cap.ai` | AI 选题/写作/改写（含知识库） | 能力 | ✅已实现 | 各台 AI 卡 + 知识库 | `/ai-task` + `/knowledge` |
 | `cap.image` | 封面/配图生成 | 能力 | ✅已实现 | 封面/配图 tab | `/images` |
 | `cap.tts` | 配音 | 能力 | ✅已实现 | 短视频·配音 tab | `/tts` |
 | `cap.handoff` | 一键填稿/发布（浏览器注入） | 能力 | ✅已实现 | 一键填稿/发布按钮 | `/handoff` |
 | `cap.publish` | 发布（公众号草稿箱等） | 能力 | ✅已实现 | 发布 tab | `/publish*` |
 
-**导航层派生规则（不单独授权）**
-- 「文章」导航 = 有任一 `article.*`
-- 「短视频」导航 = 有任一 `sv.*`
+> **短视频强制说明**：URL 是共享池 `/short-video/*`（不带具体平台），所以 studio 级
+> 访问（建作/AI/配图）只需「任一 sv.\*」；**per-平台的真正强制在发布/handoff 边界**
+> （目标平台在 body 里）——handoff 到抖音需 `sv.douyin`。小红书 handoff 图文/视频
+> 歧义，持 `note.xiaohongshu` 或 `sv.xiaohongshu` 其一即放行（anyOf）。
+
+**导航层派生规则（不单独授权，纯函数见 `license.ts` 派生区）**
+- 「文章」导航 = 有任一 `article.*`（`hasAnyArticleFeature`）
+- 「短视频」导航 = 有任一 `sv.*`（`hasAnyShortVideoFeature`）
 - 「笔记」导航 = 有 `note.xiaohongshu`
 - 「知识库」导航 = 有 `cap.ai`（知识库跟 AI 走）
-- 「账号」导航 = 有任一发布平台（article.*/sv.*/note.*）
+- 「账号」导航 = 有任一发布平台（`hasAnyPublishingModule`）
+- 短视频台内 pill = 每平台按 `svFeatureOf(sauId)` 裁剪
 
 ---
 
-## 二、当前漂移（产品已变、授权待跟上）
+## 二、当前漂移
 
-> 这些是"已拍板但授权层还没落地"的差异。下一个授权任务要把它们抹平。
-
-1. **短视频已平台化**（2026-07-12 短视频台加了平台切换器），但 `license.ts`
-   还是模块级 `short-video`。需拆成 5 个 `sv.*`。
-2. **知识库 `kb`** 仍是独立授权单元；已决定并进 `cap.ai`（删 `kb`，知识库导航
-   跟 `cap.ai`）。
-3. **小红书** 已决定拆 `note.xiaohongshu`（图文，笔记台）+ `sv.xiaohongshu`
-   （视频，短视频台）；当前 `note` 是模块级。
-
-落地后回来把上表状态改 ✅、删除本节对应条目。
+> 无。上表与代码一致（2026-07-12 授权颗粒度全面平台化已落地）。
+> 短视频台的独立 DB 池拆分仍是"将来真要每平台分化功能时再做"（见短视频重构
+> 计划），但那是数据模型演进，不影响授权颗粒度——授权已按平台设计好。
 
 ---
 

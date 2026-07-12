@@ -11,7 +11,7 @@
 import { type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
-import { anyArticlePlatform, anyPublishingModule, hasFeature, useLicense } from '../state/license';
+import { anyArticlePlatform, anyPublishingModule, anyShortVideoPlatform, hasFeature, useLicense } from '../state/license';
 
 export type EntryView =
   | 'home'
@@ -107,7 +107,7 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="edit" size={18} />
           </NavButton>
         ) : null}
-        {hasFeature(license, 'short-video') ? (
+        {anyShortVideoPlatform(license) ? (
           <NavButton
             active={view === 'studio-video'}
             ariaLabel="短视频"
@@ -118,7 +118,7 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="play" size={18} />
           </NavButton>
         ) : null}
-        {hasFeature(license, 'note') ? (
+        {hasFeature(license, 'note.xiaohongshu') ? (
           <NavButton
             active={view === 'studio-note'}
             ariaLabel="笔记"
@@ -131,7 +131,7 @@ export function EntryNavRail({ view, onViewChange }: Props) {
         ) : null}
         {/* 知识库是公司级资产(2026-07-08 用户拍板):一级入口,一处维护、
             三个创作台的 AI 全部共用,不再藏在单个创作台里。 */}
-        {hasFeature(license, 'kb') ? (
+        {hasFeature(license, 'cap.ai') ? (
           <NavButton
             active={view === 'knowledge'}
             ariaLabel="知识库"

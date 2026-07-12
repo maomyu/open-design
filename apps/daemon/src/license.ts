@@ -16,9 +16,9 @@ import path from 'node:path';
 import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import {
+  articleFeatureOf,
+  handoffTargetFeatures,
   isFeatureId,
-  moduleFeatureOfHandoffTarget,
-  moduleFeatureOfStudioPlatform,
   type FeatureId,
   type LicenseFile,
   type LicensePayload,
@@ -159,53 +159,66 @@ export function licenseStatusResponse(state: LicenseState): LicenseStatusRespons
 
 // ---- URL → 所需功能 映射(纯函数,单测覆盖) ----
 
+/** 一个请求的授权要求:all 全部持有 + anyOf 至少持有其一。
+ *  anyOf 用于共享池的短视频(URL 是 /short-video/*,不带具体平台,studio 级
+ *  访问只需"任一 sv.*")和小红书 handoff 的图文/视频歧义。 */
+export interface FeatureRequirement {
+  all: FeatureId[];
+  anyOf?: FeatureId[];
+}
+
+const SV_FEATURES: FeatureId[] = ['sv.douyin', 'sv.kuaishou', 'sv.shipinhao', 'sv.bilibili', 'sv.xiaohongshu'];
+const NONE: FeatureRequirement = { all: [] };
+
 /**
- * 计算一个 /api/media-studio 请求需要哪些授权功能。
+ * 计算一个 /api/media-studio 请求的授权要求。
  * path 是挂载点之后的相对路径(express 中间件里的 req.path,如
- * `/wechat-mp/articles` 或 `/handoff`)。返回空数组 = 放行。
+ * `/wechat-mp/articles` 或 `/handoff`)。{all:[]} = 放行。
  */
-export function requiredFeaturesFor(method: string, reqPath: string, body?: unknown): FeatureId[] {
+export function requiredFeaturesFor(method: string, reqPath: string, body?: unknown): FeatureRequirement {
   const parts = reqPath.split('/').filter(Boolean);
-  if (parts.length === 0) return [];
+  if (parts.length === 0) return NONE;
   const head = parts[0]!;
 
-  // 全局段:资产/无状态排版/浏览器地址表 放行;handoff 只拦创建。
-  if (head === 'assets' || head === 'render') return [];
+  // 全局段:资产/无状态排版 放行;handoff 只拦创建。
+  if (head === 'assets' || head === 'render') return NONE;
   if (head === 'browser') {
-    // browser/open 按目标平台拦(body.platform);urls 放行。
+    // browser/open 按目标平台拦(body.platform,anyOf);urls 放行。
     if (parts[1] === 'open' && method === 'POST') {
       const platform = String((body as { platform?: unknown } | undefined)?.platform ?? '');
-      const target = moduleFeatureOfHandoffTarget(platform) ?? moduleFeatureOfStudioPlatform(platform);
-      return target ? [target] : [];
+      const anyOf = handoffTargetFeatures(platform);
+      return anyOf.length ? { all: [], anyOf } : NONE;
     }
-    return [];
+    return NONE;
   }
   if (head === 'handoff') {
     if (method === 'POST' && parts.length === 1) {
       const target = String((body as { platform?: unknown } | undefined)?.platform ?? '');
-      const module_ = moduleFeatureOfHandoffTarget(target);
-      return module_ ? ['cap.handoff', module_] : ['cap.handoff'];
+      const anyOf = handoffTargetFeatures(target);
+      return anyOf.length ? { all: ['cap.handoff'], anyOf } : { all: ['cap.handoff'] };
     }
-    return []; // claim/progress/complete/wait 是桌面端回写口
+    return NONE; // claim/progress/complete/wait 是桌面端回写口
   }
 
   // 平台段:/:platform/...
-  const required: FeatureId[] = [];
-  // 知识库全平台共享,任何 /:platform/knowledge 都按 kb 计。
-  if (parts[1] === 'knowledge') {
-    required.push('kb');
-  } else {
-    const module_ = moduleFeatureOfStudioPlatform(head);
-    if (module_) required.push(module_);
-    else return []; // 未知平台不锁死(未来平台默认放行)
-  }
-  if (parts[1] === 'skins') return []; // 皮肤列表只读元数据
+  // 知识库全平台共享,跟 cap.ai(2026-07-12 kb 并入 AI)。
+  if (parts[1] === 'knowledge') return { all: ['cap.ai'] };
+  if (parts[1] === 'skins') return NONE; // 皮肤列表只读元数据
+
+  const all: FeatureId[] = [];
+  let anyOf: FeatureId[] | undefined;
+  const articleFeat = articleFeatureOf(head);
+  if (articleFeat) all.push(articleFeat);
+  else if (head === 'short-video') anyOf = SV_FEATURES; // studio 级:任一短视频平台
+  else if (head === 'note') all.push('note.xiaohongshu');
+  else return NONE; // 未知平台不锁死(未来平台默认放行)
+
   const tail = parts[parts.length - 1]!;
-  if (tail === 'ai-task') required.push('cap.ai');
-  if (tail === 'images') required.push('cap.image');
-  if (tail === 'tts') required.push('cap.tts');
-  if (tail === 'publish' || tail === 'publish-note' || tail === 'publish-video') required.push('cap.publish');
-  return required;
+  if (tail === 'ai-task') all.push('cap.ai');
+  if (tail === 'images') all.push('cap.image');
+  if (tail === 'tts') all.push('cap.tts');
+  if (tail === 'publish' || tail === 'publish-note' || tail === 'publish-video') all.push('cap.publish');
+  return anyOf ? { all, anyOf } : { all };
 }
 
 /** 到期锁定放行的只读方法。 */
@@ -228,9 +241,11 @@ export function licenseGuard(ref: LicenseStateRef) {
         },
       });
     }
-    const required = requiredFeaturesFor(req.method, req.path, req.body);
-    const missing = required.filter((f) => !state.features.has(f));
-    if (missing.length === 0) return next();
+    const req_ = requiredFeaturesFor(req.method, req.path, req.body);
+    const missingAll = req_.all.filter((f) => !state.features.has(f));
+    const anyOfUnmet = Boolean(req_.anyOf?.length) && !req_.anyOf!.some((f) => state.features.has(f));
+    if (missingAll.length === 0 && !anyOfUnmet) return next();
+    const missing = [...missingAll, ...(anyOfUnmet ? req_.anyOf! : [])];
     return res.status(403).json({
       error: {
         code: 'FEATURE_NOT_LICENSED',

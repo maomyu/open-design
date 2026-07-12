@@ -22,7 +22,7 @@ function payloadOf(overrides: Partial<LicensePayload> = {}): LicensePayload {
     v: 1,
     edition: 'custom',
     customer: '测试客户',
-    features: ['article.wechat-mp', 'kb', 'cap.ai'],
+    features: ['article.wechat-mp', 'cap.ai'],
     issuedAt: '2026-01-01',
     expiresAt: '2099-01-01',
     ...overrides,
@@ -119,49 +119,51 @@ describe('loadLicenseState', () => {
 describe('requiredFeaturesFor(URL→功能映射)', () => {
   const f = requiredFeaturesFor;
 
-  it('文章平台端点 → 对应 article.*', () => {
-    expect(f('GET', '/wechat-mp/articles')).toEqual(['article.wechat-mp']);
-    expect(f('POST', '/zhihu/articles')).toEqual(['article.zhihu']);
-    expect(f('PATCH', '/weibo/articles/x1')).toEqual(['article.weibo']);
+  it('文章平台端点 → article.*(all)', () => {
+    expect(f('GET', '/wechat-mp/articles')).toEqual({ all: ['article.wechat-mp'] });
+    expect(f('POST', '/zhihu/articles')).toEqual({ all: ['article.zhihu'] });
+    expect(f('PATCH', '/weibo/articles/x1')).toEqual({ all: ['article.weibo'] });
   });
 
-  it('笔记/短视频模块端点', () => {
-    expect(f('GET', '/note/articles')).toEqual(['note']);
-    expect(f('POST', '/short-video/articles/x/upload-video')).toEqual(['short-video']);
+  it('笔记 → note.xiaohongshu;短视频 studio 级 → 任一 sv.*(anyOf)', () => {
+    expect(f('GET', '/note/articles')).toEqual({ all: ['note.xiaohongshu'] });
+    expect(f('POST', '/short-video/articles/x/upload-video')).toEqual({
+      all: [],
+      anyOf: ['sv.douyin', 'sv.kuaishou', 'sv.shipinhao', 'sv.bilibili', 'sv.xiaohongshu'],
+    });
   });
 
-  it('知识库任何平台段一律 kb(全平台共享)', () => {
-    expect(f('GET', '/wechat-mp/knowledge')).toEqual(['kb']);
-    expect(f('POST', '/note/knowledge')).toEqual(['kb']);
-    expect(f('DELETE', '/zhihu/knowledge/k1')).toEqual(['kb']);
+  it('知识库任何平台段一律跟 cap.ai(2026-07-12 kb 并入 AI)', () => {
+    expect(f('GET', '/wechat-mp/knowledge')).toEqual({ all: ['cap.ai'] });
+    expect(f('POST', '/note/knowledge')).toEqual({ all: ['cap.ai'] });
+    expect(f('DELETE', '/zhihu/knowledge/k1')).toEqual({ all: ['cap.ai'] });
   });
 
   it('能力后缀叠加:ai-task/images/tts/publish*', () => {
-    expect(f('POST', '/wechat-mp/ai-task')).toEqual(['article.wechat-mp', 'cap.ai']);
-    expect(f('POST', '/zhihu/articles/x/images')).toEqual(['article.zhihu', 'cap.image']);
-    expect(f('POST', '/short-video/articles/x/tts')).toEqual(['short-video', 'cap.tts']);
-    expect(f('POST', '/wechat-mp/articles/x/publish')).toEqual(['article.wechat-mp', 'cap.publish']);
-    expect(f('POST', '/note/articles/x/publish-note')).toEqual(['note', 'cap.publish']);
+    expect(f('POST', '/wechat-mp/ai-task')).toEqual({ all: ['article.wechat-mp', 'cap.ai'] });
+    expect(f('POST', '/zhihu/articles/x/images')).toEqual({ all: ['article.zhihu', 'cap.image'] });
+    expect(f('POST', '/short-video/articles/x/tts')).toEqual({ all: ['cap.tts'], anyOf: ['sv.douyin', 'sv.kuaishou', 'sv.shipinhao', 'sv.bilibili', 'sv.xiaohongshu'] });
+    expect(f('POST', '/wechat-mp/articles/x/publish')).toEqual({ all: ['article.wechat-mp', 'cap.publish'] });
+    expect(f('POST', '/note/articles/x/publish-note')).toEqual({ all: ['note.xiaohongshu', 'cap.publish'] });
   });
 
-  it('handoff 创建按目标平台 + cap.handoff;子路由(桌面端回写)放行', () => {
-    expect(f('POST', '/handoff', { platform: 'zhihu' })).toEqual(['cap.handoff', 'article.zhihu']);
-    expect(f('POST', '/handoff', { platform: 'xiaohongshu' })).toEqual(['cap.handoff', 'note']);
-    expect(f('POST', '/handoff', { platform: 'douyin' })).toEqual(['cap.handoff', 'short-video']);
-    expect(f('POST', '/handoff/hj-1/claim')).toEqual([]);
-    expect(f('POST', '/handoff/hj-1/progress')).toEqual([]);
-    expect(f('GET', '/handoff/hj-1/wait')).toEqual([]);
+  it('handoff 创建:cap.handoff(all) + 目标平台(anyOf);小红书歧义两者其一', () => {
+    expect(f('POST', '/handoff', { platform: 'zhihu' })).toEqual({ all: ['cap.handoff'], anyOf: ['article.zhihu'] });
+    expect(f('POST', '/handoff', { platform: 'douyin' })).toEqual({ all: ['cap.handoff'], anyOf: ['sv.douyin'] });
+    expect(f('POST', '/handoff', { platform: 'xiaohongshu' })).toEqual({ all: ['cap.handoff'], anyOf: ['note.xiaohongshu', 'sv.xiaohongshu'] });
+    expect(f('POST', '/handoff/hj-1/claim')).toEqual({ all: [] });
+    expect(f('GET', '/handoff/hj-1/wait')).toEqual({ all: [] });
   });
 
   it('资产/无状态排版/皮肤/浏览器地址表 放行', () => {
-    expect(f('GET', '/assets/a1/img.png')).toEqual([]);
-    expect(f('POST', '/render')).toEqual([]);
-    expect(f('GET', '/wechat-mp/skins')).toEqual([]);
-    expect(f('GET', '/browser/urls')).toEqual([]);
+    expect(f('GET', '/assets/a1/img.png')).toEqual({ all: [] });
+    expect(f('POST', '/render')).toEqual({ all: [] });
+    expect(f('GET', '/wechat-mp/skins')).toEqual({ all: [] });
+    expect(f('GET', '/browser/urls')).toEqual({ all: [] });
   });
 
-  it('browser/open 按目标平台拦', () => {
-    expect(f('POST', '/browser/open', { platform: 'zhihu' })).toEqual(['article.zhihu']);
-    expect(f('POST', '/browser/open', { platform: 'xiaohongshu' })).toEqual(['note']);
+  it('browser/open 按目标平台拦(anyOf)', () => {
+    expect(f('POST', '/browser/open', { platform: 'zhihu' })).toEqual({ all: [], anyOf: ['article.zhihu'] });
+    expect(f('POST', '/browser/open', { platform: 'xiaohongshu' })).toEqual({ all: [], anyOf: ['note.xiaohongshu', 'sv.xiaohongshu'] });
   });
 });

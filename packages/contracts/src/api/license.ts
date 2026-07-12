@@ -7,16 +7,24 @@
 // 铁律:无授权文件 = 全功能解锁(开发机/CI/e2e/存量安装零影响)。
 // 到期语义:锁功能、留数据——写操作拒绝,读端点放行(数据永不绑架)。
 
-/** 可授权的功能单元。文章按平台细分(客户常只买单平台);短视频/笔记本期
- *  模块级(契约可扩展成平台级);cap.* 为横切能力项。 */
+/** 可授权的功能单元(2026-07-12 全面平台化:文章/短视频/笔记都按平台细分,
+ *  客户常只买单平台)。cap.* 为横切能力项(知识库跟 cap.ai,不单列)。 */
 export type FeatureId =
+  // 文章平台
   | 'article.wechat-mp'
   | 'article.zhihu'
   | 'article.weibo'
-  | 'short-video'
-  | 'note'
-  | 'kb'
+  // 短视频平台
+  | 'sv.douyin'
+  | 'sv.kuaishou'
+  | 'sv.shipinhao'
+  | 'sv.bilibili'
+  | 'sv.xiaohongshu'
+  // 图文笔记平台
+  | 'note.xiaohongshu'
+  // 其它模块
   | 'integrations'
+  // 横切能力
   | 'cap.ai'
   | 'cap.image'
   | 'cap.tts'
@@ -27,9 +35,12 @@ export const ALL_FEATURE_IDS: readonly FeatureId[] = [
   'article.wechat-mp',
   'article.zhihu',
   'article.weibo',
-  'short-video',
-  'note',
-  'kb',
+  'sv.douyin',
+  'sv.kuaishou',
+  'sv.shipinhao',
+  'sv.bilibili',
+  'sv.xiaohongshu',
+  'note.xiaohongshu',
   'integrations',
   'cap.ai',
   'cap.image',
@@ -79,9 +90,18 @@ export function hasAnyArticleFeature(features: readonly FeatureId[]): boolean {
   return features.some((f) => f.startsWith('article.'));
 }
 
-/** 「账号」导航是否出现 = 任一发布模块在授权内(有发布就要绑账号)。 */
+/** 短视频大模块是否可用 = 任一短视频平台在授权内。 */
+export function hasAnyShortVideoFeature(features: readonly FeatureId[]): boolean {
+  return features.some((f) => f.startsWith('sv.'));
+}
+
+/** 「账号」导航是否出现 = 任一发布平台在授权内(有发布就要绑账号)。 */
 export function hasAnyPublishingModule(features: readonly FeatureId[]): boolean {
-  return hasAnyArticleFeature(features) || features.includes('short-video') || features.includes('note');
+  return (
+    hasAnyArticleFeature(features)
+    || hasAnyShortVideoFeature(features)
+    || features.includes('note.xiaohongshu')
+  );
 }
 
 /** 文章平台 id(wechat-mp/zhihu/weibo)→功能 id;非文章平台返回 null。 */
@@ -92,21 +112,25 @@ export function articleFeatureOf(platform: string): FeatureId | null {
   return null;
 }
 
-/** 创作台平台段(:platform)→所属模块功能 id;未知平台返回 null(放行,
- *  留给未来平台默认不锁死)。 */
-export function moduleFeatureOfStudioPlatform(platform: string): FeatureId | null {
-  const article = articleFeatureOf(platform);
-  if (article) return article;
-  if (platform === 'note') return 'note';
-  if (platform === 'short-video') return 'short-video';
+/** 短视频 SAU 平台 id(douyin/kuaishou/tencent/bilibili/xiaohongshu)→功能 id。
+ *  注意 视频号 SAU id = tencent → sv.shipinhao。 */
+export function svFeatureOf(sauPlatform: string): FeatureId | null {
+  if (sauPlatform === 'douyin') return 'sv.douyin';
+  if (sauPlatform === 'kuaishou') return 'sv.kuaishou';
+  if (sauPlatform === 'tencent' || sauPlatform === 'shipinhao') return 'sv.shipinhao';
+  if (sauPlatform === 'bilibili') return 'sv.bilibili';
+  if (sauPlatform === 'xiaohongshu') return 'sv.xiaohongshu';
   return null;
 }
 
-/** 浏览器注入目标平台(handoff body.platform)→所属模块功能 id。 */
-export function moduleFeatureOfHandoffTarget(target: string): FeatureId | null {
-  if (target === 'zhihu') return 'article.zhihu';
-  if (target === 'weibo') return 'article.weibo';
-  if (target === 'xiaohongshu') return 'note';
-  if (target === 'douyin' || target === 'kuaishou') return 'short-video';
-  return null;
+/** 浏览器注入目标平台(handoff/发布 body.platform)→满足条件的功能集(anyOf:
+ *  持有其一即放行)。小红书歧义(图文 note.xiaohongshu / 视频 sv.xiaohongshu)
+ *  故返回两者。空数组 = 未知目标,放行。 */
+export function handoffTargetFeatures(target: string): FeatureId[] {
+  if (target === 'zhihu') return ['article.zhihu'];
+  if (target === 'weibo') return ['article.weibo'];
+  if (target === 'douyin') return ['sv.douyin'];
+  if (target === 'kuaishou') return ['sv.kuaishou'];
+  if (target === 'xiaohongshu') return ['note.xiaohongshu', 'sv.xiaohongshu'];
+  return [];
 }

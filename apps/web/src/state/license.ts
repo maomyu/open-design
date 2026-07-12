@@ -9,6 +9,8 @@ import { createContext, useContext } from 'react';
 import {
   hasAnyArticleFeature,
   hasAnyPublishingModule,
+  hasAnyShortVideoFeature,
+  svFeatureOf,
   type FeatureId,
   type LicenseStatusResponse,
 } from '@open-design/contracts';
@@ -55,8 +57,19 @@ export function anyArticlePlatform(license: LicenseInfo): boolean {
   return license.features === null || hasAnyArticleFeature([...license.features]);
 }
 
+export function anyShortVideoPlatform(license: LicenseInfo): boolean {
+  return license.features === null || hasAnyShortVideoFeature([...license.features]);
+}
+
 export function anyPublishingModule(license: LicenseInfo): boolean {
   return license.features === null || hasAnyPublishingModule([...license.features]);
+}
+
+/** 某个短视频 SAU 平台(douyin/tencent/…)是否在授权内(短视频台 pills 裁剪用)。 */
+export function hasShortVideoPlatform(license: LicenseInfo, sauId: string): boolean {
+  if (license.features === null) return true;
+  const feat = svFeatureOf(sauId);
+  return feat ? license.features.has(feat) : true;
 }
 
 /** 入口视图是否在授权内(导航裁剪与视图重定向共用一份判定)。 */
@@ -68,11 +81,12 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
     case 'studio-weibo':
       return anyArticlePlatform(license);
     case 'studio-video':
-      return hasFeature(license, 'short-video');
+      return anyShortVideoPlatform(license);
     case 'studio-note':
-      return hasFeature(license, 'note');
+      return hasFeature(license, 'note.xiaohongshu');
     case 'knowledge':
-      return hasFeature(license, 'kb');
+      return hasFeature(license, 'cap.ai'); // 知识库跟 AI 走
+
     case 'accounts':
       return anyPublishingModule(license);
     case 'integrations':
