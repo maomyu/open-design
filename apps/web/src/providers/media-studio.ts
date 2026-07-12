@@ -815,6 +815,43 @@ export function completeHandoffJob(jobId: string, ok: boolean, detail: string): 
   }).catch(() => undefined);
 }
 
+// ── 内置浏览器采集 job 回写(爆款雷达;桌面端标签里执行) ──
+export async function claimCollectJob(jobId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/claim`, { method: 'POST' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function reportCollectProgress(jobId: string, message: string): void {
+  void fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  }).catch(() => undefined);
+}
+
+export function postCollectResult(
+  jobId: string,
+  results: import('@open-design/contracts').StudioCollectPlatformResult[],
+): void {
+  void fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ results, ok: true }),
+  }).catch(() => undefined);
+}
+
+export function completeCollectJob(jobId: string, ok: boolean, detail: string): void {
+  void fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ok, detail }),
+  }).catch(() => undefined);
+}
+
 /** 图片资产的本机绝对路径(「一键存草稿」CDP 注入用)。 */
 export async function fetchStudioAssetPaths(
   platform: string,

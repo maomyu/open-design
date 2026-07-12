@@ -26,11 +26,100 @@ import {
   browserPaneKey,
   browserPanePartition,
   type BrowserPaneRequest,
+  type CollectPaneSpec,
 } from '../runtime/browser-panes';
 import { runDraftInjection, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
+import { EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, buildSearchUrl } from '../runtime/collect-extractors';
+import { postCollectResult, reportCollectProgress } from '../providers/media-studio';
+import type { StudioCollectItem } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
+
+/**
+ * 在当前面板 webview 里采集一个平台的搜索结果（含翻页/时间窗），回写采集 job。
+ * 流程：逐页(或滚动)导航搜索页(带排序+时间窗参数) → 判登录墙 → 抓卡片 → 去重累积 →
+ * postCollectResult。全程只在本标签里跑，不弹独立窗口。
+ */
+async function runCollect(
+  el: DraftWebview | null,
+  spec: CollectPaneSpec,
+  isCancelled: () => boolean,
+): Promise<void> {
+  const { jobId, platform } = spec;
+  const done = (items: StudioCollectItem[], needsLogin: boolean, note: string) => {
+    if (isCancelled()) return;
+    postCollectResult(jobId, [{ platform, items, needsLogin, ...(note ? { note } : {}) }]);
+  };
+  if (!el) return done([], false, '面板 webview 未就绪');
+  const evalJs = async (js: string, timeoutMs = 4000): Promise<unknown> => {
+    try {
+      return await Promise.race([
+        el.executeJavaScript(js),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+      ]);
+    } catch {
+      return undefined;
+    }
+  };
+  const waitReady = async () => {
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline) {
+      const state = await evalJs('document.readyState', 2000);
+      if (state === 'complete' || state === 'interactive') break;
+      await new Promise((r) => setTimeout(r, 800));
+      if (isCancelled()) return;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  };
+
+  const infinite = INFINITE_SCROLL[platform];
+  const pages = infinite ? 1 : Math.max(1, spec.pages);
+  const byId = new Map<string, StudioCollectItem>();
+  let loginWalled = false;
+
+  for (let page = 1; page <= pages; page++) {
+    if (isCancelled()) return;
+    const url = buildSearchUrl(platform, spec.keyword, {
+      order: spec.order, timeWindow: spec.timeWindow, page, nowSec: spec.nowSec,
+    });
+    reportCollectProgress(jobId, `「${platform}」第 ${page} 页，加载中…`);
+    await evalJs(`location.href = ${JSON.stringify(url)}`, 4000);
+    await waitReady();
+    if (isCancelled()) return;
+    // 登录墙判定（首页判一次即可）
+    if (page === 1) {
+      const bodyText = (await evalJs('document.body ? document.body.innerText.slice(0,4000) : ""')) as string | undefined;
+      const signals = LOGIN_WALL[platform] ?? [];
+      if (typeof bodyText === 'string' && signals.some((s) => bodyText.includes(s))) {
+        reportCollectProgress(jobId, `「${platform}」需要登录——请在这个标签里扫码登录后重试`);
+        loginWalled = true;
+        break;
+      }
+    }
+    // 无限滚动平台：滚动触发懒加载
+    if (infinite) {
+      for (let i = 0; i < Math.max(0, spec.scrolls); i++) {
+        await evalJs('window.scrollBy(0, 2000)', 2000);
+        await new Promise((r) => setTimeout(r, 1200));
+        if (isCancelled()) return;
+      }
+    }
+    const raw = await evalJs(EXTRACTORS[platform], 8000);
+    for (const it of Array.isArray(raw) ? raw : []) {
+      const item = { ...(it as Record<string, unknown>), platform } as StudioCollectItem;
+      const key = String(item.content_id ?? item.url ?? Math.random());
+      if (!byId.has(key)) byId.set(key, item);
+    }
+    reportCollectProgress(jobId, `「${platform}」第 ${page} 页累计 ${byId.size} 条`);
+    if (byId.size >= spec.per) break;
+  }
+
+  if (loginWalled) return done([], true, '需要登录：请在标签里扫码登录后重跑采集');
+  const items = [...byId.values()].slice(0, spec.per);
+  reportCollectProgress(jobId, `「${platform}」采到 ${items.length} 条`);
+  done(items, false, items.length ? '' : '未提取到条目(选择器需校准或结果未加载)');
+}
 
 interface PaneSpec {
   key: string;
@@ -42,6 +131,9 @@ interface PaneSpec {
   draftSeq?: number;
   /** handoff 桥 job id(CLI 派发):注入进度/终态回写 daemon。 */
   draftJobId?: string;
+  /** 爆款雷达采集载荷:面板就绪后消费一次,seq 递增触发重新采集。 */
+  collect?: CollectPaneSpec;
+  collectSeq?: number;
 }
 
 /** Electron <webview> 的导航 API 子集（web 包不依赖 electron 类型）。 */
@@ -68,7 +160,14 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
         const key = browserPaneKey(req.platform, req.account);
         const existing = list.find((p) => p.key === key);
         if (existing) {
-          // 已有面板:带 draft 再次打开=对同一面板重新注入(seq 递增触发)。
+          // 已有面板:带 draft/collect 再次打开=对同一面板重跑(seq 递增触发)。
+          if (req.collect) {
+            return list.map((p) =>
+              p.key === key
+                ? { ...p, url: req.url, collect: req.collect!, collectSeq: (p.collectSeq ?? 0) + 1 }
+                : p,
+            );
+          }
           if (!req.draft) return list;
           return list.map((p) =>
             p.key === key
@@ -85,6 +184,7 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
             url: req.url,
             ...(req.draft ? { draft: req.draft, draftSeq: 1 } : {}),
             ...(req.draftJobId ? { draftJobId: req.draftJobId } : {}),
+            ...(req.collect ? { collect: req.collect, collectSeq: 1 } : {}),
           },
         ];
       });
@@ -245,6 +345,24 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
       );
     };
   }, [spec.draft, spec.draftSeq]);
+
+  // 爆款雷达采集:面板加载后在【本标签 webview】里滚动+抓卡片，回写采集 job。
+  const ranCollectRef = useRef(0);
+  useEffect(() => {
+    const seq = spec.collectSeq ?? 0;
+    if (!spec.collect || seq === 0 || seq === ranCollectRef.current) return;
+    const collect = spec.collect;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      ranCollectRef.current = seq;
+      void runCollect(ref.current as unknown as DraftWebview | null, collect, () => cancelled);
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [spec.collect, spec.collectSeq]);
 
   useEffect(() => {
     const el = ref.current;

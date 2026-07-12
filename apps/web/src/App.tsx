@@ -27,6 +27,7 @@ import { ProjectView } from './components/ProjectView';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
 import { BrowserPanesHost } from './components/BrowserPanesHost';
 import { startHandoffListener } from './runtime/handoff-listener';
+import { startCollectListener } from './runtime/collect-listener';
 import { fetchLicenseInfo, LicenseContext, UNLOCKED_LICENSE, type LicenseInfo } from './state/license';
 import {
   DesignSystemCreationFlow,
@@ -200,7 +201,7 @@ function AppInner() {
   // Observability marker. `apps/web/src/observability/white-screen.ts`
   // keys its "app actually mounted" success condition on this attribute
   // because the dynamic-import loading shell (`<div class="od-loading-shell">
-  // Loading WorkBuild…</div>`) is itself >MIN_VISIBLE_TEXT and would
+  // Loading 爆创…</div>`) is itself >MIN_VISIBLE_TEXT and would
   // otherwise be mistaken for a real mount. Survives subsequent render
   // crashes — once App has mounted at least once, it's no longer a white
   // screen (subsequent failures show up as `$exception`).
@@ -212,6 +213,8 @@ function AppInner() {
   // handoff 桥:CLI「od studio handoff」派发的注入 job 由桌面端执行
   // (监听器内部自判桌面端,网页版空载)。
   useEffect(() => startHandoffListener(), []);
+  // 爆款雷达采集桥:引擎「od media collect」派发的采集 job 由桌面端在应用内标签执行。
+  useEffect(() => startCollectListener(), []);
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   // 功能授权(定制版):启动拉一次,None/失败=全功能。裁剪只是体验层,
   // daemon 才是强制点。

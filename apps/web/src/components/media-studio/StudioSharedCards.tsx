@@ -111,14 +111,15 @@ export function VersionsCard({
 
 // ---- 知识库 ----
 
-/** 公司知识库分类目录——按经营维度组织，AI 写作时按各类用途注入。 */
+/** 自媒体知识库分类——喂你的人设/观点/风格/素材，AI 写脚本时按类注入，写出来就像你本人。 */
 const KNOWLEDGE_CATEGORIES: Array<{ id: string; label: string; hint: string; placeholder: string }> = [
-  { id: 'company', label: '公司介绍', hint: '我们是谁——定位、团队、发展历程、资质背景', placeholder: '例：公司成立于 20XX 年，专注于……团队规模/核心成员/办公地点……' },
-  { id: 'product', label: '产品/服务', hint: '卖什么——功能、服务流程、套餐口径', placeholder: '例：核心服务包含哪几档、各自适合谁、服务流程是什么……' },
-  { id: 'trust', label: '信任背书', hint: '为什么信我们——资质、奖项、数据、媒体报道', placeholder: '例：行业资质认证、服务客户数量、成功率数据、获奖记录……' },
-  { id: 'case', label: '合作案例', hint: '做成过什么——客户故事、成果数据', placeholder: '例：某客户合作背景 → 我们做了什么 → 结果数据……' },
-  { id: 'card', label: 'AI 名片', hint: '对外话术——一句话介绍、联系方式、文末 CTA 口径', placeholder: '例：文末引导语固定话术、联系方式的表述方式、品牌一句话介绍……' },
-  { id: 'other', label: '其他', hint: '行业素材、口径备忘等不好归类的资料', placeholder: '粘贴任意背景资料（markdown/纯文本都行）……' },
+  { id: 'persona', label: '账号人设', hint: '你是谁——账号定位、人设标签、面向的赛道', placeholder: '例：男性情感成长博主，专注帮母胎单身/大龄男脱单；人设=接地气、过来人的大哥……' },
+  { id: 'viewpoint', label: '核心观点', hint: '你反复输出的核心主张、观点', placeholder: '例：吸引大于追求；脱单先提升自身价值、别一味讨好；男人的底气来自事业和自律……' },
+  { id: 'style', label: '口播风格', hint: '你怎么说话——开场习惯、语气、口头禅、禁用词', placeholder: '例：短句快节奏；常用"兄弟/说白了/记住一句话"；禁用"家人们/宝子"等女性向词……' },
+  { id: 'story', label: '个人故事/案例', hint: '你的真实经历、学员/粉丝案例', placeholder: '例：我有个学员 32 岁程序员母胎 solo，三个月从社恐到能自然搭讪……' },
+  { id: 'goldenline', label: '金句/话术', hint: '高频钩子、金句、行动号召/引流话术', placeholder: '例：开头钩子"你是不是也…"；结尾"想要话术评论区扣1 / 私信脱单"……' },
+  { id: 'audience', label: '目标人群', hint: '你的内容给谁看——人群画像、痛点', placeholder: '例：25-40 岁母胎单身/相亲屡败/情感受挫的男性；痛点：不会聊、不敢追、没自信……' },
+  { id: 'other', label: '其他素材', hint: '热点、选题灵感、口径备忘等', placeholder: '粘贴任意背景资料（markdown/纯文本都行）……' },
 ];
 
 export function KnowledgePanel({

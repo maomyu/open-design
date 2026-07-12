@@ -440,7 +440,7 @@ function cleanAgentVersionLabel(
 }
 
 function displayAgentName(agent: Pick<AgentInfo, 'id' | 'name'>): string {
-  return agent.id === 'amr' ? 'WorkBuild AMR' : agent.name;
+  return agent.id === 'amr' ? '爆创 AMR' : agent.name;
 }
 
 export function mergeProviderModelOptions(
@@ -2299,6 +2299,7 @@ export function SettingsDialog({
                 <small>{t('settings.memoryHint')}</small>
               </span>
             </button>
+            {/* 飞书数据中心入口已移至左侧「账号」视图(AccountsView),此处不再重复。 */}
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'media' ? ' active' : ''}`}
@@ -2387,6 +2388,8 @@ export function SettingsDialog({
                 <small>{t('settings.notificationsHint')}</small>
               </span>
             </button>
+            {/* 爆创·自媒体定制版：隐藏设计器(宠物/设计系统)入口,只围绕内容创作 */}
+            {false && (
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'pet' ? ' active' : ''}`}
@@ -2398,6 +2401,8 @@ export function SettingsDialog({
                 <small>{t('pet.navHint')}</small>
               </span>
             </button>
+            )}
+            {false && (
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'designSystems' ? ' active' : ''}`}
@@ -2409,6 +2414,7 @@ export function SettingsDialog({
                 <small>{t('settings.designSystemsHint')}</small>
               </span>
             </button>
+            )}
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'privacy' ? ' active' : ''}`}
@@ -5491,7 +5497,7 @@ function MediaProvidersSection({
 // Important: every snippet uses absolute paths to the daemon's current
 // Node-compatible runtime and built cli.js, fetched at runtime. macOS
 // and Linux ship a system /usr/bin/od (octal-dump) that shadows any
-// `od` we might add to PATH, and most WorkBuild users run from
+// `od` we might add to PATH, and most 爆创 users run from
 // source where `od` is not installed globally. The installer panel
 // must NOT reference bare `od`.
 type McpClientId =

@@ -37,13 +37,13 @@ export function buildPluginFolderAgentActionPrompt(
 //     user expected the plugin-folder buttons to satisfy.
 function buildContributePrompt(folderPath: string): string {
   return [
-    'Open a draft Pull Request that adds this generated plugin to the WorkBuild community catalog at `nexu-io/open-design`.',
+    'Open a draft Pull Request that adds this generated plugin to the 爆创 community catalog at `nexu-io/open-design`.',
     'The goal is to end this turn with a single PR URL the user can click in their browser to review the pre-filled form and press Create.',
     '',
     `Plugin folder: \`${folderPath}\``,
     `Manifest: \`${folderPath}/open-design.json\``,
     '',
-    'Run this deterministic WorkBuild CLI workflow from the current project workspace:',
+    'Run this deterministic 爆创 CLI workflow from the current project workspace:',
     '',
     `\`"$OD_NODE_BIN" "$OD_BIN" plugin open-design-pr ${folderPath}\``,
     '',
@@ -62,7 +62,7 @@ function buildContributePrompt(folderPath: string): string {
 // `publish` pushes the generated plugin to the author's own public GitHub
 // repository named by manifest `plugin.repo`. It is NOT the registry
 // submission path — `od plugin publish --to open-design` produces an
-// WorkBuild issue URL and belongs to the "WorkBuild PR" button. Before
+// 爆创 issue URL and belongs to the "爆创 PR" button. Before
 // this rewrite the prompt said "Use the supported `od plugin publish` or
 // repository-publish flow", which let the agent route through the legacy
 // registry-link builder and never actually create the author's repo (see
@@ -76,9 +76,9 @@ function buildPublishPrompt(folderPath: string): string {
     `Plugin folder: \`${folderPath}\``,
     `Manifest: \`${folderPath}/open-design.json\``,
     '',
-    'This is the **repository publish** action, NOT the registry-submission action — do NOT route through `od plugin publish --to open-design`. That command emits a WorkBuild issue URL and belongs to the "WorkBuild PR" button.',
+    'This is the **repository publish** action, NOT the registry-submission action — do NOT route through `od plugin publish --to open-design`. That command emits a 爆创 issue URL and belongs to the "爆创 PR" button.',
     '',
-    'Run this deterministic WorkBuild CLI workflow from the current project workspace:',
+    'Run this deterministic 爆创 CLI workflow from the current project workspace:',
     '',
     `\`"$OD_NODE_BIN" "$OD_BIN" plugin publish-repo ${folderPath}\``,
     '',

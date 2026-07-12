@@ -57,6 +57,12 @@ import { composeStudioAiTask } from './media-studio/ai-tasks.js';
 import { lintContent } from './media-studio/lint.js';
 import { BrowserError, openProfileBrowser, PLATFORM_PUBLISH_URLS, revealInFinder } from './media-studio/browser.js';
 import { createHandoffBus, HANDOFF_PLATFORMS, HandoffError, isHandoffPlatform } from './media-studio/handoff-jobs.js';
+import { createCollectBus, COLLECT_PLATFORMS, CollectError, isCollectPlatform } from './media-studio/collect-jobs.js';
+import type {
+  CreateStudioCollectRequest,
+  StudioCollectPlatform,
+  StudioCollectResultRequest,
+} from '@open-design/contracts';
 import { sauCheck, sauLogin, sauUploadNote, sauUploadVideo, SauError } from './media-studio/sau.js';
 import { scriptToSpeech, synthesizeVoice, TtsError } from './media-studio/volc-tts.js';
 import {
@@ -769,6 +775,104 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
     const timeoutMs = Number.isFinite(Number(req.query.timeoutMs)) ? Number(req.query.timeoutMs) : 25_000;
     const snap = await handoffBus.wait(req.params.id, since, timeoutMs);
+    if (!snap) return bad(res, 404, 'job not found');
+    res.json(snap);
+  });
+
+  // ---- 内置浏览器采集派发桥（爆款雷达 → 桌面端应用内标签执行，不弹独立窗口）----
+  // 采集跑在桌面端 webview 标签里（登录态在浏览器分区，daemon 够不着）。引擎/CLI
+  // create 建 job + SSE 广播，web 认领后在应用内标签开搜索页抓卡片、回写结果，
+  // 引擎 wait 长轮询取采集条目再评分。详见 media-studio/collect-jobs.ts。
+  const collectBus = createCollectBus();
+
+  app.post('/api/media-studio/collect', (req, res) => {
+    const body = (req.body ?? {}) as CreateStudioCollectRequest;
+    const keyword = String(body.keyword ?? '').trim();
+    if (!keyword) return bad(res, 400, '缺少 keyword');
+    const platforms = (Array.isArray(body.platforms) && body.platforms.length
+      ? body.platforms
+      : ['xiaohongshu', 'douyin', 'bilibili']
+    ).filter(isCollectPlatform) as StudioCollectPlatform[];
+    if (!platforms.length) return bad(res, 400, `platforms 必须含 ${COLLECT_PLATFORMS.join('|')} 之一`);
+    const scrolls = Number.isFinite(Number(body.scrolls)) ? Math.max(0, Math.min(20, Number(body.scrolls))) : 6;
+    const per = Number.isFinite(Number(body.per)) ? Math.max(1, Math.min(60, Number(body.per))) : 20;
+    const order = (['hot', 'latest', 'comprehensive'].includes(String(body.order))
+      ? body.order : 'hot') as 'hot' | 'latest' | 'comprehensive';
+    const timeWindow = typeof body.timeWindow === 'string' && body.timeWindow.trim() ? body.timeWindow.trim() : 'all';
+    const pages = Number.isFinite(Number(body.pages)) ? Math.max(1, Math.min(10, Number(body.pages))) : 3;
+    try {
+      const job = collectBus.create({ keyword, platforms, scrolls, per, order, timeWindow, pages });
+      res.json({ job });
+    } catch (err) {
+      if (err instanceof CollectError) return bad(res, 409, err.message);
+      bad(res, 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.get('/api/media-studio/collect/events', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    });
+    res.write(': connected\n\n');
+    const unsubscribe = collectBus.subscribe((job) => {
+      res.write(`event: job\ndata: ${JSON.stringify(job)}\n\n`);
+    });
+    const keepalive = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 30_000);
+    req.on('close', () => {
+      clearInterval(keepalive);
+      unsubscribe();
+    });
+  });
+
+  app.post('/api/media-studio/collect/:id/claim', (req, res) => {
+    const job = collectBus.claim(req.params.id);
+    if (!job) {
+      const existing = collectBus.get(req.params.id);
+      if (!existing) return bad(res, 404, 'job not found');
+      return bad(res, 409, `job 已被认领(${existing.status})`);
+    }
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/collect/:id/progress', (req, res) => {
+    const message = String((req.body ?? {}).message ?? '').trim();
+    if (!message) return bad(res, 400, '缺少 message');
+    const job = collectBus.progress(req.params.id, message);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  // web 采集完回写：results 追加各平台条目；ok=false 或含 needsLogin 也照收，
+  // 由引擎侧判断（needsLogin → 提示用户在标签里登录）。
+  app.post('/api/media-studio/collect/:id/result', (req, res) => {
+    const body = (req.body ?? {}) as StudioCollectResultRequest;
+    const results = Array.isArray(body.results) ? body.results : [];
+    const job = collectBus.addResult(req.params.id, results);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/collect/:id/complete', (req, res) => {
+    const body = (req.body ?? {}) as { ok?: boolean; detail?: string };
+    const job = collectBus.complete(req.params.id, body.ok === true, String(body.detail ?? ''));
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/collect/:id', (req, res) => {
+    const job = collectBus.get(req.params.id);
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/collect/:id/wait', async (req, res) => {
+    const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
+    const timeoutMs = Number.isFinite(Number(req.query.timeoutMs)) ? Number(req.query.timeoutMs) : 25_000;
+    const snap = await collectBus.wait(req.params.id, since, timeoutMs);
     if (!snap) return bad(res, 404, 'job not found');
     res.json(snap);
   });

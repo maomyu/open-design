@@ -19,7 +19,7 @@ const TRUST_META: Record<
 > = {
   official: {
     label: 'Official',
-    description: 'WorkBuild official',
+    description: '爆创 official',
   },
   trusted: {
     label: 'Trusted',

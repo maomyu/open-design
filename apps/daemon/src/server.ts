@@ -9624,6 +9624,112 @@ export async function startServer({
     }
   });
 
+  // ── 爆创·飞书数据中心:连接【客户自己的】飞书 + 用 lark-cli 在其账户下一键建表 ──
+  //
+  // 授权模型(零 App Secret,从零最简):客户点「连接飞书」→ 爆创跑 lark-cli 官方引导
+  //   `lark-cli config init --new`,拿到飞书官方配置链接 open.feishu.cn/page/cli?user_code=...
+  // 客户用【自己的】飞书打开该链接,跟着飞书官方页面创建免费应用并授权 → lark-cli 自动
+  // 完成配置,本机得到已授权的 baochuang-client profile。之后建表/写数据全在客户名下。
+  // 平台不接触任何 App Secret,客户机也无需预先配置过 lark-cli。
+  const FEISHU_CLIENT_PROFILE = 'baochuang-client';
+  let feishuInitChild = null;   // 正在跑的 config init 引导进程
+  let feishuInitTail = '';      // 引导输出尾部(取链接/报错用)
+
+  // 本机是否装了 lark-cli(装机自检)。
+  async function larkCliInstalled() {
+    const r = await execFileBuffered('lark-cli', ['--version'], { timeout: 8_000 });
+    return r.ok;
+  }
+  // baochuang-client profile 是否已授权(无副作用)。
+  async function feishuProfileConnected() {
+    const r = await execFileBuffered('lark-cli', ['auth', 'status', '--profile', FEISHU_CLIENT_PROFILE, '--json']);
+    return r.ok
+      && /ou_|user|valid|scopes/i.test(r.stdout)
+      && !/missing|expired|not_found|token_missing|not_configured/i.test(r.stdout);
+  }
+
+  app.post('/api/feishu/connect/start', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    if (!(await larkCliInstalled())) {
+      return res.status(500).json({ error: '本机未安装飞书命令行(lark-cli),请先安装后再连接' });
+    }
+    if (await feishuProfileConnected()) return res.json({ connected: true });
+    try {
+      feishuInitTail = '';
+      if (feishuInitChild && !feishuInitChild.killed) { try { feishuInitChild.kill(); } catch { /* ignore */ } }
+      // 长驻进程:阻塞到客户在浏览器里完成授权;我们只从早期输出里抓官方配置链接。
+      const child = spawn('lark-cli',
+        ['config', 'init', '--new', '--name', FEISHU_CLIENT_PROFILE, '--brand', 'feishu', '--lang', 'zh'],
+        { stdio: ['ignore', 'pipe', 'pipe'] });
+      feishuInitChild = child;
+      const url = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(''), 20_000);
+        const scan = (chunk) => {
+          feishuInitTail = (feishuInitTail + chunk).slice(-4000);
+          const m = feishuInitTail.match(/https:\/\/open\.feishu\.cn\/page\/cli\?\S+/);
+          if (m) { clearTimeout(timer); resolve(m[0].replace(/[)\]\s'"]+$/, '')); }
+        };
+        child.stdout.on('data', scan);
+        child.stderr.on('data', scan);
+        child.on('error', (e) => { feishuInitTail += String(e?.message || e); clearTimeout(timer); resolve(''); });
+        child.on('close', () => { clearTimeout(timer); resolve(''); });
+      });
+      if (!url) {
+        return res.status(500).json({ error: '发起飞书连接失败：' + (feishuInitTail.slice(-200) || '未取到配置链接') });
+      }
+      const codeMatch = url.match(/user_code=([\w-]+)/);
+      return res.json({ url, userCode: codeMatch ? codeMatch[1] : '' });
+    } catch (err) {
+      return res.status(500).json({ error: '发起飞书连接失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+  app.post('/api/feishu/connect/complete', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    // 客户在飞书里授权后 lark-cli 会自动完成配置;这里轮询确认(最多 ~40s)。
+    for (let i = 0; i < 20; i++) {
+      if (await feishuProfileConnected()) {
+        if (feishuInitChild && !feishuInitChild.killed) { try { feishuInitChild.kill(); } catch { /* ignore */ } }
+        feishuInitChild = null;
+        return res.json({ ok: true });
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    return res.status(408).json({ error: '还没检测到授权完成,请确认已在飞书页面点了「确认/授权」后再点一次' });
+  });
+  app.get('/api/feishu/connect/status', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    return res.json({
+      larkInstalled: await larkCliInstalled(),
+      connected: await feishuProfileConnected(),
+    });
+  });
+  app.post('/api/feishu/provision', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const name = String(req.body?.name || '自媒体爆款数据中心').slice(0, 100);
+    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
+    const py = path.join(engineDir, '.venv', 'bin', 'python');
+    const r = await execFileBuffered(py, ['scripts/provision_datacenter.py', '--name', name], {
+      cwd: engineDir,
+      env: { ...process.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      timeout: 240_000,
+    });
+    const m = r.stdout.match(/BASE_URL=(\S+)/);
+    if (!m) return res.status(500).json({ error: '建表失败：' + (r.stderr || r.stdout).slice(-300) });
+    const url = m[1];
+    try {
+      await writeAppConfig(RUNTIME_DATA_DIR, { feishuBitableUrl: url });
+    } catch { /* 存配置失败不阻断 */ }
+    return res.json({ url });
+  });
+
   app.get('/api/orbit/status', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });

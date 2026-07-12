@@ -62,7 +62,7 @@ function sanitizeProfileSegment(raw: unknown): string | null {
 function cleanUserAgent(): string {
   return app.userAgentFallback
     .split(" ")
-    .filter((token) => !/^(Electron|open-design|OpenDesign|WorkBuild)\//i.test(token))
+    .filter((token) => !/^(Electron|open-design|OpenDesign|爆创)\//i.test(token))
     .join(" ");
 }
 
