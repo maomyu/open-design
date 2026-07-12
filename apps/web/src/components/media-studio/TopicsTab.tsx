@@ -1,7 +1,7 @@
 // 选题导航（两个创作台共享）：手动候选 + 组合式选题雷达（数据源可勾选
 // 组合：爆文榜/搜一搜/全库搜索/需求词/对标动态）+「AI 帮我选题」。
 // 独立可用，也向写作/脚本步输送选题。
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
@@ -53,6 +53,54 @@ const FEED_SOURCES: Array<{ id: TopicFeedKind; label: string; usage: string; nee
 ];
 const FEEDS_STORE_KEY = 'open-design:studio:topic-feeds';
 const PEERS_STORE_KEY = 'open-design:studio:topic-peers';
+
+// 选题搜索结果留存（2026-07-12 用户要：切标签回来别丢）。按平台隔离存 localStorage，
+// 跨标签切换与应用重启都在。命中列表/提示文案/关键词/已存标记/已勾选一起存。
+const TOPIC_SEARCH_KEY = (platform: string): string => `open-design:studio:topic-search:${platform}`;
+const MAX_PERSIST_HITS = 120;
+
+interface PersistedTopicSearch {
+  hits: MediaTopicHit[];
+  notice: string | null;
+  direction: string;
+  savedUrls: string[];
+  picked: MediaTopicHit[];
+}
+
+function loadTopicSearch(platform: string): PersistedTopicSearch {
+  const empty: PersistedTopicSearch = { hits: [], notice: null, direction: '', savedUrls: [], picked: [] };
+  try {
+    const raw = window.localStorage.getItem(TOPIC_SEARCH_KEY(platform));
+    if (!raw) return empty;
+    const p = JSON.parse(raw) as Partial<PersistedTopicSearch>;
+    return {
+      hits: Array.isArray(p.hits) ? (p.hits as MediaTopicHit[]).slice(0, MAX_PERSIST_HITS) : [],
+      notice: typeof p.notice === 'string' ? p.notice : null,
+      direction: typeof p.direction === 'string' ? p.direction : '',
+      savedUrls: Array.isArray(p.savedUrls) ? (p.savedUrls as unknown[]).filter((u): u is string => typeof u === 'string') : [],
+      picked: Array.isArray(p.picked) ? (p.picked as MediaTopicHit[]).slice(0, MAX_PERSIST_HITS) : [],
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function saveTopicSearch(platform: string, data: PersistedTopicSearch): void {
+  try {
+    window.localStorage.setItem(
+      TOPIC_SEARCH_KEY(platform),
+      JSON.stringify({
+        hits: data.hits.slice(0, MAX_PERSIST_HITS),
+        notice: data.notice,
+        direction: data.direction,
+        savedUrls: data.savedUrls,
+        picked: data.picked.slice(0, MAX_PERSIST_HITS),
+      }),
+    );
+  } catch {
+    /* best-effort：容量满/隐私模式写失败无所谓，下次搜索照常 */
+  }
+}
 
 function loadEnabledFeeds(): Set<TopicFeedKind> {
   try {
@@ -135,20 +183,36 @@ export interface TopicsTabProps {
 
 export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, nativeFeed, onOpenLink }: TopicsTabProps): JSX.Element {
   const license = useLicense();
+  // 上次在该平台的选题搜索结果（切标签/重启后恢复，见文件顶 loadTopicSearch）。
+  const restored = useMemo(() => loadTopicSearch(platform), [platform]);
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
   const [source, setSource] = useState('');
   const [url, setUrl] = useState('');
-  const [direction, setDirection] = useState('');
-  const [hits, setHits] = useState<MediaTopicHit[]>([]);
+  const [direction, setDirection] = useState(restored.direction);
+  const [hits, setHits] = useState<MediaTopicHit[]>(restored.hits);
   const [feedBusy, setFeedBusy] = useState(false);
-  const [feedNotice, setFeedNotice] = useState<string | null>(null);
-  const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set());
+  const [feedNotice, setFeedNotice] = useState<string | null>(restored.notice);
+  const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set(restored.savedUrls));
   const [enabledFeeds, setEnabledFeeds] = useState<Set<TopicFeedKind>>(loadEnabledFeeds);
   const [peers, setPeers] = useState(() => window.localStorage.getItem(PEERS_STORE_KEY) ?? '');
   const [sugWords, setSugWords] = useState<string[]>([]);
   // 多选优先参考：勾选的文章喂给「AI 帮我选题」优先深挖（跨多轮搜索保留）。
-  const [pickedHits, setPickedHits] = useState<Map<string, MediaTopicHit>>(() => new Map());
+  const [pickedHits, setPickedHits] = useState<Map<string, MediaTopicHit>>(
+    () => new Map(restored.picked.map((h) => [h.url || h.title, h])),
+  );
+
+  // 每当命中/提示/关键词/已存/已勾选变化，回存该平台的选题搜索结果——切标签或
+  // 关闭再回来都还在。
+  useEffect(() => {
+    saveTopicSearch(platform, {
+      hits,
+      notice: feedNotice,
+      direction,
+      savedUrls: [...savedHitUrls],
+      picked: [...pickedHits.values()],
+    });
+  }, [platform, hits, feedNotice, direction, savedHitUrls, pickedHits]);
   // 选题深挖：类目榜找对标
   const [rankView, setRankView] = useState<RankedAccountRow[] | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
