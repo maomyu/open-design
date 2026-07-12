@@ -27,6 +27,7 @@ import type {
 } from '@open-design/contracts';
 import { isOpenDesignHostBrowserAvailable, openHostBrowserProfile } from '@open-design/host';
 import { BROWSER_PLATFORM_TITLES, normalizeBrowserPlatform, openBrowserPane } from '../runtime/browser-panes';
+import { openWebTab } from '../runtime/web-tabs';
 
 const ROOT = '/api/media-studio';
 
@@ -888,9 +889,10 @@ export { errorMessage as studioErrorMessage };
 
 /**
  * 选题台文章链接的「在内置浏览器打开」回调（2026-07-12 用户要：打开文章都走内置
- * 浏览器，别弹到系统 Chrome/Safari）。桌面端用该 平台×账号 的登录态分区在应用内
- * 打开——读全文不被登出墙挡、留在 app 内。网页端（无内置浏览器）返回 undefined，
- * 链接保持 `<a target="_blank">` 的系统新标签行为。
+ * 浏览器，别弹到系统 Chrome/Safari；且要以「标签」形式在当前工具内打开，不弹独立
+ * 窗口）。桌面端 → 开一个应用内网页内容标签（openWebTab），用该 平台×账号 的登录态
+ * 分区，读全文不被登出墙挡、留在 app 内、可像浏览器标签一样并列切换。网页端（无内置
+ * 浏览器）返回 undefined，链接保持 `<a target="_blank">` 的系统新标签行为。
  */
 export function topicLinkOpener(
   platform: string,
@@ -898,6 +900,6 @@ export function topicLinkOpener(
 ): ((url: string) => void) | undefined {
   if (!isOpenDesignHostBrowserAvailable()) return undefined;
   return (url) => {
-    void openStudioBrowserWindow({ platform, account: account || 'main', url });
+    openWebTab({ url, platform, account: account || 'main' });
   };
 }

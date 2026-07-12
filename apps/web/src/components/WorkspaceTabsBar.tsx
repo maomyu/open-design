@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { navigate, type EntryHomeView, type Route } from '../router';
 import { BROWSER_PLATFORM_TITLES, notifyBrowserTabClosed } from '../runtime/browser-panes';
+import { closeWebTab, webTabInfo, webTabLabelFromUrl, WEB_TAB_UPDATED_EVENT } from '../runtime/web-tabs';
 import type { Project } from '../types';
 import { Icon, type IconName } from './Icon';
 
@@ -28,6 +29,14 @@ type WorkspaceChromeTab =
       kind: 'browser';
       platform: string;
       account: string;
+      createdAt: number;
+      lastActiveAt: number;
+    }
+  | {
+      // 应用内网页内容标签(读文章/网页内点开的新页)。webId 指向 web-tabs 注册表。
+      id: string;
+      kind: 'web';
+      webId: string;
       createdAt: number;
       lastActiveAt: number;
     }
@@ -115,6 +124,15 @@ function tabFromRoute(route: Route, timestamp = Date.now()): WorkspaceChromeTab 
       lastActiveAt: timestamp,
     };
   }
+  if (route.kind === 'web') {
+    return {
+      id: `web:${route.id}:${nowId()}`,
+      kind: 'web',
+      webId: route.id,
+      createdAt: timestamp,
+      lastActiveAt: timestamp,
+    };
+  }
   return createEntryTab(route.kind === 'home' ? route.view : 'design-systems', timestamp);
 }
 
@@ -134,6 +152,9 @@ function routeForTab(tab: WorkspaceChromeTab): Route {
   }
   if (tab.kind === 'browser') {
     return { kind: 'browser', platform: tab.platform, account: tab.account };
+  }
+  if (tab.kind === 'web') {
+    return { kind: 'web', id: tab.webId };
   }
   return { kind: 'home', view: tab.view };
 }
@@ -212,6 +233,7 @@ function uniqueIdForTab(tab: WorkspaceChromeTab): string {
     return `marketplace:${tab.pluginId ?? 'index'}:${nowId()}`;
   }
   if (tab.kind === 'browser') return `browser:${tab.platform}:${tab.account}:${nowId()}`;
+  if (tab.kind === 'web') return `web:${tab.webId}:${nowId()}`;
   return `entry:${tab.view}:${nowId()}`;
 }
 
@@ -331,6 +353,28 @@ function syncStateToRoute(state: WorkspaceTabsState, route: Route): WorkspaceTab
     });
   }
 
+  // 1c. 网页内容标签:每个 web id 一个标签。已有(点回旧标签)则聚焦,新 id
+  // (打开文章/网页内点开新页)则追加——绝不替换当前标签。
+  if (route.kind === 'web') {
+    const existingWebTab = current.tabs.find(
+      (tab) => tab.kind === 'web' && tab.webId === route.id,
+    );
+    if (existingWebTab) {
+      return normalizeTabsState({
+        ...current,
+        tabs: current.tabs.map((tab) =>
+          tab.id === existingWebTab.id ? { ...tab, lastActiveAt: timestamp } : tab,
+        ),
+        activeTabId: existingWebTab.id,
+      });
+    }
+    const nextTab = tabFromRoute(route, timestamp);
+    return normalizeTabsState({
+      tabs: [...current.tabs, nextTab],
+      activeTabId: nextTab.id,
+    });
+  }
+
   // 2. If we are navigating to a project, and that project tab already exists:
   if (route.kind === 'project') {
     const existingProjectTab = current.tabs.find(
@@ -400,6 +444,8 @@ const HOVER_PREVIEW_DELAY_MS = 380;
 export function WorkspaceTabsBar({ route, projects }: Props) {
   const t = useT();
   const [state, setState] = useState<WorkspaceTabsState>(() => initialTabsState(route));
+  // 网页标签标题回填(webview 拿到 <title>)后 bump,触发标签栏重算标题。
+  const [webTitleTick, setWebTitleTick] = useState(0);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
@@ -443,7 +489,8 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
 
   const displayTabs = useMemo(
     () => state.tabs.map((tab) => displayTabFor(tab, projectById, t)),
-    [state.tabs, projectById, t],
+    // webTitleTick：网页标签标题回填后强制重算(webTabInfo 是外部可变注册表)。
+    [state.tabs, projectById, t, webTitleTick],
   );
   const displayTabById = useMemo(
     () => new Map(displayTabs.map((tab) => [tab.id, tab])),
@@ -490,6 +537,13 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
 
     window.addEventListener(OPEN_WORKSPACE_TAB_EVENT, onOpenWorkspaceTab);
     return () => window.removeEventListener(OPEN_WORKSPACE_TAB_EVENT, onOpenWorkspaceTab);
+  }, []);
+
+  // 网页标签标题回填 → 重算标签栏标题。
+  useEffect(() => {
+    const onTitle = () => setWebTitleTick((v) => v + 1);
+    window.addEventListener(WEB_TAB_UPDATED_EVENT, onTitle);
+    return () => window.removeEventListener(WEB_TAB_UPDATED_EVENT, onTitle);
   }, []);
 
   useEffect(() => {
@@ -567,6 +621,8 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
     const closing = normalized.tabs[closingIndex]!;
     // 后台标签关闭 = 结束该面板的 keep-alive(销毁 webview,下次重新加载)。
     if (closing.kind === 'browser') notifyBrowserTabClosed(closing.platform, closing.account);
+    // 网页内容标签关闭 = 销毁 webview + 出注册表(临时态,不再回来)。
+    if (closing.kind === 'web') closeWebTab(closing.webId);
     let nextRoute: Route | null = null;
     const nextTabs = normalized.tabs.filter((tab) => tab.id !== tabId);
     let nextState: WorkspaceTabsState;
@@ -810,6 +866,16 @@ function displayTabFor(
       id: tab.id,
       title: `${BROWSER_PLATFORM_TITLES[tab.platform] ?? tab.platform} · ${tab.account}`,
       meta: '平台后台',
+      icon: 'link',
+      tab,
+    };
+  }
+  if (tab.kind === 'web') {
+    const info = webTabInfo(tab.webId);
+    return {
+      id: tab.id,
+      title: info?.title?.trim() || (info ? webTabLabelFromUrl(info.url) : '网页'),
+      meta: '网页',
       icon: 'link',
       tab,
     };

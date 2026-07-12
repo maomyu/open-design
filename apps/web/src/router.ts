@@ -47,6 +47,9 @@ export type Route =
   | { kind: 'marketplace-edit'; pluginId: string }
   // 应用内后台标签页(桌面端):内嵌对应 平台×账号 档案的创作者后台。
   | { kind: 'browser'; platform: string; account: string }
+  // 应用内网页内容标签(桌面端):按唯一 id 多开,读文章/网页内点开的新内容,
+  // 共享平台登录分区。url/标题存内存注册表(runtime/web-tabs),临时不跨重启。
+  | { kind: 'web'; id: string }
   // AI-draft creation studio. `target` picks what gets created: a workflow
   // plugin (drops into the plugin editor after saving) or a skill.
   | { kind: 'creator'; target: 'plugin' | 'skill' }
@@ -136,6 +139,10 @@ export function parseRoute(pathname: string): Route {
       account: decodeURIComponent(parts[2]),
     };
   }
+  // 应用内网页内容标签 — /web/<id>。
+  if (parts[0] === 'web' && parts[1]) {
+    return { kind: 'web', id: decodeURIComponent(parts[1]) };
+  }
   if (parts[0] === 'integrations') {
     return { kind: 'home', view: 'integrations' };
   }
@@ -194,6 +201,9 @@ export function buildPath(route: Route): string {
   if (route.kind === 'skills-library') return '/skills';
   if (route.kind === 'browser') {
     return `/browser/${encodeURIComponent(route.platform)}/${encodeURIComponent(route.account)}`;
+  }
+  if (route.kind === 'web') {
+    return `/web/${encodeURIComponent(route.id)}`;
   }
   if (route.kind === 'marketplace') return '/marketplace';
   if (route.kind === 'marketplace-detail') return `/marketplace/${encodeURIComponent(route.pluginId)}`;

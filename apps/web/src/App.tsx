@@ -26,6 +26,7 @@ import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
 import { BrowserPanesHost } from './components/BrowserPanesHost';
+import { WebTabsHost } from './components/WebTabsHost';
 import { startHandoffListener } from './runtime/handoff-listener';
 import { fetchLicenseInfo, LicenseContext, UNLOCKED_LICENSE, type LicenseInfo } from './state/license';
 import {
@@ -1397,6 +1398,9 @@ function AppInner() {
     // 应用内后台标签页:内容由常驻的 BrowserPanesHost 覆盖渲染(keep-alive,
     // 切走不卸载),这里只留空底。
     appMain = null;
+  } else if (route.kind === 'web') {
+    // 应用内网页内容标签:由常驻的 WebTabsHost 覆盖渲染(keep-alive),留空底。
+    appMain = null;
   } else if (route.kind === 'marketplace') {
     appMain = <MarketplaceView />;
   } else if (route.kind === 'marketplace-detail') {
@@ -1583,6 +1587,7 @@ function AppInner() {
         <div className="workspace-shell__body">
           {appMain}
           <BrowserPanesHost route={route} />
+          <WebTabsHost route={route} />
         </div>
       </div>
       {clientType === 'desktop' ? null : (
