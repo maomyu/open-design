@@ -238,18 +238,23 @@ export async function createStudioCollect(
   }
 }
 
-/** 轮询采集任务到终态(done/error);采集在桌面端【可见标签】里逐平台跑,期间浏览器前台可见。 */
+/** 轮询采集任务到终态(done/error);采集在桌面端【可见标签】里逐平台跑,期间浏览器前台可见。
+ *  注意:/wait(since=0)是立即返回当前快照、并不阻塞,所以每轮之间必须 sleep,否则会在
+ *  一两秒内狂轮几十次全拿到 running 就误判失败(这是"爆款一直不显示"的根因)。采集(尤其抖音
+ *  含首页暖场/拟人输入/验证码等待)可能几分钟,故轮询上限放到 ~6 分钟。 */
 export async function waitStudioCollectDone(jobId: string): Promise<StudioCollectJob | null> {
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 120; i++) {
     try {
       const resp = await fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/wait`);
-      if (!resp.ok) return null;
-      const d = (await resp.json()) as { job?: StudioCollectJob } & StudioCollectJob;
-      const job = (d.job ?? d) as StudioCollectJob;
-      if (job.status === 'done' || job.status === 'error') return job;
+      if (resp.ok) {
+        const d = (await resp.json()) as { job?: StudioCollectJob } & StudioCollectJob;
+        const job = (d.job ?? d) as StudioCollectJob;
+        if (job.status === 'done' || job.status === 'error') return job;
+      }
     } catch {
-      return null;
+      /* 单次网络抖动忽略,下一轮再试;不要因一次失败就整体放弃 */
     }
+    await new Promise((r) => setTimeout(r, 3000));
   }
   return null;
 }
