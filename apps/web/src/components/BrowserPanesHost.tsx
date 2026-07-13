@@ -135,6 +135,26 @@ async function runCollect(
         break;
       }
     }
+    // 验证码判定：抖音/小红书反爬可能弹验证码(拖拽/滑块/选图)。检测到就【停在前台等用户过】,
+    // 不快速失败跳走——这才是用户看到"窗口一闪就关、没爆款"的根因。过完验证码 + 出结果再继续。
+    if (page === 1) {
+      const capRe = /验证码|拖拽|滑块|安全验证|请完成|点击验证|按住|拖动/;
+      const hasCap = async () => {
+        const t = (await evalJs('document.body ? document.body.innerText.slice(0,900) : ""', 3000)) as string | undefined;
+        return typeof t === 'string' && capRe.test(t);
+      };
+      if (await hasCap()) {
+        reportCollectProgress(jobId, `「${platform}」平台弹了验证码——浏览器已在前台,请完成验证(拖拽/选图/滑块),我会一直等你,过完自动继续采集`);
+        const deadline = Date.now() + 4 * 60_000; // 给足 4 分钟人工过验证
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 4000));
+          if (isCancelled()) return;
+          const cards = (await evalJs('document.querySelectorAll(\'.search-result-card, li a[href*="/video/"], .card-container\').length', 3000)) as number | undefined;
+          if (!(await hasCap()) && (cards ?? 0) > 0) break; // 验证过了且有结果 → 继续采
+        }
+        reportCollectProgress(jobId, `「${platform}」验证码已过,继续采集…`);
+      }
+    }
     // 无限滚动平台：滚动触发懒加载
     if (infinite) {
       for (let i = 0; i < Math.max(0, spec.scrolls); i++) {
