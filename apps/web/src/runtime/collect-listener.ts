@@ -46,8 +46,9 @@ async function executeCollect(job: StudioCollectJob): Promise<void> {
         },
       });
     }
-    // 轮询到各平台都回写了结果（或超时）→ 落终态。
-    const deadline = Date.now() + 4 * 60_000;
+    // 轮询到各平台都回写了结果（或超时）→ 落终态。多平台并发采集时,重平台(小红书/抖音)
+    // 首页暖场+懒加载重试较慢,给足 6 分钟避免慢平台没采完就被截断。
+    const deadline = Date.now() + 6 * 60_000;
     let last: StudioCollectJob | null = null;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 2500));

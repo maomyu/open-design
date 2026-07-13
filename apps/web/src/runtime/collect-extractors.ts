@@ -31,12 +31,22 @@ export const LOGIN_WALL: Record<StudioCollectPlatform, string[]> = {
 };
 
 /** 需要「模拟人操作」在搜索框输入+回车才会真出结果的平台（直接跳URL不触发搜索/反爬）。
- *  快手就是这样：navigate到搜索页只落在空视图，得像人一样在框里搜。 */
+ *  快手就是这样：navigate到搜索页只落在空视图，得像人一样在框里搜。
+ *  注意：抖音/小红书这类复杂 SPA 模拟打字极不可靠(打了字但不真跳搜索结果、抓成推荐流),
+ *  故它们不走打字,改走「首页暖场→再进搜索页」(见 WARMUP_HOMEPAGE)兼顾拟人与可靠。 */
 export const SEARCH_BY_TYPING: Record<StudioCollectPlatform, boolean> = {
   xiaohongshu: false,
   douyin: false,
   bilibili: false,
   kuaishou: true,
+};
+
+/** 「首页暖场」平台：进搜索页前先访问平台首页,建立会话/referrer、走出真人进站轨迹,
+ *  再 navigate 到搜索结果 URL(referrer=首页)。比裸跳搜索 URL 更不易触发反爬/封号,
+ *  又比模拟打字可靠(直连搜索页能拿到正确关键词结果)。抖音/小红书反爬凶,开启暖场。 */
+export const WARMUP_HOMEPAGE: Partial<Record<StudioCollectPlatform, string>> = {
+  douyin: 'https://www.douyin.com/',
+  xiaohongshu: 'https://www.xiaohongshu.com/explore',
 };
 
 /** 生成「在搜索框输入关键词并回车」的 JS（React 受控输入用原生 setter + input 事件）。 */

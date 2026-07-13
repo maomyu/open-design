@@ -29,7 +29,7 @@ import {
   type CollectPaneSpec,
 } from '../runtime/browser-panes';
 import { runDraftInjection, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
-import { EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, SEARCH_BY_TYPING, buildSearchSubmitJs, buildSearchUrl } from '../runtime/collect-extractors';
+import { EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, WARMUP_HOMEPAGE, SEARCH_BY_TYPING, buildSearchSubmitJs, buildSearchUrl } from '../runtime/collect-extractors';
 import { postCollectResult, reportCollectProgress } from '../providers/media-studio';
 import type { StudioCollectItem } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
@@ -41,6 +41,17 @@ const c = (key: string): string => (styles as Record<string, string | undefined>
  * 流程：逐页(或滚动)导航搜索页(带排序+时间窗参数) → 判登录墙 → 抓卡片 → 去重累积 →
  * postCollectResult。全程只在本标签里跑，不弹独立窗口。
  */
+// 采集【串行队列】：多平台同时选中时各平台面板会各自触发采集。4 个重 webview(尤其抖音/
+// 小红书 SPA + 首页暖场)并行加载会互抢 CPU/渲染资源,导致每轮总有一个重平台在重试预算内
+// 没渲染出结果=0 条(非确定性打地鼠)。改为排队一次只跑一个平台,各拿满资源→稳定。
+// (前提:面板副作用已只依赖 collectSeq,重渲染不再误取消排队中的任务。)
+let collectQueue: Promise<unknown> = Promise.resolve();
+function enqueueCollect(task: () => Promise<void>): Promise<void> {
+  const next = collectQueue.then(task, task);
+  collectQueue = next.catch(() => {});
+  return next;
+}
+
 async function runCollect(
   el: DraftWebview | null,
   spec: CollectPaneSpec,
@@ -78,8 +89,18 @@ async function runCollect(
   const byId = new Map<string, StudioCollectItem>();
   let loginWalled = false;
 
+  const warmupUrl = WARMUP_HOMEPAGE[platform];
   for (let page = 1; page <= pages; page++) {
     if (isCancelled()) return;
+    // 抖音/小红书:进搜索页【前】先访问首页暖场(建会话/referrer、走真人进站轨迹),再跳搜索页,
+    // 降低反爬/封号风险;比模拟打字可靠(直连搜索页能拿到正确关键词结果)。
+    if (page === 1 && warmupUrl) {
+      reportCollectProgress(jobId, `「${platform}」先打开首页暖场(像人一样进站)…`);
+      await evalJs(`location.href = ${JSON.stringify(warmupUrl)}`, 4000);
+      await waitReady();
+      await new Promise((r) => setTimeout(r, 1500));
+      if (isCancelled()) return;
+    }
     const url = buildSearchUrl(platform, spec.keyword, {
       order: spec.order, timeWindow: spec.timeWindow, page, nowSec: spec.nowSec,
     });
@@ -121,11 +142,11 @@ async function runCollect(
     // 结果晚于滚动才渲染)。提取到空就再滚再等重试,命中即停 —— 避免"提取太早=0 条"。
     // 命中即 break,所以快平台(B站/快手/小红书)首次即出、几乎不多等;只有慢平台会用满预算。
     let raw: unknown = await evalJs(EXTRACTORS[platform], 8000);
-    for (let attempt = 0; attempt < 12 && !(Array.isArray(raw) && raw.length > 0); attempt++) {
+    for (let attempt = 0; attempt < 20 && !(Array.isArray(raw) && raw.length > 0); attempt++) {
       if (isCancelled()) return;
       reportCollectProgress(jobId, `「${platform}」结果加载中,再等等…(第 ${attempt + 1} 次)`);
       await evalJs('window.scrollBy(0, 1200)', 2000);
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 2500));
       raw = await evalJs(EXTRACTORS[platform], 8000);
     }
     for (const it of Array.isArray(raw) ? raw : []) {
@@ -378,13 +399,18 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     const timer = window.setTimeout(() => {
       if (cancelled) return;
       ranCollectRef.current = seq;
-      void runCollect(ref.current as unknown as DraftWebview | null, collect, () => cancelled);
+      // 串行排队:一次只跑一个平台,避免并发抢资源导致慢平台采到 0。
+      void enqueueCollect(() => runCollect(ref.current as unknown as DraftWebview | null, collect, () => cancelled));
     }, 400);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [spec.collect, spec.collectSeq]);
+    // 只依赖稳定的 collectSeq(数字)。若依赖 spec.collect(对象),父组件每次进度重渲染换了
+    // 引用就会重跑本副作用 → cleanup 置 cancelled=true 把【正在采集的慢平台】(抖音/小红书)
+    // 中途取消,快平台已采完躲过,于是并发下慢平台稳定 0 条。用 seq 后重渲染不再误杀采集。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec.collectSeq]);
 
   useEffect(() => {
     const el = ref.current;
