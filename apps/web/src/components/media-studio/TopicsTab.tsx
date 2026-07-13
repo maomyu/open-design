@@ -2,7 +2,7 @@
 // 组合：爆文榜/搜一搜/全库搜索/需求词/对标动态）+「AI 帮我选题」。
 // 独立可用，也向写作/脚本步输送选题。
 import { useMemo, useState } from 'react';
-import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
+import type { MediaTopic, MediaTopicHit, StudioCollectPlatform } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
   fetchAccountRank,
@@ -129,9 +129,12 @@ export interface TopicsTabProps {
    *  采集而来(AI找选题→爆款雷达→内置浏览器)。传了此 prop:既不显示 TikHub 也不显示大家来
    *  (极致数据/公众号生态)五源——极致数据只服务公众号/视频号,不该出现在短视频台。 */
   browserCollect?: boolean;
+  /** 真抓爆款要采的平台(内置浏览器)。只采【当前选中平台】——选抖音就只抓抖音。
+   *  支持 douyin/xiaohongshu/kuaishou/bilibili;视频号(tencent)不能浏览器采集→传空数组。 */
+  collectPlatforms?: string[];
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, browserCollect = false }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, browserCollect = false, collectPlatforms }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
@@ -169,20 +172,22 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     return { time_window: radarWindow, rules };
   };
 
-  // ── 真抓爆款·直接采集(纯可视化,不经 AI 智能体)：点一下 → 内置浏览器逐平台可见采集 →
-  //    引擎按爆款筛选评分 → 选题候选直接进「候选选题」表。 ──
-  const COLLECT_PLATFORMS = ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'] as const;
+  // ── 真抓爆款·直接采集(纯可视化,不经 AI 智能体)：点一下 → 内置浏览器【当前选中平台】可见
+  //    采集 → 引擎按爆款筛选评分 → 选题候选直接进「候选选题」表。选抖音就只抓抖音。 ──
+  const collectTargets = collectPlatforms ?? ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'];
   const [collectBusy, setCollectBusy] = useState(false);
   const [collectMsg, setCollectMsg] = useState('');
   const runDirectCollect = async () => {
     const kw = direction.trim();
     if (!kw) { studioToast.err('先在上面填「方向/领域关键词」'); return; }
+    if (collectTargets.length === 0) { studioToast.err('该平台不支持内置浏览器采集(如视频号)——请选抖音/小红书/快手/B站'); return; }
     setCollectBusy(true);
     try {
-      setCollectMsg('正在打开内置浏览器,逐个平台像人一样搜索采集…(浏览器会切到前台,可看着它搜)');
+      const names = collectTargets.map((p) => ({ douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手', bilibili: 'B站' }[p] ?? p)).join('、');
+      setCollectMsg(`正在打开内置浏览器采集【${names}】,像人一样搜索…(浏览器会切到前台,可看着它搜)`);
       const created = await createStudioCollect({
         keyword: kw,
-        platforms: [...COLLECT_PLATFORMS],
+        platforms: collectTargets as StudioCollectPlatform[],
         pages: 1,
         per: 10,
         timeWindow: radarWindow,
@@ -496,7 +501,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}
               disabled={collectBusy || !direction.trim()}
-              title="直接用内置浏览器逐平台真人式搜索采集(前台可见)→ 引擎按爆款筛选评分 → 选题候选进表。不经 AI、不用 TikHub。"
+              title="用内置浏览器在【当前选中平台】真人式搜索采集(前台可见)→ 引擎按爆款筛选评分 → 选题候选进表。选哪个平台就只抓哪个,不经 AI、不用 TikHub。"
               onClick={() => void runDirectCollect()}
             >
               <Icon name="sparkles" size={14} /> {collectBusy ? '采集评分中…' : '真抓爆款(内置浏览器)'}

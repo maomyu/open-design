@@ -559,6 +559,13 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
                  不暴露 TikHub 热榜/搜索,也不暴露大家来/极致数据(公众号生态)五源——彻底绕开
                  TikHub 成本与风控,极致数据只服务公众号/视频号。 */
               browserCollect
+              /* 只采【当前选中平台】——选抖音就只抓抖音。前 4 个平台 id 与采集平台一致;
+                 视频号(tencent)不能内置浏览器采集 → 传空数组,按钮会提示改选其它平台。 */
+              collectPlatforms={
+                ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'].includes(svPlatform ?? 'douyin')
+                  ? [svPlatform ?? 'douyin']
+                  : []
+              }
               topics={topics}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);
