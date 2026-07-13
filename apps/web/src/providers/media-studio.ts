@@ -18,6 +18,8 @@ import type {
   MediaRenderResponse,
   MediaSnippet,
   MediaTopic,
+  CreateStudioCollectRequest,
+  StudioCollectJob,
   StudioAiTaskRequest,
   StudioAiTaskResponse,
   TopicFeedSearchRequest,
@@ -212,6 +214,63 @@ export async function createStudioTopic(
     return data.topic ?? null;
   } catch {
     return null;
+  }
+}
+
+// ── 真抓爆款·直接采集管线(纯可视化,不经 AI 智能体/插件) ──
+// ① createStudioCollect 发起内置浏览器采集(桌面端 collect-listener 会开可见标签逐平台搜)。
+// ② waitStudioCollectDone 轮询到各平台采完。③ radarScoreCollected 把采集条目交引擎 --radar 评分。
+export async function createStudioCollect(
+  body: CreateStudioCollectRequest,
+): Promise<{ jobId: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/collect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = (await resp.json()) as { job?: StudioCollectJob; id?: string; error?: string };
+    if (!resp.ok) return { error: d.error || '发起采集失败(桌面端需在运行)' };
+    const jobId = d.job?.id ?? d.id ?? '';
+    return jobId ? { jobId } : { error: '未取到采集任务号' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 轮询采集任务到终态(done/error);采集在桌面端【可见标签】里逐平台跑,期间浏览器前台可见。 */
+export async function waitStudioCollectDone(jobId: string): Promise<StudioCollectJob | null> {
+  for (let i = 0; i < 40; i++) {
+    try {
+      const resp = await fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/wait`);
+      if (!resp.ok) return null;
+      const d = (await resp.json()) as { job?: StudioCollectJob } & StudioCollectJob;
+      const job = (d.job ?? d) as StudioCollectJob;
+      if (job.status === 'done' || job.status === 'error') return job;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** 把采集到的条目 { 平台: [条目] } 交爆款引擎 --radar 评分,返回选题候选。 */
+export async function radarScoreCollected(
+  keyword: string,
+  items: Record<string, unknown[]>,
+  criteria?: unknown,
+): Promise<{ topics: Array<Record<string, unknown>>; count: number } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/radar-score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword, items, criteria }),
+    });
+    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string };
+    if (!resp.ok) return { error: d.error || '评分失败' };
+    return { topics: d.topics ?? [], count: d.count ?? 0 };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }
 

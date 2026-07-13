@@ -9866,6 +9866,47 @@ export async function startServer({
     return res.json({ url });
   });
 
+  // 爆款雷达·直接评分:接收【内置浏览器采集到的条目】+ 关键词 + 爆款筛选标准,跑爆款引擎
+  // (--radar 只评分选题、不写脚本;顺带按 .env 回写客户飞书数据中心),返回选题候选。
+  // 这是「真抓爆款采集」直连管线的评分环节(前端先 /collect 采集,再把结果丢这里评分)。
+  app.post('/api/media-studio/radar-score', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const keyword = String(req.body?.keyword || '').slice(0, 100);
+    const items = req.body?.items;   // { 平台: [扁平条目...] }
+    const criteria = req.body?.criteria;   // { time_window, rules:[...] } 可选
+    if (!keyword || !items || typeof items !== 'object') {
+      return res.status(400).json({ error: '缺少 keyword 或 items' });
+    }
+    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
+    const py = path.join(engineDir, '.venv', 'bin', 'python');
+    const platforms = Object.keys(items).join(',') || 'bilibili';
+    const tmpFile = path.join(os.tmpdir(), `bc-collect-${process.pid}-${Date.now()}.json`);
+    try {
+      await fs.promises.writeFile(tmpFile, JSON.stringify(items), 'utf8');
+      const args = ['-m', 'src.pipeline', '--radar', '--keyword', keyword,
+        '--platforms', platforms, '--collect-file', tmpFile];
+      if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
+      const r = await execFileBuffered(py, args, {
+        cwd: engineDir,
+        env: { ...process.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_MAX: '12' },
+        timeout: 240_000,
+      });
+      // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
+      const s = r.stdout.slice(r.stdout.indexOf('{'));
+      let parsed;
+      try { parsed = JSON.parse(s); } catch {
+        return res.status(500).json({ error: '评分失败：' + (r.stderr || r.stdout).slice(-300) });
+      }
+      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [] });
+    } catch (err) {
+      return res.status(500).json({ error: '评分失败：' + String(err && err.message ? err.message : err) });
+    } finally {
+      try { await fs.promises.unlink(tmpFile); } catch { /* ignore */ }
+    }
+  });
+
   app.get('/api/orbit/status', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });

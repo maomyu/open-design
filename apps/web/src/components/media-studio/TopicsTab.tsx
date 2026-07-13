@@ -10,6 +10,9 @@ import {
   type RankedAccountRow,
   type TopicFeedKind,
   fetchTikhubFeed,
+  createStudioCollect,
+  waitStudioCollectDone,
+  radarScoreCollected,
 } from '../../providers/media-studio';
 import { studioToast } from './StudioFeedback';
 import { hasFeature, useLicense } from '../../state/license';
@@ -160,6 +163,63 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       + (rules.length ? `命中任一规则：${rules.map((r) => r.label).join(' 或 ')}` : '仅按时间窗')
       + `。请用「爆款雷达」技能按 --time-window ${radarWindow} --criteria '${JSON.stringify(criteria)}' 采集+评分。`;
   };
+  // 爆款筛选 → 引擎 criteria 对象(直接采集管线用)。
+  const buildCriteria = () => {
+    const rules = RADAR_RULES.filter((r) => radarRules.has(r.key)).map((r) => ({ ...r.rule }));
+    return { time_window: radarWindow, rules };
+  };
+
+  // ── 真抓爆款·直接采集(纯可视化,不经 AI 智能体)：点一下 → 内置浏览器逐平台可见采集 →
+  //    引擎按爆款筛选评分 → 选题候选直接进「候选选题」表。 ──
+  const COLLECT_PLATFORMS = ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'] as const;
+  const [collectBusy, setCollectBusy] = useState(false);
+  const [collectMsg, setCollectMsg] = useState('');
+  const runDirectCollect = async () => {
+    const kw = direction.trim();
+    if (!kw) { studioToast.err('先在上面填「方向/领域关键词」'); return; }
+    setCollectBusy(true);
+    try {
+      setCollectMsg('正在打开内置浏览器,逐个平台像人一样搜索采集…(浏览器会切到前台,可看着它搜)');
+      const created = await createStudioCollect({
+        keyword: kw,
+        platforms: [...COLLECT_PLATFORMS],
+        pages: 1,
+        per: 10,
+        timeWindow: radarWindow,
+        order: 'hot',
+      });
+      if ('error' in created) { setCollectMsg(''); studioToast.err(created.error); return; }
+      const job = await waitStudioCollectDone(created.jobId);
+      if (!job || job.status === 'error') { setCollectMsg(''); studioToast.err('采集失败,请重试(桌面端需在运行)'); return; }
+      const items: Record<string, unknown[]> = {};
+      let total = 0;
+      for (const r of job.results ?? []) {
+        if (r.items?.length) { items[r.platform] = r.items; total += r.items.length; }
+      }
+      if (total === 0) { setCollectMsg(''); studioToast.err('未采到条目——可能需在标签里登录/过验证码后重试'); return; }
+      setCollectMsg(`采到 ${total} 条,正在按爆款筛选评分选题…`);
+      const scored = await radarScoreCollected(kw, items, buildCriteria());
+      if ('error' in scored) { setCollectMsg(''); studioToast.err(scored.error); return; }
+      let added = 0;
+      for (const t of scored.topics) {
+        const title = String(t['标题'] ?? '').trim();
+        if (!title) continue;
+        await onAdd({
+          title,
+          angle: String(t['评分理由'] ?? t['推荐承接服务'] ?? ''),
+          source: String(t['平台'] ?? ''),
+          url: String(t['查看原文'] ?? ''),
+          heat: String(t['推荐优先级'] ?? t['热度'] ?? ''),
+        });
+        added += 1;
+      }
+      setCollectMsg('');
+      studioToast.ok(`真抓爆款完成:采 ${total} 条 → 评出 ${added} 个选题候选,已进表`);
+    } finally {
+      setCollectBusy(false);
+    }
+  };
+
   const [hits, setHits] = useState<MediaTopicHit[]>([]);
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
@@ -431,7 +491,17 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                 搜{tikhubTargetLabel}
               </button>
             </>
-          ) : browserCollect ? null : (
+          ) : browserCollect ? (
+            <button
+              type="button"
+              className={`${c('btn')} ${c('btnPrimary')}`}
+              disabled={collectBusy || !direction.trim()}
+              title="直接用内置浏览器逐平台真人式搜索采集(前台可见)→ 引擎按爆款筛选评分 → 选题候选进表。不经 AI、不用 TikHub。"
+              onClick={() => void runDirectCollect()}
+            >
+              <Icon name="sparkles" size={14} /> {collectBusy ? '采集评分中…' : '真抓爆款(内置浏览器)'}
+            </button>
+          ) : (
             <button
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}
@@ -516,6 +586,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           </div>
         ) : null}
         {feedNotice ? <div className={c('cardHint')}>{feedNotice}</div> : null}
+        {collectMsg ? <div className={c('cardHint')} style={{ color: '#e8582e' }}>⏳ {collectMsg}</div> : null}
         {hits.length > 0 ? (
           <table className={c('table')}>
             <thead>
