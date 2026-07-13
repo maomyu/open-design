@@ -26,6 +26,14 @@ import styles from './MediaStudio.module.css';
 // 选题页(重新)挂载时读回来显示,不受卸载影响。
 let latestBaokuanHits: MediaTopicHit[] = [];
 const BAOKUAN_HITS_EVENT = 'od:baokuan-hits';
+// 采集进度提示也走模块存储 + 事件:采集时选题页会被切走卸载,本地 state 会丢,导致用户看到
+// 空白以为没反应。用模块级状态,重新挂载也能显示"正在采集/评分中…",有明确加载反馈。
+let baokuanStatus = '';
+const BAOKUAN_STATUS_EVENT = 'od:baokuan-status';
+function setBaokuanStatus(s: string): void {
+  baokuanStatus = s;
+  window.dispatchEvent(new CustomEvent<string>(BAOKUAN_STATUS_EVENT, { detail: s }));
+}
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
@@ -185,7 +193,16 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   //    采集 → 引擎按爆款筛选评分 → 选题候选直接进「候选选题」表。选抖音就只抓抖音。 ──
   const collectTargets = collectPlatforms ?? ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'];
   const [collectBusy, setCollectBusy] = useState(false);
-  const [collectMsg, setCollectMsg] = useState('');
+  const [collectMsg, setCollectMsg] = useState(() => (browserCollect ? baokuanStatus : ''));
+  // 采集进度:挂载即从模块状态读回(采集期间本组件可能被切走卸载过),并监听更新——保证采集
+  // 的 1 分多钟里界面一直有"正在采集/评分中…"的加载反馈,而不是看着像空白。
+  useEffect(() => {
+    if (!browserCollect) return;
+    if (baokuanStatus) setCollectMsg(baokuanStatus);
+    const onStatus = (ev: Event) => setCollectMsg((ev as CustomEvent<string>).detail);
+    window.addEventListener(BAOKUAN_STATUS_EVENT, onStatus);
+    return () => window.removeEventListener(BAOKUAN_STATUS_EVENT, onStatus);
+  }, [browserCollect]);
   const runDirectCollect = async () => {
     const kw = direction.trim();
     if (!kw) { studioToast.err('先在上面填「方向/领域关键词」'); return; }
@@ -193,7 +210,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     setCollectBusy(true);
     try {
       const names = collectTargets.map((p) => ({ douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手', bilibili: 'B站' }[p] ?? p)).join('、');
-      setCollectMsg(`正在打开内置浏览器采集【${names}】,像人一样搜索…(浏览器会切到前台,可看着它搜)`);
+      setBaokuanStatus(`正在打开内置浏览器采集【${names}】,像人一样搜索…(浏览器会切到前台,可看着它搜)`);
       const created = await createStudioCollect({
         keyword: kw,
         platforms: collectTargets as StudioCollectPlatform[],
@@ -202,20 +219,20 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
         timeWindow: radarWindow,
         order: 'hot',
       });
-      if ('error' in created) { setCollectMsg(''); studioToast.err(created.error); return; }
+      if ('error' in created) { setBaokuanStatus(''); studioToast.err(created.error); return; }
       const job = await waitStudioCollectDone(created.jobId);
-      if (!job || job.status === 'error') { setCollectMsg(''); studioToast.err('采集失败,请重试(桌面端需在运行)'); return; }
+      if (!job || job.status === 'error') { setBaokuanStatus(''); studioToast.err('采集失败,请重试(桌面端需在运行)'); return; }
       const items: Record<string, unknown[]> = {};
       let total = 0;
       for (const r of job.results ?? []) {
         if (r.items?.length) { items[r.platform] = r.items; total += r.items.length; }
       }
       if (total === 0) {
-        setCollectMsg('');
+        setBaokuanStatus('');
         studioToast.err('没采到内容——可能需要在该平台标签里登录/过验证码后重试(浏览器已在前台)');
         return;
       }
-      setCollectMsg(`采到 ${total} 条,正在按爆款筛选评分…`);
+      setBaokuanStatus(`采到 ${total} 条,正在按爆款筛选评分…`);
       const scored = await radarScoreCollected(kw, items, buildCriteria());
       if ('error' in scored) { studioToast.err(scored.error); return; }
       // 评出的爆款 → hits 列表(带链接/点赞/播放/评论,可勾选),像公众号那样先列出来,
@@ -237,7 +254,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       latestBaokuanHits = hitList;
       window.dispatchEvent(new CustomEvent<MediaTopicHit[]>(BAOKUAN_HITS_EVENT, { detail: hitList }));
       setHits(hitList);
-      setCollectMsg('');
+      setBaokuanStatus('');
       if (hitList.length === 0) {
         studioToast.info(`采到 ${total} 条,但没有符合「爆款筛选」的爆款。放宽标准(降低门槛/勾更多规则/换「不限时间」)或换关键词再试。`);
       } else {
@@ -245,6 +262,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       }
     } finally {
       setCollectBusy(false);
+      setBaokuanStatus('');
     }
   };
 
@@ -566,11 +584,11 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             <button
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}
-              disabled={collectBusy || !direction.trim()}
+              disabled={collectBusy || !!collectMsg || !direction.trim()}
               title="用内置浏览器在【当前选中平台】真人式搜索采集(前台可见)→ 引擎按爆款筛选评分 → 选题候选进表。选哪个平台就只抓哪个,不经 AI、不用 TikHub。"
               onClick={() => void runDirectCollect()}
             >
-              <Icon name="sparkles" size={14} /> {collectBusy ? '采集评分中…' : '真抓爆款(内置浏览器)'}
+              <Icon name="sparkles" size={14} /> {collectBusy || collectMsg ? '采集评分中…' : '真抓爆款(内置浏览器)'}
             </button>
           ) : (
             <button
@@ -657,7 +675,21 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           </div>
         ) : null}
         {feedNotice ? <div className={c('cardHint')}>{feedNotice}</div> : null}
-        {collectMsg ? <div className={c('cardHint')} style={{ color: '#e8582e' }}>⏳ {collectMsg}</div> : null}
+        {collectMsg ? (
+          <div style={{
+            margin: '10px 0', padding: '12px 14px', borderRadius: 10,
+            background: 'rgba(232,88,46,0.08)', border: '1px solid rgba(232,88,46,0.35)',
+            color: '#e8582e', fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{
+              width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(232,88,46,0.35)',
+              borderTopColor: '#e8582e', display: 'inline-block', animation: 'od-spin 0.8s linear infinite', flex: '0 0 auto',
+            }} />
+            {collectMsg}
+            <span style={{ fontWeight: 400, opacity: 0.75 }}>（采集+评分约 1-2 分钟,浏览器会切到前台采集,请稍候不要关闭）</span>
+            <style>{'@keyframes od-spin{to{transform:rotate(360deg)}}'}</style>
+          </div>
+        ) : null}
         {hits.length > 0 ? (
           <table className={c('table')}>
             <thead>
