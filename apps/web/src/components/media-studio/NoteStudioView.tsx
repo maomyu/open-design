@@ -443,9 +443,10 @@ export function NoteStudioView(): JSX.Element {
   const TABS: Array<{ id: NoteTab; label: string; step: string }> = [
     { id: 'topics', label: '选题', step: '1' },
     { id: 'copy', label: '文案', step: '2' },
-    { id: 'gallery', label: '图集', step: '3' },
+    // 图集(图片生成)跟 cap.image。客户只要文案不要生图时,授权不含 cap.image → 图集隐藏。
+    ...(hasFeature(license, 'cap.image') ? [{ id: 'gallery' as NoteTab, label: '图集', step: '3' }] : []),
     { id: 'publish', label: '发布', step: '4' },
-  ];
+  ].map((t, i): { id: NoteTab; label: string; step: string } => ({ ...t, id: t.id as NoteTab, step: String(i + 1) })); // 裁剪后步骤号顺序化
 
   const activeStatus = article ? STATUS_LABEL[article.status] : null;
   const titleCount = article ? charCount(article.title) : 0;

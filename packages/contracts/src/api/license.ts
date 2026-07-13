@@ -28,6 +28,7 @@ export type FeatureId =
   | 'cap.ai'
   | 'cap.image'
   | 'cap.tts'
+  | 'cap.video'
   | 'cap.handoff'
   | 'cap.publish';
 
@@ -45,6 +46,7 @@ export const ALL_FEATURE_IDS: readonly FeatureId[] = [
   'cap.ai',
   'cap.image',
   'cap.tts',
+  'cap.video',
   'cap.handoff',
   'cap.publish',
 ];

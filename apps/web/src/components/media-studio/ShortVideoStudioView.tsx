@@ -434,11 +434,12 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   const TABS: Array<{ id: VideoTab; label: string; step: string; optional?: boolean }> = [
     { id: 'topics', label: '选题', step: '1' },
     { id: 'script', label: '脚本', step: '2' },
-    // 授权裁剪:配音跟 cap.tts。
+    // 授权裁剪:配音跟 cap.tts、成片(视频生成)跟 cap.video。客户口播自己拍不生视频时,
+    // 授权不含 cap.tts/cap.video → 这两步自动隐藏,只留 选题→脚本→发布。
     ...(hasFeature(license, 'cap.tts') ? ([{ id: 'voice', label: '配音', step: '3', optional: true }] as const) : []),
-    { id: 'video', label: '成片', step: '4' },
+    ...(hasFeature(license, 'cap.video') ? ([{ id: 'video', label: '成片', step: '4' }] as const) : []),
     { id: 'publish', label: '发布', step: '5' },
-  ];
+  ].map((t, i): { id: VideoTab; label: string; step: string; optional?: boolean } => ({ ...t, id: t.id as VideoTab, step: String(i + 1) })); // 裁剪后步骤号顺序化(1,2,3…不跳号)
 
   const activeStatus = article ? STATUS_LABEL[article.status] : null;
   const speechText = article ? article.bodyMd : '';
