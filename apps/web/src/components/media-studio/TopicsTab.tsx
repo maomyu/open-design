@@ -460,8 +460,14 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     <>
       <div className={c('card')}>
         <div className={c('cardLabel')}>
-          找热点 · 组合选题雷达
-          <span className={c('cardHint')}>{aiOnly ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出' : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}</span>
+          {browserCollect ? '真抓爆款 · 内置浏览器采集' : '找热点 · 组合选题雷达'}
+          <span className={c('cardHint')}>
+            {browserCollect
+              ? '选平台 + 填方向 + 勾爆款筛选 → 点「真抓爆款」→ 内置浏览器逐条抓真实爆款、按标准评分列出'
+              : aiOnly
+                ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出'
+                : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}
+          </span>
         </div>
         {tikhubTargets ? (
           <div className={c('row')}>
@@ -484,7 +490,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
         ) : null}
         {browserCollect ? (
           <div className={c('row')}>
-            <span className={c('cardHint')}>选题平台：{platform}（数据只从平台内置浏览器采集，不用 TikHub / 极致数据）</span>
+            <span className={c('cardHint')}>
+              采集平台：{collectTargets.map((p) => ({ douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手', bilibili: 'B站' }[p] ?? p)).join('、') || '（请在上方选平台）'}
+              {'（只从该平台的内置浏览器真实采集，不用 TikHub / 极致数据；选哪个平台就只抓哪个）'}
+            </span>
           </div>
         ) : null}
         {tikhubTargets || browserCollect ? null : (
