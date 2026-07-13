@@ -555,11 +555,10 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
           {tab === 'topics' ? (
             <TopicsTab
               platform={PLATFORM}
-              tikhubTargets={[
-                { id: 'douyin', label: '抖音' },
-                { id: 'xiaohongshu', label: '小红书' },
-                { id: 'kuaishou', label: '快手' },
-              ]}
+              /* 短视频平台(抖音/小红书/B站/快手)一律走【内置浏览器采集】(AI找选题→爆款雷达),
+                 不暴露 TikHub 热榜/搜索,也不暴露大家来/极致数据(公众号生态)五源——彻底绕开
+                 TikHub 成本与风控,极致数据只服务公众号/视频号。 */
+              browserCollect
               topics={topics}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);

@@ -122,9 +122,13 @@ export interface TopicsTabProps {
    *  平台走它自己的接口(抖音↔抖音、小红书↔小红书、快手↔快手),传了此
    *  prop 数据源区渲染平台 chips+热榜/搜索,不再是大家来(公众号生态)五源。 */
   tikhubTargets?: Array<{ id: 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo'; label: string }>;
+  /** 内置浏览器采集模式(短视频台:抖音/小红书/B站/快手)：选题数据【只】从平台内置浏览器
+   *  采集而来(AI找选题→爆款雷达→内置浏览器)。传了此 prop:既不显示 TikHub 也不显示大家来
+   *  (极致数据/公众号生态)五源——极致数据只服务公众号/视频号,不该出现在短视频台。 */
+  browserCollect?: boolean;
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, browserCollect = false }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
@@ -356,7 +360,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             ))}
           </div>
         ) : null}
-        {tikhubTargets ? null : (
+        {browserCollect ? (
+          <div className={c('row')}>
+            <span className={c('cardHint')}>选题平台：{platform}（数据只从平台内置浏览器采集，不用 TikHub / 极致数据）</span>
+          </div>
+        ) : null}
+        {tikhubTargets || browserCollect ? null : (
         <div className={c('row')}>
           {FEED_SOURCES.map((s) => (
             <label key={s.id} className={`${c('row')} ${c('feedSrc')}`} style={{ gap: 4, cursor: 'pointer' }}>
@@ -369,7 +378,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           ))}
         </div>
         )}
-        {!tikhubTargets && enabledFeeds.has('peers') ? (
+        {!tikhubTargets && !browserCollect && enabledFeeds.has('peers') ? (
           <div className={c('row')}>
             <input
               className={`${c('input')} ${c('grow')}`}
@@ -398,7 +407,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             placeholder="方向/领域关键词，例：AI 编程、考研、育儿…"
             onChange={(e) => setDirection(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !feedBusy) void (tikhubTargets ? runTikhub('search') : runCombo());
+              if (e.key === 'Enter' && !feedBusy && !browserCollect) void (tikhubTargets ? runTikhub('search') : runCombo());
             }}
           />
           {tikhubTargets ? (
@@ -422,7 +431,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                 搜{tikhubTargetLabel}
               </button>
             </>
-          ) : (
+          ) : browserCollect ? null : (
             <button
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}

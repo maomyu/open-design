@@ -82,6 +82,8 @@ class Pipeline:
         if self.dry_run:
             from src.adapters import mock
             return mock.mock_comments(platform, content_id)
+        if self._collect_data is not None:
+            return []   # 内置浏览器采集模式:不打 TikHub 取评论文本(绕开成本/风控)
         try:
             return self.tik.fetch_comments(platform, content_id)
         except Exception:
@@ -91,6 +93,8 @@ class Pipeline:
         """带缓存地补作者粉丝数（同作者只查一次）。"""
         if self.dry_run:
             return 0
+        if self._collect_data is not None:
+            return 0    # 内置浏览器采集模式:粉丝数已由采集条目提供,不打 TikHub 补
         ck = f"{platform}:{author_id}"
         if ck not in self._fans_cache:
             self._fans_cache[ck] = self.tik.fetch_fans(platform, author_id)
@@ -154,6 +158,9 @@ class Pipeline:
             if rc.platform == "gzh":
                 return self._gzh_body(rc.url)
             if rc.platform == "xiaohongshu":
+                if self._collect_data is not None:
+                    # 内置浏览器采集模式:用采集条目自带正文,不打 TikHub 详情
+                    return self._clean(rc.raw.get("_fulltext") or rc.raw.get("desc") or "")
                 note = self.tik.fetch_detail("xiaohongshu", rc.content_id.split("_", 1)[-1])
                 body = normalize._pick(note, "desc", "content", "note_desc", default="")
                 return self._clean(body)
@@ -200,6 +207,8 @@ class Pipeline:
 
     def _media_url(self, rc: normalize.RawContent) -> str:
         """取视频可下载直链(mp4)喂给 ASR。抖音/快手走详情 play_addr；拿不到返回空。"""
+        if self._collect_data is not None:
+            return ""   # 内置浏览器采集模式:不打 TikHub 取视频直链(ASR 略过,不产生成本)
         try:
             det = self.tik.fetch_detail(rc.platform, rc.content_id.split("_", 1)[-1])
             for path in (("video", "play_addr"), ("video", "download_addr"),
