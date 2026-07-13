@@ -252,26 +252,27 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [dlBusy, setDlBusy] = useState<string>('');
   // 平台中文名 → 内置浏览器采集平台 id(边播边抓要用对的登录分区)。
   const SOURCE_TO_PLATFORM: Record<string, string> = { 抖音: 'douyin', 小红书: 'xiaohongshu', 快手: 'kuaishou', B站: 'bilibili' };
-  const runDownloadVideo = async (t: MediaTopic) => {
-    if (!t.url) { studioToast.err('这条没有原视频链接'); return; }
-    setDlBusy(t.id);
+  // 两级下载:先 yt-dlp(快、B站/公开视频好使),下不了(需登录/反爬)转内置浏览器边播边抓。
+  const downloadVideoTwoStage = async (url: string, title: string, source: string, busyKey: string) => {
+    if (!url) { studioToast.err('这条没有原视频链接'); return; }
+    setDlBusy(busyKey);
     try {
-      // ① 先用 yt-dlp(快、B站/公开抖音小红书好使)。
       studioToast.info('正在下载原视频(yt-dlp,大视频稍慢)…');
-      const r = await downloadStudioVideo(t.url);
+      const r = await downloadStudioVideo(url);
       if (!('error' in r)) { studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`); return; }
-      // ② yt-dlp 下不了(需登录/反爬)→ 内置浏览器【边播边抓】直链兜底。
-      const plat = SOURCE_TO_PLATFORM[t.source] ?? (collectTargets[0] as string) ?? 'douyin';
+      const plat = SOURCE_TO_PLATFORM[source] ?? (collectTargets[0] as string) ?? 'douyin';
       studioToast.info('yt-dlp 下不了,改用内置浏览器边播边抓(浏览器会打开该视频)…');
-      const grabbed = await grabVideoSrc({ platform: plat, account: 'main', url: t.url });
+      const grabbed = await grabVideoSrc({ platform: plat, account: 'main', url });
       if ('error' in grabbed) { studioToast.err(`下载失败:${grabbed.error}`); return; }
-      const saved = await downloadVideoByUrl(grabbed.mediaUrl, grabbed.referer, t.title);
+      const saved = await downloadVideoByUrl(grabbed.mediaUrl, grabbed.referer, title);
       if ('error' in saved) { studioToast.err(`下载失败:${saved.error}`); return; }
       studioToast.ok(`已用内置浏览器抓取下载:${saved.file}(在 ${saved.dir} 文件夹)`);
     } finally {
       setDlBusy('');
     }
   };
+  const runDownloadVideo = (t: MediaTopic) => void downloadVideoTwoStage(t.url, t.title, t.source, t.id);
+  const runDownloadHit = (hit: MediaTopicHit) => void downloadVideoTwoStage(hit.url, hit.title, hit.account, hit.url || hit.title);
 
   const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? latestBaokuanHits : []));
   // 真抓爆款结果:挂载即从模块存储读回(采集期间本组件可能被卸载过),并监听广播实时更新。
@@ -684,7 +685,13 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                       )}
                     </td>
                     <td>{hit.account}</td>
-                    <td>{hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—'}</td>
+                    <td style={{ whiteSpace: 'nowrap', color: browserCollect ? '#e8582e' : undefined, fontWeight: browserCollect ? 600 : undefined }}>
+                      {browserCollect
+                        ? [hit.readNum ? `播放${hit.readNum >= 10000 ? (hit.readNum / 10000).toFixed(1) + '万' : hit.readNum}` : '',
+                           hit.zanNum ? `赞${hit.zanNum >= 10000 ? (hit.zanNum / 10000).toFixed(1) + '万' : hit.zanNum}` : '']
+                            .filter(Boolean).join('·') || (hit.hot ?? '—')
+                        : (hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—')}
+                    </td>
                     <td className={c('tdActions')}>
                       <button
                         type="button"
@@ -695,6 +702,17 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                       >
                         <Icon name="sparkles" size={13} /> AI 转题
                       </button>{' '}
+                      {browserCollect && hit.url ? (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={dlBusy === (hit.url || hit.title)}
+                          title="下载这条爆款的原视频到本地(仿写文案用)"
+                          onClick={() => runDownloadHit(hit)}
+                        >
+                          {dlBusy === (hit.url || hit.title) ? '下载中…' : '下载视频'}
+                        </button>
+                      ) : null}{' '}
                       {aiOnly ? null : (
                         <button
                           type="button"
