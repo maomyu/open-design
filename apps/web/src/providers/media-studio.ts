@@ -317,6 +317,24 @@ export async function downloadVideoByUrl(
   }
 }
 
+/** 本地视频文件 → 口播文案(抽音频+ASR)。仿写用。 */
+export async function extractScriptFromVideo(
+  videoFile: string,
+): Promise<{ transcript: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/extract-script`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoFile }),
+    });
+    const d = (await resp.json()) as { transcript?: string; error?: string };
+    if (!resp.ok) return { error: d.error || '提取文案失败' };
+    return { transcript: d.transcript ?? '' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function updateStudioTopic(
   platform: string,
   id: string,

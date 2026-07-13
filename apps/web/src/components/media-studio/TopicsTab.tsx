@@ -15,6 +15,7 @@ import {
   radarScoreCollected,
   downloadStudioVideo,
   downloadVideoByUrl,
+  extractScriptFromVideo,
 } from '../../providers/media-studio';
 import { grabVideoSrc } from '../../runtime/browser-panes';
 import { studioToast } from './StudioFeedback';
@@ -271,26 +272,55 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   // 平台中文名 → 内置浏览器采集平台 id(边播边抓要用对的登录分区)。
   const SOURCE_TO_PLATFORM: Record<string, string> = { 抖音: 'douyin', 小红书: 'xiaohongshu', 快手: 'kuaishou', B站: 'bilibili' };
   // 两级下载:先 yt-dlp(快、B站/公开视频好使),下不了(需登录/反爬)转内置浏览器边播边抓。
+  // 返回本地文件路径(供"提取文案"用),失败返回 null;quiet=true 时不弹成功 toast(串在仿写流程里)。
+  const downloadVideoGetFile = async (url: string, title: string, source: string, quiet = false): Promise<string | null> => {
+    if (!url) { studioToast.err('这条没有原视频链接'); return null; }
+    const r = await downloadStudioVideo(url);
+    if (!('error' in r)) { if (!quiet) studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`); return r.file; }
+    const plat = SOURCE_TO_PLATFORM[source] ?? (collectTargets[0] as string) ?? 'douyin';
+    studioToast.info('yt-dlp 下不了,改用内置浏览器边播边抓(浏览器会打开该视频)…');
+    const grabbed = await grabVideoSrc({ platform: plat, account: 'main', url });
+    if ('error' in grabbed) { studioToast.err(`下载失败:${grabbed.error}`); return null; }
+    const saved = await downloadVideoByUrl(grabbed.mediaUrl, grabbed.referer, title);
+    if ('error' in saved) { studioToast.err(`下载失败:${saved.error}`); return null; }
+    if (!quiet) studioToast.ok(`已用内置浏览器抓取下载:${saved.file}(在 ${saved.dir} 文件夹)`);
+    return saved.file;
+  };
   const downloadVideoTwoStage = async (url: string, title: string, source: string, busyKey: string) => {
-    if (!url) { studioToast.err('这条没有原视频链接'); return; }
     setDlBusy(busyKey);
+    try { studioToast.info('正在下载原视频(yt-dlp,大视频稍慢)…'); await downloadVideoGetFile(url, title, source); }
+    finally { setDlBusy(''); }
+  };
+  const runDownloadVideo = (t: MediaTopic) => void downloadVideoTwoStage(t.url, t.title, t.source, t.id);
+  const runDownloadHit = (hit: MediaTopicHit) => void downloadVideoTwoStage(hit.url, hit.title, hit.account, hit.url || hit.title);
+
+  // 【抖音仿写三步·可视化】① 下载原视频 → ② 抽音频+ASR 提取口播文案 → ③ 把原文案交 AI 仿写。
+  // 每步用醒目进度横幅(模块级状态,切页不丢)显示,让用户看得见在做什么。
+  const runExtractAndRewrite = async (hit: MediaTopicHit) => {
+    if (!hit.url) { studioToast.err('这条没有原视频链接'); return; }
+    setDlBusy(hit.url || hit.title);
     try {
-      studioToast.info('正在下载原视频(yt-dlp,大视频稍慢)…');
-      const r = await downloadStudioVideo(url);
-      if (!('error' in r)) { studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`); return; }
-      const plat = SOURCE_TO_PLATFORM[source] ?? (collectTargets[0] as string) ?? 'douyin';
-      studioToast.info('yt-dlp 下不了,改用内置浏览器边播边抓(浏览器会打开该视频)…');
-      const grabbed = await grabVideoSrc({ platform: plat, account: 'main', url });
-      if ('error' in grabbed) { studioToast.err(`下载失败:${grabbed.error}`); return; }
-      const saved = await downloadVideoByUrl(grabbed.mediaUrl, grabbed.referer, title);
-      if ('error' in saved) { studioToast.err(`下载失败:${saved.error}`); return; }
-      studioToast.ok(`已用内置浏览器抓取下载:${saved.file}(在 ${saved.dir} 文件夹)`);
+      const plat = SOURCE_TO_PLATFORM[hit.account] ?? (collectTargets[0] as string) ?? 'douyin';
+      setBaokuanStatus('仿写第①步 · 正在下载原视频(仿写要基于真实口播内容)…');
+      const file = await downloadVideoGetFile(hit.url, hit.title, hit.account, true);
+      if (!file) { setBaokuanStatus(''); return; }
+      setBaokuanStatus('仿写第②步 · 正在提取口播文案(抽音频 + 语音转写,约半分钟)…');
+      const ex = await extractScriptFromVideo(file);
+      if ('error' in ex) { setBaokuanStatus(''); studioToast.err(`提取文案失败:${ex.error}`); return; }
+      const transcript = ex.transcript.trim();
+      setBaokuanStatus('');
+      if (!transcript) { studioToast.info('这条没提取到口播文案(可能是纯音乐/画面无旁白),换一条带口播的爆款试试。'); return; }
+      // 第③步:把原口播文案交给 AI 仿写(保留结构/钩子,换成用户自己的表达)。
+      studioToast.ok('已提取原口播文案 ✓ 正在交给 AI 仿写(保留爆点结构、换成你的表达)…');
+      onAiFind(
+        `请【仿写】下面这条爆款视频的口播文案:保留它的开场钩子、内容结构和爆点节奏,但换成全新的、`
+        + `属于我自己账号的表达和案例,不要照抄原句。平台:${plat}。原标题:${hit.title}。\n\n【原口播文案】\n${transcript}`,
+        toPicked([hit]),
+      );
     } finally {
       setDlBusy('');
     }
   };
-  const runDownloadVideo = (t: MediaTopic) => void downloadVideoTwoStage(t.url, t.title, t.source, t.id);
-  const runDownloadHit = (hit: MediaTopicHit) => void downloadVideoTwoStage(hit.url, hit.title, hit.account, hit.url || hit.title);
 
   const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? latestBaokuanHits : []));
   // 真抓爆款结果:挂载即从模块存储读回(采集期间本组件可能被卸载过),并监听广播实时更新。
@@ -734,15 +764,27 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         : (hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—')}
                     </td>
                     <td className={c('tdActions')}>
-                      <button
-                        type="button"
-                        className={c('btn')}
-                        disabled={aiBusy}
-                        title="AI 抓这篇原文分析后，转化出 1-2 个属于你账号的差异化选题进候选（不是照搬标题）"
-                        onClick={() => onAiFind('', toPicked([hit]))}
-                      >
-                        <Icon name="sparkles" size={13} /> AI 转题
-                      </button>{' '}
+                      {browserCollect ? (
+                        <button
+                          type="button"
+                          className={`${c('btn')} ${c('btnPrimary')}`}
+                          disabled={aiBusy || dlBusy === (hit.url || hit.title)}
+                          title="下载原视频 → 提取口播文案 → AI 仿写(保留爆点结构、换成你的表达)。三步有进度提示。"
+                          onClick={() => void runExtractAndRewrite(hit)}
+                        >
+                          <Icon name="sparkles" size={13} /> {dlBusy === (hit.url || hit.title) ? '仿写中…' : '提取文案仿写'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={aiBusy}
+                          title="AI 抓这篇原文分析后，转化出 1-2 个属于你账号的差异化选题进候选（不是照搬标题）"
+                          onClick={() => onAiFind('', toPicked([hit]))}
+                        >
+                          <Icon name="sparkles" size={13} /> AI 转题
+                        </button>
+                      )}{' '}
                       {browserCollect && hit.url ? (
                         <button
                           type="button"

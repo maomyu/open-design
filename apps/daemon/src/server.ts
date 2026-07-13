@@ -9977,6 +9977,34 @@ export async function startServer({
     }
   });
 
+  // 爆款视频 → 口播文案(仿写用)。收到【已下载的本地视频文件】,抽音频 + 火山 ASR 转写。
+  // 抖音仿写的"下载→提取文案→仿写"三步里的第二步;前端先下视频(两级下载)、再把本地路径丢这里。
+  app.post('/api/media-studio/extract-script', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const videoFile = String(req.body?.videoFile || '').trim();
+    if (!videoFile || !videoFile.startsWith('/')) return res.status(400).json({ error: '缺少本地视频文件路径' });
+    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
+    const py = path.join(engineDir, '.venv', 'bin', 'python');
+    try {
+      const r = await execFileBuffered(py, ['scripts/extract_script.py', '--video', videoFile], {
+        cwd: engineDir,
+        env: { ...process.env },
+        timeout: 300_000,
+      });
+      const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+      let parsed: { transcript?: string; error?: string };
+      try { parsed = JSON.parse(s); } catch {
+        return res.status(500).json({ error: '提取文案失败：' + (r.stderr || r.stdout).slice(-300) });
+      }
+      if (parsed.error) return res.status(422).json({ error: parsed.error });
+      return res.json({ transcript: parsed.transcript ?? '' });
+    } catch (err) {
+      return res.status(500).json({ error: '提取文案失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
   app.get('/api/orbit/status', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
