@@ -62,6 +62,30 @@ export function grabVideoSrc(req: { platform: string; account: string; url: stri
   });
 }
 
+/**
+ * 导出该 平台×账号 登录分区的 cookie 到本机文件(给 daemon 的 yt-dlp 带真实
+ * 会话)。抖音/小红书的视频下载接口现在硬性要 cookie——用户已在内置浏览器登录,
+ * 这里把登录态落成 Netscape 文件,下载器加 --cookies 就能像登录用户一样下原视频。
+ * 仅桌面端可用(需主进程 session.cookies);Web-only 环境返回 null,调用方回退。
+ */
+export async function exportBrowserCookies(platform: string, account: string): Promise<string | null> {
+  try {
+    const host = (globalThis as Record<string, unknown>)['__od__'] as
+      | { browser?: { exportCookies?: (r: { platform: string; account: string }) => Promise<unknown> } }
+      | undefined;
+    const fn = host?.browser?.exportCookies;
+    if (typeof fn !== 'function') return null;
+    const res = await fn({ platform: normalizeBrowserPlatform(platform), account });
+    if (res && typeof res === 'object' && (res as { ok?: boolean }).ok === true) {
+      const cf = (res as { cookieFile?: string }).cookieFile;
+      return typeof cf === 'string' && cf ? cf : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** 平台中文名（后台标签标题/工具条 chip 共用;客户定制中文直写）。 */
 export const BROWSER_PLATFORM_TITLES: Record<string, string> = {
   'wechat-mp': '公众号',

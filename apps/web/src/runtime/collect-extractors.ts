@@ -42,9 +42,10 @@ export const SEARCH_BY_TYPING: Record<StudioCollectPlatform, boolean> = {
   kuaishou: true,
 };
 
-/** 拟人输入的平台首页(从这里开始敲搜索框)。快手无首页项→退回其搜索页再在框里搜(原行为)。 */
+/** 拟人输入的平台首页(从这里开始敲搜索框)。无首页项的平台→直接进【搜索结果页】再在框里搜。
+ *  抖音不设首页:抖音首页就是「精选」推荐流(与关键词无关),从那进等于先逛精选;直接进搜索页
+ *  再逐字敲入,既避开精选、又保留真人打字信号。小红书 explore 是搜索承载页,保留。 */
 export const PLATFORM_HOMEPAGE: Partial<Record<StudioCollectPlatform, string>> = {
-  douyin: 'https://www.douyin.com/',
   xiaohongshu: 'https://www.xiaohongshu.com/explore',
 };
 

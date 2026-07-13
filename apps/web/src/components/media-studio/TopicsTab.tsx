@@ -17,7 +17,7 @@ import {
   downloadVideoByUrl,
   extractScriptFromVideo,
 } from '../../providers/media-studio';
-import { grabVideoSrc } from '../../runtime/browser-panes';
+import { grabVideoSrc, exportBrowserCookies } from '../../runtime/browser-panes';
 import { studioToast } from './StudioFeedback';
 import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
@@ -275,9 +275,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   // 返回本地文件路径(供"提取文案"用),失败返回 null;quiet=true 时不弹成功 toast(串在仿写流程里)。
   const downloadVideoGetFile = async (url: string, title: string, source: string, quiet = false): Promise<string | null> => {
     if (!url) { studioToast.err('这条没有原视频链接'); return null; }
-    const r = await downloadStudioVideo(url);
-    if (!('error' in r)) { if (!quiet) studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`); return r.file; }
     const plat = SOURCE_TO_PLATFORM[source] ?? (collectTargets[0] as string) ?? 'douyin';
+    // 抖音/小红书下载接口硬性要登录态 cookie——先把内置浏览器里已登录的会话导出成
+    // cookie 文件,yt-dlp 带上它就能像登录用户一样直接下原视频(最可靠的一条路)。
+    const cookieFile = (await exportBrowserCookies(plat, 'main')) ?? undefined;
+    const r = await downloadStudioVideo(url, cookieFile);
+    if (!('error' in r)) { if (!quiet) studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`); return r.file; }
     studioToast.info('yt-dlp 下不了,改用内置浏览器边播边抓(浏览器会打开该视频)…');
     const grabbed = await grabVideoSrc({ platform: plat, account: 'main', url });
     if ('error' in grabbed) { studioToast.err(`下载失败:${grabbed.error}`); return null; }

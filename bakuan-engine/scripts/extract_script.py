@@ -13,6 +13,10 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 必须先导入 config.settings：它 load_dotenv(override=True) 把 .env 里的
+# ASR_API_KEY/ARK 等注入环境。否则 transcribe 读到空 Key → 静默返回空文案
+# (曾表现为"转写为空",实为没加载 .env,而非视频真的没口播)。
+from config import settings as _settings  # noqa: E402,F401
 from src.asr import transcribe as ASR  # noqa: E402
 
 

@@ -220,6 +220,17 @@ export type OpenDesignHostSetFileInputRequest = {
   files: string[];
 };
 
+export type OpenDesignHostExportCookiesRequest = {
+  /** 平台 id（如 "douyin"）+ 账号，定位到那条持久登录分区。 */
+  platform: string;
+  account: string;
+};
+
+/** 导出登录态 cookie 到本机 Netscape 文件（给 yt-dlp/下载器带上真实会话）。 */
+export type OpenDesignHostExportCookiesResult =
+  | { ok: true; cookieFile: string; count: number }
+  | OpenDesignHostFailure;
+
 export type OpenDesignHostBridge = {
   // Optional capability: hosts older than the embedded-browser feature do
   // not expose it, and the renderer falls back to its non-embedded path.
@@ -227,6 +238,8 @@ export type OpenDesignHostBridge = {
     openProfile(request: OpenDesignHostBrowserProfileRequest): Promise<OpenDesignHostActionResult>;
     /** Optional (newer hosts): CDP file-input injection for「一键存草稿」. */
     setFileInput?(request: OpenDesignHostSetFileInputRequest): Promise<OpenDesignHostActionResult>;
+    /** Optional (newer hosts): 导出该平台登录分区的 cookie 给下载器带真实会话。 */
+    exportCookies?(request: OpenDesignHostExportCookiesRequest): Promise<OpenDesignHostExportCookiesResult>;
   };
   client: OpenDesignHostClient;
   pdf: {
@@ -458,6 +471,26 @@ export async function setHostBrowserFileInput(
   }
   try {
     return await setFileInput(request);
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export function isOpenDesignHostCookieExportAvailable(scope: OpenDesignHostGlobalScope = globalThis): boolean {
+  return typeof getOpenDesignHost(scope)?.browser?.exportCookies === "function";
+}
+
+export async function exportHostBrowserCookies(
+  request: OpenDesignHostExportCookiesRequest,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): Promise<OpenDesignHostExportCookiesResult> {
+  const host = getOpenDesignHost(scope);
+  const exportCookies = host?.browser?.exportCookies;
+  if (typeof exportCookies !== "function") {
+    return unavailable("host cookie export is not available (older desktop build)");
+  }
+  try {
+    return await exportCookies(request);
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : String(error));
   }

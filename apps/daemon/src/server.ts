@@ -9915,25 +9915,67 @@ export async function startServer({
     }
     const url = String(req.body?.url || '').trim();
     if (!/^https?:\/\//.test(url)) return res.status(400).json({ error: '无效的视频链接' });
+    // 内置浏览器导出的登录态 cookie 文件(yt-dlp 兜底路径用)。
+    const cookieFile = String(req.body?.cookieFile || '').trim();
     const ytdlp = path.join(PROJECT_ROOT, 'bakuan-engine', '.venv', 'bin', 'yt-dlp');
+    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
+    const py = path.join(engineDir, '.venv', 'bin', 'python');
     const outDir = path.join(RUNTIME_DATA_DIR, 'downloads');
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+
+    // ①【首选:TikHub 解析直链】抖音/快手/小红书下载接口硬性要登录态 cookie,yt-dlp 匿名下不了;
+    // TikHub 官方接口给链接就返回 play_addr 直链(无需用户登录),由 daemon 带 Referer 下载,最稳。
+    // (这是「下载单条视频做仿写」用途;真抓爆款采集仍走内置浏览器,不经 TikHub。)
+    if (/douyin\.com|kuaishou\.com|xiaohongshu\.com|xhslink|v\.douyin/i.test(url)) {
+      try {
+        await fs.promises.mkdir(outDir, { recursive: true });
+        const rr = await execFileBuffered(py, ['scripts/resolve_video_url.py', '--url', url], {
+          cwd: engineDir, env: { ...process.env }, timeout: 60_000,
+        });
+        const jsonStr = (rr.stdout || '').slice((rr.stdout || '').indexOf('{'));
+        const parsed = jsonStr ? JSON.parse(jsonStr) as { mediaUrl?: string; referer?: string; title?: string; error?: string } : {};
+        if (parsed.mediaUrl) {
+          const resp = await fetch(parsed.mediaUrl, {
+            headers: { 'User-Agent': UA, ...(parsed.referer ? { Referer: parsed.referer } : {}) },
+          });
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            if (buf.length > 10_000) {
+              const safeTitle = (parsed.title || 'video').replace(/[/\\:*?"<>|\n]+/g, '_').slice(0, 60) || 'video';
+              const file = path.join(outDir, `${safeTitle}-${Date.now()}.mp4`);
+              await fs.promises.writeFile(file, buf);
+              return res.json({ file, dir: outDir, bytes: buf.length, via: 'tikhub' });
+            }
+          }
+        }
+        // TikHub 没解析到/下载太小 → 落到 ② yt-dlp 兜底(下面),不直接报错。
+      } catch { /* fall through to yt-dlp */ }
+    }
+
+    // ②【兜底:yt-dlp】B站等公开平台直接下;抖音等若配了登录 cookie 也能下。
     try {
       await fs.promises.mkdir(outDir, { recursive: true });
       const outTmpl = path.join(outDir, '%(title).60s-%(id)s.%(ext)s');
-      const r = await execFileBuffered(ytdlp, [
-        '--no-playlist', '--no-warnings', '-f', 'mp4/bestvideo+bestaudio/best',
+      // 用带音轨的合并格式(bv*+ba/b):仿写要转写口播,纯视频流(无音轨)会让 ASR 抽不到音频。
+      const args = [
+        '--no-playlist', '--no-warnings', '-f', 'bv*+ba/b',
         '--merge-output-format', 'mp4', '-o', outTmpl,
-        '--print', 'after_move:filepath', url,
-      ], { timeout: 300_000 });
+        '--print', 'after_move:filepath',
+      ];
+      if (cookieFile && fs.existsSync(cookieFile)) args.push('--cookies', cookieFile);
+      args.push(url);
+      const r = await execFileBuffered(ytdlp, args, { timeout: 300_000 });
       const file = (r.stdout || '').trim().split('\n').filter(Boolean).pop() || '';
       if (!r.ok || !file) {
         const err = (r.stderr || r.stdout || '').slice(-300);
         // 平台反爬/需登录/不支持时给人话提示。
-        const hint = /kuaishou|快手/i.test(url)
-          ? '快手视频 yt-dlp 支持较弱,可能需要登录态;可先在浏览器标签手动保存。'
-          : /login|cookie|private|403|Unsupported URL/i.test(err)
-            ? '该视频可能需登录/受反爬保护,或该平台暂不支持直接下载。'
-            : '';
+        const hint = /Fresh cookies|cookie/i.test(err)
+          ? '需要登录态 cookie——请在内置浏览器登录该平台后重试(会自动带上你的登录 cookie)。'
+          : /kuaishou|快手/i.test(url)
+            ? '快手视频 yt-dlp 支持较弱,可能需要登录态;可先在浏览器标签手动保存。'
+            : /login|private|403|Unsupported URL/i.test(err)
+              ? '该视频可能需登录/受反爬保护,或该平台暂不支持直接下载。'
+              : '';
         return res.status(500).json({ error: '下载失败:' + err + (hint ? `（${hint}）` : '') });
       }
       return res.json({ file, dir: outDir });

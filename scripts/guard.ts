@@ -47,10 +47,12 @@ const residualSkippedDirectories = new Set([
   ".opencode",
   ".task",
   ".tmp",
+  ".venv",
   ".vite",
   "dist",
   "node_modules",
   "out",
+  "venv",
 ]);
 
 const residualAllowedExactPaths = new Set([
@@ -96,6 +98,10 @@ const residualAllowedExactPaths = new Set([
   "tools/pack/resources/mac/notarize.cjs",
   // electron-builder hook path; CJS compatibility entry used by tools-pack desktop builds.
   "tools/pack/resources/web-standalone-after-pack.cjs",
+  // 视频号视频解密 glue：驱动微信官方为 Web Worker 编译的 WASM 解密模块,必须在
+  // Node 里伪造最小 worker 全局(self/importScripts)再直接执行,无法转 TS。
+  // 由 daemon 以 `node wx_decrypt.js` 子进程调用,不进 app 运行时打包。
+  "bakuan-engine/scripts/wx_decrypt.js",
 ]);
 
 const residualAllowedPathPrefixes = [
