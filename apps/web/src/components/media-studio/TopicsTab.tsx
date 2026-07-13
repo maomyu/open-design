@@ -131,6 +131,31 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [source, setSource] = useState('');
   const [url, setUrl] = useState('');
   const [direction, setDirection] = useState('');
+  // 🎯 爆款筛选（可选，喂给「AI 帮我选题」的爆款雷达）：时间窗 + 可组合的爆款规则（命中任一）。
+  const [radarWindow, setRadarWindow] = useState<'all' | '7d' | '30d' | '180d'>('180d');
+  const [radarRules, setRadarRules] = useState<Set<string>>(() => new Set());
+  const toggleRadarRule = (k: string) =>
+    setRadarRules((s) => {
+      const n = new Set(s);
+      n.has(k) ? n.delete(k) : n.add(k);
+      return n;
+    });
+  // 预设爆款规则（灵活组合，组间 OR）：低粉爆款 / 高播放大爆 / 高赞。
+  const RADAR_RULES: Array<{ key: string; label: string; rule: Record<string, number> }> = [
+    { key: 'lowfan', label: '低粉爆款(粉丝≤3000·播放≥10万)', rule: { fans_max: 3000, plays_min: 100000 } },
+    { key: 'bigplay', label: '高播放大爆(播放≥300万)', rule: { plays_min: 3000000 } },
+    { key: 'highlike', label: '高赞(点赞≥5万)', rule: { likes_min: 50000 } },
+  ];
+  const RADAR_WINDOW_LABEL: Record<string, string> = { all: '不限时间', '7d': '近一周', '30d': '近30天', '180d': '近半年' };
+  // 把当前爆款筛选拼成结构化说明，附到「方向」文本后，交给爆款雷达技能解析执行。
+  const buildRadarNote = (): string => {
+    if (radarRules.size === 0 && radarWindow === 'all') return '';
+    const rules = RADAR_RULES.filter((r) => radarRules.has(r.key)).map((r) => ({ ...r.rule, label: r.label }));
+    const criteria = { time_window: radarWindow, rules };
+    return `\n\n[爆款筛选] 时间窗=${RADAR_WINDOW_LABEL[radarWindow]}(${radarWindow})；`
+      + (rules.length ? `命中任一规则：${rules.map((r) => r.label).join(' 或 ')}` : '仅按时间窗')
+      + `。请用「爆款雷达」技能按 --time-window ${radarWindow} --criteria '${JSON.stringify(criteria)}' 采集+评分。`;
+  };
   const [hits, setHits] = useState<MediaTopicHit[]>([]);
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
@@ -412,7 +437,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               type="button"
               className={c('btn')}
               disabled={aiBusy}
-              onClick={() => onAiFind(direction.trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
+              onClick={() => onAiFind((direction.trim() + buildRadarNote()).trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
               title={
                 aiBusy
                   ? '有 AI 任务正在运行——等它结束（或在底部面板中止）再发起'
@@ -429,6 +454,37 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               清空已选
             </button>
           ) : null}
+        </div>
+        {/* 🎯 爆款筛选：时间窗 + 可组合的爆款规则（喂给「AI 帮我选题」的爆款雷达采集+评分） */}
+        <div className={c('row')} style={{ flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <span className={c('cardHint')}>🎯 爆款筛选：</span>
+          <select
+            className={c('input')}
+            value={radarWindow}
+            onChange={(e) => setRadarWindow(e.target.value as 'all' | '7d' | '30d' | '180d')}
+            title="只看这个时间范围内发布的爆款"
+            style={{ width: 'auto', minWidth: 96 }}
+          >
+            <option value="7d">近一周</option>
+            <option value="30d">近30天</option>
+            <option value="180d">近半年</option>
+            <option value="all">不限时间</option>
+          </select>
+          {RADAR_RULES.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              className={`${c('chip')}${radarRules.has(r.key) ? ` ${c('chipBlue')}` : ''}`}
+              style={{ cursor: 'pointer', border: 'none' }}
+              title="可多选，命中任一即算爆款（灵活组合）"
+              onClick={() => toggleRadarRule(r.key)}
+            >
+              {radarRules.has(r.key) ? '✓ ' : ''}{r.label}
+            </button>
+          ))}
+          <span className={c('cardHint')} style={{ opacity: 0.6 }}>
+            选好后点「AI 帮我选题」→ 按此翻页采集+评分
+          </span>
         </div>
         {sugWords.length > 0 ? (
           <div className={c('row')} style={{ flexWrap: 'wrap' }}>
