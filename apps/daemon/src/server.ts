@@ -9616,6 +9616,11 @@ export async function startServer({
     try {
       const config = await writeAppConfig(RUNTIME_DATA_DIR, req.body);
       orbitService.configure(config.orbit);
+      // task#5:客户手动粘贴/改「飞书数据中心链接」时,同样把它同步进引擎 .env,
+      // 保证爆款引擎回写永远落到客户当前的真 base(与 provision 建表路径一致)。
+      if (typeof config.feishuBitableUrl === 'string' && config.feishuBitableUrl) {
+        try { await syncEngineFeishuEnv(path.join(PROJECT_ROOT, 'bakuan-engine'), config.feishuBitableUrl); } catch { /* 不阻断 */ }
+      }
       res.json({ config });
     } catch (err) {
       res
@@ -9632,20 +9637,94 @@ export async function startServer({
   // 完成配置,本机得到已授权的 baochuang-client profile。之后建表/写数据全在客户名下。
   // 平台不接触任何 App Secret,客户机也无需预先配置过 lark-cli。
   const FEISHU_CLIENT_PROFILE = 'baochuang-client';
-  let feishuInitChild = null;   // 正在跑的 config init 引导进程
-  let feishuInitTail = '';      // 引导输出尾部(取链接/报错用)
+  // 连接飞书是【两步】:① config init 建应用(拿 App)② auth login 本人登录(拿用户身份)。
+  // 只做①会得到 user:missing、connected=false —— 建表需要用户身份,故必须把②接上。
+  const FEISHU_LOGIN_SCOPE =
+    'base:record:retrieve base:record:create base:record:update base:app:create base:table:create bitable:app';
+  let feishuInitChild = null;      // 正在跑的 config init 引导进程(建应用)
+  let feishuInitTail = '';         // 引导输出尾部(取链接/报错用)
+  let feishuLoginChild = null;     // 后台跑的用户登录轮询进程(用户点授权后自动保存 token)
+  let feishuLastLogin = null;      // 最近一次用户登录链接缓存 {url,userCode}(status 复用,避免每次刷新都换码)
+  let feishuStarting = false;      // 正在发起登录(防 status 轮询并发重复起进程)
 
   // 本机是否装了 lark-cli(装机自检)。
   async function larkCliInstalled() {
     const r = await execFileBuffered('lark-cli', ['--version'], { timeout: 8_000 });
     return r.ok;
   }
-  // baochuang-client profile 是否已授权(无副作用)。
+  // baochuang-client profile 是否【完整连接】(应用+用户身份都在,无副作用)。
   async function feishuProfileConnected() {
     const r = await execFileBuffered('lark-cli', ['auth', 'status', '--profile', FEISHU_CLIENT_PROFILE, '--json']);
     return r.ok
       && /ou_|user|valid|scopes/i.test(r.stdout)
       && !/missing|expired|not_found|token_missing|not_configured/i.test(r.stdout);
+  }
+  // 应用是否已配好(config init 完成即有 appId;此时可能还差用户登录)。
+  async function feishuAppConfigured() {
+    const r = await execFileBuffered('lark-cli', ['auth', 'status', '--profile', FEISHU_CLIENT_PROFILE, '--json']);
+    return r.ok && /"appId"|app_id/i.test(r.stdout);
+  }
+  // 发起【用户设备流登录】:先 --no-wait 拿链接+设备码,再【后台】续跑轮询。
+  // 关键:轮询在后台进程里跑,不阻塞 HTTP 请求 —— 用户在飞书点授权的瞬间后台自动
+  // 保存 token,前端 4s 轮询 status 就会自动变绿,无需用户再点「我已授权」。
+  // 返回 {url,userCode} 或 null。
+  async function feishuStartUserLogin() {
+    const r = await execFileBuffered('lark-cli',
+      ['auth', 'login', '--profile', FEISHU_CLIENT_PROFILE, '--domain', 'base',
+        '--scope', FEISHU_LOGIN_SCOPE, '--no-wait', '--json'], { timeout: 20_000 });
+    if (!r.ok) return null;
+    let url = '', device = '', userCode = '';
+    try {
+      const j = JSON.parse(r.stdout);
+      const x = j.data || j;
+      url = x.verification_url || x.verification_uri || x.url || '';
+      device = x.device_code || '';
+      const cm = url.match(/user_code=([\w-]+)/);
+      userCode = x.user_code || (cm ? cm[1] : '');
+    } catch { return null; }
+    if (!url || !device) return null;
+    // 后台续跑:阻塞轮询到用户授权,授权后 lark-cli 自动落盘 token(本进程只在后台等)。
+    if (feishuLoginChild && !feishuLoginChild.killed) { try { feishuLoginChild.kill(); } catch { /* ignore */ } }
+    const child = spawn('lark-cli',
+      ['auth', 'login', '--profile', FEISHU_CLIENT_PROFILE, '--device-code', device],
+      { stdio: ['ignore', 'ignore', 'ignore'] });
+    feishuLoginChild = child;
+    child.on('close', () => { if (feishuLoginChild === child) feishuLoginChild = null; });
+    child.on('error', () => { if (feishuLoginChild === child) feishuLoginChild = null; });
+    feishuLastLogin = { url, userCode };
+    return feishuLastLogin;
+  }
+
+  // task#5:把客户当前连接的飞书数据中心 base + lark-cli 后端 + 客户 profile 同步进
+  // 引擎 <engineDir>/.env(upsert)。引擎 config/settings.py 用 load_dotenv(override=True),
+  // 以 .env 为准,故这里是让引擎回写落到【客户真 base】的唯一可靠入口(不再依赖开发写死值)。
+  async function syncEngineFeishuEnv(engineDir, bitableUrl) {
+    const tokMatch = String(bitableUrl || '').match(/\/base\/([A-Za-z0-9]+)/);
+    const baseToken = tokMatch ? tokMatch[1] : '';
+    if (!baseToken) return;
+    const want = {
+      FEISHU_BACKEND: 'larkcli',
+      FEISHU_BITABLE_APP_TOKEN: baseToken,
+      LARK_PROFILE: FEISHU_CLIENT_PROFILE,
+    };
+    const envPath = path.join(engineDir, '.env');
+    let text = '';
+    try { text = await fs.promises.readFile(envPath, 'utf8'); } catch { text = ''; }
+    const lines = text.length ? text.split(/\r?\n/) : [];
+    const seen = new Set();
+    const out = lines.map((ln) => {
+      const mm = ln.match(/^\s*([A-Z_]+)\s*=/);
+      if (mm && Object.prototype.hasOwnProperty.call(want, mm[1])) {
+        seen.add(mm[1]);
+        return `${mm[1]}=${want[mm[1]]}`;
+      }
+      return ln;
+    });
+    for (const [k, v] of Object.entries(want)) {
+      if (!seen.has(k)) out.push(`${k}=${v}`);
+    }
+    let joined = out.join('\n').replace(/\n+$/,'');
+    await fs.promises.writeFile(envPath, joined + '\n', 'utf8');
   }
 
   app.post('/api/feishu/connect/start', async (req, res) => {
@@ -9657,9 +9736,17 @@ export async function startServer({
     }
     if (await feishuProfileConnected()) return res.json({ connected: true });
     try {
+      // 应用已配好、只差【本人登录】→ 直接发用户登录链接(第二步)。
+      if (await feishuAppConfigured()) {
+        const login = await feishuStartUserLogin();
+        if (login) {
+          return res.json({ ...login, stage: 'login' });
+        }
+        // 拿不到登录链接就退回重建应用流程。
+      }
       feishuInitTail = '';
       if (feishuInitChild && !feishuInitChild.killed) { try { feishuInitChild.kill(); } catch { /* ignore */ } }
-      // 长驻进程:阻塞到客户在浏览器里完成授权;我们只从早期输出里抓官方配置链接。
+      // 第一步:长驻进程建应用;从早期输出里抓官方配置链接(客户用自己飞书创建免费应用)。
       const child = spawn('lark-cli',
         ['config', 'init', '--new', '--name', FEISHU_CLIENT_PROFILE, '--brand', 'feishu', '--lang', 'zh'],
         { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -9674,13 +9761,14 @@ export async function startServer({
         child.stdout.on('data', scan);
         child.stderr.on('data', scan);
         child.on('error', (e) => { feishuInitTail += String(e?.message || e); clearTimeout(timer); resolve(''); });
-        child.on('close', () => { clearTimeout(timer); resolve(''); });
+        // 进程退出(含被外部杀掉)即清引用,让 status 的 stage 不再残留在 'app'。
+        child.on('close', () => { clearTimeout(timer); if (feishuInitChild === child) feishuInitChild = null; resolve(''); });
       });
       if (!url) {
         return res.status(500).json({ error: '发起飞书连接失败：' + (feishuInitTail.slice(-200) || '未取到配置链接') });
       }
       const codeMatch = url.match(/user_code=([\w-]+)/);
-      return res.json({ url, userCode: codeMatch ? codeMatch[1] : '' });
+      return res.json({ url, userCode: codeMatch ? codeMatch[1] : '', stage: 'app' });
     } catch (err) {
       return res.status(500).json({ error: '发起飞书连接失败：' + String(err && err.message ? err.message : err) });
     }
@@ -9689,24 +9777,69 @@ export async function startServer({
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
-    // 客户在飞书里授权后 lark-cli 会自动完成配置;这里轮询确认(最多 ~40s)。
-    for (let i = 0; i < 20; i++) {
-      if (await feishuProfileConnected()) {
-        if (feishuInitChild && !feishuInitChild.killed) { try { feishuInitChild.kill(); } catch { /* ignore */ } }
-        feishuInitChild = null;
-        return res.json({ ok: true });
+    const cleanupInit = () => {
+      if (feishuInitChild && !feishuInitChild.killed) { try { feishuInitChild.kill(); } catch { /* ignore */ } }
+      feishuInitChild = null;
+    };
+    // 本端点【绝不长阻塞】:等待授权的活儿全交给后台轮询进程 + 前端 4s status 轮询。
+    // ① 已经连上(后台登录轮询刚落盘,或建应用即已具备身份)→ 直接过。
+    if (await feishuProfileConnected()) { cleanupInit(); return res.json({ ok: true }); }
+    // ② 应用已建好、还没连上 → 确保后台【用户登录】轮询在跑,回链接让用户去授权。
+    //    用户在飞书点授权后,后台进程自动落盘,前端轮询自动变绿,无需再点「我已授权」。
+    if (await feishuAppConfigured()) {
+      if (feishuLoginChild && !feishuLoginChild.killed) {
+        return res.json({ waiting: true, message: '正在等你在飞书里点「授权」…授权后界面会自动变绿,不用再点。' });
       }
-      await new Promise((r) => setTimeout(r, 2000));
+      const login = await feishuStartUserLogin();
+      if (login) {
+        return res.json({ needLogin: true, ...login, message: '应用已建好 ✓ 最后一步:用你的飞书打开链接登录授权 —— 授权后界面自动变绿,无需再点。' });
+      }
+      return res.status(500).json({ error: '发起用户登录失败,请稍后重试' });
     }
-    return res.status(408).json({ error: '还没检测到授权完成,请确认已在飞书页面点了「确认/授权」后再点一次' });
+    // ③ 应用都还没建好 → 提示先完成建应用。
+    return res.status(408).json({ error: '还没检测到应用创建完成,请确认已在飞书页面完成「创建应用并授权」后再点一次' });
   });
+  // status 是【全程自动推进器】:前端每几秒轮询它,它按当前实际状态自动往前走,
+  // 无需用户点任何"下一步"按钮 ——
+  //   连上了            → stage=connected
+  //   应用建好没登录    → 自动起后台登录轮询,回 stage=login + 登录链接
+  //   应用还没建好      → stage=app(建应用中)/ idle
+  // 用户全程只需:点一次「连接飞书」→ 在飞书里点两次授权(建应用、本人登录),界面自己走完。
   app.get('/api/feishu/connect/status', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
+    const larkInstalled = await larkCliInstalled();
+    if (!larkInstalled) return res.json({ larkInstalled: false, connected: false, stage: 'idle' });
+
+    if (await feishuProfileConnected()) {
+      // 连上了:收尾,清掉建应用引导进程与登录缓存。
+      if (feishuInitChild && !feishuInitChild.killed) { try { feishuInitChild.kill(); } catch { /* ignore */ } }
+      feishuInitChild = null;
+      feishuLastLogin = null;
+      return res.json({ larkInstalled: true, connected: true, stage: 'connected' });
+    }
+
+    if (await feishuAppConfigured()) {
+      // 应用已建好、还没登录 → 确保后台登录轮询在跑(死了/没起就补一个),把登录链接交给前端。
+      if ((!feishuLoginChild || feishuLoginChild.killed) && !feishuStarting) {
+        feishuStarting = true;
+        try { await feishuStartUserLogin(); } catch { /* 起失败下轮再试 */ } finally { feishuStarting = false; }
+      }
+      return res.json({
+        larkInstalled: true,
+        connected: false,
+        stage: 'login',
+        loginUrl: feishuLastLogin?.url || '',
+        userCode: feishuLastLogin?.userCode || '',
+      });
+    }
+
+    // 应用还没建好:建应用引导在跑就是 app,否则 idle。
     return res.json({
-      larkInstalled: await larkCliInstalled(),
-      connected: await feishuProfileConnected(),
+      larkInstalled: true,
+      connected: false,
+      stage: feishuInitChild && !feishuInitChild.killed ? 'app' : 'idle',
     });
   });
   app.post('/api/feishu/provision', async (req, res) => {
@@ -9727,6 +9860,9 @@ export async function startServer({
     try {
       await writeAppConfig(RUNTIME_DATA_DIR, { feishuBitableUrl: url });
     } catch { /* 存配置失败不阻断 */ }
+    // task#5:把客户【刚建的真 base】自动同步进引擎 .env,让爆款引擎回写落到客户自己的数据中心,
+    // 而不是开发写死的旧 base(引擎 config/settings.py 是 load_dotenv(override=True),.env 为准)。
+    try { await syncEngineFeishuEnv(engineDir, url); } catch { /* 同步失败不阻断建表 */ }
     return res.json({ url });
   });
 

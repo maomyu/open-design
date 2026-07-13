@@ -37,8 +37,17 @@ OPTS = {
               "快速起量", "公众号阅读达标", "视频号互动达标", "竞品账号监控", "单链接手动"],
     "情绪点": ["共鸣", "希望", "焦虑", "愤怒", "认同", "好奇"],
 }
-# 关联字段(link)先建成 text,建完所有表后统一转 link → 原始库
-LINK_FIELDS = {"来源内容", "关联内容", "关联选题", "关联成品", "关联爆款", "参考稿范围", "典型正例", "典型反例"}
+# 关联字段(link)的目标表:建表时先跳过,建完所有表后 pass-2 统一 field-create 真双向关联。
+# 客户在飞书里点关联单元格即可跳到对侧记录(选题→原始爆款、审核→选题、复盘→审核…)。
+LINK_TARGETS = {
+    ("今日爆款选题池", "来源内容"): "爆款内容原始库",
+    ("爆点拆解库", "关联内容"): "爆款内容原始库",
+    ("成品内容审核库", "关联选题"): "今日爆款选题池",
+    ("发布复盘库", "关联成品"): "成品内容审核库",
+    ("风格画像库", "参考稿范围"): "爆款内容原始库",
+    ("风格画像库", "典型正例"): "爆款内容原始库",
+    ("风格画像库", "典型反例"): "爆款内容原始库",
+}
 
 
 def field_json(fname: str, ftype: str) -> dict:
@@ -64,6 +73,43 @@ def run(args: list[str]) -> dict:
         return {"ok": False, "raw": r.stdout[:200] + r.stderr[:200]}
 
 
+def create_link_fields(base: str) -> None:
+    """pass-2:所有表建好后,把关联字段建成真 link(指向目标表)。客户在飞书点关联单元格即可跳转。
+    失败不阻断(退化为无关联,数据仍完整)。"""
+    for (tbl, fld), target in LINK_TARGETS.items():
+        r = run(["+field-create", "--base-token", base, "--table-id", tbl,
+                 "--json", json.dumps({"type": "link", "name": fld, "link_table": target},
+                                      ensure_ascii=False)])
+        print(f"  {'✓' if r.get('ok') else '✗'} 关联 {tbl}.{fld} → {target}")
+
+
+def seed_defaults(base: str) -> None:
+    """建表后种子填充:①系统配置表填默认阈值/频率/TopK/模型(客户在飞书直接改即生效);
+    ②监控配置库填一条示例行(默认不启用),让客户照着改成自己的关键词/竞品。失败不阻断建表。"""
+    try:
+        from src.feishu.larkcli_bitable import LarkCliBitable
+        from src.feishu import config_sync as CS
+        from config import settings as S
+        fs = LarkCliBitable(app_token=base, profile=PROFILE)
+        cfg = [{"配置项": item, "当前值": str(getattr(S, attr, "")), "是否启用": True}
+               for item, (attr, _c) in CS._MAP.items() if getattr(S, attr, None) is not None]
+        cfg.append({"配置项": "检测频率", "当前值": os.getenv("DEFAULT_DETECT_INTERVAL_MIN", "120"),
+                    "单位": "分钟", "是否启用": True})
+        cfg.append({"配置项": "TopK", "当前值": os.getenv("RAG_TOPK", "5"), "是否启用": True})
+        high = getattr(S, "LLM_TIERS", {}).get("high", "deepseek-reasoner")
+        cfg.append({"配置项": "默认模型.high", "当前值": high, "是否启用": True})
+        fs.batch_add("系统配置表", cfg)
+        print(f"  ✓ 系统配置表 种子 {len(cfg)} 条")
+        fs.batch_add("监控配置库", [{
+            "类型": "关键词", "关键词/账号": "男性情感", "主题分类": "婚恋观点",
+            "平台": ["小红书", "抖音"], "优先级": "P1", "时间窗": "7d",
+            "最低阈值": 0, "是否启用": False, "备注": "示例:改成你的方向/竞品后勾选「是否启用」即生效",
+        }])
+        print("  ✓ 监控配置库 种子 1 条示例")
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! 种子填充跳过(不影响建表): {str(e)[:120]}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", default="自媒体爆款数据中心")
@@ -73,7 +119,8 @@ def main():
 
     names = list(TABLES.keys())
     first = names[0]
-    ffields = [field_json(n, t) for n, t in TABLES[first]["fields"]]
+    # pass-1 先跳过 link 字段(目标表还没建),建完所有表后 pass-2 再补真关联。
+    ffields = [field_json(n, t) for n, t in TABLES[first]["fields"] if t != "link"]
     d = run(["+base-create", "--name", a.name, "--table-name", first,
              "--fields", json.dumps(ffields, ensure_ascii=False)])
     if not d.get("ok"):
@@ -86,10 +133,13 @@ def main():
     print(f"✓ 建 base「{a.name}」token={base}  首表={first}")
 
     for name in names[1:]:
-        flds = [field_json(n, t) for n, t in TABLES[name]["fields"]]
+        flds = [field_json(n, t) for n, t in TABLES[name]["fields"] if t != "link"]
         r = run(["+table-create", "--base-token", base, "--name", name,
                  "--fields", json.dumps(flds, ensure_ascii=False)])
         print(f"  {'✓' if r.get('ok') else '✗'} 表 {name}")
+
+    create_link_fields(base)   # pass-2:所有表都在了,统一建真双向关联字段
+    seed_defaults(base)   # 种子:系统配置表默认配置 + 监控配置库示例(客户可在飞书直接改)
 
     url = base_url or f"https://feishu.cn/base/{base}"
     print(f"\n完成。关联字段(link)可再跑转换脚本;后台表可分组折叠。")

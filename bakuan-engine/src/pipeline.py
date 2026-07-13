@@ -476,7 +476,8 @@ class Pipeline:
             ev = EV.evaluate(rc, transcript=transcript, comments=comments,
                              account_recent_likes=account_recent_likes,
                              growth_per_hour=store.growth_per_hour(rc.content_id))
-            self._write_topic(rc, ev, link)
+            topic_rid = self._write_topic(rc, ev, link)   # 选题池 record_id(供审核库关联)
+            topic_link = [{"id": topic_rid}] if topic_rid else None
             if self._radar_mode:
                 return True    # 雷达模式：评分选题即止，跳过拆解/脚本/封面
             if ev.traffic < 65 and ev.intent < 65:
@@ -485,7 +486,7 @@ class Pipeline:
                                     {"likes": rc.likes, "comments": rc.comments})
             # 把 AI 爆点拆解写进「爆点拆解库」（关联爆款=原始库记录）
             self._add("爆点拆解库", {
-                "关联爆款": link, "选题类型": str(decon.get("selectopic", "")),
+                "关联内容": link, "选题类型": str(decon.get("selectopic", "")),
                 "前3秒钩子": str(decon.get("hook", "")), "核心矛盾": str(decon.get("conflict", "")),
                 "用户痛点": str(decon.get("pain", "")),
                 "情绪点": decon.get("emotion") if isinstance(decon.get("emotion"), list) else str(decon.get("emotion", "")),
@@ -501,17 +502,15 @@ class Pipeline:
             for mode in _script_modes():
                 last_script = GEN.generate(decon, materials, style, mode, original_text=transcript)
                 script_fields = last_script.to_feishu(rc.platform, version=1)
-                if link:
-                    script_fields["关联爆款"] = link
+                script_fields["关联选题"] = topic_link   # 审核库→选题池 真双向关联
                 last_rid = self._add("成品内容审核库", script_fields)
             # 封面(Seedream)最慢：批量默认不出图，需要时设 COVER_IN_BATCH=1；出图后上传到该脚本记录
             if last_script and os.getenv("COVER_IN_BATCH") == "1":
                 self._make_cover(rc, last_script, last_rid)
             review = {"平台": normalize.cn_platform(rc.platform),
                       "模型/接口成本": router.cost_summary().get("calls", 0),
-                      "复盘结论": f"待发布；判定理由：{ev.reason}"}
-            if link:
-                review["关联爆款"] = link
+                      "复盘结论": f"待发布；判定理由：{ev.reason}",
+                      "关联成品": [{"id": last_rid}] if last_rid else None}   # 复盘库→审核库 真双向关联
             self._add("发布复盘库", review)
             return True
         except Exception as e:
@@ -587,7 +586,7 @@ class Pipeline:
         return self._add("爆款内容原始库", fields)
 
     def _write_topic(self, rc: normalize.RawContent, ev: EV.Evaluation,
-                     link: list[dict] | None = None) -> None:
+                     link: list[dict] | None = None) -> str:
         # 收集给爆创「选题步骤」的选题候选(标题/平台/热度/来源/评分/推荐承接)
         self.radar_items.append({
             "标题": rc.title, "平台": normalize.cn_platform(rc.platform),
@@ -597,8 +596,10 @@ class Pipeline:
             "高频用户问题": ev.top_questions, "推荐承接服务": ev.recommend_service,
             "评分理由": ev.reason,
         })
-        self._add("今日爆款选题池", {
-            "关联爆款": link,
+        # 选题池「来源内容」是真双向关联字段 → 指向「爆款内容原始库」那条记录,
+        # 客户在飞书点一下即可跳到原始爆款。返回本条选题的 record_id,供审核库反查关联。
+        return self._add("今日爆款选题池", {
+            "来源内容": link,
             "流量爆款分": ev.traffic, "精准意向分": ev.intent,
             "内容类型": EV.content_type(ev), "推荐优先级": ev.traffic_grade,
             "所属榜单": EV.classify_boards(ev), "评分理由": ev.reason,

@@ -1,7 +1,7 @@
 // 飞书数据中心（爆创·自媒体定制）
 //
 // 客户装机三步：① 连接【自己的】飞书(lark-cli device-flow,客户点链接用自己飞书授权)
-// → ② 平台用 lark-cli 在【客户账户下】一键建好 12 表数据中心(provision) → ③ 内置浏览器打开。
+// → ② 平台用 lark-cli 在【客户账户下】一键建好 10 表数据中心(provision) → ③ 内置浏览器打开。
 // 数据全在客户自己飞书名下,与开发者账号无关。URL 存 app-config.feishuBitableUrl(仅本机)。
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Icon } from './Icon';
@@ -35,6 +35,30 @@ export function FeishuDataCenterSection() {
   }
   useEffect(() => { void loadStatus(); }, []);
 
+  // 【全程自动推进】未连上时每 3.5s 轮询 status,由它驱动界面一步步往前走,客户不用点
+  // 任何"下一步":建应用中 → 应用建好自动切到「本人登录」链接 → 授权后自动变绿。连上即停。
+  useEffect(() => {
+    if (connected) return;
+    const id = window.setInterval(async () => {
+      try {
+        const st = await fetch('/api/feishu/connect/status').then((r) => r.json());
+        if (st?.larkInstalled === false) { setLarkInstalled(false); return; }
+        setLarkInstalled(true);
+        if (st?.connected) {
+          setConnected(true); setAuthUrl(''); setAuthCode('');
+          setMsg('已连接你的飞书 ✓ 现在可以「创建数据中心」了。');
+          return;
+        }
+        // 应用已建好、进入「本人登录」阶段 → 自动把链接切成登录链接(无需用户点)。
+        if (st?.stage === 'login' && st?.loginUrl) {
+          setAuthUrl(st.loginUrl); setAuthCode(st.userCode || '');
+          setMsg('最后一步·本人登录:点下面链接用你的飞书登录授权 —— 授权后自动变绿,无需再点任何按钮。');
+        }
+      } catch { /* 轮询失败忽略,下次再试 */ }
+    }, 3500);
+    return () => window.clearInterval(id);
+  }, [connected]);
+
   async function saveUrl(u: string) {
     setSaveStatus('saving');
     try {
@@ -59,7 +83,9 @@ export function FeishuDataCenterSection() {
       if (!r.ok) { setMsg(d.error || '发起连接失败'); return; }
       if (d.connected) { setConnected(true); setMsg('已连接你的飞书 ✓'); return; }
       setAuthUrl(d.url); setAuthCode(d.userCode || '');
-      setMsg('点下面链接,用【你自己的】飞书打开,按飞书页面「创建应用并授权」,然后回来点「我已授权」。');
+      setMsg(d.stage === 'login'
+        ? '点下面链接,用【你自己的】飞书登录授权 —— 授权后界面自动变绿,不用点任何按钮。'
+        : '第①步·建应用:点下面链接,用【你自己的】飞书「创建应用并授权」。建好后界面会【自动】跳到「本人登录」链接,你只管在飞书里点授权,全程不用点「我已授权」。');
     } finally { setBusy(''); }
   }
   async function completeConnect() {
@@ -68,11 +94,22 @@ export function FeishuDataCenterSection() {
       const r = await fetch('/api/feishu/connect/complete', { method: 'POST' });
       const d = await r.json();
       if (!r.ok) { setMsg(d.error || '确认授权失败,请重新连接'); return; }
-      setConnected(true); setAuthUrl(''); setMsg('已连接你的飞书 ✓');
+      // 建应用完成后还差第二步「本人登录」:后端回 needLogin + 新链接(后台已在轮询)。
+      if (d.needLogin && d.url) {
+        setAuthUrl(d.url); setAuthCode(d.userCode || '');
+        setMsg(d.message || '最后一步:用你的飞书打开链接登录授权 —— 授权后界面自动变绿,无需再点。');
+        return;
+      }
+      // 后台正在等你在飞书里点授权:保持链接、别清,让 4s 轮询自动收尾。
+      if (d.waiting) {
+        setMsg(d.message || '正在等你在飞书里点「授权」…授权后界面会自动变绿,不用再点。');
+        return;
+      }
+      setConnected(true); setAuthUrl(''); setAuthCode(''); setMsg('已连接你的飞书 ✓');
     } finally { setBusy(''); }
   }
   async function provision() {
-    setBusy('provision'); setMsg('正在你的飞书里创建数据中心（12 张表，约 1 分钟）…');
+    setBusy('provision'); setMsg('正在你的飞书里创建数据中心（10 张表，约 1 分钟）…');
     try {
       const r = await fetch('/api/feishu/provision', {
         method: 'POST',
@@ -121,8 +158,8 @@ export function FeishuDataCenterSection() {
           </button>
         )}
         {!connected && authUrl ? (
-          <button type="button" className="plugin-edit-view__step-link" onClick={completeConnect} disabled={busy === 'complete'}>
-            {busy === 'complete' ? '确认中…' : '我已授权'}
+          <button type="button" className="plugin-edit-view__step-link" onClick={completeConnect} disabled={busy === 'complete'} title="通常不用点,授权后界面会自动变绿;点它只是手动催一下">
+            {busy === 'complete' ? '刷新中…' : '刷新一下'}
           </button>
         ) : null}
       </div>
@@ -144,7 +181,7 @@ export function FeishuDataCenterSection() {
       <div style={stepStyle}>
         <span style={{ ...numStyle, background: connected ? '#e8582e' : '#bbb' }}>2</span>
         <button type="button" className="settings-primary-btn" onClick={provision} disabled={!connected || busy === 'provision'}>
-          {busy === 'provision' ? '创建中…' : '在我的飞书创建数据中心（12 表）'}
+          {busy === 'provision' ? '创建中…' : '在我的飞书创建数据中心（10 表）'}
         </button>
       </div>
 

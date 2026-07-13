@@ -13,6 +13,15 @@ import subprocess
 from typing import Any, Iterable
 
 
+# 关联/查找类字段的 lark-cli type 值(这些字段才允许写 link 数组 [{"id":..}])。
+_LINK_TYPES = {"link", "duplex_link", "single_link", "one_way_link", "two_way_link", "lookup"}
+
+
+def _is_link_val(v: Any) -> bool:
+    """值是否为 link 数组 [{"id":"rec.."}, ...]。"""
+    return isinstance(v, list) and len(v) > 0 and all(isinstance(x, dict) and "id" in x for x in v)
+
+
 class LarkCliBitable:
     def __init__(self, app_token: str | None = None, profile: str | None = None):
         self.base = app_token or os.getenv("FEISHU_BITABLE_APP_TOKEN", "")
@@ -105,6 +114,25 @@ class LarkCliBitable:
         ids = self.batch_add(table_name, [fields])
         return ids[0] if ids else ""
 
+    def _keep_cols(self, table_name: str, records: list[dict], cols: list[str]) -> list[str]:
+        """按【表真实结构】过滤要写的列，避免整条写入被拒：
+        - 表里没有的字段直接丢(否则 800030201 未知字段)；
+        - 目标字段非关联类型、但值是 link 数组 [{"id":..}] 的丢(否则 800010407 类型不符)。
+        读不到表结构时(meta 空)不过滤，保持原样以免误伤。
+        """
+        meta = self._field_meta(table_name)
+        if not meta:
+            return cols
+        keep = []
+        for c in cols:
+            m = meta.get(c)
+            if not m:                      # 表里无此字段 → 丢
+                continue
+            if m.get("type") not in _LINK_TYPES and any(_is_link_val(r.get(c)) for r in records):
+                continue                   # 文本/数字字段收到 link 值 → 丢(引擎关联字段与实建 text 不符时的兜底)
+            keep.append(c)
+        return keep
+
     def batch_add(self, table_name: str, records: Iterable[dict[str, Any]]) -> list[str]:
         records = list(records)
         if not records:
@@ -114,6 +142,9 @@ class LarkCliBitable:
             for k in r:
                 if k not in cols:
                     cols.append(k)
+        cols = self._keep_cols(table_name, records, cols)   # 按真实表结构过滤，避免整条被拒
+        if not cols:
+            return []
         self._ensure_options(table_name, records)   # 补齐缺失的 select 选项，避免报错
         rows = [[self._fmt(table_name, c, r.get(c)) for c in cols] for r in records]
         data = self._run(["+record-batch-create", "--table-id", table_name,
@@ -123,6 +154,10 @@ class LarkCliBitable:
 
     def update_record(self, table_name: str, record_id: str, fields: dict[str, Any]) -> None:
         # lark-cli 批量更新格式：{"record_id_list":[...],"patch":{字段:值}}（同一 patch 应用到这些记录）
+        keep = self._keep_cols(table_name, [fields], list(fields.keys()))
+        fields = {k: v for k, v in fields.items() if k in keep}
+        if not fields:
+            return
         self._ensure_options(table_name, [fields])   # 补齐缺失的 select 选项
         payload = {"record_id_list": [record_id],
                    "patch": {k: self._fmt(table_name, k, v) for k, v in fields.items()}}
