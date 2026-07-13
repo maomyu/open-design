@@ -117,7 +117,17 @@ async function runCollect(
         if (isCancelled()) return;
       }
     }
-    const raw = await evalJs(EXTRACTORS[platform], 8000);
+    // 提取：搜索结果常异步懒加载(抖音尤其慢,且 4 平台并行采集时被资源竞争进一步拖慢,
+    // 结果晚于滚动才渲染)。提取到空就再滚再等重试,命中即停 —— 避免"提取太早=0 条"。
+    // 命中即 break,所以快平台(B站/快手/小红书)首次即出、几乎不多等;只有慢平台会用满预算。
+    let raw: unknown = await evalJs(EXTRACTORS[platform], 8000);
+    for (let attempt = 0; attempt < 12 && !(Array.isArray(raw) && raw.length > 0); attempt++) {
+      if (isCancelled()) return;
+      reportCollectProgress(jobId, `「${platform}」结果加载中,再等等…(第 ${attempt + 1} 次)`);
+      await evalJs('window.scrollBy(0, 1200)', 2000);
+      await new Promise((r) => setTimeout(r, 2000));
+      raw = await evalJs(EXTRACTORS[platform], 8000);
+    }
     for (const it of Array.isArray(raw) ? raw : []) {
       const item = { ...(it as Record<string, unknown>), platform } as StudioCollectItem;
       const key = String(item.content_id ?? item.url ?? Math.random());
