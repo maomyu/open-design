@@ -1,7 +1,7 @@
 // 选题导航（两个创作台共享）：手动候选 + 组合式选题雷达（数据源可勾选
 // 组合：爆文榜/搜一搜/全库搜索/需求词/对标动态）+「AI 帮我选题」。
 // 独立可用，也向写作/脚本步输送选题。
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { MediaTopic, MediaTopicHit, StudioCollectPlatform } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
@@ -20,6 +20,12 @@ import { grabVideoSrc } from '../../runtime/browser-panes';
 import { studioToast } from './StudioFeedback';
 import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
+
+// 真抓爆款结果的【模块级存储 + 事件】。采集时内置浏览器会切到前台采集页,导致选题页组件卸载;
+// runDirectCollect 是独立 async 会跑完,但卸载后 setHits 失效。故把爆款结果写进模块存储 + 广播事件,
+// 选题页(重新)挂载时读回来显示,不受卸载影响。
+let latestBaokuanHits: MediaTopicHit[] = [];
+const BAOKUAN_HITS_EVENT = 'od:baokuan-hits';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
@@ -211,30 +217,31 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       }
       setCollectMsg(`采到 ${total} 条,正在按爆款筛选评分…`);
       const scored = await radarScoreCollected(kw, items, buildCriteria());
-      if ('error' in scored) { setCollectMsg(''); studioToast.err(scored.error); return; }
-      const fmt = (n: number) => (n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n));
-      let added = 0;
-      for (const t of scored.topics) {
-        const title = String(t['标题'] ?? '').trim();
-        if (!title) continue;
-        const likes = Number(t['点赞']) || 0, plays = Number(t['播放']) || 0, comments = Number(t['评论']) || 0;
-        const metric = [plays > 0 ? `播放${fmt(plays)}` : '', likes > 0 ? `赞${fmt(likes)}` : '', comments > 0 ? `评论${fmt(comments)}` : '']
-          .filter(Boolean).join('·');
-        await onAdd({
-          title,
-          angle: `${t['热度'] ?? ''}级 · ${t['评分理由'] ?? ''}`,
-          source: String(t['平台'] ?? ''),
+      if ('error' in scored) { studioToast.err(scored.error); return; }
+      // 评出的爆款 → hits 列表(带链接/点赞/播放/评论,可勾选),像公众号那样先列出来,
+      // 再由用户勾选 +「AI 帮我选题」推荐成候选选题。不直接进候选表。
+      const hitList: MediaTopicHit[] = scored.topics
+        .filter((t) => String(t['标题'] ?? '').trim())
+        .map((t) => ({
+          title: String(t['标题'] ?? '').trim(),
           url: String(t['查看原文'] ?? ''),
-          heat: metric || String(t['热度'] ?? ''),
-        });
-        added += 1;
-      }
+          account: String(t['平台'] ?? ''),
+          publishedAt: '',
+          signals: ['trending'] as MediaTopicHit['signals'],
+          readNum: Number(t['播放']) || null,
+          zanNum: Number(t['点赞']) || null,
+          hot: `${t['热度'] ?? ''}级 · 流量分${t['流量爆款分'] ?? ''}`,
+          desc: `${String(t['评分理由'] ?? '')}${Number(t['评论']) ? ` · 评论${t['评论']}` : ''}`,
+        }));
+      // 写模块存储 + 广播:即使采集把选题页卸载过,重新挂载也能读到这批爆款。
+      latestBaokuanHits = hitList;
+      window.dispatchEvent(new CustomEvent<MediaTopicHit[]>(BAOKUAN_HITS_EVENT, { detail: hitList }));
+      setHits(hitList);
       setCollectMsg('');
-      if (added === 0) {
-        // 采到了但没命中筛选:明确告知,而不是静默无结果。
-        studioToast.info(`采到 ${total} 条,但没有符合「爆款筛选」的爆款。试试放宽标准(降低门槛/勾更多规则/换「不限时间」),或换个关键词。`);
+      if (hitList.length === 0) {
+        studioToast.info(`采到 ${total} 条,但没有符合「爆款筛选」的爆款。放宽标准(降低门槛/勾更多规则/换「不限时间」)或换关键词再试。`);
       } else {
-        studioToast.ok(`真抓爆款完成:采 ${total} 条 → 命中 ${added} 个爆款,已进候选表(带链接·点赞·评论)`);
+        studioToast.ok(`真抓到 ${hitList.length} 个爆款,已列在下面(带链接·点赞)。勾选想做的,再点「AI 帮我选题」生成候选选题。`);
       }
     } finally {
       setCollectBusy(false);
@@ -266,7 +273,15 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     }
   };
 
-  const [hits, setHits] = useState<MediaTopicHit[]>([]);
+  const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? latestBaokuanHits : []));
+  // 真抓爆款结果:挂载即从模块存储读回(采集期间本组件可能被卸载过),并监听广播实时更新。
+  useEffect(() => {
+    if (!browserCollect) return;
+    if (latestBaokuanHits.length) setHits(latestBaokuanHits);
+    const onHits = (ev: Event) => setHits((ev as CustomEvent<MediaTopicHit[]>).detail);
+    window.addEventListener(BAOKUAN_HITS_EVENT, onHits);
+    return () => window.removeEventListener(BAOKUAN_HITS_EVENT, onHits);
+  }, [browserCollect]);
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
   const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set());
