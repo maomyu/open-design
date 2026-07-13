@@ -437,7 +437,8 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
     // 授权裁剪:配音跟 cap.tts、成片(视频生成)跟 cap.video。客户口播自己拍不生视频时,
     // 授权不含 cap.tts/cap.video → 这两步自动隐藏,只留 选题→脚本→发布。
     ...(hasFeature(license, 'cap.tts') ? ([{ id: 'voice', label: '配音', step: '3', optional: true }] as const) : []),
-    ...(hasFeature(license, 'cap.video') ? ([{ id: 'video', label: '成片', step: '4' }] as const) : []),
+    // 「上传」=客户把自己剪好的成品视频传上来(不是AI生成);发布时自动带上文案+视频。始终保留。
+    { id: 'video', label: '上传', step: '4' },
     { id: 'publish', label: '发布', step: '5' },
   ].map((t, i): { id: VideoTab; label: string; step: string; optional?: boolean } => ({ ...t, id: t.id as VideoTab, step: String(i + 1) })); // 裁剪后步骤号顺序化(1,2,3…不跳号)
 
@@ -768,8 +769,8 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               <>
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
-                    成片（发布必需）
-                    <span className={c('cardHint')}>已有成片给本机绝对路径；要 AI 生成视频，用「插件」页的短视频工作流跑完再把成片路径填回来</span>
+                    上传成品视频（发布必需）
+                    <span className={c('cardHint')}>你自己拍好剪好的口播视频，选文件传上来即可；发布时会自动带上「脚本」里的文案标题标签。</span>
                   </div>
                   <div className={c('row')}>
                     <label className={c('btn')} style={{ cursor: 'pointer' }} title="直接选本机视频文件，自动存进作品素材目录">
