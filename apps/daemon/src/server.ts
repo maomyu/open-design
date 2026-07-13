@@ -9907,6 +9907,41 @@ export async function startServer({
     }
   });
 
+  // 下载爆款原视频(给用户仿写文案用)。用 yt-dlp(开源标准,支持 B站/抖音/小红书;快手较弱)。
+  // 下到 <数据目录>/downloads/,返回本地文件路径,前端可「在 Finder 显示」。
+  app.post('/api/media-studio/download-video', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const url = String(req.body?.url || '').trim();
+    if (!/^https?:\/\//.test(url)) return res.status(400).json({ error: '无效的视频链接' });
+    const ytdlp = path.join(PROJECT_ROOT, 'bakuan-engine', '.venv', 'bin', 'yt-dlp');
+    const outDir = path.join(RUNTIME_DATA_DIR, 'downloads');
+    try {
+      await fs.promises.mkdir(outDir, { recursive: true });
+      const outTmpl = path.join(outDir, '%(title).60s-%(id)s.%(ext)s');
+      const r = await execFileBuffered(ytdlp, [
+        '--no-playlist', '--no-warnings', '-f', 'mp4/bestvideo+bestaudio/best',
+        '--merge-output-format', 'mp4', '-o', outTmpl,
+        '--print', 'after_move:filepath', url,
+      ], { timeout: 300_000 });
+      const file = (r.stdout || '').trim().split('\n').filter(Boolean).pop() || '';
+      if (!r.ok || !file) {
+        const err = (r.stderr || r.stdout || '').slice(-300);
+        // 平台反爬/需登录/不支持时给人话提示。
+        const hint = /kuaishou|快手/i.test(url)
+          ? '快手视频 yt-dlp 支持较弱,可能需要登录态;可先在浏览器标签手动保存。'
+          : /login|cookie|private|403|Unsupported URL/i.test(err)
+            ? '该视频可能需登录/受反爬保护,或该平台暂不支持直接下载。'
+            : '';
+        return res.status(500).json({ error: '下载失败:' + err + (hint ? `（${hint}）` : '') });
+      }
+      return res.json({ file, dir: outDir });
+    } catch (err) {
+      return res.status(500).json({ error: '下载失败:' + String(err && err.message ? err.message : err) });
+    }
+  });
+
   app.get('/api/orbit/status', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });

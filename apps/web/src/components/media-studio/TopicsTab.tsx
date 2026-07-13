@@ -13,6 +13,7 @@ import {
   createStudioCollect,
   waitStudioCollectDone,
   radarScoreCollected,
+  downloadStudioVideo,
 } from '../../providers/media-studio';
 import { studioToast } from './StudioFeedback';
 import { hasFeature, useLicense } from '../../state/license';
@@ -201,27 +202,55 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       for (const r of job.results ?? []) {
         if (r.items?.length) { items[r.platform] = r.items; total += r.items.length; }
       }
-      if (total === 0) { setCollectMsg(''); studioToast.err('未采到条目——可能需在标签里登录/过验证码后重试'); return; }
-      setCollectMsg(`采到 ${total} 条,正在按爆款筛选评分选题…`);
+      if (total === 0) {
+        setCollectMsg('');
+        studioToast.err('没采到内容——可能需要在该平台标签里登录/过验证码后重试(浏览器已在前台)');
+        return;
+      }
+      setCollectMsg(`采到 ${total} 条,正在按爆款筛选评分…`);
       const scored = await radarScoreCollected(kw, items, buildCriteria());
       if ('error' in scored) { setCollectMsg(''); studioToast.err(scored.error); return; }
+      const fmt = (n: number) => (n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n));
       let added = 0;
       for (const t of scored.topics) {
         const title = String(t['标题'] ?? '').trim();
         if (!title) continue;
+        const likes = Number(t['点赞']) || 0, plays = Number(t['播放']) || 0, comments = Number(t['评论']) || 0;
+        const metric = [plays > 0 ? `播放${fmt(plays)}` : '', likes > 0 ? `赞${fmt(likes)}` : '', comments > 0 ? `评论${fmt(comments)}` : '']
+          .filter(Boolean).join('·');
         await onAdd({
           title,
-          angle: String(t['评分理由'] ?? t['推荐承接服务'] ?? ''),
+          angle: `${t['热度'] ?? ''}级 · ${t['评分理由'] ?? ''}`,
           source: String(t['平台'] ?? ''),
           url: String(t['查看原文'] ?? ''),
-          heat: String(t['推荐优先级'] ?? t['热度'] ?? ''),
+          heat: metric || String(t['热度'] ?? ''),
         });
         added += 1;
       }
       setCollectMsg('');
-      studioToast.ok(`真抓爆款完成:采 ${total} 条 → 评出 ${added} 个选题候选,已进表`);
+      if (added === 0) {
+        // 采到了但没命中筛选:明确告知,而不是静默无结果。
+        studioToast.info(`采到 ${total} 条,但没有符合「爆款筛选」的爆款。试试放宽标准(降低门槛/勾更多规则/换「不限时间」),或换个关键词。`);
+      } else {
+        studioToast.ok(`真抓爆款完成:采 ${total} 条 → 命中 ${added} 个爆款,已进候选表(带链接·点赞·评论)`);
+      }
     } finally {
       setCollectBusy(false);
+    }
+  };
+
+  // 下载爆款原视频(仿写文案用)。逐行 busy。
+  const [dlBusy, setDlBusy] = useState<string>('');
+  const runDownloadVideo = async (t: MediaTopic) => {
+    if (!t.url) { studioToast.err('这条没有原视频链接'); return; }
+    setDlBusy(t.id);
+    try {
+      studioToast.info('正在下载原视频(yt-dlp,大视频稍慢)…');
+      const r = await downloadStudioVideo(t.url);
+      if ('error' in r) { studioToast.err(r.error); return; }
+      studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`);
+    } finally {
+      setDlBusy('');
     }
   };
 
@@ -709,8 +738,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             <thead>
               <tr>
                 <th>标题</th>
-                <th>角度</th>
-                <th>来源</th>
+                <th>热度指标</th>
+                <th>角度/理由</th>
+                <th>原文</th>
                 <th />
               </tr>
             </thead>
@@ -718,11 +748,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               {candidates.map((t) => (
                 <tr key={t.id}>
                   <td>{t.title}</td>
+                  <td style={{ whiteSpace: 'nowrap', color: '#e8582e', fontWeight: 600 }}>{t.heat || '—'}</td>
                   <td>{t.angle || '—'}</td>
                   <td>
                     {t.url ? (
-                      <a className={c('link')} href={t.url} target="_blank" rel="noreferrer">
-                        {t.source || '原文'}
+                      <a className={c('link')} href={t.url} target="_blank" rel="noreferrer" title="点开看原视频的真实点赞/评论">
+                        点击看原文 ↗
                       </a>
                     ) : (
                       t.source || '—'
@@ -732,6 +763,13 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => onWrite(t)}>
                       去写作
                     </button>{' '}
+                    {t.url ? (
+                      <>
+                        <button type="button" className={c('btn')} disabled={dlBusy === t.id} title="用 yt-dlp 把原视频下载到本地,给仿写文案用" onClick={() => void runDownloadVideo(t)}>
+                          {dlBusy === t.id ? '下载中…' : '下载视频'}
+                        </button>{' '}
+                      </>
+                    ) : null}
                     <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => void onDelete(t.id)}>
                       删除
                     </button>

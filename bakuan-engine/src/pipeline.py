@@ -601,7 +601,9 @@ class Pipeline:
             "标题": rc.title, "平台": normalize.cn_platform(rc.platform),
             "流量爆款分": ev.traffic, "精准意向分": ev.intent,
             "热度": ev.traffic_grade, "所属榜单": EV.classify_boards(ev),
-            "查看原文": rc.url, "点赞": rc.likes, "粉丝": rc.fans,
+            "查看原文": rc.url,
+            "点赞": rc.likes, "播放": rc.plays, "评论": rc.comments,
+            "收藏": rc.collects, "粉丝": rc.fans,
             "高频用户问题": ev.top_questions, "推荐承接服务": ev.recommend_service,
             "评分理由": ev.reason,
         })

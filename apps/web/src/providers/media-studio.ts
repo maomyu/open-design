@@ -274,6 +274,24 @@ export async function radarScoreCollected(
   }
 }
 
+/** 下载某爆款的原视频(yt-dlp),返回本地文件路径。给用户仿写文案用。 */
+export async function downloadStudioVideo(
+  url: string,
+): Promise<{ file: string; dir: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/download-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const d = (await resp.json()) as { file?: string; dir?: string; error?: string };
+    if (!resp.ok || !d.file) return { error: d.error || '下载失败' };
+    return { file: d.file, dir: d.dir ?? '' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function updateStudioTopic(
   platform: string,
   id: string,

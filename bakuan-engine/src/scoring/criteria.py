@@ -56,9 +56,12 @@ def _rule_hit(m: Metrics, rule: dict[str, Any]) -> bool:
         return key not in rule or rule[key] in (None, "") or v <= float(rule[key])
 
     like_rate = (m.likes / m.fans) if m.fans > 0 else 0.0
+    # 播放/点赞统一为「热度」：抖音/小红书/快手只给点赞、B站只给播放,平台各异。plays_min 用两者
+    # 较大值判定,这样"低粉爆款(热度≥10万)"在抖音看赞、在B站看播放,跨平台都能正确命中爆款。
+    heat = max(m.plays, m.likes)
     return (
         ge(m.fans, "fans_min") and le(m.fans, "fans_max")
-        and ge(m.plays, "plays_min") and le(m.plays, "plays_max")
+        and ge(heat, "plays_min") and le(m.plays, "plays_max")
         and ge(m.likes, "likes_min") and le(m.likes, "likes_max")
         and ge(m.comments, "comments_min") and ge(m.collects, "collects_min")
         and ge(like_rate, "like_rate_min")
