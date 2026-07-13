@@ -11,7 +11,7 @@
 // 非桌面端(host 桥不可用)渲染降级卡片,走独立 Chrome 档案的老路径。
 import { useEffect, useRef, useState } from 'react';
 import { isOpenDesignHostBrowserAvailable } from '@open-design/host';
-import type { Route } from '../router';
+import { navigate, type Route } from '../router';
 import { Icon } from './Icon';
 import {
   completeHandoffJob,
@@ -400,7 +400,13 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
       if (cancelled) return;
       ranCollectRef.current = seq;
       // 串行排队:一次只跑一个平台,避免并发抢资源导致慢平台采到 0。
-      void enqueueCollect(() => runCollect(ref.current as unknown as DraftWebview | null, collect, () => cancelled));
+      // 轮到本平台真正开始采集时,把视图切到它的浏览器标签,让用户【看得见】内置浏览器在
+      // 逐个平台搜索+滚动(而不是后台悄悄跑、用户感知不到)。
+      void enqueueCollect(async () => {
+        if (cancelled) return;
+        navigate({ kind: 'browser', platform: spec.platform, account: spec.account });
+        await runCollect(ref.current as unknown as DraftWebview | null, collect, () => cancelled);
+      });
     }, 400);
     return () => {
       cancelled = true;

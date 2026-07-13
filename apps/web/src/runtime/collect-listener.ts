@@ -11,6 +11,7 @@ import type { StudioCollectJob } from '@open-design/contracts';
 import { claimCollectJob, completeCollectJob } from '../providers/media-studio';
 import { openBrowserPane } from './browser-panes';
 import { buildSearchUrl } from './collect-extractors';
+import { navigate, parseRoute } from '../router';
 
 const EVENTS_URL = '/api/media-studio/collect/events';
 
@@ -27,6 +28,9 @@ async function fetchJob(id: string): Promise<StudioCollectJob | null> {
 
 async function executeCollect(job: StudioCollectJob): Promise<void> {
   if (!(await claimCollectJob(job.id))) return; // 别的窗口抢到了
+  // 记住用户当前所在页(通常是「选题」),采集时视图会跟着各平台浏览器标签走(用户看得见
+  // 内置浏览器逐个平台搜),采完自动切回这里看结果。若本就在浏览器标签则不回跳。
+  const returnRoute = parseRoute(window.location.pathname);
   try {
     // 每个平台在应用内标签打开搜索页 + 挂采集载荷（BrowserPanesHost 执行翻页抓取）。
     const nowSec = Math.floor(Date.now() / 1000);
@@ -64,6 +68,9 @@ async function executeCollect(job: StudioCollectJob): Promise<void> {
     completeCollectJob(job.id, total > 0 || needLogin.length > 0, detail);
   } catch (err) {
     completeCollectJob(job.id, false, `采集异常：${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    // 采完切回用户来处(选题页)看结果;若来处本就是浏览器标签(比如需登录),就留着别跳走。
+    if (returnRoute.kind !== 'browser') navigate(returnRoute);
   }
 }
 
