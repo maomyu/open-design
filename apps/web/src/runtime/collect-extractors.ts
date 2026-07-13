@@ -27,8 +27,36 @@ export const LOGIN_WALL: Record<StudioCollectPlatform, string[]> = {
   xiaohongshu: ['登录后查看', '扫码登录', '手机号登录'],
   douyin: ['登录后可查看', '扫码登录', '验证码登录'],
   bilibili: [],
-  kuaishou: ['登录后', '扫码登录'],
+  kuaishou: ['扫码登录后', '请先登录'],
 };
+
+/** 需要「模拟人操作」在搜索框输入+回车才会真出结果的平台（直接跳URL不触发搜索/反爬）。
+ *  快手就是这样：navigate到搜索页只落在空视图，得像人一样在框里搜。 */
+export const SEARCH_BY_TYPING: Record<StudioCollectPlatform, boolean> = {
+  xiaohongshu: false,
+  douyin: false,
+  bilibili: false,
+  kuaishou: true,
+};
+
+/** 生成「在搜索框输入关键词并回车」的 JS（React 受控输入用原生 setter + input 事件）。 */
+export function buildSearchSubmitJs(keyword: string): string {
+  const kw = JSON.stringify(keyword);
+  return `(() => {
+    const kw = ${kw};
+    const input = document.querySelector('input[placeholder*="搜索"], input[placeholder*="搜"], .search-input input, input.search-input, input[type="search"], header input, input');
+    if (!input) return 'no-input';
+    input.focus();
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (setter) setter.call(input, kw); else input.value = kw;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    const btn = document.querySelector('.search-btn, [class*="search-button"], [class*="searchBtn"], button[type="submit"]');
+    if (btn) btn.click();
+    return 'submitted';
+  })()`;
+}
 
 export interface SearchParams {
   /** 排序：hot=按热度/最多播放(默认，找爆款), latest=最新, comprehensive=综合。 */
@@ -165,18 +193,21 @@ export const EXTRACTORS: Record<StudioCollectPlatform, string> = {
     return out;
   })()`,
   kuaishou: `(() => {
+    // 快手搜索结果是 div 卡片(无 <a>)：.card-container > .photo-card[data-like-count="⭐ N"]，
+    // 标题在 .caption(或 img.alt)，作者在文本行，点赞在 data-like-count 属性。
     const out = [], seen = new Set();
-    document.querySelectorAll('a[href*="/short-video/"], a[href*="/f/"]').forEach(a => {
-      const m = a.href.match(/\\/(short-video|f)\\/([0-9a-zA-Z_-]+)/);
-      if (!m) return;
-      const id = m[2]; if (seen.has(id)) return;
-      const card = a.closest('li, .card') || a.parentElement?.parentElement || a;
-      const title = (card.querySelector('.title, .desc, span')?.innerText || a.innerText || '').trim().slice(0, 90);
-      const likeEl = card.querySelector('.like, .count');
-      const author = (card.querySelector('.author, .name')?.innerText || '').trim();
+    document.querySelectorAll('.card-container').forEach(card => {
+      const pc = card.querySelector('.photo-card') || card;
+      const lines = (card.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
+      let title = (card.querySelector('.caption, .cover-img')?.innerText
+        || card.querySelector('img')?.getAttribute('alt') || lines[0] || '').replace(/#[^\\s#]+/g, '').trim().slice(0, 90);
       if (!title) return;
-      seen.add(id);
-      out.push({ content_id: id, title, url: 'https://www.kuaishou.com/short-video/' + id, likes: (likeEl?.innerText || '0').trim(), author });
+      const likeRaw = pc.getAttribute('data-like-count') || lines.find(ln => /^[\\d.]+\\s*[万wW]?$/.test(ln)) || '0';
+      const likes = (String(likeRaw).match(/[\\d.]+\\s*[万wW]?/) || ['0'])[0];
+      const author = (lines.find(ln => ln !== lines[0] && !/^[\\d.]+\\s*[万wW]?$/.test(ln) && !ln.includes('#')) || '').slice(0, 30);
+      const id = 'ks_' + title.replace(/[^\\w一-龥]/g, '').slice(0, 20) + likes;
+      if (seen.has(id)) return; seen.add(id);
+      out.push({ content_id: id, title, likes, author, url: '' });
     });
     return out;
   })()`,

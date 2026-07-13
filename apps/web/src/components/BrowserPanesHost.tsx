@@ -29,7 +29,7 @@ import {
   type CollectPaneSpec,
 } from '../runtime/browser-panes';
 import { runDraftInjection, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
-import { EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, buildSearchUrl } from '../runtime/collect-extractors';
+import { EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, SEARCH_BY_TYPING, buildSearchSubmitJs, buildSearchUrl } from '../runtime/collect-extractors';
 import { postCollectResult, reportCollectProgress } from '../providers/media-studio';
 import type { StudioCollectItem } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
@@ -95,6 +95,18 @@ async function runCollect(
         reportCollectProgress(jobId, `「${platform}」需要登录——请在这个标签里扫码登录后重试`);
         loginWalled = true;
         break;
+      }
+    }
+    // 模拟人操作：某些平台（快手）直接跳搜索URL不触发搜索/反爬，需在搜索框输入+回车。
+    if (page === 1 && SEARCH_BY_TYPING[platform]) {
+      reportCollectProgress(jobId, `「${platform}」像人一样在搜索框里搜「${spec.keyword}」…`);
+      await evalJs(buildSearchSubmitJs(spec.keyword), 4000);
+      await new Promise((r) => setTimeout(r, 3500)); // 等结果异步渲染
+      // 轻微滚动几下模拟浏览，触发懒加载
+      for (let i = 0; i < 3; i++) {
+        await evalJs('window.scrollBy(0, 800)', 2000);
+        await new Promise((r) => setTimeout(r, 900));
+        if (isCancelled()) return;
       }
     }
     // 无限滚动平台：滚动触发懒加载
