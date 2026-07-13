@@ -30,40 +30,61 @@ export const LOGIN_WALL: Record<StudioCollectPlatform, string[]> = {
   kuaishou: ['扫码登录后', '请先登录'],
 };
 
-/** 需要「模拟人操作」在搜索框输入+回车才会真出结果的平台（直接跳URL不触发搜索/反爬）。
- *  快手就是这样：navigate到搜索页只落在空视图，得像人一样在框里搜。
- *  注意：抖音/小红书这类复杂 SPA 模拟打字极不可靠(打了字但不真跳搜索结果、抓成推荐流),
- *  故它们不走打字,改走「首页暖场→再进搜索页」(见 WARMUP_HOMEPAGE)兼顾拟人与可靠。 */
+/** 需要【真·模拟人输入】搜索的平台：从首页进 → 在搜索框逐字符敲入关键词 → 回车,走完整
+ *  真人搜索轨迹(有 referrer、有逐字输入/回车交互),而不是直接跳搜索结果 URL(易被反爬识别)。
+ *  抖音/小红书反爬凶,全部走拟人输入;快手直接跳搜索 URL 只落空视图,本来就必须在框里搜。
+ *  拟人输入后会验证是否真跳到搜索结果页,没跳成才直连兜底(见 runCollect),避免抓成推荐流。
+ *  B站公开搜索宽松、且直连能带精确时间窗参数,保持直连。 */
 export const SEARCH_BY_TYPING: Record<StudioCollectPlatform, boolean> = {
-  xiaohongshu: false,
-  douyin: false,
+  xiaohongshu: true,
+  douyin: true,
   bilibili: false,
   kuaishou: true,
 };
 
-/** 「首页暖场」平台：进搜索页前先访问平台首页,建立会话/referrer、走出真人进站轨迹,
- *  再 navigate 到搜索结果 URL(referrer=首页)。比裸跳搜索 URL 更不易触发反爬/封号,
- *  又比模拟打字可靠(直连搜索页能拿到正确关键词结果)。抖音/小红书反爬凶,开启暖场。 */
-export const WARMUP_HOMEPAGE: Partial<Record<StudioCollectPlatform, string>> = {
+/** 拟人输入的平台首页(从这里开始敲搜索框)。快手无首页项→退回其搜索页再在框里搜(原行为)。 */
+export const PLATFORM_HOMEPAGE: Partial<Record<StudioCollectPlatform, string>> = {
   douyin: 'https://www.douyin.com/',
   xiaohongshu: 'https://www.xiaohongshu.com/explore',
 };
 
-/** 生成「在搜索框输入关键词并回车」的 JS（React 受控输入用原生 setter + input 事件）。 */
+/** 生成【真·模拟人输入】搜索的 JS：找到搜索框(必要时先点开搜索入口)→ 聚焦 → 逐字符敲入
+ *  (每个字符都派发 keydown/input/keyup、带随机停顿,像真人打字)→ 回车 +（兜底）点搜索按钮。
+ *  返回 'submitted' / 'no-input'。异步 IIFE(executeJavaScript 会 await 其结果)。
+ *  拟人化目的:比"瞬间 setValue"更不易被反爬识别为脚本。 */
 export function buildSearchSubmitJs(keyword: string): string {
   const kw = JSON.stringify(keyword);
-  return `(() => {
+  return `(async () => {
     const kw = ${kw};
-    const input = document.querySelector('input[placeholder*="搜索"], input[placeholder*="搜"], .search-input input, input.search-input, input[type="search"], header input, input');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const findInput = () => document.querySelector(
+      'input[data-e2e*="search"], input[placeholder*="搜索"], input[placeholder*="搜"], .search-input input, input.search-input, input[type="search"], header input');
+    let input = findInput();
+    if (!input) {
+      // 有些平台首页要先点「搜索」入口才出现输入框
+      const entry = document.querySelector('[data-e2e*="search"], [class*="search-entry"], [class*="searchEntry"], [class*="search-icon"], [aria-label*="搜索"]');
+      if (entry) { try { entry.click(); } catch (e) {} await sleep(700); }
+      input = findInput();
+    }
     if (!input) return 'no-input';
-    input.focus();
+    input.focus(); try { input.click(); } catch (e) {}
+    await sleep(200);
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-    if (setter) setter.call(input, kw); else input.value = kw;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    const btn = document.querySelector('.search-btn, [class*="search-button"], [class*="searchBtn"], button[type="submit"]');
-    if (btn) btn.click();
+    let cur = '';
+    for (const ch of Array.from(kw)) {                 // 逐字符敲(拟人)
+      cur += ch;
+      if (setter) setter.call(input, cur); else input.value = cur;
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch, inputType: 'insertText' }));
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+      await sleep(70 + Math.floor(Math.random() * 110));
+    }
+    await sleep(350);
+    for (const type of ['keydown', 'keypress', 'keyup']) {   // 回车
+      input.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    }
+    const btn = document.querySelector('.search-btn, [class*="search-button"], [class*="searchBtn"], [data-e2e*="search-btn"], button[type="submit"]');
+    if (btn) { try { btn.click(); } catch (e) {} }
     return 'submitted';
   })()`;
 }

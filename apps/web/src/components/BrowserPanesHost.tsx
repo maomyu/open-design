@@ -29,7 +29,7 @@ import {
   type CollectPaneSpec,
 } from '../runtime/browser-panes';
 import { runDraftInjection, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
-import { EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, WARMUP_HOMEPAGE, SEARCH_BY_TYPING, buildSearchSubmitJs, buildSearchUrl } from '../runtime/collect-extractors';
+import { EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, PLATFORM_HOMEPAGE, SEARCH_BY_TYPING, buildSearchSubmitJs, buildSearchUrl } from '../runtime/collect-extractors';
 import { postCollectResult, reportCollectProgress } from '../providers/media-studio';
 import type { StudioCollectItem } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
@@ -89,24 +89,40 @@ async function runCollect(
   const byId = new Map<string, StudioCollectItem>();
   let loginWalled = false;
 
-  const warmupUrl = WARMUP_HOMEPAGE[platform];
+  const homepage = PLATFORM_HOMEPAGE[platform];
+  const typeSearch = SEARCH_BY_TYPING[platform];
   for (let page = 1; page <= pages; page++) {
     if (isCancelled()) return;
-    // 抖音/小红书:进搜索页【前】先访问首页暖场(建会话/referrer、走真人进站轨迹),再跳搜索页,
-    // 降低反爬/封号风险;比模拟打字可靠(直连搜索页能拿到正确关键词结果)。
-    if (page === 1 && warmupUrl) {
-      reportCollectProgress(jobId, `「${platform}」先打开首页暖场(像人一样进站)…`);
-      await evalJs(`location.href = ${JSON.stringify(warmupUrl)}`, 4000);
-      await waitReady();
-      await new Promise((r) => setTimeout(r, 1500));
-      if (isCancelled()) return;
-    }
-    const url = buildSearchUrl(platform, spec.keyword, {
+    const searchUrl = buildSearchUrl(platform, spec.keyword, {
       order: spec.order, timeWindow: spec.timeWindow, page, nowSec: spec.nowSec,
     });
-    reportCollectProgress(jobId, `「${platform}」第 ${page} 页，加载中…`);
-    await evalJs(`location.href = ${JSON.stringify(url)}`, 4000);
-    await waitReady();
+    if (page === 1 && typeSearch) {
+      // 【真·模拟人输入】首页(抖音/小红书;快手无首页则退回搜索页)进 → 搜索框逐字符敲入 → 回车。
+      const startUrl = homepage ?? searchUrl;
+      reportCollectProgress(jobId, `「${platform}」打开${homepage ? '首页' : '搜索页'},准备像人一样输入…`);
+      await evalJs(`location.href = ${JSON.stringify(startUrl)}`, 4000);
+      await waitReady();
+      if (isCancelled()) return;
+      await new Promise((r) => setTimeout(r, 1200)); // 像人看一眼再动手
+      reportCollectProgress(jobId, `「${platform}」在搜索框里逐字敲「${spec.keyword}」并回车…`);
+      await evalJs(buildSearchSubmitJs(spec.keyword), 10_000);
+      await new Promise((r) => setTimeout(r, 2500)); // 让键盘输入/回车事件充分派发
+      if (isCancelled()) return;
+      // 拟人敲入(键盘交互=真人信号,已在搜索框里真打字+回车)后,统一进入【规范搜索页】:
+      // 带排序/时间窗参数、DOM 结构稳定、提取器可靠。抖音/小红书的搜索框回车常落在结构不同
+      // 的变体页(如抖音 jingxuan 搜索页 → 提取器抓不到),故这里显式进规范搜索页兜底,
+      // referrer=刚才打字的首页,依然是真人搜索轨迹。
+      if (homepage) {
+        reportCollectProgress(jobId, `「${platform}」进入搜索结果页…`);
+        await evalJs(`location.href = ${JSON.stringify(searchUrl)}`, 4000);
+        await waitReady();
+      }
+    } else {
+      // 直连平台(B站)或翻页:带排序/时间窗参数直接进搜索页。
+      reportCollectProgress(jobId, `「${platform}」第 ${page} 页，加载中…`);
+      await evalJs(`location.href = ${JSON.stringify(searchUrl)}`, 4000);
+      await waitReady();
+    }
     if (isCancelled()) return;
     // 登录墙判定（首页判一次即可）
     if (page === 1) {
@@ -116,18 +132,6 @@ async function runCollect(
         reportCollectProgress(jobId, `「${platform}」需要登录——请在这个标签里扫码登录后重试`);
         loginWalled = true;
         break;
-      }
-    }
-    // 模拟人操作：某些平台（快手）直接跳搜索URL不触发搜索/反爬，需在搜索框输入+回车。
-    if (page === 1 && SEARCH_BY_TYPING[platform]) {
-      reportCollectProgress(jobId, `「${platform}」像人一样在搜索框里搜「${spec.keyword}」…`);
-      await evalJs(buildSearchSubmitJs(spec.keyword), 4000);
-      await new Promise((r) => setTimeout(r, 3500)); // 等结果异步渲染
-      // 轻微滚动几下模拟浏览，触发懒加载
-      for (let i = 0; i < 3; i++) {
-        await evalJs('window.scrollBy(0, 800)', 2000);
-        await new Promise((r) => setTimeout(r, 900));
-        if (isCancelled()) return;
       }
     }
     // 无限滚动平台：滚动触发懒加载
