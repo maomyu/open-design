@@ -9942,6 +9942,41 @@ export async function startServer({
     }
   });
 
+  // 「边播边抓」兜底:内置浏览器从视频页抓到的【媒体直链】(mediaUrl)+ 页面地址(referer,反爬要),
+  // 由 daemon 带 Referer/UA 下载保存。yt-dlp 下不了(抖音/小红书/快手需登录/反爬)时用这条。
+  app.post('/api/media-studio/download-video-url', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const mediaUrl = String(req.body?.mediaUrl || '').trim();
+    const referer = String(req.body?.referer || '').trim();
+    const titleRaw = String(req.body?.title || 'video').trim();
+    if (!/^https?:\/\//.test(mediaUrl)) return res.status(400).json({ error: '无效的媒体直链' });
+    const outDir = path.join(RUNTIME_DATA_DIR, 'downloads');
+    const safeTitle = titleRaw.replace(/[/\\:*?"<>|\n]+/g, '_').slice(0, 60) || 'video';
+    const file = path.join(outDir, `${safeTitle}-${Date.now()}.mp4`);
+    try {
+      await fs.promises.mkdir(outDir, { recursive: true });
+      const resp = await fetch(mediaUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+          ...(referer ? { Referer: referer } : {}),
+        },
+      });
+      if (!resp.ok || !resp.body) {
+        return res.status(500).json({ error: `媒体下载失败(HTTP ${resp.status})——可能是流媒体加密或直链过期` });
+      }
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.length < 10_000) {
+        return res.status(500).json({ error: '抓到的不是有效视频(可能是加密流/占位),该视频无法直链下载' });
+      }
+      await fs.promises.writeFile(file, buf);
+      return res.json({ file, dir: outDir, bytes: buf.length });
+    } catch (err) {
+      return res.status(500).json({ error: '媒体下载失败:' + String(err && err.message ? err.message : err) });
+    }
+  });
+
   app.get('/api/orbit/status', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });

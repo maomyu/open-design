@@ -14,7 +14,9 @@ import {
   waitStudioCollectDone,
   radarScoreCollected,
   downloadStudioVideo,
+  downloadVideoByUrl,
 } from '../../providers/media-studio';
+import { grabVideoSrc } from '../../runtime/browser-panes';
 import { studioToast } from './StudioFeedback';
 import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
@@ -241,14 +243,24 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
 
   // 下载爆款原视频(仿写文案用)。逐行 busy。
   const [dlBusy, setDlBusy] = useState<string>('');
+  // 平台中文名 → 内置浏览器采集平台 id(边播边抓要用对的登录分区)。
+  const SOURCE_TO_PLATFORM: Record<string, string> = { 抖音: 'douyin', 小红书: 'xiaohongshu', 快手: 'kuaishou', B站: 'bilibili' };
   const runDownloadVideo = async (t: MediaTopic) => {
     if (!t.url) { studioToast.err('这条没有原视频链接'); return; }
     setDlBusy(t.id);
     try {
+      // ① 先用 yt-dlp(快、B站/公开抖音小红书好使)。
       studioToast.info('正在下载原视频(yt-dlp,大视频稍慢)…');
       const r = await downloadStudioVideo(t.url);
-      if ('error' in r) { studioToast.err(r.error); return; }
-      studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`);
+      if (!('error' in r)) { studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`); return; }
+      // ② yt-dlp 下不了(需登录/反爬)→ 内置浏览器【边播边抓】直链兜底。
+      const plat = SOURCE_TO_PLATFORM[t.source] ?? (collectTargets[0] as string) ?? 'douyin';
+      studioToast.info('yt-dlp 下不了,改用内置浏览器边播边抓(浏览器会打开该视频)…');
+      const grabbed = await grabVideoSrc({ platform: plat, account: 'main', url: t.url });
+      if ('error' in grabbed) { studioToast.err(`下载失败:${grabbed.error}`); return; }
+      const saved = await downloadVideoByUrl(grabbed.mediaUrl, grabbed.referer, t.title);
+      if ('error' in saved) { studioToast.err(`下载失败:${saved.error}`); return; }
+      studioToast.ok(`已用内置浏览器抓取下载:${saved.file}(在 ${saved.dir} 文件夹)`);
     } finally {
       setDlBusy('');
     }

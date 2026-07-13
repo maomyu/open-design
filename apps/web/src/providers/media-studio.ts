@@ -292,6 +292,26 @@ export async function downloadStudioVideo(
   }
 }
 
+/** 「边播边抓」抓到媒体直链后,让 daemon 带 Referer 下载保存。 */
+export async function downloadVideoByUrl(
+  mediaUrl: string,
+  referer: string,
+  title: string,
+): Promise<{ file: string; dir: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/download-video-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mediaUrl, referer, title }),
+    });
+    const d = (await resp.json()) as { file?: string; dir?: string; error?: string };
+    if (!resp.ok || !d.file) return { error: d.error || '下载失败' };
+    return { file: d.file, dir: d.dir ?? '' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function updateStudioTopic(
   platform: string,
   id: string,

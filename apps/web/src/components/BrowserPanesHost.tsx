@@ -22,6 +22,7 @@ import {
 import {
   BROWSER_PLATFORM_TITLES,
   BROWSER_TAB_CLOSED_EVENT,
+  GRAB_VIDEO_RESULT_EVENT,
   OPEN_BROWSER_PANE_EVENT,
   browserPaneKey,
   browserPanePartition,
@@ -181,6 +182,9 @@ interface PaneSpec {
   /** 爆款雷达采集载荷:面板就绪后消费一次,seq 递增触发重新采集。 */
   collect?: CollectPaneSpec;
   collectSeq?: number;
+  /** 「边播边抓」下载:导航到视频页、抓 <video> 直链后回报,seq 递增触发。 */
+  grab?: { grabId: string };
+  grabSeq?: number;
 }
 
 /** Electron <webview> 的导航 API 子集（web 包不依赖 electron 类型）。 */
@@ -207,7 +211,14 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
         const key = browserPaneKey(req.platform, req.account);
         const existing = list.find((p) => p.key === key);
         if (existing) {
-          // 已有面板:带 draft/collect 再次打开=对同一面板重跑(seq 递增触发)。
+          // 已有面板:带 draft/collect/grab 再次打开=对同一面板重跑(seq 递增触发)。
+          if (req.grab) {
+            return list.map((p) =>
+              p.key === key
+                ? { ...p, url: req.url, grab: req.grab!, grabSeq: (p.grabSeq ?? 0) + 1 }
+                : p,
+            );
+          }
           if (req.collect) {
             return list.map((p) =>
               p.key === key
@@ -232,6 +243,7 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
             ...(req.draft ? { draft: req.draft, draftSeq: 1 } : {}),
             ...(req.draftJobId ? { draftJobId: req.draftJobId } : {}),
             ...(req.collect ? { collect: req.collect, collectSeq: 1 } : {}),
+            ...(req.grab ? { grab: req.grab, grabSeq: 1 } : {}),
           },
         ];
       });
@@ -421,6 +433,57 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     // 中途取消,快平台已采完躲过,于是并发下慢平台稳定 0 条。用 seq 后重渲染不再误杀采集。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec.collectSeq]);
+
+  // 「边播边抓」下载:导航到视频页 → 播放触发加载 → 抓 <video> 直链(或页面里的 mp4)→ 回报。
+  const ranGrabRef = useRef(0);
+  useEffect(() => {
+    const seq = spec.grabSeq ?? 0;
+    if (!spec.grab || seq === 0 || seq === ranGrabRef.current) return;
+    ranGrabRef.current = seq;
+    const grabId = spec.grab.grabId;
+    let cancelled = false;
+    const el = () => ref.current as unknown as DraftWebview | null;
+    const evalOn = async (js: string, ms = 6000): Promise<unknown> => {
+      const w = el();
+      if (!w) return undefined;
+      try {
+        return await Promise.race([
+          w.executeJavaScript(js),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+        ]);
+      } catch { return undefined; }
+    };
+    const report = (result: { mediaUrl: string; referer: string } | { error: string }) => {
+      window.dispatchEvent(new CustomEvent(GRAB_VIDEO_RESULT_EVENT, { detail: { grabId, result } }));
+    };
+    const timer = window.setTimeout(async () => {
+      if (cancelled) return;
+      navigate({ kind: 'browser', platform: spec.platform, account: spec.account });
+      await evalOn(`location.href=${JSON.stringify(spec.url)}`, 4000);
+      // 抓取脚本:等 <video> 出现并有 http 直链;拿不到就扫页面里的 .mp4 直链兜底。
+      const grabJs = `(async()=>{const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+        for(let i=0;i<25&&!${'false'};i++){const v=document.querySelector('video');
+          if(v){try{v.muted=true;v.play();}catch(e){}
+            const s=v.currentSrc||v.src||'';
+            if(/^https?:/.test(s))return JSON.stringify({mediaUrl:s,referer:location.href});}
+          await sleep(1000);}
+        const h=document.documentElement.innerHTML;
+        const m=h.match(/https?:\\/\\/[^"'\\\\\\s]+\\.mp4[^"'\\\\\\s]*/);
+        if(m)return JSON.stringify({mediaUrl:m[0].replace(/\\\\u002F/g,'/'),referer:location.href});
+        return JSON.stringify({error:'no-src'});})()`;
+      const raw = (await evalOn(grabJs, 40_000)) as string | undefined;
+      if (cancelled) return;
+      try {
+        const parsed = JSON.parse(String(raw || '{}'));
+        if (parsed.mediaUrl) report({ mediaUrl: parsed.mediaUrl, referer: parsed.referer || spec.url });
+        else report({ error: '没在页面抓到视频直链(可能是加密流)——可在浏览器里右键手动保存' });
+      } catch {
+        report({ error: '抓取解析失败——可在浏览器里右键手动保存视频' });
+      }
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec.grabSeq]);
 
   useEffect(() => {
     const el = ref.current;
