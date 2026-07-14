@@ -337,6 +337,34 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
     [flushSave],
   );
 
+  // 【提取文案仿写·第③步】用户选「直接出可开拍的仿写口播稿」:拿到真实口播 transcript 后,
+  // 新建一篇短视频稿(带上原文/来源),直接跑 script 任务写出仿写口播稿,并切到脚本区看它成文。
+  const rewriteToScript = useCallback(
+    async (title: string, transcript: string, sourceUrl: string) => {
+      await flushSave();
+      const created = await createStudioArticle(PLATFORM, {
+        title: `仿写·${title.slice(0, 20) || '爆款'}`,
+        topic: title,
+        extra: { targetPlatform: svPlatformLabel, sourceTranscript: transcript, sourceUrl },
+      });
+      if (!created) { studioToast.err('建稿失败——请重试'); return; }
+      await refreshArticles();
+      setArticle(created);
+      window.localStorage.setItem(lastArticleKey, created.id);
+      setTab('script');
+      const note = [
+        '请【仿写】这条爆款的口播文案:保留它的开场钩子、内容结构和爆点节奏,',
+        '换成全新的、属于本账号(男性情感赛道)的表达与案例,不要照抄原句。',
+        `\n【原口播文案】\n${transcript}`,
+      ].join('');
+      const t = await createStudioAiTask(PLATFORM, { kind: 'script', articleId: created.id, input: { note } });
+      if ('error' in t) { studioToast.err(t.error); return; }
+      aiSeqRef.current += 1;
+      setAiTask({ ...t, seq: aiSeqRef.current });
+    },
+    [flushSave, refreshArticles, svPlatformLabel, lastArticleKey],
+  );
+
   // AI 任务运行中每 3 秒轮询——agent 中途写回的脚本实时上屏，不等任务结束。
   useEffect(() => {
     if (!effectiveAiRunning) return;
@@ -576,6 +604,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
+              onRewriteToScript={(title, transcript, sourceUrl) => void rewriteToScript(title, transcript, sourceUrl)}
               aiBusy={effectiveAiRunning}
             />
           ) : null}

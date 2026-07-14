@@ -138,6 +138,9 @@ export interface TopicsTabProps {
   onWrite: (topic: MediaTopic) => void;
   /** picked = 用户勾选的优先参考；单篇「AI 转题」= note 空 + picked 一篇。 */
   onAiFind: (note: string, picked?: PickedHit[]) => void;
+  /** 【提取文案仿写】拿到真实口播 transcript 后,直接建稿写一版可开拍的仿写口播稿(短视频台)。
+   *  没传(如公众号)则回退到 onAiFind('topics') 老路。 */
+  onRewriteToScript?: (title: string, transcript: string, sourceUrl: string) => void;
   aiBusy: boolean;
   /** TikHub 平台分流模式(短视频台,2026-07-09 用户拍板):选题数据按目标
    *  平台走它自己的接口(抖音↔抖音、小红书↔小红书、快手↔快手),传了此
@@ -152,7 +155,7 @@ export interface TopicsTabProps {
   collectPlatforms?: string[];
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, browserCollect = false, collectPlatforms }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, aiBusy, tikhubTargets, browserCollect = false, collectPlatforms }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
@@ -313,13 +316,20 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       const transcript = ex.transcript.trim();
       setBaokuanStatus('');
       if (!transcript) { studioToast.info('这条没提取到口播文案(可能是纯音乐/画面无旁白),换一条带口播的爆款试试。'); return; }
-      // 第③步:把原口播文案交给 AI 仿写(保留结构/钩子,换成用户自己的表达)。
-      studioToast.ok('已提取原口播文案 ✓ 正在交给 AI 仿写(保留爆点结构、换成你的表达)…');
-      onAiFind(
-        `请【仿写】下面这条爆款视频的口播文案:保留它的开场钩子、内容结构和爆点节奏,但换成全新的、`
-        + `属于我自己账号的表达和案例,不要照抄原句。平台:${plat}。原标题:${hit.title}。\n\n【原口播文案】\n${transcript}`,
-        toPicked([hit]),
-      );
+      // 第③步:直接产出【可开拍的仿写口播稿】(用户拍板:一步到位,不绕选题池)。
+      // 短视频台走 onRewriteToScript(建稿→跑 script 任务→切脚本区看成文);
+      // 无此回调的场景(公众号等)回退到 onAiFind('topics') 老路。
+      if (onRewriteToScript) {
+        studioToast.ok('已提取原口播文案 ✓ 正在直接写一版可开拍的仿写口播稿…');
+        onRewriteToScript(hit.title, transcript, hit.url);
+      } else {
+        studioToast.ok('已提取原口播文案 ✓ 正在交给 AI 仿写(保留爆点结构、换成你的表达)…');
+        onAiFind(
+          `请【仿写】下面这条爆款视频的口播文案:保留它的开场钩子、内容结构和爆点节奏,但换成全新的、`
+          + `属于我自己账号的表达和案例,不要照抄原句。平台:${plat}。原标题:${hit.title}。\n\n【原口播文案】\n${transcript}`,
+          toPicked([hit]),
+        );
+      }
     } finally {
       setDlBusy('');
     }
