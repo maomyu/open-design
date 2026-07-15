@@ -75,7 +75,13 @@ export async function exportBrowserCookies(platform: string, account: string): P
       | undefined;
     const fn = host?.browser?.exportCookies;
     if (typeof fn !== 'function') return null;
-    const res = await fn({ platform: normalizeBrowserPlatform(platform), account });
+    // 加超时兜底:cookie 导出是 IPC 调用,若浏览器分区未就绪/主进程卡住,await 会永久挂起——
+    // 而下载首选走 TikHub 直链本就不需要 cookie。6s 拿不到就当没有(返回 null),让下载照常进行,
+    // 避免"提取仿写"卡在①下载前(用户报"一直转圈"的根因之一)。
+    const res = await Promise.race([
+      fn({ platform: normalizeBrowserPlatform(platform), account }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+    ]);
     if (res && typeof res === 'object' && (res as { ok?: boolean }).ok === true) {
       const cf = (res as { cookieFile?: string }).cookieFile;
       return typeof cf === 'string' && cf ? cf : null;

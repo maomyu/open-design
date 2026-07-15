@@ -62,6 +62,22 @@ const SAU_PLATFORMS: Array<{ id: SauPlatformId; label: string }> = [
   { id: 'tencent', label: '视频号' },
 ];
 
+/**
+ * 子平台按选题 URL 的平台域名判定。选题都存在同一 'short-video' 池里(MediaTopic 无子平台字段),
+ * 靠 URL 的平台域名区分显示,避免切到 B站 却看到快手/抖音的选题(2026-07-15 用户报串台)。
+ */
+const SUB_PLATFORM_URL_RE: Array<{ id: SauPlatformId; re: RegExp }> = [
+  { id: 'douyin', re: /douyin\.com|iesdouyin|v\.douyin/i },
+  { id: 'xiaohongshu', re: /xiaohongshu\.com|xhslink/i },
+  { id: 'kuaishou', re: /kuaishou\.com|chenzhongtech/i },
+  { id: 'bilibili', re: /bilibili\.com|b23\.tv/i },
+  { id: 'tencent', re: /channels\.weixin|finder|weixin\.qq/i },
+];
+function topicSubPlatform(url: string): SauPlatformId | null {
+  for (const { id, re } of SUB_PLATFORM_URL_RE) if (re.test(url)) return id;
+  return null;
+}
+
 const TONES = ['真诚口播', '干货清单', '故事化', '测评对比', '情绪共鸣'];
 const DURATIONS = ['15s', '30s', '60s', '1-3min'];
 
@@ -514,9 +530,17 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   // 自动发布(sau 矩阵直传)已下线(2026-07-09 用户拍板):抖音等平台只走
   // 「带稿开后台 → 人工存草稿/发布」。daemon 端点与 od CLI 保留可恢复。
 
+  // 只显示当前子平台的选题(选题共用一个 'short-video' 池,按 URL 平台域名过滤;URL 认不出平台的
+  // 少数选题在各子平台都显示,不丢)。修复:切到 B站 却看到快手/抖音选题的串台(2026-07-15)。
+  const curSubPlatform = svPlatform ?? 'douyin';
+  const visibleTopics = topics.filter((t) => {
+    const p = topicSubPlatform(t.url || '');
+    return p === null || p === curSubPlatform;
+  });
+
   // ---- 步骤完成态（用户一眼看到走到哪了） ----
   const stepDone: Record<VideoTab, boolean> = {
-    topics: topics.some((t) => t.status === 'used'),
+    topics: visibleTopics.some((t) => t.status === 'used'),
     script: Boolean(article && article.title.trim() && article.bodyMd.trim()),
     voice: Boolean(audioUrl),
     video: Boolean(videoPath.trim()),
@@ -659,7 +683,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
                   ? [svPlatform ?? 'douyin']
                   : []
               }
-              topics={topics}
+              topics={visibleTopics}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);
                 if (created) setTopics((list) => [created, ...list]);

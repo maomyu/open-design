@@ -24,8 +24,9 @@ const COLLECT_PLATFORM_LABEL: Record<string, string> = { douyin: '抖音', xiaoh
 
 // 真抓爆款结果的【模块级存储 + 事件】。采集时内置浏览器会切到前台采集页,导致选题页组件卸载;
 // runDirectCollect 是独立 async 会跑完,但卸载后 setHits 失效。故把爆款结果写进模块存储 + 广播事件,
-// 选题页(重新)挂载时读回来显示,不受卸载影响。
-let latestBaokuanHits: MediaTopicHit[] = [];
+// 选题页(重新)挂载时读回来显示,不受卸载影响。★按采集平台分桶(key=采集平台组合),否则切子平台
+// (如快手→B站)会读回上个平台的爆款结果、串台(2026-07-15 用户报)。
+const latestBaokuanHitsByPlat: Record<string, MediaTopicHit[]> = {};
 const BAOKUAN_HITS_EVENT = 'od:baokuan-hits';
 // 采集进度提示也走模块存储 + 事件:采集时选题页会被切走卸载,本地 state 会丢,导致用户看到
 // 空白以为没反应。用模块级状态,重新挂载也能显示"正在采集/评分中…",有明确加载反馈。
@@ -204,6 +205,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   // ── 真抓爆款·直接采集(纯可视化,不经 AI 智能体)：点一下 → 内置浏览器【当前选中平台】可见
   //    采集 → 引擎按爆款筛选评分 → 选题候选直接进「候选选题」表。选抖音就只抓抖音。 ──
   const collectTargets = collectPlatforms ?? ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'];
+  // 爆款结果模块存储的分桶 key = 当前采集平台组合(短视频台每个子平台单独一桶,互不串台)。
+  const baokuanPlatKey = collectTargets.join(',');
   const [collectBusy, setCollectBusy] = useState(false);
   const [collectMsg, setCollectMsg] = useState(() => (browserCollect ? baokuanStatus : ''));
   // 采集进度:挂载即从模块状态读回(采集期间本组件可能被切走卸载过),并监听更新——保证采集
@@ -242,9 +245,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           hot: `${t['热度'] ?? ''}级 · 流量分${t['流量爆款分'] ?? ''}`,
           desc: `${String(t['评分理由'] ?? '')}${Number(t['评论']) ? ` · 评论${t['评论']}` : ''}${Number(t['粉丝']) ? ` · 粉丝${t['粉丝']}` : ''}`,
         }));
-      // 写模块存储 + 广播:即使采集把选题页卸载过,重新挂载也能读到这批爆款。
-      latestBaokuanHits = hitList;
-      window.dispatchEvent(new CustomEvent<MediaTopicHit[]>(BAOKUAN_HITS_EVENT, { detail: hitList }));
+      // 写模块存储(按平台分桶)+ 广播:即使采集把选题页卸载过,重新挂载也能读到本平台这批爆款。
+      latestBaokuanHitsByPlat[baokuanPlatKey] = hitList;
+      window.dispatchEvent(new CustomEvent<{ plat: string; hits: MediaTopicHit[] }>(BAOKUAN_HITS_EVENT, { detail: { plat: baokuanPlatKey, hits: hitList } }));
       setHits(hitList);
       setBaokuanStatus('');
       if (hitList.length === 0) {
@@ -290,7 +293,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       setBaokuanStatus('① 正在下载原视频(仿写要基于真实口播内容)…');
       const file = await downloadVideoGetFile(hit.url, hit.title, hit.account, true);
       if (!file) { setBaokuanStatus(''); return; }
-      setBaokuanStatus('② 正在提取口播文案(抽音频 + 语音转写,约半分钟)…');
+      setBaokuanStatus('② 正在提取口播文案(抽音频 + 语音转写;长视频只取前 5 分钟,约半分钟,请稍候别关)…');
       const ex = await extractScriptFromVideo(file);
       setBaokuanStatus('');
       // "转写为空/纯音乐/无口播"不是真失败——这条视频本来就没口播,没法仿写口播稿。
@@ -320,15 +323,18 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     }
   };
 
-  const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? latestBaokuanHits : []));
-  // 真抓爆款结果:挂载即从模块存储读回(采集期间本组件可能被卸载过),并监听广播实时更新。
+  const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? (latestBaokuanHitsByPlat[baokuanPlatKey] ?? []) : []));
+  // 真抓爆款结果:挂载/切平台时从模块存储读回【本平台】那桶(没有就清空,不串上个平台),并监听广播。
   useEffect(() => {
     if (!browserCollect) return;
-    if (latestBaokuanHits.length) setHits(latestBaokuanHits);
-    const onHits = (ev: Event) => setHits((ev as CustomEvent<MediaTopicHit[]>).detail);
+    setHits(latestBaokuanHitsByPlat[baokuanPlatKey] ?? []);
+    const onHits = (ev: Event) => {
+      const d = (ev as CustomEvent<{ plat: string; hits: MediaTopicHit[] }>).detail;
+      if (d && d.plat === baokuanPlatKey) setHits(d.hits);
+    };
     window.addEventListener(BAOKUAN_HITS_EVENT, onHits);
     return () => window.removeEventListener(BAOKUAN_HITS_EVENT, onHits);
-  }, [browserCollect]);
+  }, [browserCollect, baokuanPlatKey]);
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedNotice, setFeedNotice] = useState<string | null>(null);
   const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set());
