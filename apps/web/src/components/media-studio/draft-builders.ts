@@ -120,6 +120,8 @@ export async function buildStudioDraft(target: string, article: MediaArticle): P
     case 'short-video': {
       const file = typeof extra.videoPath === 'string' ? extra.videoPath.trim() : '';
       if (!file.startsWith('/')) return null;
+      // 封面(用户在发布页上传的本机图):带上 → 注入时自动上传到抖音「设置封面」。
+      const cover = typeof extra.coverPath === 'string' ? extra.coverPath.trim() : '';
       return {
         platform: target,
         kind: 'video',
@@ -127,6 +129,7 @@ export async function buildStudioDraft(target: string, article: MediaArticle): P
         body: article.bodyMd.trim(),
         tags: splitTags(extra.tags),
         filePaths: [file],
+        ...(cover.startsWith('/') ? { coverPath: cover } : {}),
       };
     }
     default:

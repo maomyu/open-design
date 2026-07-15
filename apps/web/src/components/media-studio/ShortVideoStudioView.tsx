@@ -22,6 +22,7 @@ import {
   createStudioTopic,
   deleteStudioArticle,
   deleteStudioTopic,
+  fetchDownloadedVideoObjectUrl,
   fetchStudioArticle,
   fetchStudioArticles,
   fetchStudioPublishes,
@@ -30,6 +31,7 @@ import {
   type StudioLintHit,
   synthesizeStudioTts,
   updateStudioArticle,
+  uploadStudioCover,
   uploadStudioVideo,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
@@ -84,6 +86,64 @@ function timeLabel(ts: number): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 【提取文案仿写·素材卡】仿写建稿时把原视频 + 提取的口播文案带到脚本页,一眼对照着改。
+ *  原视频用 blob 播放(绕开 od:// 的 Range 透传问题);文案可一键复制。仅当本稿是「提取仿写」
+ *  来的(extra 里有 sourceTranscript/sourceVideoFile)才显示。 */
+function SourceMaterialCard({ videoFile, transcript, sourceUrl }: { videoFile: string; transcript: string; sourceUrl: string }): JSX.Element | null {
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!videoFile) { setVideoUrl(null); return; }
+    let revoke: (() => void) | null = null;
+    let alive = true;
+    setVideoUrl(null);
+    void fetchDownloadedVideoObjectUrl(videoFile).then((r) => {
+      if (!alive) { r?.revoke(); return; }
+      if (r) { revoke = r.revoke; setVideoUrl(r.url); }
+    });
+    return () => { alive = false; if (revoke) revoke(); };
+  }, [videoFile]);
+  if (!videoFile && !transcript) return null;
+  return (
+    <div className={c('card')}>
+      <div className={c('cardLabel')}>
+        对照原爆款(仿写素材)
+        <span className={c('cardHint')}>下载的原视频 + 提取的口播文案——AI 已按你的风格仿写,可对照着微调</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 260px) 1fr', gap: 14, alignItems: 'start' }}>
+        <div>
+          {videoFile ? (
+            videoUrl ? (
+              <video src={videoUrl} controls playsInline style={{ width: '100%', maxHeight: '48vh', borderRadius: 10, background: '#000' }} />
+            ) : (
+              <div style={{ width: '100%', aspectRatio: '9 / 16', maxHeight: '48vh', borderRadius: 10, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 13, gap: 8 }}>
+                <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.25)', borderTopColor: '#fff', display: 'inline-block', animation: 'od-spin 0.8s linear infinite' }} />
+                正在载入视频…
+              </div>
+            )
+          ) : (
+            <div className={c('cardHint')}>（无原视频）</div>
+          )}
+          {sourceUrl ? (
+            <a href={sourceUrl} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ display: 'inline-block', marginTop: 6, fontSize: 11.5 }}>看原视频 ↗</a>
+          ) : null}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span className={c('cardHint')}>提取的原口播文案（{transcript.replace(/\s+/g, '').length} 字）</span>
+            {transcript ? (
+              <button type="button" className={c('btn')} onClick={() => { void navigator.clipboard?.writeText(transcript); studioToast.ok('原文案已复制'); }}>复制原文案</button>
+            ) : null}
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13.5, lineHeight: 1.7, background: 'var(--od-surface-muted, #f6f6f7)', borderRadius: 10, padding: 12, maxHeight: '48vh', overflow: 'auto' }}>
+            {transcript || '（无口播文案）'}
+          </div>
+        </div>
+      </div>
+      <style>{'@keyframes od-spin{to{transform:rotate(360deg)}}'}</style>
+    </div>
+  );
 }
 
 /** 下一个 hh:mm 时点（今天已过就取明天），datetime-local 值格式。 */
@@ -146,6 +206,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   const [voicePreviewUrl, setVoicePreviewUrl] = useState('');
   const [voicePreviewBusy, setVoicePreviewBusy] = useState(false);
   const [videoUploadBusy, setVideoUploadBusy] = useState(false);
+  const [coverUploadBusy, setCoverUploadBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
   const [lintHits, setLintHits] = useState<StudioLintHit[]>([]);
@@ -340,21 +401,25 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   // 【提取文案仿写·第③步】用户选「直接出可开拍的仿写口播稿」:拿到真实口播 transcript 后,
   // 新建一篇短视频稿(带上原文/来源),直接跑 script 任务写出仿写口播稿,并切到脚本区看它成文。
   const rewriteToScript = useCallback(
-    async (title: string, transcript: string, sourceUrl: string) => {
+    async (title: string, transcript: string, sourceUrl: string, videoFile: string) => {
       await flushSave();
       const created = await createStudioArticle(PLATFORM, {
         title: `仿写·${title.slice(0, 20) || '爆款'}`,
         topic: title,
-        extra: { targetPlatform: svPlatformLabel, sourceTranscript: transcript, sourceUrl },
+        // sourceVideoFile:下载的原视频本地路径 → 脚本页 blob 播放展示;sourceTranscript:提取的口播文案。
+        extra: { targetPlatform: svPlatformLabel, sourceTranscript: transcript, sourceUrl, sourceVideoFile: videoFile },
       });
       if (!created) { studioToast.err('建稿失败——请重试'); return; }
       await refreshArticles();
       setArticle(created);
       window.localStorage.setItem(lastArticleKey, created.id);
       setTab('script');
+      // 仿写风格(2026-07-14 用户拍板):优先按【知识库】里的账号人设/口播风格(daemon 会把公司
+      // 知识库注入 AI);知识库还没配口播风格时,就沿用这条爆款本身(今天题库里的案例)的风格与节奏。
       const note = [
-        '请【仿写】这条爆款的口播文案:保留它的开场钩子、内容结构和爆点节奏,',
-        '换成全新的、属于本账号(男性情感赛道)的表达与案例,不要照抄原句。',
+        '请【仿写】这条爆款的口播文案:保留它的开场钩子、内容结构和爆点节奏,换成全新的表达与案例,不要照抄原句。',
+        '\n【风格】优先用「公司知识库」里的账号人设/口播风格,把它改写成本账号的表达与口吻;',
+        '如果知识库里还没有口播风格,就沿用这条爆款本身的风格与节奏(它就是今天题库里的爆款案例),仿其形、换其肉。',
         `\n【原口播文案】\n${transcript}`,
       ].join('');
       const t = await createStudioAiTask(PLATFORM, { kind: 'script', articleId: created.id, input: { note } });
@@ -604,7 +669,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
-              onRewriteToScript={(title, transcript, sourceUrl) => void rewriteToScript(title, transcript, sourceUrl)}
+              onRewriteToScript={(title, transcript, sourceUrl, videoFile) => void rewriteToScript(title, transcript, sourceUrl, videoFile)}
               aiBusy={effectiveAiRunning}
             />
           ) : null}
@@ -614,6 +679,14 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               emptyCta('还没有作品。从「选题」挑一个开始，或新建一个空白作品。')
             ) : (
               <>
+                {/* 「提取文案仿写」来的稿:把原视频 + 原口播文案摆在脚本页顶部,对照着改仿写稿。 */}
+                {str(extra.sourceTranscript) || str(extra.sourceVideoFile) ? (
+                  <SourceMaterialCard
+                    videoFile={str(extra.sourceVideoFile)}
+                    transcript={str(extra.sourceTranscript)}
+                    sourceUrl={str(extra.sourceUrl)}
+                  />
+                ) : null}
                 {hasFeature(license, 'cap.ai') ? (
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
@@ -864,6 +937,43 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               emptyCta('发布属于某个作品——先去「脚本」新建。')
             ) : (
               <>
+                {/* 封面(可选):用户传一张封面图,一键存草稿时自动上传到抖音「设置封面」。
+                    不传也能存草稿(抖音会用视频首帧)。 */}
+                <div className={c('card')}>
+                  <div className={c('cardLabel')}>
+                    封面（可选）
+                    <span className={c('cardHint')}>传一张封面图，「一键存草稿」时自动上传到抖音；不传则用视频首帧</span>
+                  </div>
+                  <div className={c('row')}>
+                    <label className={c('btn')} style={{ cursor: 'pointer' }} title="选本机封面图(jpg/png),存草稿时自动带上">
+                      <Icon name="upload" size={14} /> {coverUploadBusy ? '上传中…' : str(extra.coverPath) ? '换封面' : '选择封面图'}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg"
+                        style={{ display: 'none' }}
+                        disabled={coverUploadBusy}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          void (async () => {
+                            setCoverUploadBusy(true);
+                            const result = await uploadStudioCover(PLATFORM, article.id, file);
+                            setCoverUploadBusy(false);
+                            if (result.error) studioToast.err(result.error);
+                            else if (result.article) { setArticle(result.article); studioToast.ok('封面已就位，存草稿时会自动上传'); }
+                          })();
+                        }}
+                      />
+                    </label>
+                    {str(extra.coverPath) ? (
+                      <>
+                        <span className={c('cardHint')}>已选：{str(extra.coverPath).split('/').pop()}</span>
+                        <button type="button" className={c('btn')} onClick={() => editArticle({ extra: { coverPath: '' } })}>移除</button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
                 {/* 自动发布(sau 矩阵直传)与定时发布已下线(2026-07-09 用户
                     拍板):抖音等平台只走「带稿开后台 → 人工存草稿/发布」,
                     零自动化指纹。daemon 端点与 od CLI 保留,可恢复。 */}

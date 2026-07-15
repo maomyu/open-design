@@ -239,24 +239,63 @@ export async function createStudioCollect(
 }
 
 /** 轮询采集任务到终态(done/error);采集在桌面端【可见标签】里逐平台跑,期间浏览器前台可见。
- *  注意:/wait(since=0)是立即返回当前快照、并不阻塞,所以每轮之间必须 sleep,否则会在
- *  一两秒内狂轮几十次全拿到 running 就误判失败(这是"爆款一直不显示"的根因)。采集(尤其抖音
- *  含首页暖场/拟人输入/验证码等待)可能几分钟,故轮询上限放到 ~6 分钟。 */
-export async function waitStudioCollectDone(jobId: string): Promise<StudioCollectJob | null> {
-  for (let i = 0; i < 120; i++) {
+ *  用 /wait 的【长轮询 + since 游标】拿 progress 增量:采集端(BrowserPanesHost.runCollect)
+ *  每步 reportCollectProgress 写进 job.progress,这里通过 onProgress 把它顶到选题页显示——
+ *  尤其"撞验证码/需登录"这种要用户动手的提示,必须让用户在应用里看得见(2026-07-14 用户报
+ *  "抖音撞验证码要停下等用户 + 要有提示")。采集(抖音含首页暖场/拟人输入/验证码等待)可能几
+ *  分钟,故上限放到 ~6 分钟。 */
+export async function waitStudioCollectDone(
+  jobId: string,
+  onProgress?: (message: string, job: StudioCollectJob) => void,
+): Promise<StudioCollectJob | null> {
+  let cursor = 0;
+  const deadline = Date.now() + 6 * 60_000;
+  while (Date.now() < deadline) {
     try {
-      const resp = await fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/wait`);
+      // since=cursor:服务端阻塞到有新 progress / 终态 / 超时(20s)才返回,天然节流。
+      const resp = await fetch(
+        `${ROOT}/collect/${encodeURIComponent(jobId)}/wait?since=${cursor}&timeoutMs=20000`,
+      );
       if (resp.ok) {
-        const d = (await resp.json()) as { job?: StudioCollectJob } & StudioCollectJob;
+        const d = (await resp.json()) as { job?: StudioCollectJob; cursor?: number } & StudioCollectJob;
         const job = (d.job ?? d) as StudioCollectJob;
+        if (onProgress && Array.isArray(job.progress)) {
+          for (const line of job.progress) if (line) onProgress(line, job);
+        }
+        if (typeof d.cursor === 'number') cursor = d.cursor;
         if (job.status === 'done' || job.status === 'error') return job;
       }
     } catch {
       /* 单次网络抖动忽略,下一轮再试;不要因一次失败就整体放弃 */
     }
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, 800));
   }
   return null;
+}
+
+/**
+ * 【TikHub 直采选题】真抓爆款主通道:给关键词+平台+爆款标准,daemon 让引擎走 TikHub 搜索
+ * (翻页累积→按标准筛→评分)秒出选题候选。取代"开内置浏览器逐平台搜+抓卡片"的老路——
+ * 更快、字段更全(带粉丝/评论/真视频id可下载)、无登录/验证码/滚动/改版问题。
+ */
+export async function collectScoreTopics(
+  keyword: string,
+  platforms: string[],
+  criteria?: unknown,
+  pages = 1,
+): Promise<{ topics: Array<Record<string, unknown>>; count: number } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/collect-score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword, platforms, pages, ...(criteria ? { criteria } : {}) }),
+    });
+    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string };
+    if (!resp.ok) return { error: d.error || 'TikHub 采集/评分失败' };
+    return { topics: d.topics ?? [], count: d.count ?? 0 };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** 把采集到的条目 { 平台: [条目] } 交爆款引擎 --radar 评分,返回选题候选。 */
@@ -315,6 +354,39 @@ export async function downloadVideoByUrl(
     return { file: d.file, dir: d.dir ?? '' };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 已下载爆款原视频的可播放 URL(供 <video> 预览用)。
+ * 传 daemon 下载接口返回的绝对路径或文件名,取 basename 拼到 download-file 路由。
+ */
+export function downloadedVideoUrl(file: string): string {
+  const base = file.split(/[\\/]/).pop() ?? file;
+  return `${ROOT}/download-file/${encodeURIComponent(base)}`;
+}
+
+/**
+ * 把已下载视频整体 fetch 成 blob 并返回 objectURL,供 <video src> 用。
+ * 为什么不直接 <video src={apiUrl}>:packaged 下网页走 od:// 协议,<video> 自己发的
+ * Range 请求要穿 od://→web-sidecar→daemon 三层代理,206/Range 透传不稳,常表现为
+ * "下下来了却放不出来"。改成 fetch 整块(走的是稳的 fetch 代理)→ createObjectURL,
+ * <video> 直接吃本地 blob,绕开 Range 问题。仿写用的短视频通常几 MB,一次性拉没压力。
+ * 返回 { url, revoke };失败返回 null(调用方回退到 apiUrl 或提示)。
+ */
+export async function fetchDownloadedVideoObjectUrl(
+  file: string,
+): Promise<{ url: string; revoke: () => void } | null> {
+  try {
+    const base = file.split(/[\\/]/).pop() ?? file;
+    const resp = await fetch(`${ROOT}/download-file/${encodeURIComponent(base)}`);
+    if (!resp.ok) return null;
+    const blob = await resp.blob();
+    if (blob.size < 1024) return null; // 太小=不是有效视频
+    const url = URL.createObjectURL(blob);
+    return { url, revoke: () => URL.revokeObjectURL(url) };
+  } catch {
+    return null;
   }
 }
 
@@ -683,6 +755,29 @@ export async function deleteStudioKnowledge(platform: string, id: string): Promi
 }
 
 // ---- short-video: 配音 / 登录态 / 矩阵发布 ----
+
+/** 上传封面图(发布页),存进作品素材目录并记 extra.coverPath;一键存草稿时自动传到抖音封面。 */
+export async function uploadStudioCover(
+  platform: string,
+  articleId: string,
+  file: File,
+): Promise<{ path?: string; article?: MediaArticle; error?: string }> {
+  try {
+    const resp = await fetch(
+      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/upload-cover`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name) },
+        body: file,
+      },
+    );
+    const data = (await resp.json().catch(() => ({}))) as { path?: string; article?: MediaArticle; error?: string };
+    if (!resp.ok) return { error: data.error ?? `封面上传失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
 
 export async function uploadStudioVideo(
   platform: string,

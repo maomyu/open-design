@@ -47,48 +47,18 @@ export const SEARCH_BY_TYPING: Record<StudioCollectPlatform, boolean> = {
  *  再逐字敲入,既避开精选、又保留真人打字信号。小红书 explore 是搜索承载页,保留。 */
 export const PLATFORM_HOMEPAGE: Partial<Record<StudioCollectPlatform, string>> = {
   xiaohongshu: 'https://www.xiaohongshu.com/explore',
+  // 抖音改从首页进(2026-07-14):原来直连 /search/<kw> 深链是强机器人信号,正是"总弹
+  // 验证码"的诱因。真人是打开抖音→在搜索框里搜,humanSearch 会真点框真打字真回车落到搜索
+  // 结果页(不会停在精选);时间窗过滤交给后续爆款评分,不再靠深链 URL 参数。
+  douyin: 'https://www.douyin.com/',
 };
 
-/** 生成【真·模拟人输入】搜索的 JS：找到搜索框(必要时先点开搜索入口)→ 聚焦 → 逐字符敲入
- *  (每个字符都派发 keydown/input/keyup、带随机停顿,像真人打字)→ 回车 +（兜底）点搜索按钮。
- *  返回 'submitted' / 'no-input'。异步 IIFE(executeJavaScript 会 await 其结果)。
- *  拟人化目的:比"瞬间 setValue"更不易被反爬识别为脚本。 */
-export function buildSearchSubmitJs(keyword: string): string {
-  const kw = JSON.stringify(keyword);
-  return `(async () => {
-    const kw = ${kw};
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const findInput = () => document.querySelector(
-      'input[data-e2e*="search"], input[placeholder*="搜索"], input[placeholder*="搜"], .search-input input, input.search-input, input[type="search"], header input');
-    let input = findInput();
-    if (!input) {
-      // 有些平台首页要先点「搜索」入口才出现输入框
-      const entry = document.querySelector('[data-e2e*="search"], [class*="search-entry"], [class*="searchEntry"], [class*="search-icon"], [aria-label*="搜索"]');
-      if (entry) { try { entry.click(); } catch (e) {} await sleep(700); }
-      input = findInput();
-    }
-    if (!input) return 'no-input';
-    input.focus(); try { input.click(); } catch (e) {}
-    await sleep(200);
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-    let cur = '';
-    for (const ch of Array.from(kw)) {                 // 逐字符敲(拟人)
-      cur += ch;
-      if (setter) setter.call(input, cur); else input.value = cur;
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch, inputType: 'insertText' }));
-      input.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
-      await sleep(70 + Math.floor(Math.random() * 110));
-    }
-    await sleep(350);
-    for (const type of ['keydown', 'keypress', 'keyup']) {   // 回车
-      input.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    }
-    const btn = document.querySelector('.search-btn, [class*="search-button"], [class*="searchBtn"], [data-e2e*="search-btn"], button[type="submit"]');
-    if (btn) { try { btn.click(); } catch (e) {} }
-    return 'submitted';
-  })()`;
-}
+/** 判定搜索结果页是否已渲染出卡片(用于决定要不要兜底跳规范搜索页)。 */
+export const CARD_PROBE_SEL = '.search-result-card, li a[href*="/video/"], .card-container, [data-e2e="scroll-item"]';
+
+// 搜索输入改由【真人模拟】完成:见 apps/web/src/runtime/browser-draft.ts 的 humanSearch()
+// ——真鼠标点框 + 系统级真实键入(isTrusted=true),不再用 JS 合成事件(会触发反爬验证码)。
+// 旧的 buildSearchSubmitJs(JS dispatchEvent 版)已于 2026-07-14 移除。
 
 export interface SearchParams {
   /** 排序：hot=按热度/最多播放(默认，找爆款), latest=最新, comprehensive=综合。 */
@@ -182,12 +152,19 @@ export const EXTRACTORS: Record<StudioCollectPlatform, string> = {
     return out;
   })()`,
   douyin: `(() => {
-    // 抖音类名混淆，按卡片文本解析：[合集|]时长|点赞|标题#标签@提及|@作者|日期(2天前/4周前)。
+    // 抖音搜索结果(已登录真人搜索落在 jingxuan/综合页,2026-07-14 实测):卡片是 .search-result-card,
+    // 【没有 <a href="/video/..."> 链接】(JS 路由跳转),类名全混淆。所以按【卡片可见文本】解析:
+    // 时长(mm:ss) / 点赞(纯数字,可带 万/w/亿) / 标题(带#标签,最长那行) / @作者 / 日期(· 6月12日 / N天前 / 2025-04-11)。
+    // 视频 id/url 尽力而为:卡内 <a href*="/video/">(规范页有) → HTML 里的 /video/<id> 或 modal_id →
+    // 都没有(精选页卡片无 id 暴露)则用 标题+点赞 合成 id 仅供去重,url 留空(这类暂不能直接下载,
+    // 但采集/爆款筛选/列表照常;下载/仿写另议)。
     const YEAR = new Date().getFullYear();
     const parseRel = (s) => {
       s = (s||'').trim();
       let m = s.match(/(20\\d\\d)-(\\d{1,2})-(\\d{1,2})/);
       if (m) return Math.floor(new Date(+m[1],+m[2]-1,+m[3]).getTime()/1000);
+      m = s.match(/(\\d{1,2})月(\\d{1,2})日/);
+      if (m) return Math.floor(new Date(YEAR,+m[1]-1,+m[2]).getTime()/1000);
       m = s.match(/(\\d{1,2})-(\\d{1,2})$/);
       if (m) return Math.floor(new Date(YEAR,+m[1]-1,+m[2]).getTime()/1000);
       const now = Math.floor(Date.now()/1000);
@@ -200,27 +177,27 @@ export const EXTRACTORS: Record<StudioCollectPlatform, string> = {
       return 0;
     };
     const out = [], seen = new Set();
-    document.querySelectorAll('.search-result-card, li[data-e2e]').forEach(card => {
+    document.querySelectorAll('.search-result-card, li[data-e2e="scroll-item"], li[data-e2e]').forEach(card => {
+      // 视频 id/url:尽力而为(见顶注)。
+      let id = '', url = '';
       const a = card.querySelector('a[href*="/video/"]');
-      if (!a) return;
-      const m = a.href.match(/\\/video\\/(\\d+)/);
-      if (!m) return;
-      const id = m[1]; if (seen.has(id)) return;
-      const lines = card.innerText.split('\\n').map(s => s.trim()).filter(Boolean);
+      if (a) { const mm = a.href.match(/\\/video\\/(\\d+)/); if (mm) { id = mm[1]; url = 'https://www.douyin.com/video/' + id; } }
+      if (!id) { const mm = card.outerHTML.match(/\\/video\\/(\\d{15,25})/) || card.outerHTML.match(/(?:modal_id|aweme_id|awemeId)["'=:\\\\s]*(\\d{15,25})/); if (mm) { id = mm[1]; url = 'https://www.douyin.com/video/' + id; } }
+      const lines = (card.innerText||'').split('\\n').map(s => s.trim()).filter(Boolean);
       let date = '', author = '', likes = '0';
       for (const ln of lines) {
-        if (!date && (/前$/.test(ln) || /^\\d{4}-\\d{1,2}-\\d{1,2}/.test(ln) || /昨天|今天/.test(ln))) date = ln;
+        if (!date && (/前$/.test(ln) || /^\\d{4}-\\d{1,2}-\\d{1,2}/.test(ln) || /\\d{1,2}月\\d{1,2}日/.test(ln) || /昨天|今天/.test(ln))) date = ln.replace(/^·\\s*/, '');
         else if (!author && ln.startsWith('@')) author = ln.replace(/^@/, '');
         else if (likes === '0' && /^[\\d.]+\\s*[万wW亿]?$/.test(ln)) likes = ln;
       }
       const cand = lines.filter(ln => ln !== date && ('@'+author) !== ln && ln !== likes
-        && !/^\\d{1,2}:\\d{2}/.test(ln) && ln !== '合集' && !/^[\\d.]+\\s*[万wW亿]?$/.test(ln));
+        && !/^\\d{1,2}:\\d{2}$/.test(ln) && ln !== '合集' && !/^·/.test(ln) && !/^[\\d.]+\\s*[万wW亿]?$/.test(ln));
       let title = (cand.sort((a, b) => b.length - a.length)[0] || '');
       title = title.replace(/#[^\\s#]+/g, '').replace(/@[^\\s@]+/g, '').trim().slice(0, 90);
       if (!title) return;
-      seen.add(id);
-      out.push({ content_id: id, title, url: 'https://www.douyin.com/video/' + id,
-        likes, author, publish_time: parseRel(date) });
+      if (!id) id = 'dy_' + title.replace(/[^\\w一-龥]/g, '').slice(0, 16) + '_' + likes; // 合成去重键
+      if (seen.has(id)) return; seen.add(id);
+      out.push({ content_id: id, title, url, likes, author, publish_time: parseRel(date) });
     });
     return out;
   })()`,

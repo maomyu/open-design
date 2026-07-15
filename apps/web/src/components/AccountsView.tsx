@@ -38,6 +38,23 @@ interface Draft {
 
 const EMPTY_DRAFT: Draft = { name: '', persona: '', samplesText: '', credentials: {} };
 
+// 各平台【登录用主站】URL:比发布上传深页更适合登录(有清楚的「登录」入口),且和采集
+// 访问的是同一域名——扫码登录后 cookie 落在 .douyin.com 等主域,采集/发布共用同一登录态。
+// 没映射的平台退回默认后台 URL(daemon /browser/urls)。
+const PLATFORM_LOGIN_URLS: Record<string, string> = {
+  douyin: 'https://www.douyin.com/',
+  xiaohongshu: 'https://www.xiaohongshu.com/',
+  // 快手登【创作者中心】:www.kuaishou.com 在 webview 里会返回 JSON 接口响应,不是登录页;
+  // cp.kuaishou.com 会重定向到 passport 扫码登录页,且正是发布(cp.kuaishou.com)要的登录态。
+  kuaishou: 'https://cp.kuaishou.com/',
+  bilibili: 'https://www.bilibili.com/',
+  shipinhao: 'https://channels.weixin.qq.com/',
+  tencent: 'https://channels.weixin.qq.com/',
+  'wechat-mp': 'https://mp.weixin.qq.com/',
+  zhihu: 'https://www.zhihu.com/',
+  weibo: 'https://weibo.com/',
+};
+
 export function AccountsView() {
   const { t } = useI18n();
   const [byPlatform, setByPlatform] = useState<Record<string, AccountProfileView[]>>({});
@@ -70,10 +87,26 @@ export function AccountsView() {
         </div>
       </header>
 
-      {/* 爆创·自媒体定制:飞书数据中心专属入口——填客户自己的飞书表格链接,
-          一键内置浏览器打开(登录客户自己的飞书,数据在他自己账户名下)。 */}
+      {/* ── 数据源 / 结果存储 ──
+          飞书数据中心:选题/评分/脚本结果都沉淀到客户自己的飞书表格。选题采集本身已改用
+          TikHub 内置数据源(无需在此配置或登录)。 */}
+      <div style={{ margin: '4px 0 8px' }}>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>📊 数据源 · 结果存储</div>
+        <div style={{ fontSize: 12.5, opacity: 0.72, marginTop: 2 }}>
+          选题采集已用 <b>TikHub</b> 内置数据源(带粉丝/点赞/评论,无需登录);结果存到你自己的飞书数据中心。
+        </div>
+      </div>
       <div className="accounts-view__feishu" style={{ marginBottom: 18 }}>
         <FeishuDataCenterSection />
+      </div>
+
+      {/* ── 发布账号 ──
+          各平台登录只为【发布】(一键存草稿/发送)和下载原视频用,不用于选题采集。 */}
+      <div style={{ margin: '18px 0 8px', borderTop: '1px solid var(--od-border, #ececec)', paddingTop: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>📤 发布账号</div>
+        <div style={{ fontSize: 12.5, opacity: 0.72, marginTop: 2 }}>
+          在这里登录各平台,用于<b>发布(一键存草稿/发送)</b>和下载原视频。<b>选题采集不需要登录</b>——那一步走 TikHub。
+        </div>
       </div>
 
       {loading ? (
@@ -197,14 +230,18 @@ function PlatformCard({
                   <button
                     type="button"
                     className="plugin-edit-view__step-link"
-                    title="打开该账号的专属浏览器（档案隔离，登录一次长期保持，多号不串）"
+                    title="打开该账号的专属浏览器登录该平台（用于【发布】一键存草稿 + 下载原视频的登录态；档案隔离，扫码登录一次长期保持，多号不串。选题采集已改走 TikHub，不需要登录）"
                     onClick={async () => {
-                      const r = await openStudioBrowser({ platform: platform.id, account: a.name });
-                      await onChanged(r.error ? `专属浏览器打开失败：${r.error}` : `已打开「${a.name}」专属浏览器`);
+                      // 用【平台主站登录页】而不是发布上传深页:主站有清楚的「登录」入口,
+                      // 且和采集访问的是同一域名(cookie 落在 .douyin.com 等,采集直接复用登录态)。
+                      // 主站没映射的平台退回默认后台 URL(daemon /browser/urls)。
+                      const loginUrl = PLATFORM_LOGIN_URLS[platform.id];
+                      const r = await openStudioBrowser({ platform: platform.id, account: a.name, ...(loginUrl ? { url: loginUrl } : {}) });
+                      await onChanged(r.error ? `专属浏览器打开失败：${r.error}` : `已打开「${a.name}」专属浏览器——请在里面扫码登录${platform.title}`);
                     }}
                   >
                     <Icon name="external-link" size={12} />
-                    <span>打开后台</span>
+                    <span>打开登录</span>
                   </button>
                   <button
                     type="button"

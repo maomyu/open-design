@@ -29,8 +29,8 @@ import {
   type BrowserPaneRequest,
   type CollectPaneSpec,
 } from '../runtime/browser-panes';
-import { runDraftInjection, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
-import { EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, PLATFORM_HOMEPAGE, SEARCH_BY_TYPING, buildSearchSubmitJs, buildSearchUrl } from '../runtime/collect-extractors';
+import { runDraftInjection, humanSearch, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
+import { CARD_PROBE_SEL, EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, PLATFORM_HOMEPAGE, SEARCH_BY_TYPING, buildSearchUrl } from '../runtime/collect-extractors';
 import { postCollectResult, reportCollectProgress } from '../providers/media-studio';
 import type { StudioCollectItem } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
@@ -53,12 +53,19 @@ function enqueueCollect(task: () => Promise<void>): Promise<void> {
   return next;
 }
 
+// 采集期在【浏览器标签本身】上显示的醒目状态(验证码/需登录时用户正看着这个标签)。
+export type CollectPaneStatus = { text: string; kind: 'info' | 'action' | 'done' } | null;
+
 async function runCollect(
   el: DraftWebview | null,
   spec: CollectPaneSpec,
   isCancelled: () => boolean,
+  onStatus?: (s: CollectPaneStatus) => void,
 ): Promise<void> {
   const { jobId, platform } = spec;
+  const say = (text: string, kind: 'info' | 'action' | 'done') => {
+    if (!isCancelled()) onStatus?.({ text, kind });
+  };
   const done = (items: StudioCollectItem[], needsLogin: boolean, note: string) => {
     if (isCancelled()) return;
     postCollectResult(jobId, [{ platform, items, needsLogin, ...(note ? { note } : {}) }]);
@@ -90,6 +97,61 @@ async function runCollect(
   const byId = new Map<string, StudioCollectItem>();
   let loginWalled = false;
 
+  // 反爬验证码检测。踩过两个坑,现在的口径是【只认真正弹出可见的验证弹层】:
+  //   - 2026-07-14 先漏报(旧版只查正文前 900 字,抖音验证码在 iframe 里读不到);
+  //   - 改宽后又误报(用户报"提示了但根本没要验证"):抖音页面为随时能弹验证【常驻一个隐藏的
+  //     captcha 容器】,加上正文里"验证码登录"等字样,宽泛匹配(正文关键词 / [class*=captcha] /
+  //     iframe[src*=verify])把这些没弹出的东西也当成了正在验证。
+  // 定稿:不看正文关键词、不用宽泛通配;只认【字节系精确验证容器 / 验证 iframe】且【当前可见、
+  // 尺寸够大】(排除 display:none、0 尺寸、移出视口的常驻隐藏容器)。宁可偶尔漏报(顶多采不到、
+  // 有"未提取到"提示),也不要误报把用户支使去看根本不存在的验证。
+  const detectCaptcha = async (): Promise<boolean> => {
+    const hit = await evalJs(
+      `(() => { try {
+        const vis = (el) => {
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          if (r.width < 120 || r.height < 120) return false;          // 常驻隐藏容器/小图标:太小,排除
+          if (r.right < 0 || r.bottom < 0 || r.left > innerWidth) return false; // 移出视口(left:-9999 等)
+          const s = getComputedStyle(el);
+          return s.display !== 'none' && s.visibility !== 'hidden' && +s.opacity !== 0;
+        };
+        // 字节系(抖音/头条)验证码专用容器 —— 平时不注入或隐藏,真弹出时才可见。精确 class。
+        const sels = ['.captcha_verify_container', '[class*="captcha_verify"]', '.secsdk-captcha-drag-wrapper', '#captcha-verify-image', '#captcha_container'];
+        for (const sel of sels) {
+          for (const el of document.querySelectorAll(sel)) { if (vis(el)) return true; }
+        }
+        // 可见且够大的验证 iframe(内容跨源读不到,但元素可见性/尺寸能判)。src 必须明确带 captcha/secsdk。
+        for (const f of document.querySelectorAll('iframe')) {
+          if (/captcha|secsdk/i.test(f.getAttribute('src') || '') && vis(f)) return true;
+        }
+        return false;
+      } catch (e) { return false; } })()`,
+      3000,
+    );
+    return hit === true;
+  };
+  // 撞验证码 → 前台红条醒目提示 + 等用户过(最多 4 分钟)→ 过了重进搜索页继续。
+  const waitOutCaptcha = async (search: string): Promise<'passed' | 'timeout' | 'cancelled'> => {
+    reportCollectProgress(jobId, `「${platform}」平台弹了验证码——浏览器已在前台,请完成验证(拖拽/选图/滑块),我会一直等你,过完自动继续采集`);
+    say('⚠️ 平台要求验证:请在下方浏览器里完成验证(拖拽/滑块/选图),完成后自动继续采集(我会一直等你)', 'action');
+    const deadline = Date.now() + 4 * 60_000; // 给足 4 分钟人工过验证
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      if (isCancelled()) return 'cancelled';
+      // 验证码 DOM/文案都消失即算过——不强绑结果卡片(抖音过验证后常先跳回搜索/推荐页,卡片还没出)。
+      if (!(await detectCaptcha())) {
+        reportCollectProgress(jobId, `「${platform}」验证码已过,重新进入搜索页继续采集…`);
+        say('✓ 验证已过,继续采集…', 'info');
+        await evalJs(`location.href = ${JSON.stringify(search)}`, 4000);
+        await waitReady();
+        return 'passed';
+      }
+    }
+    reportCollectProgress(jobId, `「${platform}」验证等待超时,仍尝试抓取(可能没有结果)…`);
+    return 'timeout';
+  };
+
   const homepage = PLATFORM_HOMEPAGE[platform];
   const typeSearch = SEARCH_BY_TYPING[platform];
   for (let page = 1; page <= pages; page++) {
@@ -104,19 +166,29 @@ async function runCollect(
       await evalJs(`location.href = ${JSON.stringify(startUrl)}`, 4000);
       await waitReady();
       if (isCancelled()) return;
-      await new Promise((r) => setTimeout(r, 1200)); // 像人看一眼再动手
-      reportCollectProgress(jobId, `「${platform}」在搜索框里逐字敲「${spec.keyword}」并回车…`);
-      await evalJs(buildSearchSubmitJs(spec.keyword), 10_000);
-      await new Promise((r) => setTimeout(r, 2500)); // 让键盘输入/回车事件充分派发
+      await new Promise((r) => setTimeout(r, 2200 + Math.floor(Math.random() * 1500))); // 等首页 feed 加载完 + 像人先看一眼
+      reportCollectProgress(jobId, `「${platform}」真人式操作:先看两眼→真鼠标点搜索框→慢速逐字敲「${spec.keyword}」→回车(躲验证码)…`);
+      // 真人模拟:真鼠标点框 + 系统级真实键入(isTrusted=true),取代 JS 合成事件——
+      // 后者被抖音/小红书反爬识破必弹验证码。找不到框(no-input)就靠后面直连搜索页兜底。
+      const searched = el ? await humanSearch(el, spec.keyword) : 'no-input';
+      if (searched === 'no-input') {
+        reportCollectProgress(jobId, `「${platform}」没找到搜索框,改直连搜索结果页…`);
+      }
+      await new Promise((r) => setTimeout(r, 2500)); // 等真实回车触发的搜索导航完成
       if (isCancelled()) return;
-      // 拟人敲入(键盘交互=真人信号,已在搜索框里真打字+回车)后,统一进入【规范搜索页】:
-      // 带排序/时间窗参数、DOM 结构稳定、提取器可靠。抖音/小红书的搜索框回车常落在结构不同
-      // 的变体页(如抖音 jingxuan 搜索页 → 提取器抓不到),故这里显式进规范搜索页兜底,
-      // referrer=刚才打字的首页,依然是真人搜索轨迹。
+      // 真人打字+回车后【优先停在真人搜出来的结果页】。原来无条件硬跳规范搜索 URL——但硬跳
+      // 深链本身是强机器人信号(抖音"总弹验证码"的诱因)。所以改成:先探一下真人结果页有没有
+      // 卡片,有就留着(最像真人);只有解析不到(如落到抖音 jingxuan 变体页)才兜底硬跳规范
+      // 搜索页保证提取器能抓。no-input(没找到搜索框)也走兜底硬跳。
       if (homepage) {
-        reportCollectProgress(jobId, `「${platform}」进入搜索结果页…`);
-        await evalJs(`location.href = ${JSON.stringify(searchUrl)}`, 4000);
-        await waitReady();
+        const probe = (await evalJs(`document.querySelectorAll(${JSON.stringify(CARD_PROBE_SEL)}).length`, 3000)) as number | undefined;
+        if (searched === 'no-input' || !(typeof probe === 'number' && probe > 0)) {
+          reportCollectProgress(jobId, `「${platform}」真人结果页未见卡片,兜底进规范搜索页…`);
+          await evalJs(`location.href = ${JSON.stringify(searchUrl)}`, 4000);
+          await waitReady();
+        } else {
+          reportCollectProgress(jobId, `「${platform}」已停在真人搜索结果页(${probe} 张卡片)`);
+        }
       }
     } else {
       // 直连平台(B站)或翻页:带排序/时间窗参数直接进搜索页。
@@ -125,35 +197,39 @@ async function runCollect(
       await waitReady();
     }
     if (isCancelled()) return;
-    // 登录墙判定（首页判一次即可）
+    // 登录墙判定（首页判一次即可）。需求:未登录时【停在前台等用户登录】,而不是直接
+    // 失败让用户重跑——浏览器标签已在前台,轮询到登录墙消失即自动继续采集(和验证码一致)。
     if (page === 1) {
-      const bodyText = (await evalJs('document.body ? document.body.innerText.slice(0,4000) : ""')) as string | undefined;
       const signals = LOGIN_WALL[platform] ?? [];
-      if (typeof bodyText === 'string' && signals.some((s) => bodyText.includes(s))) {
-        reportCollectProgress(jobId, `「${platform}」需要登录——请在这个标签里扫码登录后重试`);
-        loginWalled = true;
-        break;
+      const isWalled = async () => {
+        const t = (await evalJs('document.body ? document.body.innerText.slice(0,4000) : ""', 3000)) as string | undefined;
+        return typeof t === 'string' && signals.some((s) => t.includes(s));
+      };
+      if (signals.length && (await isWalled())) {
+        const msg = `「${platform}」需要登录——浏览器已在前台,请扫码/登录,我会一直等你,登录后自动继续采集`;
+        reportCollectProgress(jobId, msg);
+        say('⚠️ 需要登录:请在下方浏览器里扫码/登录,登录后自动继续采集(我会一直等)', 'action');
+        const deadline = Date.now() + 5 * 60_000; // 给足 5 分钟人工登录
+        let loggedIn = false;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 3000));
+          if (isCancelled()) return;
+          if (!(await isWalled())) { loggedIn = true; break; }
+        }
+        if (!loggedIn) { loginWalled = true; break; } // 超时仍未登录 → 老兜底(报需登录)
+        // 登录后页面常已跳走,重新进规范搜索页再继续抓。
+        reportCollectProgress(jobId, `「${platform}」已登录 ✓ 重新进入搜索页继续采集…`);
+        say('✓ 已登录,继续采集…', 'info');
+        await evalJs(`location.href = ${JSON.stringify(searchUrl)}`, 4000);
+        await waitReady();
+        if (isCancelled()) return;
       }
     }
     // 验证码判定：抖音/小红书反爬可能弹验证码(拖拽/滑块/选图)。检测到就【停在前台等用户过】,
     // 不快速失败跳走——这才是用户看到"窗口一闪就关、没爆款"的根因。过完验证码 + 出结果再继续。
-    if (page === 1) {
-      const capRe = /验证码|拖拽|滑块|安全验证|请完成|点击验证|按住|拖动/;
-      const hasCap = async () => {
-        const t = (await evalJs('document.body ? document.body.innerText.slice(0,900) : ""', 3000)) as string | undefined;
-        return typeof t === 'string' && capRe.test(t);
-      };
-      if (await hasCap()) {
-        reportCollectProgress(jobId, `「${platform}」平台弹了验证码——浏览器已在前台,请完成验证(拖拽/选图/滑块),我会一直等你,过完自动继续采集`);
-        const deadline = Date.now() + 4 * 60_000; // 给足 4 分钟人工过验证
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 4000));
-          if (isCancelled()) return;
-          const cards = (await evalJs('document.querySelectorAll(\'.search-result-card, li a[href*="/video/"], .card-container\').length', 3000)) as number | undefined;
-          if (!(await hasCap()) && (cards ?? 0) > 0) break; // 验证过了且有结果 → 继续采
-        }
-        reportCollectProgress(jobId, `「${platform}」验证码已过,继续采集…`);
-      }
+    if (page === 1 && (await detectCaptcha())) {
+      if ((await waitOutCaptcha(searchUrl)) === 'cancelled') return;
+      if (isCancelled()) return;
     }
     // 无限滚动平台：滚动触发懒加载
     if (infinite) {
@@ -169,6 +245,11 @@ async function runCollect(
     let raw: unknown = await evalJs(EXTRACTORS[platform], 8000);
     for (let attempt = 0; attempt < 20 && !(Array.isArray(raw) && raw.length > 0); attempt++) {
       if (isCancelled()) return;
+      // 验证码常在【搜索请求返回后 / 滚动触发风控时】才弹,不只在首帧——所以空转几次仍无结果时
+      // 复检一次验证码(抖音尤甚),撞上就停下红条提示等用户过,而不是空转到超时=0 条还不吭声。
+      if ((attempt === 2 || attempt === 6) && (await detectCaptcha())) {
+        if ((await waitOutCaptcha(searchUrl)) === 'cancelled') return;
+      }
       reportCollectProgress(jobId, `「${platform}」结果加载中,再等等…(第 ${attempt + 1} 次)`);
       await evalJs('window.scrollBy(0, 1200)', 2000);
       await new Promise((r) => setTimeout(r, 2500));
@@ -183,9 +264,13 @@ async function runCollect(
     if (byId.size >= spec.per) break;
   }
 
-  if (loginWalled) return done([], true, '需要登录：请在标签里扫码登录后重跑采集');
+  if (loginWalled) {
+    say('需要登录:请在浏览器里扫码登录后,回选题页重跑「真抓爆款」', 'action');
+    return done([], true, '需要登录：请在标签里扫码登录后重跑采集');
+  }
   const items = [...byId.values()].slice(0, spec.per);
   reportCollectProgress(jobId, `「${platform}」采到 ${items.length} 条`);
+  say(items.length ? `✓ 「${platform}」采到 ${items.length} 条,正在评分…` : '未提取到条目,可换关键词或稍后重试', items.length ? 'done' : 'action');
   done(items, false, items.length ? '' : '未提取到条目(选择器需校准或结果未加载)');
 }
 
@@ -328,6 +413,8 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
       className={`${c('host')}${activeKey ? ` ${c('hostActive')}` : ''}`}
       aria-hidden={activeKey ? undefined : true}
     >
+      {/* 采集状态条用到的动画:info 的转圈 + action(验证码/需登录)的脉冲高亮。 */}
+      <style>{'@keyframes od-spin{to{transform:rotate(360deg)}}@keyframes od-pulse{0%,100%{opacity:1}50%{opacity:0.55}}'}</style>
       {panes.map((pane) => (
         <BrowserPane key={pane.key} spec={pane} active={pane.key === activeKey} />
       ))}
@@ -425,6 +512,8 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     };
   }, [spec.draft, spec.draftSeq]);
 
+  // 采集期在标签上显示的醒目状态(验证码/需登录时用户正看着这个标签)。
+  const [collectStatus, setCollectStatus] = useState<CollectPaneStatus>(null);
   // 爆款雷达采集:面板加载后在【本标签 webview】里滚动+抓卡片，回写采集 job。
   const ranCollectRef = useRef(0);
   useEffect(() => {
@@ -441,7 +530,13 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
       void enqueueCollect(async () => {
         if (cancelled) return;
         navigate({ kind: 'browser', platform: spec.platform, account: spec.account });
-        await runCollect(ref.current as unknown as DraftWebview | null, collect, () => cancelled);
+        setCollectStatus({ text: `正在采集「${spec.platform}」…`, kind: 'info' });
+        await runCollect(
+          ref.current as unknown as DraftWebview | null,
+          collect,
+          () => cancelled,
+          (s) => { if (!cancelled) setCollectStatus(s); },
+        );
       });
     }, 400);
     return () => {
@@ -580,6 +675,29 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
               <Icon name="close" size={11} />
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {/* 采集状态醒目条:验证码/需登录(kind=action)时红底加粗常驻,提示用户在下方浏览器里
+          完成操作,完成后自动继续采集(2026-07-14 用户要求"撞验证码要停下等 + 有提示")。 */}
+      {collectStatus ? (
+        <div
+          role={collectStatus.kind === 'action' ? 'alert' : undefined}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+            fontSize: 13.5, fontWeight: 700, lineHeight: 1.5,
+            background: collectStatus.kind === 'action' ? 'rgba(220,38,38,0.14)' : 'rgba(232,88,46,0.08)',
+            color: collectStatus.kind === 'action' ? '#dc2626' : '#e8582e',
+            borderBottom: `1px solid ${collectStatus.kind === 'action' ? 'rgba(220,38,38,0.5)' : 'rgba(232,88,46,0.3)'}`,
+            ...(collectStatus.kind === 'action' ? { animation: 'od-pulse 1.2s ease-in-out infinite' } : {}),
+          }}
+        >
+          {collectStatus.kind === 'info' ? (
+            <span style={{
+              width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(232,88,46,0.35)',
+              borderTopColor: '#e8582e', display: 'inline-block', animation: 'od-spin 0.8s linear infinite', flex: '0 0 auto',
+            }} />
+          ) : null}
+          <span>{collectStatus.text}</span>
         </div>
       ) : null}
       <webview

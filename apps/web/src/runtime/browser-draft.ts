@@ -192,6 +192,33 @@ function clickAt(wv: DraftWebview, x: number, y: number): void {
   wv.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
 }
 
+/** 真人式移动光标到 (x,y):从一个偏移起点分几步(smoothstep 缓动 + 轻微抖动)移过去。
+ *  真人点击前一定有移动轨迹,直接在目标点 mouseDown 是明显的脚本信号(抖音搜索必弹验证码
+ *  的主因之一)。 */
+async function moveMouseHuman(wv: DraftWebview, x: number, y: number): Promise<void> {
+  const steps = 8 + Math.floor(Math.random() * 6);
+  const sx = x - (90 + Math.random() * 160) * (Math.random() < 0.5 ? 1 : -1);
+  const sy = y - (60 + Math.random() * 120);
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const ease = t * t * (3 - 2 * t); // smoothstep
+    const jx = (Math.random() - 0.5) * 6;
+    const jy = (Math.random() - 0.5) * 6;
+    wv.sendInputEvent({ type: 'mouseMove', x: Math.round(sx + (x - sx) * ease + jx), y: Math.round(sy + (y - sy) * ease + jy) });
+    await sleep(10 + Math.random() * 22);
+  }
+  wv.sendInputEvent({ type: 'mouseMove', x, y });
+}
+
+/** 真人式点击:先移动光标过去,停一下,再按下→短停→抬起(按压时长像真人)。 */
+async function humanClickAt(wv: DraftWebview, x: number, y: number): Promise<void> {
+  await moveMouseHuman(wv, x, y);
+  await sleep(60 + Math.random() * 120);
+  wv.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+  await sleep(45 + Math.random() * 70);
+  wv.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+}
+
 /** JS 合成聚焦(坐标点击落空时的兜底):focus + 光标置末尾。 */
 async function focusBySelector(wv: DraftWebview, selector: string): Promise<boolean> {
   const ok = await wvEval<boolean>(
@@ -221,8 +248,8 @@ async function focusByClick(wv: DraftWebview, selector: string): Promise<boolean
   if (!r || r.w < 4) return focusBySelector(wv, selector);
   // 元素在视口外(负坐标/超出下方):坐标点击无效,直接合成聚焦。
   if (r.y < 8 || r.y > 2000) return focusBySelector(wv, selector);
-  // 点前部而非正中心:输入框中央可能盖着 placeholder 联想图标。
-  clickAt(wv, Math.round(r.x + Math.min(r.w / 2, 60)), Math.round(r.y + r.h / 2));
+  // 点前部而非正中心:输入框中央可能盖着 placeholder 联想图标。真人式移动+点击(带轨迹)。
+  await humanClickAt(wv, Math.round(r.x + Math.min(r.w / 2, 60)), Math.round(r.y + r.h / 2));
   await sleep(280 + Math.random() * 160);
   // 校验真的聚焦上了,没有就合成兜底。
   const focused = await wvEval<boolean>(
@@ -286,7 +313,12 @@ async function clearFieldBySelector(wv: DraftWebview, selector: string): Promise
  *  按码元拆开发 char 会撕成两个孤立代理,页面渲染成 ��(2026-07-09 用户
  *  报草稿乱码)。emoji 字素走 insertText 整体插入——真人输入 emoji 也是
  *  从表情面板「选」而不是「打」,行为模式反而更真实。 */
-async function typeText(wv: DraftWebview, text: string, onProgress?: (percent: number) => void): Promise<void> {
+async function typeText(
+  wv: DraftWebview,
+  text: string,
+  onProgress?: (percent: number) => void,
+  opts?: { slow?: boolean },
+): Promise<void> {
   const graphemes =
     typeof Intl !== 'undefined' && 'Segmenter' in Intl
       ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].map((s) => s.segment)
@@ -305,7 +337,14 @@ async function typeText(wv: DraftWebview, text: string, onProgress?: (percent: n
       // emoji/组合字素 → 整体插入到当前焦点(等价表情面板选入)。
       await wvEval(wv, `document.execCommand('insertText', false, ${JSON.stringify(g)})`);
     }
-    await sleep(humanDelay(g));
+    // slow 模式(采集搜索用,躲反爬):字均放慢约 1.8 倍,且约 18% 概率来一次
+    // 200-650ms 的"想一下/看一眼"停顿——真人搜关键词不是匀速一口气敲完的。
+    let delay = humanDelay(g);
+    if (opts?.slow) {
+      delay = Math.round(delay * 1.8);
+      if (Math.random() < 0.18) delay += 200 + Math.random() * 450;
+    }
+    await sleep(delay);
     const pct = Math.floor(((i + 1) / graphemes.length) * 10) * 10;
     if (onProgress && pct !== lastReported && pct > 0) {
       lastReported = pct;
@@ -319,6 +358,57 @@ function pressEnter(wv: DraftWebview): void {
   wv.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
   wv.sendInputEvent({ type: 'char', keyCode: '\r' });
   wv.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+}
+
+// ---- 真人模拟搜索(爆款采集用)。2026-07-14 用户报"总触发抖音验证码":
+// 采集原来的 buildSearchSubmitJs 走 JS 合成事件(dispatchEvent 的 KeyboardEvent/
+// InputEvent 是 isTrusted=false),抖音/小红书反爬一眼识破 → 弹验证码。这里改走
+// 和发布同一套【系统级真实输入管线】:真鼠标点搜索框聚焦 → 逐字符真实 char 键入
+// (带真人打字节奏抖动)→ 真实回车。isTrusted=true,页面无法与真人区分。 ----
+
+const SEARCH_INPUT_SEL =
+  'input[data-e2e*="search"], input[placeholder*="搜索"], input[placeholder*="搜"], .search-input input, input.search-input, input[type="search"], header input';
+const SEARCH_ENTRY_SEL =
+  '[data-e2e*="search"], [class*="search-entry"], [class*="searchEntry"], [class*="search-icon"], [aria-label*="搜索"]';
+
+/**
+ * 像真人一样在当前页面的搜索框里搜关键词:必要时先真点开搜索入口 → 真鼠标点框聚焦 →
+ * 逐字符真实键入 → 真实回车。全程 sendInputEvent(isTrusted=true),不触发反爬验证码。
+ * 返回 'submitted'（已提交）/ 'no-input'（页面上找不到搜索框,交由调用方兜底直连搜索 URL）。
+ */
+export async function humanSearch(wv: DraftWebview, keyword: string): Promise<'submitted' | 'no-input'> {
+  // 0) 【落地先停一下、看两眼、随手滑一下 feed】真人到站不会秒搜——多晃几下鼠标 + 轻轻滚一下
+  //    首页再回顶部,给反爬足够的"人在看"信号,再开始搜。抖音搜索反爬对"一进来就搜"最敏感。
+  await moveMouseHuman(wv, 260 + Math.random() * 380, 180 + Math.random() * 220);
+  await sleep(900 + Math.random() * 1300);
+  await moveMouseHuman(wv, 200 + Math.random() * 520, 320 + Math.random() * 260);
+  await wvEval(wv, `window.scrollBy(0, ${200 + Math.floor(Math.random() * 320)})`);
+  await sleep(800 + Math.random() * 1100);
+  await moveMouseHuman(wv, 240 + Math.random() * 420, 200 + Math.random() * 200);
+  await wvEval(wv, 'window.scrollTo({ top: 0 })');
+  await sleep(600 + Math.random() * 700);
+  // 1) 搜索框不在 → 真人式点开搜索入口(有些站首页要先点放大镜才出输入框)。
+  let rect = await rectOf(wv, SEARCH_INPUT_SEL);
+  if (!rect || rect.w < 4) {
+    const entry = await rectOf(wv, SEARCH_ENTRY_SEL);
+    if (entry && entry.w >= 4 && entry.y > 8 && entry.y < 2000) {
+      await humanClickAt(wv, Math.round(entry.x + entry.w / 2), Math.round(entry.y + entry.h / 2));
+      await sleep(800 + Math.random() * 700);
+    }
+    rect = await rectOf(wv, SEARCH_INPUT_SEL);
+  }
+  if (!rect || rect.w < 4) return 'no-input';
+  // 2) 真鼠标(带移动轨迹)点击搜索框聚焦(坐标落空自动退回 JS 合成聚焦)。
+  const focused = await focusByClick(wv, SEARCH_INPUT_SEL);
+  if (!focused) return 'no-input';
+  await sleep(500 + Math.random() * 600); // 点完盯一眼输入框再动手,像真人
+  // 3) 清掉可能的残留 → 逐字【慢速】真实键入(带想一下的停顿）→ 打完再确认一下才回车。
+  await clearFieldByKeys(wv);
+  await typeText(wv, keyword, undefined, { slow: true });
+  await sleep(900 + Math.random() * 1200);
+  // 4) 真实回车提交。
+  pressEnter(wv);
+  return 'submitted';
 }
 
 /** 键入一个话题标签并从联想弹层确认成「真话题实体」(2026-07-09 用户报
@@ -534,73 +624,164 @@ async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress
 }
 
 // ---- 抖音(视频) ----
+// 抖音创作者中心的拦截弹窗:进上传页时若有上次未发布草稿会弹「你还有上次未发布的视频,是否
+// 继续编辑?继续编辑/放弃」——不关掉会挡住新成片的上传;各种功能通知弹「我知道了」。注入前后
+// 都清一遍,否则表单/存草稿按钮点不到(2026-07-14 用户报"存草稿没成功"的主因之一)。
+async function dismissDouyinBlockers(wv: DraftWebview): Promise<void> {
+  // 上次未发布草稿:点「放弃」(注入本就是传新成片)。可能弹二次确认,紧跟着补点确定/确认。
+  if (await clickByText(wv, ['放弃'])) {
+    await sleep(500);
+    await clickByText(wv, ['确定', '确认', '放弃']); // 仅在点了放弃后才点确认,避免误点表单里的确定
+    await sleep(400);
+  }
+  // 各种功能通知弹层:点「我知道了」。
+  for (const t of ['我知道了', '知道了']) {
+    if (await clickByText(wv, [t])) await sleep(400);
+  }
+}
+
+// 自动上传封面(用户在发布页上传的封面图):点「设置封面」→ 打开封面弹层 → CDP 塞图到封面
+// 专用文件输入(accept=image/*)→ 点「完成/确定」保存。实测:封面文件输入是隐藏的
+// input[type=file][accept*=image];视频输入是 accept*=video——按 accept 区分,别塞错。
+async function uploadDouyinCover(wv: DraftWebview, coverPath: string, progress: DraftProgress): Promise<boolean> {
+  // 真实点击「设置封面」打开封面弹层(JS click 对抖音 React 常不生效),落空再退回 JS 点击。
+  if (!(await clickRealByText(wv, ['设置封面'])) && !(await clickByText(wv, ['设置封面']))) return false;
+  await sleep(1600);
+  const put = await setFiles(wv, [coverPath], 'input[type=file][accept*="image"]');
+  if (!put.ok) return false;
+  await sleep(3200); // 等封面上传 + 预览渲染
+  // 弹层里保存封面:优先真实点击「完成/确定」(抖音 React 按钮 JS click 常不生效)。
+  const done =
+    (await clickRealByText(wv, ['完成', '确定', '确认', '保存', '下一步']))
+    || (await clickByText(wv, ['完成', '确定', '确认', '保存', '下一步']));
+  await sleep(1500);
+  if (progress && !done) progress('封面已传但没自动点「完成」——可在页面手动确认');
+  return true;
+}
+
 async function injectDouyin(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
   if (await isLoginWall(wv)) {
     return { ok: false, detail: '抖音还没登录——在面板里登录后再点一次「一键存草稿」' };
   }
-  progress('1/4 上传成片…');
-  const put = await setFiles(wv, draft.filePaths);
+  // 0) 先清掉拦截弹窗(上次未发布草稿「放弃」、通知「我知道了」),否则挡住上传。
+  progress('0/5 关掉拦截弹窗…');
+  await dismissDouyinBlockers(wv);
+
+  progress('1/5 上传成片…');
+  // 只塞到视频文件输入(accept*=video),别塞到封面的 image 输入。
+  const put = await setFiles(wv, draft.filePaths, 'input[type=file][accept*="video"], input[type=file]');
   if (!put.ok) {
     return { ok: false, detail: `成片注入失败(${put.reason ?? '未知'})——请手动拖入(成片文件夹已可从发布步打开)` };
   }
 
-  progress('2/4 等编辑表单就绪…');
-  const formReady = await waitFor(wv, 'input[placeholder*="标题"], input[placeholder*="作品标题"], [contenteditable="true"]', 90_000);
+  progress('2/5 等编辑表单就绪…');
+  // 标题是 semi-input(placeholder「填写作品标题…」),描述是 contenteditable。
+  const formReady = await waitFor(wv, 'input[placeholder*="标题"], input.semi-input, [contenteditable="true"]', 90_000);
   if (!formReady) {
     return { ok: false, detail: '视频已提交但编辑表单没等到——表单出现后手动粘贴标题即可,文案在剪贴板' };
   }
+  await sleep(1500);
+  await dismissDouyinBlockers(wv); // 表单页也可能弹「我知道了」
 
-  progress('3/4 键入标题/简介…');
-  const DY_TITLE_SEL = 'input[placeholder*="标题"], input[placeholder*="作品标题"]';
+  progress('3/5 键入标题/简介…');
+  const DY_TITLE_SEL = 'input[placeholder*="标题"], input.semi-input';
   const titleOk =
     (await typeIntoField(wv, DY_TITLE_SEL, draft.title.slice(0, 30)))
     || (await fillInput(wv, DY_TITLE_SEL, draft.title.slice(0, 30)));
   const editorOk =
-    (await typeIntoField(wv, '[contenteditable="true"]', draft.title, (pct) => progress(`3/4 键入简介… ${pct}%`)))
+    (await typeIntoField(wv, '[contenteditable="true"]', draft.title, (pct) => progress(`3/5 键入简介… ${pct}%`)))
     || (await fillEditor(wv, draft.title));
   if (!titleOk && !editorOk) {
     return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴' };
   }
   if (editorOk && draft.tags.length > 0) {
-    // 简介末尾逐个话题:#词 + 联想弹层回车确认成真话题实体。
     await typeText(wv, ' ');
-    await typeHashtags(wv, draft.tags, (i, total) => progress(`3/4 话题 ${i}/${total}…`));
+    await typeHashtags(wv, draft.tags, (i, total) => progress(`3/5 话题 ${i}/${total}…`));
   }
   clickAt(wv, 20, 200);
   await sleep(600);
 
-  progress('4/4 存草稿…');
-  const saved = await clickSaveDraft(wv);
+  // 4) 封面(可选):用户在发布页传的封面 → 自动上传到抖音。失败不阻断存草稿。
+  if (draft.coverPath) {
+    progress('4/5 上传封面…');
+    const coverOk = await uploadDouyinCover(wv, draft.coverPath, progress);
+    if (!coverOk) progress('4/5 封面自动上传没成(不阻断)——可在页面手动设置封面');
+    await dismissDouyinBlockers(wv);
+  }
+
+  progress('5/5 存草稿(暂存离开)…');
+  // 抖音的存草稿按钮是「暂存离开」。必须【真实坐标点击】——JS el.click() 触发不了抖音 React 的
+  // 保存动作(2026-07-14 实测:填好了但 JS 点击存不上),clickRealByText 走真实鼠标事件。
+  const saved =
+    (await clickRealByText(wv, ['暂存离开', '存草稿', '保存草稿', '存为草稿']))
+    || (await clickSaveDraft(wv));
+  await sleep(2500);
   return saved
-    ? { ok: true, detail: '已存到抖音草稿——在面板里核对,满意后自己点发布' }
-    : { ok: true, detail: '内容已填好——没找到「存草稿」按钮,请在面板里手动点一下保存' };
+    ? { ok: true, detail: '已点「暂存离开」存草稿——请在抖音草稿箱/面板里核对,满意后自己发布' }
+    : { ok: true, detail: '内容已填好——没自动点到「暂存离开」,请在面板里手动点一下(在右下角)' };
 }
 
 // ---- 快手(视频) ----
-async function injectKuaishou(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
-  if (await isLoginWall(wv)) {
-    return { ok: false, detail: '快手还没登录——在面板里登录后再点一次「一键存草稿」' };
+// 快手创作者中心(cp.kuaishou.com)进上传页时若有未发布作品会弹「还有上次未发布的视频,
+// 是否继续编辑?继续编辑/放弃」——不关掉挡住新成片上传。点「放弃」传新的。
+async function dismissKuaishouBlockers(wv: DraftWebview): Promise<void> {
+  if (await clickByText(wv, ['放弃'])) {
+    await sleep(600);
+    await clickByText(wv, ['确定', '确认']); // 可能的二次确认
+    await sleep(300);
   }
+  for (const t of ['我知道了', '知道了']) {
+    if (await clickByText(wv, [t])) await sleep(400);
+  }
+}
+
+// 快手封面自动上传:点「封面设置」→ 打开封面弹层 →(必要时切「上传封面/本地上传」)→ CDP 塞封面图
+// 到图片文件输入(accept*=image,实测存在)→ 点「完成/确定」。失败不阻断存草稿。
+async function uploadKuaishouCover(wv: DraftWebview, coverPath: string, progress: DraftProgress): Promise<boolean> {
+  if (!(await clickRealByText(wv, ['封面设置'])) && !(await clickByText(wv, ['封面设置']))) return false;
+  await sleep(1800);
+  // 弹层里可能要先切到「上传封面/本地上传」才出文件选择(有的直接塞 image 输入也能触发)。
+  await clickByText(wv, ['上传封面', '本地上传', '上传图片', '本地封面', '上传']);
+  await sleep(800);
+  const put = await setFiles(wv, [coverPath], 'input[type=file][accept*="image"]');
+  if (!put.ok) return false;
+  await sleep(3500); // 等封面上传 + 预览渲染
+  const done =
+    (await clickRealByText(wv, ['完成', '确定', '确认', '保存', '使用', '下一步']))
+    || (await clickByText(wv, ['完成', '确定', '确认', '保存', '使用', '下一步']));
+  await sleep(1500);
+  if (progress && !done) progress('封面已传但没自动点「完成」——可在页面手动确认封面');
+  return true;
+}
+
+async function injectKuaishou(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
+  // 登录由 runDraftInjection 统一处理(没登录会停前台等扫码)。
+  // 0) 关掉「还有上次未发布的视频/继续编辑/放弃」拦截弹窗。
+  progress('0/4 关掉拦截弹窗…');
+  await dismissKuaishouBlockers(wv);
+
   progress('1/4 上传成片…');
-  const put = await setFiles(wv, draft.filePaths);
+  const put = await setFiles(wv, draft.filePaths, 'input[type=file][accept*="video"], input[type=file]');
   if (!put.ok) {
     return { ok: false, detail: `成片注入失败(${put.reason ?? '未知'})——请手动拖入(成片文件夹已可从发布步打开)` };
   }
 
-  progress('2/4 等编辑表单就绪…');
-  const KS_FIELD_SEL = 'input[placeholder*="标题"], [contenteditable="true"], textarea[placeholder*="描述"]';
-  const formReady = await waitFor(wv, KS_FIELD_SEL, 90_000);
+  progress('2/4 等编辑表单就绪…(视频处理较久)');
+  // 实测:快手无独立标题框,「作品描述」是 contenteditable(占位「作品描述不会写?…」),
+  // 描述即文案。视频处理慢,等长一点。
+  const formReady = await waitFor(wv, '[contenteditable="true"]', 120_000);
   if (!formReady) {
-    return { ok: false, detail: '视频已提交但编辑表单没等到——表单出现后手动粘贴标题即可,文案在剪贴板' };
+    return { ok: false, detail: '视频已提交但编辑表单没等到(可能还在处理)——表单出现后手动粘贴文案即可,文案在剪贴板' };
   }
+  await sleep(1500);
+  await dismissKuaishouBlockers(wv);
 
-  progress('3/4 键入标题/描述…');
+  progress('3/4 键入作品描述…');
   const typed =
-    (await typeIntoField(wv, KS_FIELD_SEL, draft.title, (pct) => progress(`3/4 键入描述… ${pct}%`)))
-    || (await fillInput(wv, 'input[placeholder*="标题"], textarea[placeholder*="描述"]', draft.title))
+    (await typeIntoField(wv, '[contenteditable="true"]', draft.title, (pct) => progress(`3/4 键入描述… ${pct}%`)))
     || (await fillEditor(wv, draft.title));
   if (!typed) {
-    return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴' };
+    return { ok: false, detail: '表单结构对不上(快手可能改版了)——文案在剪贴板,请手动粘贴' };
   }
   if (draft.tags.length > 0) {
     await typeText(wv, ' ');
@@ -609,11 +790,23 @@ async function injectKuaishou(wv: DraftWebview, draft: DraftPayload, progress: D
   clickAt(wv, 20, 200);
   await sleep(600);
 
-  progress('4/4 存草稿…');
-  const saved = await clickSaveDraft(wv);
-  return saved
-    ? { ok: true, detail: '已存到快手草稿——在面板里核对,满意后自己点发布' }
-    : { ok: true, detail: '内容已填好——没找到「存草稿」按钮,请在面板里手动点一下保存' };
+  // 封面(可选):用户在发布页传的封面 → 自动上传到快手「封面设置」。失败不阻断。
+  if (draft.coverPath) {
+    progress('封面 · 上传中…');
+    const coverOk = await uploadKuaishouCover(wv, draft.coverPath, progress);
+    if (!coverOk) progress('封面自动上传没成(不阻断)——可在页面手动设置封面');
+    await dismissKuaishouBlockers(wv);
+  }
+  await sleep(1200); // 停一下让快手自动保存编辑态(它会把上传的作品自动留到草稿箱)
+
+  // 快手【没有独立「存草稿」按钮】(底部只有 发布/取消),上传的作品会自动进「草稿箱」。
+  // 铁律:绝不点「发布」。停在发布前一步——成片已传、文案已填,作品已在草稿箱,用户核对后
+  // 自己点「发布」,或去「内容管理→草稿」里管理。
+  progress('4/4 已填好,停在发布前(快手自动存草稿箱)…');
+  return {
+    ok: true,
+    detail: '已上传成片+填好文案,停在发布前——快手没有独立「存草稿」键,作品已自动进「草稿箱」(内容管理→草稿);核对后你自己点「发布」。',
+  };
 }
 
 // ---- 知乎(专栏文章) ----
@@ -816,12 +1009,53 @@ export function draftInjectionSupported(platform: string): boolean {
   return platform in ADAPTERS;
 }
 
+const DRAFT_PLATFORM_LABEL: Record<string, string> = {
+  xiaohongshu: '小红书', douyin: '抖音', kuaishou: '快手', zhihu: '知乎', weibo: '微博',
+};
+// 各平台发布页 URL(与 daemon media-studio/browser.ts 对齐):登录成功后导回这里再注入。
+const DRAFT_PUBLISH_URL: Record<string, string> = {
+  xiaohongshu: 'https://creator.xiaohongshu.com/publish/publish?source=official',
+  douyin: 'https://creator.douyin.com/creator-micro/content/upload',
+  kuaishou: 'https://cp.kuaishou.com/article/publish/video',
+  zhihu: 'https://zhuanlan.zhihu.com/write',
+  weibo: 'https://weibo.com',
+};
+
+/**
+ * 【统一登录引导】没登录时把登录页停在前台,给醒目提示,等用户扫码登录(最多 5 分钟),登录后
+ * 导回发布页再继续注入——所有平台一致(2026-07-14 用户:没登录要引导去登录)。返回是否已登录。
+ */
+async function waitForLogin(wv: DraftWebview, platform: string, label: string, progress: DraftProgress): Promise<boolean> {
+  if (!(await isLoginWall(wv))) return true;
+  progress(`⚠️ ${label}还没登录——请在下方页面扫码登录,登录后自动继续存草稿(我会一直等你,最多5分钟)`);
+  const deadline = Date.now() + 5 * 60_000;
+  while (Date.now() < deadline) {
+    await sleep(3000);
+    if (!(await isLoginWall(wv))) {
+      // 登录后页面常停在登录成功页/平台首页,导回发布页再让适配器接手。
+      const url = DRAFT_PUBLISH_URL[platform];
+      if (url) {
+        try { await wv.executeJavaScript(`location.href=${JSON.stringify(url)}`); } catch { /* ignore */ }
+        await sleep(3500);
+      }
+      progress(`✓ ${label}已登录,继续存草稿…`);
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function runDraftInjection(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
   const adapter = ADAPTERS[draft.platform];
   if (!adapter) {
     return { ok: false, detail: `「${draft.platform}」暂不支持自动填稿——文案在剪贴板,请手动粘贴` };
   }
+  const label = DRAFT_PLATFORM_LABEL[draft.platform] ?? draft.platform;
   try {
+    // 先统一处理登录:没登录就停前台等用户扫码,登录后自动继续;超时才引导去账号页。
+    if (!(await waitForLogin(wv, draft.platform, label, progress))) {
+      return { ok: false, detail: `${label}还没登录——请去左侧「账号」页给${label}添加账号并扫码登录,再回来点一次「一键存草稿」` };
+    }
     return await adapter(wv, draft, progress);
   } catch (err) {
     return { ok: false, detail: `自动填稿中断(${err instanceof Error ? err.message : String(err)})——文案在剪贴板,请手动接手` };
