@@ -35,6 +35,8 @@ import {
 import { readProcessStamp } from "@open-design/platform";
 
 import { createDesktopRuntime, type DesktopRuntime } from "./runtime.js";
+import { flushEmbeddedBrowserCookieVault } from "./embedded-browser.js";
+export { applyEmbeddedBrowserNetworkSwitches } from "./embedded-browser.js";
 import { attachDesktopProcessErrorFilter } from "./uncaught-exception.js";
 import { createDesktopUpdater, createDesktopUpdaterScheduler, type DesktopUpdaterScheduler } from "./updater.js";
 import {
@@ -393,6 +395,13 @@ export async function runDesktopMain(
   async function shutdown(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
+    // 退出前把内置浏览器各分区 cookie 落一遍保险库(登录态跨重启/重编译不丢的最后一道)。
+    // 必须 await 到写完再继续退出——否则 fire-and-forget 的写会被进程退出腰斩成 0 字节档案
+    // (2026-07-14 实测),回灌就拿到空。套 3s 超时,别让保险库写卡死退出。
+    await Promise.race([
+      flushEmbeddedBrowserCookieVault(),
+      new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+    ]).catch(() => undefined);
     await options.beforeShutdown?.().catch((error: unknown) => {
       console.error("desktop beforeShutdown failed", error);
     });

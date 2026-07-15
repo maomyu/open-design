@@ -15,7 +15,7 @@ import {
 } from "@open-design/sidecar-proto";
 import type { OpenDesignHostActionResult, OpenDesignHostUpdaterActionOptions } from "@open-design/host";
 
-import { hardenWebviewEmbeddedBrowser, registerEmbeddedBrowserBridge, registerEmbeddedBrowserCookieBridge, registerWebviewFileInputBridge } from "./embedded-browser.js";
+import { flushEmbeddedBrowserCookieVault, hardenWebviewEmbeddedBrowser, registerEmbeddedBrowserBridge, registerEmbeddedBrowserCookieBridge, registerWebviewFileInputBridge, restoreEmbeddedBrowserCookies } from "./embedded-browser.js";
 import { createElectronPdfTarget, exportPdfFromHtml, savePrintReadyDocumentAsPdf } from "./pdf-export.js";
 import type { PrintReadyPdfOptions } from "./pdf-export.js";
 import type { DesktopUpdater } from "./updater.js";
@@ -1054,6 +1054,9 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
   registerEmbeddedBrowserBridge();
   registerWebviewFileInputBridge();
   registerEmbeddedBrowserCookieBridge();
+  // 启动即回灌内置浏览器各分区的 cookie 保险库,让"登录一次长期保持"跨重启/重编译成立
+  // (签名安装包里 Chromium 自身磁盘持久化不可靠,见 embedded-browser.ts)。best-effort。
+  void restoreEmbeddedBrowserCookies();
   ipcMain.handle("shell:open-external", async (_event, url: string) => {
     if (!isHttpUrl(url)) return false;
     try {

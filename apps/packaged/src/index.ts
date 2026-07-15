@@ -10,7 +10,7 @@ import {
   createSidecarLaunchEnv,
   resolveAppIpcPath,
 } from "@open-design/sidecar";
-import { applyOsLocaleSwitch } from "@open-design/desktop/main";
+import { applyEmbeddedBrowserNetworkSwitches, applyOsLocaleSwitch } from "@open-design/desktop/main";
 import { readProcessStamp } from "@open-design/platform";
 import { join } from "node:path";
 import { app, dialog } from "electron";
@@ -69,6 +69,10 @@ async function main(): Promise<void> {
   // en-US default. runDesktopMain (called later) calls the same helper
   // again to recover the resolved locale string for the BrowserWindow.
   applyOsLocaleSwitch(app);
+  // 必须在 whenReady 之前:关掉网络服务沙箱(打包 Electron 的常规防御性开关)。短视频账号
+  // 登录态跨重启/重编译长期保持,靠的是 cookie 保险库(见 embedded-browser.ts),不依赖
+  // 此开关;安装包日志里的 cache 结构报错是旧会话残留、非致命,与登录态持久化无关。
+  applyEmbeddedBrowserNetworkSwitches(app);
 
   const config = await readPackagedConfig();
   const argvStamp = readProcessStamp(process.argv.slice(1), OPEN_DESIGN_SIDECAR_CONTRACT);
