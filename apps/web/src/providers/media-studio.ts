@@ -319,21 +319,39 @@ export async function radarScoreCollected(
 }
 
 /** 下载某爆款的原视频(yt-dlp),返回本地文件路径。给用户仿写文案用。 */
+/** fetch + 超时自动中止:任何一步 daemon 卡住都不会让 UI 无限转圈(用户报"提取仿写一直转圈"
+ *  的兜底)。超时抛 AbortError,上层 catch 转成友好文案。 */
+async function fetchWithTimeout(input: string, init: RequestInit, ms: number): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(input, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function timeoutMsg(e: unknown, fallback: string): string {
+  if (e instanceof DOMException && e.name === 'AbortError') return fallback;
+  return e instanceof Error ? e.message : String(e);
+}
+
 export async function downloadStudioVideo(
   url: string,
   cookieFile?: string,
 ): Promise<{ file: string; dir: string } | { error: string }> {
   try {
-    const resp = await fetch(`${ROOT}/download-video`, {
+    // 180s 上限:大视频(小红书/B站可达上百 MB)也够下完,卡死则超时报错而非永久转圈。
+    const resp = await fetchWithTimeout(`${ROOT}/download-video`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, ...(cookieFile ? { cookieFile } : {}) }),
-    });
+    }, 180_000);
     const d = (await resp.json()) as { file?: string; dir?: string; error?: string };
     if (!resp.ok || !d.file) return { error: d.error || '下载失败' };
     return { file: d.file, dir: d.dir ?? '' };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
+    return { error: timeoutMsg(e, '下载超时(视频过大或网络慢)——换条短一点的爆款再试') };
   }
 }
 
@@ -391,20 +409,40 @@ export async function fetchDownloadedVideoObjectUrl(
 }
 
 /** 本地视频文件 → 口播文案(抽音频+ASR)。仿写用。 */
+/** B站视频「存草稿」全自动:daemon 用登录 cookie 直连 upos 上传 API 建草稿(绕开网页上传器)。 */
+export async function submitBilibiliDraft(
+  videoFile: string, title: string, desc: string, tags: string, cookieFile: string, coverPath = '',
+): Promise<{ ok: true; draftId: unknown } | { error: string }> {
+  try {
+    // 360s:B站上传大视频较慢;超时中止而非无限转圈。
+    const resp = await fetchWithTimeout(`${ROOT}/bilibili-draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoFile, title, desc, tags, cookieFile, coverPath }),
+    }, 360_000);
+    const d = (await resp.json()) as { ok?: boolean; draftId?: unknown; error?: string };
+    if (!resp.ok || !d.ok) return { error: d.error || 'B站存草稿失败' };
+    return { ok: true, draftId: d.draftId };
+  } catch (e) {
+    return { error: timeoutMsg(e, 'B站上传超时(视频过大或网络慢)——换条短一点的再试') };
+  }
+}
+
 export async function extractScriptFromVideo(
   videoFile: string,
 ): Promise<{ transcript: string } | { error: string }> {
   try {
-    const resp = await fetch(`${ROOT}/extract-script`, {
+    // 320s 上限:略高于 daemon 侧 300s ASR 超时,让 daemon 的具体错误先浮上来;真卡死也会中止。
+    const resp = await fetchWithTimeout(`${ROOT}/extract-script`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videoFile }),
-    });
+    }, 320_000);
     const d = (await resp.json()) as { transcript?: string; error?: string };
     if (!resp.ok) return { error: d.error || '提取文案失败' };
     return { transcript: d.transcript ?? '' };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
+    return { error: timeoutMsg(e, '提取文案超时——视频过长,换条短一点的口播爆款再试') };
   }
 }
 

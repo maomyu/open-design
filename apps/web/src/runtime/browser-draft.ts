@@ -11,6 +11,8 @@
 //     这是所有"填稿工具"的共同宿命,失败路径已兜底。
 import { setHostBrowserFileInput } from '@open-design/host';
 import { markdownToZhihuHtml } from '../components/media-studio/zhihu-preview';
+import { submitBilibiliDraft } from '../providers/media-studio';
+import { exportBrowserCookies } from './browser-panes';
 
 export interface DraftPayload {
   /** 目标平台 id(xiaohongshu/douyin/...)。 */
@@ -571,29 +573,71 @@ async function clickSaveDraft(wv: DraftWebview): Promise<boolean> {
   return false;
 }
 
-// ---- 小红书(图文) ----
+// 小红书视频封面(用户在发布页上传的封面图):点「编辑封面/设置封面」→ 弹层里切「上传封面」
+// tab → CDP 塞图到图片文件输入 → 点「确定/完成」。小红书封面默认是抽帧,上传是次要 tab,
+// 找不到上传入口就跳过(不阻断存草稿)。★真实页面文案/结构待登录后校准。
+async function uploadXiaohongshuCover(wv: DraftWebview, coverPath: string, progress: DraftProgress): Promise<boolean> {
+  // 打开封面编辑弹层(优先真实点击)。
+  if (!(await clickRealByText(wv, ['编辑封面', '设置封面', '选择封面', '封面']))
+    && !(await clickByText(wv, ['编辑封面', '设置封面', '选择封面', '封面']))) return false;
+  await sleep(1500);
+  // 弹层里切到「上传封面/上传图片/本地上传」tab(默认是抽帧)。
+  await clickByText(wv, ['上传封面', '上传图片', '本地上传', '上传']);
+  await sleep(800);
+  const put = await setFiles(wv, [coverPath], 'input[type=file][accept*="image"]');
+  if (!put.ok) return false;
+  await sleep(2600); // 等封面上传 + 预览
+  const done =
+    (await clickRealByText(wv, ['确定', '完成', '确认', '保存', '下一步']))
+    || (await clickByText(wv, ['确定', '完成', '确认', '保存', '下一步']));
+  await sleep(1200);
+  if (progress && !done) progress('封面已传但没自动点「确定」——可在页面手动确认');
+  return true;
+}
+
+// ---- 小红书(图文 / 视频) ----
 async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
   if (await isLoginWall(wv)) {
     return { ok: false, detail: '小红书还没登录——在面板里登录后再点一次「一键存草稿」' };
   }
-  progress('1/5 切换到「上传图文」…');
-  await clickByText(wv, ['上传图文']);
-  await sleep(1200);
+  const isVideo = draft.kind === 'video';
 
-  progress(`2/5 上传 ${draft.filePaths.length} 张图…`);
-  const put = await setFiles(wv, draft.filePaths);
-  if (!put.ok) {
-    return { ok: false, detail: `图片注入失败(${put.reason ?? '未知'})——请手动拖入(图集文件夹已可从发布步打开)` };
+  if (isVideo) {
+    // 发布页默认就是「上传视频」tab(实测 active),且页面上「上传视频」还有个中心圆形
+    // 上传按钮——点它会触发原生文件选择框(卡死注入)。所以视频路【不点 tab】,直接 CDP
+    // 塞文件到隐藏的视频输入(setFiles 走 DOM.setFileInputFiles,对隐藏输入也生效)。
+    progress('1/6 准备上传视频…');
+    await sleep(600);
+    progress('2/6 上传视频…');
+    // 小红书视频输入的 accept 是扩展名列表 `.mp4,.mov,.flv,…`(实测,非 video/*),
+    // 按 mp4 匹配才命中;失败退回通用 setFiles 自动找第一个文件输入(默认就是视频 tab)。
+    const put = (await setFiles(wv, draft.filePaths, 'input[type=file][accept*="mp4"]')).ok
+      ? { ok: true }
+      : await setFiles(wv, draft.filePaths);
+    if (!put.ok) {
+      return { ok: false, detail: '视频注入失败——请手动拖入(视频文件夹已可从发布步打开)' };
+    }
+  } else {
+    progress('1/6 切换到「上传图文」…');
+    await clickByText(wv, ['上传图文']);
+    await sleep(1200);
+    progress(`2/6 上传 ${draft.filePaths.length} 张图…`);
+    const put = await setFiles(wv, draft.filePaths);
+    if (!put.ok) {
+      return { ok: false, detail: `图片注入失败(${put.reason ?? '未知'})——请手动拖入(图集文件夹已可从发布步打开)` };
+    }
   }
 
-  progress('3/5 等编辑表单就绪…');
-  // 图传完后小红书才渲染标题/正文表单;等标题框出现。
-  const formReady = await waitFor(wv, 'input[placeholder*="标题"], input[placeholder*="填写标题"]', 60_000);
+  progress('3/6 等编辑表单就绪…');
+  // 传完后小红书才渲染标题/正文表单;等标题框出现。视频要转码,等得久些。
+  const formReady = await waitFor(wv, 'input[placeholder*="标题"], input[placeholder*="填写标题"]', isVideo ? 120_000 : 60_000);
   if (!formReady) {
-    return { ok: false, detail: '图片已提交但编辑表单没等到(可能还在处理)——表单出现后手动粘贴文案即可,文案在剪贴板' };
+    return { ok: false, detail: isVideo
+      ? '视频已提交但编辑表单没等到(可能还在转码)——表单出现后手动粘贴文案即可,文案在剪贴板'
+      : '图片已提交但编辑表单没等到(可能还在处理)——表单出现后手动粘贴文案即可,文案在剪贴板' };
   }
 
-  progress('4/5 键入标题…');
+  progress('4/6 键入标题…');
   // 真实键入(系统级输入管线,带打字节奏);失败退回合成填充兜底。
   const TITLE_SEL = 'input[placeholder*="标题"], input[placeholder*="填写标题"]';
   const titleOk =
@@ -602,7 +646,7 @@ async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress
   // 正文与标签分开:正文逐字键入;标签走「#词+联想弹层回车」确认成
   // 真话题实体(纯拼在正文里只是文本,不是话题)。
   const bodyOk =
-    (await typeIntoField(wv, '[contenteditable="true"]', draft.body, (pct) => progress(`4/5 键入正文… ${pct}%`)))
+    (await typeIntoField(wv, '[contenteditable="true"]', draft.body, (pct) => progress(`4/6 键入正文… ${pct}%`)))
     || (await fillEditor(wv, draft.body));
   if (!titleOk && !bodyOk) {
     return { ok: false, detail: '表单结构对不上(平台可能改版了)——文案在剪贴板,请手动粘贴;把这个情况反馈给我们跟修' };
@@ -610,13 +654,19 @@ async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress
   if (bodyOk && draft.tags.length > 0) {
     // 光标此刻在正文末尾;空一段再逐个上话题。
     await typeText(wv, '\n');
-    await typeHashtags(wv, draft.tags, (i, total) => progress(`4/5 话题 ${i}/${total}…`));
+    await typeHashtags(wv, draft.tags, (i, total) => progress(`4/6 话题 ${i}/${total}…`));
   }
   // 点页面空白处收残留联想弹层(真实点击),它会挡底部「存草稿」。
   clickAt(wv, 20, 200);
   await sleep(600);
 
-  progress('5/5 存草稿…');
+  // 视频封面(用户在发布页上传的封面);图文没有封面概念,跳过。
+  if (isVideo && draft.coverPath) {
+    progress('5/6 封面 · 上传中…');
+    await uploadXiaohongshuCover(wv, draft.coverPath, progress);
+  }
+
+  progress('6/6 存草稿…');
   const saved = await clickSaveDraft(wv);
   return saved
     ? { ok: true, detail: '已存到小红书草稿箱——在面板里核对,满意后自己点发布' }
@@ -997,10 +1047,40 @@ async function injectWeibo(wv: DraftWebview, draft: DraftPayload, progress: Draf
   };
 }
 
+// ---- B站(视频投稿·全自动) ----
+// B站网页投稿页的上传器(input[name=buploader])【拒绝程序化塞文件】:它是 Vue 响应式组件,CDP
+// setFiles 塞进去的文件会被重渲染抹掉(input.files 恒空、不上传),只认真人拖拽/点击弹原生框。所以
+// 抖音/快手/小红书那套「注入网页表单」对 B站 无效。改为:导出登录 cookie → 交给 daemon 用 cookie
+// 直连 B站 的 upos 上传 API + draft/add 建草稿(见 daemon /bilibili-draft + scripts/bilibili_upload.py)。
+// 全程不碰网页上传器,wv 只用于统一登录检测(runDraftInjection 已处理)。
+async function injectBilibili(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
+  const video = draft.filePaths[0] || '';
+  if (!video) return { ok: false, detail: 'B站存草稿需要成片视频——请先在「上传」步传成片' };
+
+  progress('1/3 读取B站登录态…');
+  // 账号从当前 webview 的分区推导:分区名 persist:od-browser-bilibili-<账号>,登录态就在这个分区里。
+  // 之前硬编码 'main' 对不上真实账号分区(如 u9f4c2966)→ 导出为空、报"登录态读取失败"。
+  const partition = String(wv.getAttribute('partition') || '');
+  const account = partition.replace(/^persist:od-browser-bilibili-/, '') || 'main';
+  const cookieFile = await exportBrowserCookies('bilibili', account);
+  if (!cookieFile) {
+    return { ok: false, detail: 'B站登录态读取失败——请确认已在「账号」页登录B站,再点一次「一键存草稿」' };
+  }
+
+  progress('2/3 上传视频到B站(直连官方接口,大视频较慢,请稍候别关)…');
+  const tags = draft.tags.join(',');
+  const r = await submitBilibiliDraft(video, draft.title, draft.body, tags, cookieFile, draft.coverPath ?? '');
+  if ('error' in r) return { ok: false, detail: r.error };
+
+  progress('3/3 完成');
+  return { ok: true, detail: '已存到B站草稿箱(投稿管理 → 草稿箱)——核对分区后自己点投稿即可(封面已带上)' };
+}
+
 const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgress) => Promise<DraftResult>> = {
   xiaohongshu: injectXiaohongshu,
   douyin: injectDouyin,
   kuaishou: injectKuaishou,
+  bilibili: injectBilibili,
   zhihu: injectZhihu,
   weibo: injectWeibo,
 };
@@ -1010,13 +1090,14 @@ export function draftInjectionSupported(platform: string): boolean {
 }
 
 const DRAFT_PLATFORM_LABEL: Record<string, string> = {
-  xiaohongshu: '小红书', douyin: '抖音', kuaishou: '快手', zhihu: '知乎', weibo: '微博',
+  xiaohongshu: '小红书', douyin: '抖音', kuaishou: '快手', bilibili: 'B站', zhihu: '知乎', weibo: '微博',
 };
 // 各平台发布页 URL(与 daemon media-studio/browser.ts 对齐):登录成功后导回这里再注入。
 const DRAFT_PUBLISH_URL: Record<string, string> = {
   xiaohongshu: 'https://creator.xiaohongshu.com/publish/publish?source=official',
   douyin: 'https://creator.douyin.com/creator-micro/content/upload',
   kuaishou: 'https://cp.kuaishou.com/article/publish/video',
+  bilibili: 'https://member.bilibili.com/platform/upload/video/frame',
   zhihu: 'https://zhuanlan.zhihu.com/write',
   weibo: 'https://weibo.com',
 };

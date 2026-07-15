@@ -10155,6 +10155,41 @@ export async function startServer({
     }
   });
 
+  // B站视频「存草稿」全自动:B站网页上传器拒绝程序化塞文件(抖音/快手/小红书那套注入对它无效),
+  // 改为服务端用登录 cookie 直连 upos 上传 API + draft/add 建草稿(见 scripts/bilibili_upload.py)。
+  // cookieFile = web 侧 exportBrowserCookies('bilibili') 导出的 Netscape 文件。
+  app.post('/api/media-studio/bilibili-draft', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const videoFile = String(req.body?.videoFile || '').trim();
+    const cookieFile = String(req.body?.cookieFile || '').trim();
+    const title = String(req.body?.title || '').trim();
+    const desc = String(req.body?.desc || '').trim();
+    const tags = String(req.body?.tags || '').trim();
+    const coverPath = String(req.body?.coverPath || '').trim();
+    if (!videoFile || !videoFile.startsWith('/')) return res.status(400).json({ error: '缺少本地视频文件路径' });
+    if (!cookieFile) return res.status(400).json({ error: 'B站还没登录——请先去「账号」页给B站添加账号并扫码登录' });
+    try {
+      const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+      const args = ['scripts/bilibili_upload.py', '--video', videoFile, '--cookie-file', cookieFile];
+      if (title) args.push('--title', title);
+      if (desc) args.push('--desc', desc);
+      if (tags) args.push('--tags', tags);
+      if (coverPath.startsWith('/')) args.push('--cover', coverPath);
+      const r = await execFileBuffered(eng.python, args, { cwd: eng.engineDir, env: eng.env, timeout: 300_000 });
+      const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+      let parsed: { ok?: boolean; draft_id?: unknown; error?: string };
+      try { parsed = JSON.parse(s); } catch {
+        return res.status(500).json({ error: 'B站存草稿失败：' + (r.stderr || r.stdout).slice(-300) });
+      }
+      if (parsed.error) return res.status(422).json({ error: parsed.error });
+      return res.json({ ok: true, draftId: parsed.draft_id ?? null });
+    } catch (err) {
+      return res.status(500).json({ error: 'B站存草稿失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
   app.get('/api/orbit/status', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
