@@ -71,3 +71,6 @@ apps/landing-page/public/previews/
 growth/**
 .gstack/
 dist-cli/
+
+# Vendored packaging blobs (standalone python + offline wheels + ffmpeg + pbs) — regenerated locally
+tools/pack/vendor/

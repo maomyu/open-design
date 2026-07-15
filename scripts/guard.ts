@@ -128,6 +128,11 @@ const residualAllowedPathPrefixes = [
   "design-templates/html-ppt/assets/",
   "test-results/",
   "vendor/",
+  // Vendored packaging blobs for the bundled Python engine: relocatable CPython
+  // (python-build-standalone), offline wheels, and static ffmpeg. These ship the
+  // short-video pipeline (真抓爆款/下载/ASR) inside the installer and are
+  // git-ignored, downloaded locally; never project-owned code.
+  "tools/pack/vendor/",
 ];
 
 const residualAllowedPathPatterns: RegExp[] = [
