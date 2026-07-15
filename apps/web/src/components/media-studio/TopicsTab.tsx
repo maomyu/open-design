@@ -194,9 +194,13 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   // 爆款筛选 → 引擎 criteria 对象(直接采集管线用)。
   const buildCriteria = () => {
     const rules = RADAR_RULES.filter((r) => radarRules.has(r.key)).map((r) => ({ ...r.rule }));
-    // 没勾任何规则时给个默认爆款门槛(热度≥1万):否则冷门词会拿低赞视频凑数当"爆款"
-    // (2026-07-14 用户报"才2个赞也算爆款")。勾了规则就按规则来(规则本身都带更高门槛)。
-    if (rules.length === 0) rules.push({ plays_min: 10000 });
+    // 没勾任何规则时给个默认爆款门槛:否则冷门词会拿低赞视频凑数当"爆款"(2026-07-14 用户报
+    // "才2个赞也算爆款")。视频号走极致数据【没有播放量、热度=点赞】,1万点赞门槛太高常常采不出
+    // (2026-07-15 用户报),给它 2000 的较低默认;其余平台维持 1 万。勾了规则就按规则来。
+    if (rules.length === 0) {
+      const floor = collectTargets.includes('channels') ? 2000 : 10000;
+      rules.push({ plays_min: floor });
+    }
     return { time_window: radarWindow, rules };
   };
   // 采集页数(1-4):每页约 12 条候选。默认 1 页;想多看爆款可调大(会多爬几页,稍慢)。
