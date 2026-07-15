@@ -9991,6 +9991,42 @@ export async function startServer({
     const outDir = path.join(RUNTIME_DATA_DIR, 'downloads');
     const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
+    // ⓪【视频号:WASM 解密】视频号选题 url 采集时挂了 #odk=<decode_key>(dajiala 无按 object_id
+    // 反查,download_url+decode_key 只在采集时有,随选题带走)。视频号视频前 128KB 用 ISAAC64 加密,
+    // 下载后用微信官方 WASM(scripts/sph/decrypt.cjs,跑在 Node)解密还原可播 MP4。
+    if (url.includes('#odk=')) {
+      try {
+        const hi = url.indexOf('#odk=');
+        const dlUrl = url.slice(0, hi);
+        const decodeKey = url.slice(hi + 5).trim();
+        if (!decodeKey) throw new Error('选题缺少解密 key(重新采集一次视频号选题)');
+        await fs.promises.mkdir(outDir, { recursive: true });
+        const resp = await fetch(dlUrl, { headers: { 'User-Agent': UA, Referer: 'https://channels.weixin.qq.com/' } });
+        if (!resp.ok) throw new Error('下载失败 HTTP ' + resp.status);
+        const encBuf = Buffer.from(await resp.arrayBuffer());
+        if (encBuf.length < 10_000) throw new Error('下载内容过小(链接可能已失效,重采一次)');
+        const encFile = path.join(outDir, `sph-enc-${Date.now()}.bin`);
+        await fs.promises.writeFile(encFile, encBuf);
+        const outFile = path.join(outDir, `视频号-${Date.now()}.mp4`);
+        const decryptCjs = path.join(engineDir, 'scripts', 'sph', 'decrypt.cjs');
+        // 跑 Node 解密脚本:打包态 daemon 在 Electron 下,用 process.execPath + ELECTRON_RUN_AS_NODE
+        // 当纯 Node 跑;dev 态 execPath 本就是 node,该 env 无害。
+        const rr = await execFileBuffered(process.execPath, [decryptCjs, encFile, decodeKey, outFile], {
+          env: { ...eng.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 90_000,
+        });
+        await fs.promises.unlink(encFile).catch(() => {});
+        const js = (rr.stdout || '').slice((rr.stdout || '').indexOf('{'));
+        const parsed = js ? JSON.parse(js) as { ok?: boolean; error?: string } : {};
+        if (parsed.ok) {
+          const st = await fs.promises.stat(outFile);
+          return res.json({ file: outFile, dir: outDir, bytes: st.size, via: 'sph-wasm' });
+        }
+        throw new Error(parsed.error || (rr.stderr || '').slice(-200) || '解密失败');
+      } catch (e) {
+        return res.status(500).json({ error: '视频号下载失败：' + String(e && (e as Error).message ? (e as Error).message : e) });
+      }
+    }
+
     // ①【首选:TikHub 解析直链】抖音/快手/小红书下载接口硬性要登录态 cookie,yt-dlp 匿名下不了;
     // TikHub 官方接口给链接就返回 play_addr 直链(无需用户登录),由 daemon 带 Referer 下载,最稳。
     // (这是「下载单条视频做仿写」用途;真抓爆款采集仍走内置浏览器,不经 TikHub。)
