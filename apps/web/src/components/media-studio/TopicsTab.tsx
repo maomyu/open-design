@@ -211,6 +211,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const collectTargets = collectPlatforms ?? ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'];
   // 爆款结果模块存储的分桶 key = 当前采集平台组合(短视频台每个子平台单独一桶,互不串台)。
   const baokuanPlatKey = collectTargets.join(',');
+  // 采集数据源标签:视频号走极致数据(dajiala),其余走 TikHub 直采。UI 文案据此显示,别再写死 TikHub。
+  const collectSource = collectTargets.includes('channels') ? '极致数据' : 'TikHub';
   const [collectBusy, setCollectBusy] = useState(false);
   const [collectMsg, setCollectMsg] = useState(() => (browserCollect ? baokuanStatus : ''));
   // 采集进度:挂载即从模块状态读回(采集期间本组件可能被切走卸载过),并监听更新——保证采集
@@ -231,7 +233,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       // 【TikHub 直采】不再开内置浏览器逐平台搜(慢、要登录、撞验证码、DOM 易改版),直接给
       // 关键词+平台+爆款标准,引擎走 TikHub 搜索(翻页累积→按标准筛→评分)秒出选题。
       const names = collectTargets.map((p) => (COLLECT_PLATFORM_LABEL[p] ?? p)).join('、');
-      setBaokuanStatus(`正在用 TikHub 直采【${names}】${radarPages} 页并按爆款标准筛选评分…(约十几秒${radarPages > 1 ? '~' + radarPages * 8 + '秒' : ''})`);
+      setBaokuanStatus(`正在用 ${collectSource} 直采【${names}】${radarPages} 页并按爆款标准筛选评分…(约十几秒${radarPages > 1 ? '~' + radarPages * 8 + '秒' : ''})`);
       const scored = await collectScoreTopics(kw, collectTargets, buildCriteria(), radarPages);
       if ('error' in scored) { setBaokuanStatus(''); studioToast.err(scored.error); return; }
       // 评出的爆款 → hits 列表(带链接/点赞/播放/评论,可勾选),像公众号那样先列出来,
@@ -516,10 +518,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     <>
       <div className={c('card')}>
         <div className={c('cardLabel')}>
-          {browserCollect ? '真抓爆款 · TikHub 直采' : '找热点 · 组合选题雷达'}
+          {browserCollect ? `真抓爆款 · ${collectSource} 直采` : '找热点 · 组合选题雷达'}
           <span className={c('cardHint')}>
             {browserCollect
-              ? '选平台 + 填方向 + 勾爆款筛选 → 点「真抓爆款」→ TikHub 直采真实爆款(带粉丝/点赞/评论)、按标准评分列出,十几秒出'
+              ? `选平台 + 填方向 + 勾爆款筛选 → 点「真抓爆款」→ ${collectSource} 直采真实爆款(带粉丝/点赞/评论)、按标准评分列出,十几秒出`
               : aiOnly
                 ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出'
                 : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}
@@ -625,10 +627,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}
               disabled={collectBusy || !!collectMsg || !direction.trim()}
-              title="用 TikHub 接口直采【当前选中平台】真实爆款(带粉丝/点赞/评论),按爆款筛选评分列出。十几秒出,不用开浏览器、不用登录/扫码。选哪个平台就只抓哪个。"
+              title={`用 ${collectSource} 接口直采【当前选中平台】真实爆款(带粉丝/点赞/评论),按爆款筛选评分列出。十几秒出,不用开浏览器、不用登录/扫码。选哪个平台就只抓哪个。`}
               onClick={() => void runDirectCollect()}
             >
-              <Icon name="sparkles" size={14} /> {collectBusy || collectMsg ? '采集评分中…' : '真抓爆款(TikHub 直采)'}
+              <Icon name="sparkles" size={14} /> {collectBusy || collectMsg ? '采集评分中…' : `真抓爆款(${collectSource} 直采)`}
             </button>
           ) : (
             <button
@@ -742,7 +744,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               borderTopColor: '#e8582e', display: 'inline-block', animation: 'od-spin 0.8s linear infinite', flex: '0 0 auto',
             }} />
             {collectMsg}
-            <span style={{ fontWeight: 400, opacity: 0.75 }}>（TikHub 直采+评分,约十几秒,请稍候）</span>
+            <span style={{ fontWeight: 400, opacity: 0.75 }}>（{collectSource} 直采+评分,约十几秒,请稍候）</span>
             <style>{'@keyframes od-spin{to{transform:rotate(360deg)}}'}</style>
           </div>
         ) : null}
