@@ -151,8 +151,8 @@ export interface TopicsTabProps {
    *  采集而来(AI找选题→爆款雷达→内置浏览器)。传了此 prop:既不显示 TikHub 也不显示大家来
    *  (极致数据/公众号生态)五源——极致数据只服务公众号/视频号,不该出现在短视频台。 */
   browserCollect?: boolean;
-  /** 真抓爆款要采的平台(内置浏览器)。只采【当前选中平台】——选抖音就只抓抖音。
-   *  支持 douyin/xiaohongshu/kuaishou/bilibili;视频号(tencent)不能浏览器采集→传空数组。 */
+  /** 真抓爆款要采的平台。只采【当前选中平台】——选抖音就只抓抖音。抖音/小红书/快手/B站走 TikHub
+   *  直采;视频号走极致数据(dajiala,平台 id=channels,选题带 #odk= 解密key)。 */
   collectPlatforms?: string[];
 }
 
@@ -225,7 +225,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const runDirectCollect = async () => {
     const kw = direction.trim();
     if (!kw) { studioToast.err('先在上面填「方向/领域关键词」'); return; }
-    if (collectTargets.length === 0) { studioToast.err('该平台暂不支持(如视频号)——请选抖音/小红书/快手/B站'); return; }
+    if (collectTargets.length === 0) { studioToast.err('该平台暂不支持真抓爆款——请切到抖音/小红书/快手/B站/视频号'); return; }
     setCollectBusy(true);
     try {
       // 【TikHub 直采】不再开内置浏览器逐平台搜(慢、要登录、撞验证码、DOM 易改版),直接给
@@ -548,7 +548,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           <div className={c('row')}>
             <span className={c('cardHint')}>
               采集平台：{collectTargets.map((p) => (COLLECT_PLATFORM_LABEL[p] ?? p)).join('、') || '（请在上方选平台）'}
-              {'（TikHub 直采：秒出真实爆款，带粉丝/点赞/评论，无需登录/扫码；选哪个平台就只抓哪个）'}
+              {collectTargets.includes('channels')
+                ? '（视频号走极致数据直采：按点赞热度筛爆款，无需登录；下载自动解密还原可播视频）'
+                : '（TikHub 直采：秒出真实爆款，带粉丝/点赞/评论，无需登录/扫码；选哪个平台就只抓哪个）'}
             </span>
           </div>
         ) : null}
@@ -704,7 +706,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             可多选,命中任一即算爆款
           </span>
           <span className={c('cardHint')} style={{ opacity: 0.55, width: '100%', fontSize: 11.5 }}>
-            热度 = 播放与点赞取高值;抖音不公开播放量,按点赞算(快手/B站按播放算)
+            热度 = 播放与点赞取高值;抖音/视频号不公开播放量,按点赞算(快手/B站按播放算)。
+            {collectTargets.includes('channels') ? '视频号是纯点赞,默认门槛已自动降到 2000。' : ''}
           </span>
         </div>
         {sugWords.length > 0 ? (
