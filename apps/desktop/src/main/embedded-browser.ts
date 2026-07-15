@@ -424,13 +424,25 @@ export function registerWebviewFileInputBridge(): void {
       ])) as T;
     try {
       if (!wasAttached) dbg.attach("1.3");
-      const doc = await send<{ root: { nodeId: number } }>("DOM.getDocument");
-      const found = await send<{ nodeId: number }>("DOM.querySelector", {
+      // depth:-1 + pierce:true 把 iframe/shadow DOM 全展开进 CDP 的 DOM agent,否则跨框架搜不到。
+      const doc = await send<{ root: { nodeId: number } }>("DOM.getDocument", { depth: -1, pierce: true });
+      let nodeId = (await send<{ nodeId: number }>("DOM.querySelector", {
         nodeId: doc.root.nodeId,
         selector,
-      });
-      if (!found.nodeId) return { ok: false, reason: `页面里没找到文件选择框（${selector}）` };
-      await send("DOM.setFileInputFiles", { files, nodeId: found.nodeId });
+      })).nodeId;
+      // 主框架没找到 → 跨 iframe 全文搜(视频号发表页的视频输入在同源 iframe 里;其它平台不受影响)。
+      if (!nodeId) {
+        const search = await send<{ searchId: string; resultCount: number }>("DOM.performSearch", { query: selector });
+        if (search.resultCount > 0) {
+          const res = await send<{ nodeIds: number[] }>("DOM.getSearchResults", {
+            searchId: search.searchId, fromIndex: 0, toIndex: search.resultCount,
+          });
+          nodeId = res.nodeIds[0] ?? 0;
+        }
+        await send("DOM.discardSearchResults", { searchId: search.searchId }).catch(() => {});
+      }
+      if (!nodeId) return { ok: false, reason: `页面里没找到文件选择框（${selector}）` };
+      await send("DOM.setFileInputFiles", { files, nodeId });
       return { ok: true };
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : String(err) };
