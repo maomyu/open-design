@@ -20,7 +20,7 @@ import { studioToast } from './StudioFeedback';
 import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
 
-const COLLECT_PLATFORM_LABEL: Record<string, string> = { douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手', bilibili: 'B站' };
+const COLLECT_PLATFORM_LABEL: Record<string, string> = { douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手', bilibili: 'B站', channels: '视频号' };
 
 // 真抓爆款结果的【模块级存储 + 事件】。采集时内置浏览器会切到前台采集页,导致选题页组件卸载;
 // runDirectCollect 是独立 async 会跑完,但卸载后 setHits 失效。故把爆款结果写进模块存储 + 广播事件,
