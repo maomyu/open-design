@@ -6,7 +6,7 @@
   "main": "./dist/cli.js",
   "types": "./dist/cli.d.ts",
   "bin": {
-    "od": "./dist/cli.js"
+    "bc": "./dist/cli.js"
   },
   "exports": {
     ".": {

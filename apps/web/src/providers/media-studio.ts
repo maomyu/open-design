@@ -18,6 +18,8 @@ import type {
   MediaRenderResponse,
   MediaSnippet,
   MediaTopic,
+  CreateStudioCollectRequest,
+  StudioCollectJob,
   StudioAiTaskRequest,
   StudioAiTaskResponse,
   TopicFeedSearchRequest,
@@ -213,6 +215,124 @@ export async function createStudioTopic(
     return data.topic ?? null;
   } catch {
     return null;
+  }
+}
+
+// ── 真抓爆款·直接采集管线(纯可视化,不经 AI 智能体/插件) ──
+// ① createStudioCollect 发起内置浏览器采集(桌面端 collect-listener 会开可见标签逐平台搜)。
+// ② waitStudioCollectDone 轮询到各平台采完。③ radarScoreCollected 把采集条目交引擎 --radar 评分。
+export async function createStudioCollect(
+  body: CreateStudioCollectRequest,
+): Promise<{ jobId: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/collect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = (await resp.json()) as { job?: StudioCollectJob; id?: string; error?: string };
+    if (!resp.ok) return { error: d.error || '发起采集失败(桌面端需在运行)' };
+    const jobId = d.job?.id ?? d.id ?? '';
+    return jobId ? { jobId } : { error: '未取到采集任务号' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 轮询采集任务到终态(done/error);采集在桌面端【可见标签】里逐平台跑,期间浏览器前台可见。
+ *  注意:/wait(since=0)是立即返回当前快照、并不阻塞,所以每轮之间必须 sleep,否则会在
+ *  一两秒内狂轮几十次全拿到 running 就误判失败(这是"爆款一直不显示"的根因)。采集(尤其抖音
+ *  含首页暖场/拟人输入/验证码等待)可能几分钟,故轮询上限放到 ~6 分钟。 */
+export async function waitStudioCollectDone(jobId: string): Promise<StudioCollectJob | null> {
+  for (let i = 0; i < 120; i++) {
+    try {
+      const resp = await fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/wait`);
+      if (resp.ok) {
+        const d = (await resp.json()) as { job?: StudioCollectJob } & StudioCollectJob;
+        const job = (d.job ?? d) as StudioCollectJob;
+        if (job.status === 'done' || job.status === 'error') return job;
+      }
+    } catch {
+      /* 单次网络抖动忽略,下一轮再试;不要因一次失败就整体放弃 */
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return null;
+}
+
+/** 把采集到的条目 { 平台: [条目] } 交爆款引擎 --radar 评分,返回选题候选。 */
+export async function radarScoreCollected(
+  keyword: string,
+  items: Record<string, unknown[]>,
+  criteria?: unknown,
+): Promise<{ topics: Array<Record<string, unknown>>; count: number } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/radar-score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword, items, criteria }),
+    });
+    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string };
+    if (!resp.ok) return { error: d.error || '评分失败' };
+    return { topics: d.topics ?? [], count: d.count ?? 0 };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 下载某爆款的原视频(yt-dlp),返回本地文件路径。给用户仿写文案用。 */
+export async function downloadStudioVideo(
+  url: string,
+): Promise<{ file: string; dir: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/download-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const d = (await resp.json()) as { file?: string; dir?: string; error?: string };
+    if (!resp.ok || !d.file) return { error: d.error || '下载失败' };
+    return { file: d.file, dir: d.dir ?? '' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 「边播边抓」抓到媒体直链后,让 daemon 带 Referer 下载保存。 */
+export async function downloadVideoByUrl(
+  mediaUrl: string,
+  referer: string,
+  title: string,
+): Promise<{ file: string; dir: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/download-video-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mediaUrl, referer, title }),
+    });
+    const d = (await resp.json()) as { file?: string; dir?: string; error?: string };
+    if (!resp.ok || !d.file) return { error: d.error || '下载失败' };
+    return { file: d.file, dir: d.dir ?? '' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 本地视频文件 → 口播文案(抽音频+ASR)。仿写用。 */
+export async function extractScriptFromVideo(
+  videoFile: string,
+): Promise<{ transcript: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/extract-script`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoFile }),
+    });
+    const d = (await resp.json()) as { transcript?: string; error?: string };
+    if (!resp.ok) return { error: d.error || '提取文案失败' };
+    return { transcript: d.transcript ?? '' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -810,6 +930,43 @@ export function reportHandoffProgress(jobId: string, message: string): void {
 /** 注入终态回写(done/error;fire-and-forget)。 */
 export function completeHandoffJob(jobId: string, ok: boolean, detail: string): void {
   void fetch(`${ROOT}/handoff/${encodeURIComponent(jobId)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ok, detail }),
+  }).catch(() => undefined);
+}
+
+// ── 内置浏览器采集 job 回写(爆款雷达;桌面端标签里执行) ──
+export async function claimCollectJob(jobId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/claim`, { method: 'POST' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function reportCollectProgress(jobId: string, message: string): void {
+  void fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  }).catch(() => undefined);
+}
+
+export function postCollectResult(
+  jobId: string,
+  results: import('@open-design/contracts').StudioCollectPlatformResult[],
+): void {
+  void fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ results, ok: true }),
+  }).catch(() => undefined);
+}
+
+export function completeCollectJob(jobId: string, ok: boolean, detail: string): void {
+  void fetch(`${ROOT}/collect/${encodeURIComponent(jobId)}/complete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ok, detail }),

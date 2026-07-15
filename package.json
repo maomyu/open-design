@@ -7,7 +7,7 @@
   "description": "Local-first design product: detects your installed code-agent CLI, runs design skills + design systems, streams artifacts into a sandboxed preview.",
   "license": "Apache-2.0",
   "bin": {
-    "od": "./apps/daemon/dist/cli.js"
+    "bc": "./apps/daemon/dist/cli.js"
   },
   "scripts": {
     "postinstall": "node ./scripts/postinstall.mjs",
@@ -29,7 +29,7 @@
     "@open-design/tools-pack": "workspace:*",
     "@open-design/tools-serve": "workspace:*",
     "@types/node": "20.19.39",
-    "tsx": "4.22.3",
+    "tsx": "4.23.0",
     "typescript": "5.9.3"
   },
   "engines": {

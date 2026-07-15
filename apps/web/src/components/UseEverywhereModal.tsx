@@ -1,4 +1,4 @@
-// Use WorkBuild Everywhere — modal entry that documents WorkBuild's
+// Use 爆创 Everywhere — modal entry that documents 爆创's
 // non-UI surfaces (CLI, MCP, HTTP, Skills) and ships a one-click "copy
 // guide for an agent" payload. Reachable from the entry top-bar and
 // from Settings → Integrations as a sibling of the existing MCP install
@@ -44,7 +44,7 @@ interface Props {
   onOpenSettings?: () => void;
   /** Live daemon URL when known (e.g. http://127.0.0.1:7456). */
   daemonUrl?: string;
-  /** Optional WorkBuild version string surfaced in the agent guide header. */
+  /** Optional 爆创 version string surfaced in the agent guide header. */
   versionHint?: string;
 }
 

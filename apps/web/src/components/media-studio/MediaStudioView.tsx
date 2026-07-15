@@ -1785,7 +1785,7 @@ export function MediaStudioView(): JSX.Element {
             : item.id === 'publish'
               ? hasFeature(license, 'cap.publish')
               : true,
-        ).map((item) => {
+        ).map((item, idx) => {
           // 步骤完成态：让用户一眼看到这篇文章走到哪一步了。
           const done =
             item.id === 'write'
@@ -1804,7 +1804,7 @@ export function MediaStudioView(): JSX.Element {
               className={`${c('tab')}${tab === item.id ? ` ${c('tabActive')}` : ''}`}
               onClick={() => setTab(item.id)}
             >
-              <span className={c('tabStep')}>{item.step}</span>
+              <span className={c('tabStep')}>{idx + 1}</span>
               {item.label}
               {item.optional ? <span className={c('tabStep')}>·选</span> : null}
               {done ? <Icon name="check" size={12} /> : null}

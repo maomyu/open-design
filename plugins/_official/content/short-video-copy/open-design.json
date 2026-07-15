@@ -75,45 +75,19 @@
             },
             {
               "id": "scrape",
-              "label": "真抓热榜",
-              "prompt": "真抓该平台（{{platform}}）的公开热榜。下面每种抓取方式用户可多选——选中的每一种都各跑一遍、把各自抓到的候选合并去重后再筛。**合规硬边界:只在用户自己已登录的会话 + 公开热榜页只读抓取,不规避反爬、不碰非公开数据。**抓到后筛出与赛道（{{domain}}）相关的、列成带「为什么有潜力」的候选行插入「选题候选」表(来源填原文平台/账号、查看原文 link 放原文 URL),并把抓取时间写进 board 的 `note`。某一种方式缺工具/缺 key/被反爬拦下:如实说明并降级,别假装抓过、别影响其它选中的方式。",
-              "branch": {
-                "select": "multi",
-                "pick": "ask"
-              },
-              "modes": [
-                {
-                  "id": "auto",
-                  "label": "自动（智能探测）",
-                  "prompt": "先探测本机可用工具(命令行有没有 bb-browser、有没有 gstack 的 browse、有没有 chrome-devtools MCP、有没有 TIKHUB_API_KEY),按下面顺序走:① 优先 bb-browser(带现成平台 adapter,用真实浏览器+登录态):有 adapter 的平台 site 直取(B站 `bb-browser site bilibili/ranking`/`bilibili/popular 30`;小红书 `bb-browser site xiaohongshu/search \"{{domain}}\" --sort likes`;跨平台 `bb-browser site weibo/hot`/`toutiao/hot`/`zhihu/hot`;先 `bb-browser site list`/`site info <name>` 确认),无 adapter 的平台(抖音/视频号/快手)用 `bb-browser open <热榜URL>` → `snapshot` → `get text <ref>`/`eval`、不够 `scroll down` 再 snapshot。② bb-browser 搞不定 → gstack browse 兜底(自带反检测)。③ 还不行 → chrome-devtools MCP 或 TikHub。都不行就坦诚降级到「AI 建议」,绝不假装。"
-                },
-                {
-                  "id": "bb-browser",
-                  "label": "bb-browser",
-                  "prompt": "只用 bb-browser(它带现成平台 adapter,用真实浏览器+登录态,大多数平台它就搞定)。有 adapter 的平台 site 直取:B站 `bb-browser site bilibili/ranking`/`bilibili/popular 30`/`bilibili/trending`;小红书 `bb-browser site xiaohongshu/search \"{{domain}}\" --sort likes`;跨平台热点 `bb-browser site weibo/hot`/`toutiao/hot`/`zhihu/hot`;先 `bb-browser site list`/`site info <name>` 确认可用性。无 adapter 的平台(抖音/视频号/快手)用浏览器操作直接开热榜页抓:`bb-browser open <热榜URL>` → `snapshot` → `get text <ref>`/`eval`,不够 `scroll down` 再 snapshot。"
-                },
-                {
-                  "id": "gstack",
-                  "label": "gstack 反检测",
-                  "prompt": "用 gstack browse(默认带 Layer C 反检测、最像真人,专啃反爬严的站;通常在 `~/.claude/skills/gstack/browse/dist/browse` 或 PATH 里的 `browse`)。要登录态先 `browse cookie-import-browser` 从真实 Chrome 导 cookie;再 `browse goto <热榜URL>` → `browse snapshot` 拿 @ref → `browse text <sel>`/`browse js \"<expr>\"` 提取,不够 `browse scroll` 再 snapshot。"
-                },
-                {
-                  "id": "cdp",
-                  "label": "Chrome DevTools MCP",
-                  "prompt": "用 chrome-devtools MCP 打开该平台（{{platform}}）热榜页,直接读取页面内容提取候选。"
-                },
-                {
-                  "id": "tikhub",
-                  "label": "TikHub API",
-                  "prompt": "检查 TIKHUB_API_KEY,用 curl 调 https://api.tikhub.io 上对应平台（{{platform}}）的热榜端点,请求头带 Authorization: Bearer $TIKHUB_API_KEY,展示页注明数据来自 TikHub;key 缺失则提示去「集成 → API Keys」配置(密钥从 https://api.tikhub.io/ 获取),别假装抓过。"
-                }
-              ]
+              "label": "真抓爆款(内置浏览器)",
+              "prompt": "用【本步绑定的「爆款雷达」技能】真抓爆款:它用爆创【内置浏览器标签】(你已登录的会话、逐字模拟人搜索、串行不并发、标签前台可见、能看到它逐个平台搜+翻页)去抖音/小红书/快手/B站搜关键词、抓真实爆款,再交爆款引擎按你的爆款筛选标准评分。严格按爆款雷达技能两步走:①`collect_via_app.py` 内置浏览器采集(你会看到标签在动)②引擎 `--collect-file --radar` 评分。把评分出的选题候选(标题/角度/热度/相关/差异/来源/查看原文 link)插入「选题候选」表。**只用内置浏览器采集,绝不用 TikHub/极致/bb-browser/gstack;不碰非公开数据、不规避反爬(靠拟人操作 + 你的登录态)。** 若用户给了 [爆款筛选] 标准就按它的 --time-window/--criteria 采集评分;仅当桌面端不可用(拿不到内置浏览器)才如实降级到 AI 建议,绝不假装抓过。"
             }
           ],
           "branch": {
             "select": "single",
             "pick": "ask"
-          }
+          },
+          "skills": [
+            {
+              "ref": "baokuan-radar"
+            }
+          ]
         },
         {
           "id": "copy",

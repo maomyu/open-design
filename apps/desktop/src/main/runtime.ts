@@ -647,7 +647,7 @@ function createPendingHtml(): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
 <html>
   <head>
-    <title>WorkBuild</title>
+    <title>爆创</title>
     <style>
       body {
         align-items: center;
@@ -679,7 +679,7 @@ function createPendingHtml(): string {
   <body>
     <main>
       ${logoDataUrl ? `<img src="${logoDataUrl}" alt="" />` : ""}
-      <h1>WorkBuild</h1>
+      <h1>爆创</h1>
       <p>Waiting for the web runtime URL…</p>
     </main>
   </body>
@@ -1221,7 +1221,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     minHeight: 600,
     minWidth: 900,
     show: true,
-    title: "WorkBuild",
+    title: "爆创",
     ...MAC_WINDOW_CHROME,
     webPreferences: {
       additionalArguments: osLocaleAdditionalArguments(options.osLocale),
@@ -1261,7 +1261,7 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
   const unsubscribeUpdater = options.updater?.subscribe(() => sendUpdaterStatus()) ?? (() => undefined);
   const requireMainWindowSender = (event: Electron.IpcMainInvokeEvent): void => {
     if (event.sender !== window.webContents) {
-      throw new Error("updater IPC is only available to the main WorkBuild window");
+      throw new Error("updater IPC is only available to the main 爆创 window");
     }
   };
   ipcMain.handle("od:update:status", async (event) => {

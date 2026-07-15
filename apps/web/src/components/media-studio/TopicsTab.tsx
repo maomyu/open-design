@@ -2,7 +2,7 @@
 // 组合：爆文榜/搜一搜/全库搜索/需求词/对标动态）+「AI 帮我选题」。
 // 独立可用，也向写作/脚本步输送选题。
 import { useEffect, useMemo, useState } from 'react';
-import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
+import type { MediaTopic, MediaTopicHit, StudioCollectPlatform } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
   fetchAccountRank,
@@ -10,10 +10,31 @@ import {
   type RankedAccountRow,
   type TopicFeedKind,
   fetchTikhubFeed,
+  createStudioCollect,
+  waitStudioCollectDone,
+  radarScoreCollected,
+  downloadStudioVideo,
+  downloadVideoByUrl,
+  extractScriptFromVideo,
 } from '../../providers/media-studio';
+import { grabVideoSrc } from '../../runtime/browser-panes';
 import { studioToast } from './StudioFeedback';
 import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
+
+// 真抓爆款结果的【模块级存储 + 事件】。采集时内置浏览器会切到前台采集页,导致选题页组件卸载;
+// runDirectCollect 是独立 async 会跑完,但卸载后 setHits 失效。故把爆款结果写进模块存储 + 广播事件,
+// 选题页(重新)挂载时读回来显示,不受卸载影响。
+let latestBaokuanHits: MediaTopicHit[] = [];
+const BAOKUAN_HITS_EVENT = 'od:baokuan-hits';
+// 采集进度提示也走模块存储 + 事件:采集时选题页会被切走卸载,本地 state 会丢,导致用户看到
+// 空白以为没反应。用模块级状态,重新挂载也能显示"正在采集/评分中…",有明确加载反馈。
+let baokuanStatus = '';
+const BAOKUAN_STATUS_EVENT = 'od:baokuan-status';
+function setBaokuanStatus(s: string): void {
+  baokuanStatus = s;
+  window.dispatchEvent(new CustomEvent<string>(BAOKUAN_STATUS_EVENT, { detail: s }));
+}
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
@@ -179,9 +200,16 @@ export interface TopicsTabProps {
   };
   /** 传了则文章链接(热点/候选原文)改在内置浏览器打开(桌面端);不传保持系统新标签。 */
   onOpenLink?: (url: string) => void;
+  /** 内置浏览器采集模式(短视频台:抖音/小红书/B站/快手)：选题数据【只】从平台内置浏览器
+   *  采集而来(AI找选题→爆款雷达→内置浏览器)。传了此 prop:既不显示 TikHub 也不显示大家来
+   *  (极致数据/公众号生态)五源——极致数据只服务公众号/视频号,不该出现在短视频台。 */
+  browserCollect?: boolean;
+  /** 真抓爆款要采的平台(内置浏览器)。只采【当前选中平台】——选抖音就只抓抖音。
+   *  支持 douyin/xiaohongshu/kuaishou/bilibili;视频号(tencent)不能浏览器采集→传空数组。 */
+  collectPlatforms?: string[];
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, nativeFeed, onOpenLink }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, aiBusy, tikhubTargets, nativeFeed, onOpenLink, browserCollect = false, collectPlatforms }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   // 上次在该平台的选题搜索结果（切标签/重启后恢复，见文件顶 loadTopicSearch）。
   const restored = useMemo(() => loadTopicSearch(platform), [platform]);
@@ -190,7 +218,179 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [source, setSource] = useState('');
   const [url, setUrl] = useState('');
   const [direction, setDirection] = useState(restored.direction);
-  const [hits, setHits] = useState<MediaTopicHit[]>(restored.hits);
+  // 🎯 爆款筛选（可选，喂给「AI 帮我选题」的爆款雷达）：时间窗 + 可组合的爆款规则（命中任一）。
+  const [radarWindow, setRadarWindow] = useState<'all' | '7d' | '30d' | '180d'>('180d');
+  const [radarRules, setRadarRules] = useState<Set<string>>(() => new Set());
+  const toggleRadarRule = (k: string) =>
+    setRadarRules((s) => {
+      const n = new Set(s);
+      n.has(k) ? n.delete(k) : n.add(k);
+      return n;
+    });
+  // 预设爆款规则（灵活组合，组间 OR）：低粉爆款 / 高播放大爆 / 高赞。
+  const RADAR_RULES: Array<{ key: string; label: string; rule: Record<string, number> }> = [
+    { key: 'lowfan', label: '低粉爆款(粉丝≤3000·播放≥10万)', rule: { fans_max: 3000, plays_min: 100000 } },
+    { key: 'bigplay', label: '高播放大爆(播放≥300万)', rule: { plays_min: 3000000 } },
+    { key: 'highlike', label: '高赞(点赞≥5万)', rule: { likes_min: 50000 } },
+  ];
+  const RADAR_WINDOW_LABEL: Record<string, string> = { all: '不限时间', '7d': '近一周', '30d': '近30天', '180d': '近半年' };
+  // 把当前爆款筛选拼成结构化说明，附到「方向」文本后，交给爆款雷达技能解析执行。
+  const buildRadarNote = (): string => {
+    if (radarRules.size === 0 && radarWindow === 'all') return '';
+    const rules = RADAR_RULES.filter((r) => radarRules.has(r.key)).map((r) => ({ ...r.rule, label: r.label }));
+    const criteria = { time_window: radarWindow, rules };
+    return `\n\n[爆款筛选] 时间窗=${RADAR_WINDOW_LABEL[radarWindow]}(${radarWindow})；`
+      + (rules.length ? `命中任一规则：${rules.map((r) => r.label).join(' 或 ')}` : '仅按时间窗')
+      + `。请用「爆款雷达」技能按 --time-window ${radarWindow} --criteria '${JSON.stringify(criteria)}' 采集+评分。`;
+  };
+  // 爆款筛选 → 引擎 criteria 对象(直接采集管线用)。
+  const buildCriteria = () => {
+    const rules = RADAR_RULES.filter((r) => radarRules.has(r.key)).map((r) => ({ ...r.rule }));
+    return { time_window: radarWindow, rules };
+  };
+
+  // ── 真抓爆款·直接采集(纯可视化,不经 AI 智能体)：点一下 → 内置浏览器【当前选中平台】可见
+  //    采集 → 引擎按爆款筛选评分 → 选题候选直接进「候选选题」表。选抖音就只抓抖音。 ──
+  const collectTargets = collectPlatforms ?? ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'];
+  const [collectBusy, setCollectBusy] = useState(false);
+  const [collectMsg, setCollectMsg] = useState(() => (browserCollect ? baokuanStatus : ''));
+  // 采集进度:挂载即从模块状态读回(采集期间本组件可能被切走卸载过),并监听更新——保证采集
+  // 的 1 分多钟里界面一直有"正在采集/评分中…"的加载反馈,而不是看着像空白。
+  useEffect(() => {
+    if (!browserCollect) return;
+    if (baokuanStatus) setCollectMsg(baokuanStatus);
+    const onStatus = (ev: Event) => setCollectMsg((ev as CustomEvent<string>).detail);
+    window.addEventListener(BAOKUAN_STATUS_EVENT, onStatus);
+    return () => window.removeEventListener(BAOKUAN_STATUS_EVENT, onStatus);
+  }, [browserCollect]);
+  const runDirectCollect = async () => {
+    const kw = direction.trim();
+    if (!kw) { studioToast.err('先在上面填「方向/领域关键词」'); return; }
+    if (collectTargets.length === 0) { studioToast.err('该平台不支持内置浏览器采集(如视频号)——请选抖音/小红书/快手/B站'); return; }
+    setCollectBusy(true);
+    try {
+      const names = collectTargets.map((p) => ({ douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手', bilibili: 'B站' }[p] ?? p)).join('、');
+      setBaokuanStatus(`正在打开内置浏览器采集【${names}】,像人一样搜索…(浏览器会切到前台,可看着它搜)`);
+      const created = await createStudioCollect({
+        keyword: kw,
+        platforms: collectTargets as StudioCollectPlatform[],
+        pages: 1,
+        per: 10,
+        timeWindow: radarWindow,
+        order: 'hot',
+      });
+      if ('error' in created) { setBaokuanStatus(''); studioToast.err(created.error); return; }
+      const job = await waitStudioCollectDone(created.jobId);
+      if (!job || job.status === 'error') { setBaokuanStatus(''); studioToast.err('采集失败,请重试(桌面端需在运行)'); return; }
+      const items: Record<string, unknown[]> = {};
+      let total = 0;
+      for (const r of job.results ?? []) {
+        if (r.items?.length) { items[r.platform] = r.items; total += r.items.length; }
+      }
+      if (total === 0) {
+        setBaokuanStatus('');
+        studioToast.err('没采到内容——可能需要在该平台标签里登录/过验证码后重试(浏览器已在前台)');
+        return;
+      }
+      setBaokuanStatus(`采到 ${total} 条,正在按爆款筛选评分…`);
+      const scored = await radarScoreCollected(kw, items, buildCriteria());
+      if ('error' in scored) { studioToast.err(scored.error); return; }
+      // 评出的爆款 → hits 列表(带链接/点赞/播放/评论,可勾选),像公众号那样先列出来,
+      // 再由用户勾选 +「AI 帮我选题」推荐成候选选题。不直接进候选表。
+      const hitList: MediaTopicHit[] = scored.topics
+        .filter((t) => String(t['标题'] ?? '').trim())
+        .map((t) => ({
+          title: String(t['标题'] ?? '').trim(),
+          url: String(t['查看原文'] ?? ''),
+          account: String(t['平台'] ?? ''),
+          publishedAt: '',
+          signals: ['trending'] as MediaTopicHit['signals'],
+          readNum: Number(t['播放']) || null,
+          zanNum: Number(t['点赞']) || null,
+          hot: `${t['热度'] ?? ''}级 · 流量分${t['流量爆款分'] ?? ''}`,
+          desc: `${String(t['评分理由'] ?? '')}${Number(t['评论']) ? ` · 评论${t['评论']}` : ''}`,
+        }));
+      // 写模块存储 + 广播:即使采集把选题页卸载过,重新挂载也能读到这批爆款。
+      latestBaokuanHits = hitList;
+      window.dispatchEvent(new CustomEvent<MediaTopicHit[]>(BAOKUAN_HITS_EVENT, { detail: hitList }));
+      setHits(hitList);
+      setBaokuanStatus('');
+      if (hitList.length === 0) {
+        studioToast.info(`采到 ${total} 条,但没有符合「爆款筛选」的爆款。放宽标准(降低门槛/勾更多规则/换「不限时间」)或换关键词再试。`);
+      } else {
+        studioToast.ok(`真抓到 ${hitList.length} 个爆款,已列在下面(带链接·点赞)。勾选想做的,再点「AI 帮我选题」生成候选选题。`);
+      }
+    } finally {
+      setCollectBusy(false);
+      setBaokuanStatus('');
+    }
+  };
+
+  // 下载爆款原视频(仿写文案用)。逐行 busy。
+  const [dlBusy, setDlBusy] = useState<string>('');
+  // 平台中文名 → 内置浏览器采集平台 id(边播边抓要用对的登录分区)。
+  const SOURCE_TO_PLATFORM: Record<string, string> = { 抖音: 'douyin', 小红书: 'xiaohongshu', 快手: 'kuaishou', B站: 'bilibili' };
+  // 两级下载:先 yt-dlp(快、B站/公开视频好使),下不了(需登录/反爬)转内置浏览器边播边抓。
+  // 返回本地文件路径(供"提取文案"用),失败返回 null;quiet=true 时不弹成功 toast(串在仿写流程里)。
+  const downloadVideoGetFile = async (url: string, title: string, source: string, quiet = false): Promise<string | null> => {
+    if (!url) { studioToast.err('这条没有原视频链接'); return null; }
+    const r = await downloadStudioVideo(url);
+    if (!('error' in r)) { if (!quiet) studioToast.ok(`已下载到:${r.file}(在 ${r.dir} 文件夹)`); return r.file; }
+    const plat = SOURCE_TO_PLATFORM[source] ?? (collectTargets[0] as string) ?? 'douyin';
+    studioToast.info('yt-dlp 下不了,改用内置浏览器边播边抓(浏览器会打开该视频)…');
+    const grabbed = await grabVideoSrc({ platform: plat, account: 'main', url });
+    if ('error' in grabbed) { studioToast.err(`下载失败:${grabbed.error}`); return null; }
+    const saved = await downloadVideoByUrl(grabbed.mediaUrl, grabbed.referer, title);
+    if ('error' in saved) { studioToast.err(`下载失败:${saved.error}`); return null; }
+    if (!quiet) studioToast.ok(`已用内置浏览器抓取下载:${saved.file}(在 ${saved.dir} 文件夹)`);
+    return saved.file;
+  };
+  const downloadVideoTwoStage = async (url: string, title: string, source: string, busyKey: string) => {
+    setDlBusy(busyKey);
+    try { studioToast.info('正在下载原视频(yt-dlp,大视频稍慢)…'); await downloadVideoGetFile(url, title, source); }
+    finally { setDlBusy(''); }
+  };
+  const runDownloadVideo = (t: MediaTopic) => void downloadVideoTwoStage(t.url, t.title, t.source, t.id);
+  const runDownloadHit = (hit: MediaTopicHit) => void downloadVideoTwoStage(hit.url, hit.title, hit.account, hit.url || hit.title);
+
+  // 【抖音仿写三步·可视化】① 下载原视频 → ② 抽音频+ASR 提取口播文案 → ③ 把原文案交 AI 仿写。
+  // 每步用醒目进度横幅(模块级状态,切页不丢)显示,让用户看得见在做什么。
+  const runExtractAndRewrite = async (hit: MediaTopicHit) => {
+    if (!hit.url) { studioToast.err('这条没有原视频链接'); return; }
+    setDlBusy(hit.url || hit.title);
+    try {
+      const plat = SOURCE_TO_PLATFORM[hit.account] ?? (collectTargets[0] as string) ?? 'douyin';
+      setBaokuanStatus('仿写第①步 · 正在下载原视频(仿写要基于真实口播内容)…');
+      const file = await downloadVideoGetFile(hit.url, hit.title, hit.account, true);
+      if (!file) { setBaokuanStatus(''); return; }
+      setBaokuanStatus('仿写第②步 · 正在提取口播文案(抽音频 + 语音转写,约半分钟)…');
+      const ex = await extractScriptFromVideo(file);
+      if ('error' in ex) { setBaokuanStatus(''); studioToast.err(`提取文案失败:${ex.error}`); return; }
+      const transcript = ex.transcript.trim();
+      setBaokuanStatus('');
+      if (!transcript) { studioToast.info('这条没提取到口播文案(可能是纯音乐/画面无旁白),换一条带口播的爆款试试。'); return; }
+      // 第③步:把原口播文案交给 AI 仿写(保留结构/钩子,换成用户自己的表达)。
+      studioToast.ok('已提取原口播文案 ✓ 正在交给 AI 仿写(保留爆点结构、换成你的表达)…');
+      onAiFind(
+        `请【仿写】下面这条爆款视频的口播文案:保留它的开场钩子、内容结构和爆点节奏,但换成全新的、`
+        + `属于我自己账号的表达和案例,不要照抄原句。平台:${plat}。原标题:${hit.title}。\n\n【原口播文案】\n${transcript}`,
+        toPicked([hit]),
+      );
+    } finally {
+      setDlBusy('');
+    }
+  };
+
+  // 内置浏览器采集(短视频爆款)从模块存储恢复；其余(文章台)从 localStorage 留存恢复。
+  const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? latestBaokuanHits : restored.hits));
+  // 真抓爆款结果:挂载即从模块存储读回(采集期间本组件可能被卸载过),并监听广播实时更新。
+  useEffect(() => {
+    if (!browserCollect) return;
+    if (latestBaokuanHits.length) setHits(latestBaokuanHits);
+    const onHits = (ev: Event) => setHits((ev as CustomEvent<MediaTopicHit[]>).detail);
+    window.addEventListener(BAOKUAN_HITS_EVENT, onHits);
+    return () => window.removeEventListener(BAOKUAN_HITS_EVENT, onHits);
+  }, [browserCollect]);
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedNotice, setFeedNotice] = useState<string | null>(restored.notice);
   const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set(restored.savedUrls));
@@ -402,8 +602,14 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     <>
       <div className={c('card')}>
         <div className={c('cardLabel')}>
-          找热点 · 组合选题雷达
-          <span className={c('cardHint')}>{aiOnly ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出' : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}</span>
+          {browserCollect ? '真抓爆款 · 内置浏览器采集' : '找热点 · 组合选题雷达'}
+          <span className={c('cardHint')}>
+            {browserCollect
+              ? '选平台 + 填方向 + 勾爆款筛选 → 点「真抓爆款」→ 内置浏览器逐条抓真实爆款、按标准评分列出'
+              : aiOnly
+                ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出'
+                : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}
+          </span>
         </div>
         {nativeFeed && nativeFeed.sources.some((s) => !s.needsKeyword) ? (
           <div className={c('row')} style={{ flexWrap: 'wrap' }}>
@@ -440,7 +646,15 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             ))}
           </div>
         ) : null}
-        {nativeFeed || tikhubTargets ? null : (
+        {browserCollect ? (
+          <div className={c('row')}>
+            <span className={c('cardHint')}>
+              采集平台：{collectTargets.map((p) => ({ douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手', bilibili: 'B站' }[p] ?? p)).join('、') || '（请在上方选平台）'}
+              {'（只从该平台的内置浏览器真实采集，不用 TikHub / 极致数据；选哪个平台就只抓哪个）'}
+            </span>
+          </div>
+        ) : null}
+        {nativeFeed || tikhubTargets || browserCollect ? null : (
         <div className={c('row')}>
           {FEED_SOURCES.map((s) => (
             <label key={s.id} className={`${c('row')} ${c('feedSrc')}`} style={{ gap: 4, cursor: 'pointer' }}>
@@ -453,7 +667,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           ))}
         </div>
         )}
-        {!tikhubTargets && !nativeFeed && enabledFeeds.has('peers') ? (
+        {!tikhubTargets && !nativeFeed && !browserCollect && enabledFeeds.has('peers') ? (
           <div className={c('row')}>
             <input
               className={`${c('input')} ${c('grow')}`}
@@ -486,7 +700,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                 if (nativeFeed) {
                   const searchSrc = nativeFeed.sources.find((s) => s.needsKeyword);
                   if (searchSrc) void runNative(searchSrc.id);
-                } else void (tikhubTargets ? runTikhub('search') : runCombo());
+                } else if (!browserCollect) void (tikhubTargets ? runTikhub('search') : runCombo());
               }
             }}
           />
@@ -526,6 +740,16 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                 搜{tikhubTargetLabel}
               </button>
             </>
+          ) : browserCollect ? (
+            <button
+              type="button"
+              className={`${c('btn')} ${c('btnPrimary')}`}
+              disabled={collectBusy || !!collectMsg || !direction.trim()}
+              title="用内置浏览器在【当前选中平台】真人式搜索采集(前台可见)→ 引擎按爆款筛选评分 → 选题候选进表。选哪个平台就只抓哪个,不经 AI、不用 TikHub。"
+              onClick={() => void runDirectCollect()}
+            >
+              <Icon name="sparkles" size={14} /> {collectBusy || collectMsg ? '采集评分中…' : '真抓爆款(内置浏览器)'}
+            </button>
           ) : (
             <button
               type="button"
@@ -541,7 +765,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               type="button"
               className={c('btn')}
               disabled={aiBusy}
-              onClick={() => onAiFind(direction.trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
+              onClick={() => onAiFind((direction.trim() + buildRadarNote()).trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
               title={
                 aiBusy
                   ? '有 AI 任务正在运行——等它结束（或在底部面板中止）再发起'
@@ -558,6 +782,37 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               清空已选
             </button>
           ) : null}
+        </div>
+        {/* 🎯 爆款筛选：时间窗 + 可组合的爆款规则（喂给「AI 帮我选题」的爆款雷达采集+评分） */}
+        <div className={c('row')} style={{ flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <span className={c('cardHint')}>🎯 爆款筛选：</span>
+          <select
+            className={c('input')}
+            value={radarWindow}
+            onChange={(e) => setRadarWindow(e.target.value as 'all' | '7d' | '30d' | '180d')}
+            title="只看这个时间范围内发布的爆款"
+            style={{ width: 'auto', minWidth: 96 }}
+          >
+            <option value="7d">近一周</option>
+            <option value="30d">近30天</option>
+            <option value="180d">近半年</option>
+            <option value="all">不限时间</option>
+          </select>
+          {RADAR_RULES.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              className={`${c('chip')}${radarRules.has(r.key) ? ` ${c('chipBlue')}` : ''}`}
+              style={{ cursor: 'pointer', border: 'none' }}
+              title="可多选，命中任一即算爆款（灵活组合）"
+              onClick={() => toggleRadarRule(r.key)}
+            >
+              {radarRules.has(r.key) ? '✓ ' : ''}{r.label}
+            </button>
+          ))}
+          <span className={c('cardHint')} style={{ opacity: 0.6 }}>
+            选好后点「AI 帮我选题」→ 按此翻页采集+评分
+          </span>
         </div>
         {sugWords.length > 0 ? (
           <div className={c('row')} style={{ flexWrap: 'wrap' }}>
@@ -580,6 +835,21 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           </div>
         ) : null}
         {feedNotice ? <div className={c('cardHint')}>{feedNotice}</div> : null}
+        {collectMsg ? (
+          <div style={{
+            margin: '10px 0', padding: '12px 14px', borderRadius: 10,
+            background: 'rgba(232,88,46,0.08)', border: '1px solid rgba(232,88,46,0.35)',
+            color: '#e8582e', fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{
+              width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(232,88,46,0.35)',
+              borderTopColor: '#e8582e', display: 'inline-block', animation: 'od-spin 0.8s linear infinite', flex: '0 0 auto',
+            }} />
+            {collectMsg}
+            <span style={{ fontWeight: 400, opacity: 0.75 }}>（采集+评分约 1-2 分钟,浏览器会切到前台采集,请稍候不要关闭）</span>
+            <style>{'@keyframes od-spin{to{transform:rotate(360deg)}}'}</style>
+          </div>
+        ) : null}
         {hits.length > 0 ? (
           <table className={c('table')}>
             <thead>
@@ -627,17 +897,46 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                       )}
                     </td>
                     <td>{hit.account}</td>
-                    <td>{hit.hot ? hit.hot : hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—'}</td>
+                    <td style={{ whiteSpace: 'nowrap', color: browserCollect ? '#e8582e' : undefined, fontWeight: browserCollect ? 600 : undefined }}>
+                      {browserCollect
+                        ? [hit.readNum ? `播放${hit.readNum >= 10000 ? (hit.readNum / 10000).toFixed(1) + '万' : hit.readNum}` : '',
+                           hit.zanNum ? `赞${hit.zanNum >= 10000 ? (hit.zanNum / 10000).toFixed(1) + '万' : hit.zanNum}` : '']
+                            .filter(Boolean).join('·') || (hit.hot ?? '—')
+                        : (hit.hot ? hit.hot : hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—')}
+                    </td>
                     <td className={c('tdActions')}>
-                      <button
-                        type="button"
-                        className={c('btn')}
-                        disabled={aiBusy}
-                        title="AI 抓这篇原文分析后，转化出 1-2 个属于你账号的差异化选题进候选（不是照搬标题）"
-                        onClick={() => onAiFind('', toPicked([hit]))}
-                      >
-                        <Icon name="sparkles" size={13} /> AI 转题
-                      </button>{' '}
+                      {browserCollect ? (
+                        <button
+                          type="button"
+                          className={`${c('btn')} ${c('btnPrimary')}`}
+                          disabled={aiBusy || dlBusy === (hit.url || hit.title)}
+                          title="下载原视频 → 提取口播文案 → AI 仿写(保留爆点结构、换成你的表达)。三步有进度提示。"
+                          onClick={() => void runExtractAndRewrite(hit)}
+                        >
+                          <Icon name="sparkles" size={13} /> {dlBusy === (hit.url || hit.title) ? '仿写中…' : '提取文案仿写'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={aiBusy}
+                          title="AI 抓这篇原文分析后，转化出 1-2 个属于你账号的差异化选题进候选（不是照搬标题）"
+                          onClick={() => onAiFind('', toPicked([hit]))}
+                        >
+                          <Icon name="sparkles" size={13} /> AI 转题
+                        </button>
+                      )}{' '}
+                      {browserCollect && hit.url ? (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={dlBusy === (hit.url || hit.title)}
+                          title="下载这条爆款的原视频到本地(仿写文案用)"
+                          onClick={() => runDownloadHit(hit)}
+                        >
+                          {dlBusy === (hit.url || hit.title) ? '下载中…' : '下载视频'}
+                        </button>
+                      ) : null}{' '}
                       {aiOnly ? null : (
                         <button
                           type="button"
@@ -708,8 +1007,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             <thead>
               <tr>
                 <th>标题</th>
-                <th>角度</th>
-                <th>来源</th>
+                <th>热度指标</th>
+                <th>角度/理由</th>
+                <th>原文</th>
                 <th />
               </tr>
             </thead>
@@ -717,6 +1017,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               {candidates.map((t) => (
                 <tr key={t.id}>
                   <td>{t.title}</td>
+                  <td style={{ whiteSpace: 'nowrap', color: '#e8582e', fontWeight: 600 }}>{t.heat || '—'}</td>
                   <td>{t.angle || '—'}</td>
                   <td>
                     {t.url ? (
@@ -725,6 +1026,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         href={t.url}
                         target="_blank"
                         rel="noreferrer"
+                        title="点开原文（短视频可看原视频真实点赞/评论）"
                         onClick={(e) => {
                           if (onOpenLink && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
                             e.preventDefault();
@@ -732,7 +1034,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                           }
                         }}
                       >
-                        {t.source || '原文'}
+                        {t.source || '点击看原文 ↗'}
                       </a>
                     ) : (
                       t.source || '—'
@@ -742,6 +1044,13 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => onWrite(t)}>
                       去写作
                     </button>{' '}
+                    {t.url ? (
+                      <>
+                        <button type="button" className={c('btn')} disabled={dlBusy === t.id} title="用 yt-dlp 把原视频下载到本地,给仿写文案用" onClick={() => void runDownloadVideo(t)}>
+                          {dlBusy === t.id ? '下载中…' : '下载视频'}
+                        </button>{' '}
+                      </>
+                    ) : null}
                     <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => void onDelete(t.id)}>
                       删除
                     </button>

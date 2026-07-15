@@ -3,9 +3,25 @@
 // BrowserPanesHost(常驻面板宿主)三方靠这里的事件与工具函数解耦。
 import { navigate } from '../router';
 import type { DraftPayload } from './browser-draft';
+import type { StudioCollectPlatform } from '@open-design/contracts';
 
 export const OPEN_BROWSER_PANE_EVENT = 'od:browser-pane:open';
 export const BROWSER_TAB_CLOSED_EVENT = 'od:browser-pane:closed';
+export const GRAB_VIDEO_RESULT_EVENT = 'od:browser-pane:grab-result';
+
+/** 爆款雷达采集载荷:面板加载后在标签里翻页/滚动+抓卡片，回写 daemon 采集 job。 */
+export interface CollectPaneSpec {
+  jobId: string;
+  platform: StudioCollectPlatform;
+  keyword: string;
+  scrolls: number;
+  per: number;
+  order: 'hot' | 'latest' | 'comprehensive';
+  timeWindow: string;
+  pages: number;
+  /** 时间窗起点基准（秒）；由 daemon/listener 传入，webview 侧不再取当前时间。 */
+  nowSec: number;
+}
 
 export interface BrowserPaneRequest {
   platform: string;
@@ -15,6 +31,35 @@ export interface BrowserPaneRequest {
   draft?: DraftPayload;
   /** handoff 桥 job id(CLI 派发):注入进度/终态回写 daemon。 */
   draftJobId?: string;
+  /** 爆款雷达采集:面板加载后在标签里抓真实爆款卡片(一次性)。 */
+  collect?: CollectPaneSpec;
+  /** 「边播边抓」下载:面板导航到 url(视频页)、抓 <video> 直链后回报(一次性)。 */
+  grab?: { grabId: string };
+}
+
+/** 「边播边抓」:在内置浏览器(已登录会话)打开视频页,抓到媒体直链 + referer。
+ *  用于 yt-dlp 下不了(需登录/反爬)的抖音/小红书/快手。返回 {mediaUrl,referer} 或 {error}。 */
+export function grabVideoSrc(req: { platform: string; account: string; url: string }):
+  Promise<{ mediaUrl: string; referer: string } | { error: string }> {
+  const grabId = `grab-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  return new Promise((resolve) => {
+    const onResult = (ev: Event) => {
+      const d = (ev as CustomEvent<{ grabId: string; result: { mediaUrl: string; referer: string } | { error: string } }>).detail;
+      if (!d || d.grabId !== grabId) return;
+      window.removeEventListener(GRAB_VIDEO_RESULT_EVENT, onResult);
+      clearTimeout(timer);
+      resolve(d.result);
+    };
+    const timer = setTimeout(() => {
+      window.removeEventListener(GRAB_VIDEO_RESULT_EVENT, onResult);
+      resolve({ error: '抓取超时——视频可能是加密流,或未在页面加载出来' });
+    }, 90_000);
+    window.addEventListener(GRAB_VIDEO_RESULT_EVENT, onResult);
+    window.dispatchEvent(new CustomEvent<BrowserPaneRequest>(OPEN_BROWSER_PANE_EVENT, {
+      detail: { platform: req.platform, account: req.account, url: req.url, grab: { grabId } },
+    }));
+    navigate({ kind: 'browser', platform: req.platform, account: req.account });
+  });
 }
 
 /** 平台中文名（后台标签标题/工具条 chip 共用;客户定制中文直写）。 */

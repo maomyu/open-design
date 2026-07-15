@@ -1215,7 +1215,7 @@ export function DesignFilesPanel({
                               void handlePluginFolderAgentAction(folder.path, 'contribute')
                             }
                           >
-                            {sharingFolder === `contribute:${folder.path}` ? 'Sending…' : 'WorkBuild PR'}
+                            {sharingFolder === `contribute:${folder.path}` ? 'Sending…' : '爆创 PR'}
                           </button>
                         </div>
                       ) : null}

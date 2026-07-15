@@ -24,6 +24,7 @@ import {
   deletePlatformAccountApi,
 } from '../providers/daemon';
 import { openStudioBrowser } from '../providers/media-studio';
+import { FeishuDataCenterSection } from './FeishuDataCenterSection';
 import './AccountsView.css';
 import './PluginEditView.css';
 
@@ -68,6 +69,12 @@ export function AccountsView() {
           <p className="plugins-view__lede">{t('accountsView.lede')}</p>
         </div>
       </header>
+
+      {/* 爆创·自媒体定制:飞书数据中心专属入口——填客户自己的飞书表格链接,
+          一键内置浏览器打开(登录客户自己的飞书,数据在他自己账户名下)。 */}
+      <div className="accounts-view__feishu" style={{ marginBottom: 18 }}>
+        <FeishuDataCenterSection />
+      </div>
 
       {loading ? (
         <div className="plugins-view__empty">{t('pluginsView.loading')}</div>

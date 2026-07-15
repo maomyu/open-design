@@ -120,6 +120,10 @@ const residualAllowedPathPrefixes = [
   "design-templates/last30days/scripts/lib/vendor/",
   // Vendored upstream html-ppt runtime assets (lewislulu/html-ppt-skill, design template).
   "design-templates/html-ppt/assets/",
+  // Vendored 微信视频号 video-decrypt helper (WeChat official WASM glue + ISAAC-64
+  // keystream); must stay .js — it fakes a Web Worker env for the WASM module and
+  // is invoked as a standalone `node wx_decrypt.js` by the bakuan-engine.
+  "bakuan-engine/scripts/wx_decrypt.js",
   "test-results/",
   "vendor/",
 ];

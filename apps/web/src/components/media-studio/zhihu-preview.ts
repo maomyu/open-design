@@ -167,7 +167,7 @@ export function weiboPreviewDoc(opts: { title: string; bodyMd: string; imageUrls
   ${tagText ? '' : ''}
   </style></head><body>
   <div class="card">
-    <div class="head"><div class="avatar"></div><div><div class="name">微博用户</div><div class="meta">刚刚 · 来自 WorkBuild</div></div></div>
+    <div class="head"><div class="avatar"></div><div><div class="name">微博用户</div><div class="meta">刚刚 · 来自 爆创</div></div></div>
     <div class="text">${bodyText}${tagText ? ` <span class="tp">${tagText}</span>` : ''}</div>
     ${imgGrid}
   </div></body></html>`;

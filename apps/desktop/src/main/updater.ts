@@ -282,7 +282,7 @@ export function resolveDesktopUpdaterConfig(input: DesktopUpdaterConfigInput): D
   const env = input.env ?? process.env;
   const mode = normalizeMode(env[DESKTOP_UPDATE_ENV.MODE], input.mode ?? DESKTOP_UPDATE_MODES.PACKAGE_LAUNCHER);
   const defaultEnabled = input.source === SIDECAR_SOURCES.PACKAGED;
-  // There is NO default update feed: WorkBuild ships without upstream
+  // There is NO default update feed: 爆创 ships without upstream
   // release infrastructure, so the updater stays dormant unless an explicit
   // OD_UPDATE_METADATA_URL is configured (packaging harnesses and future
   // self-hosted feeds set it). This is the invariant that keeps a customer
@@ -586,7 +586,7 @@ async function ensureOwnedUpdateRoot(
           ok: false,
           error: createError(
             "update-root-not-owned",
-            `update root is not empty and has no WorkBuild updater ownership marker: ${realRoot}`,
+            `update root is not empty and has no 爆创 updater ownership marker: ${realRoot}`,
           ),
         };
       }

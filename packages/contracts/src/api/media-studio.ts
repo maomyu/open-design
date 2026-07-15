@@ -473,3 +473,85 @@ export interface StudioHandoffCompleteRequest {
   ok: boolean;
   detail: string;
 }
+
+// ── 内置浏览器采集（爆款雷达用；在应用内标签 webview 里抓，不弹独立窗口）──
+//
+// CLI/引擎 POST /api/media-studio/collect 建 job → daemon 总线 SSE 广播给桌面端 web
+// → web 在【应用内标签】打开各平台搜索页、executeJavaScript 抓真实爆款卡片 →
+// progress 回写进度 → complete 回传采集到的条目 JSON → 调用方 wait 长轮询取。
+// 登录态在桌面端 webview 分区里（daemon 够不着），所以采集必须跑在桌面端标签。
+export type StudioCollectPlatform = 'xiaohongshu' | 'douyin' | 'bilibili' | 'kuaishou';
+
+export type StudioCollectStatus = 'pending' | 'claimed' | 'running' | 'done' | 'error';
+
+/** 采集到的一条作品（统一扁平字段，喂引擎 --collect-file）。 */
+export interface StudioCollectItem {
+  platform: StudioCollectPlatform;
+  content_id?: string;
+  title: string;
+  url?: string;
+  author?: string;
+  likes?: string | number;
+  comments?: string | number;
+  collects?: string | number;
+  plays?: string | number;
+}
+
+/** 某平台的采集结果（web 抓完每平台回写一段）。 */
+export interface StudioCollectPlatformResult {
+  platform: StudioCollectPlatform;
+  items: StudioCollectItem[];
+  needsLogin: boolean;
+  note?: string;
+}
+
+/** 排序：hot=最多播放/热度(找爆款默认)，latest=最新，comprehensive=综合。 */
+export type StudioCollectOrder = 'hot' | 'latest' | 'comprehensive';
+
+export interface StudioCollectJob {
+  id: string;
+  keyword: string;
+  platforms: StudioCollectPlatform[];
+  /** 每平台滚动次数、每平台取多少条（web 采集参数）。 */
+  scrolls: number;
+  per: number;
+  /** 排序（找爆款默认 hot）。 */
+  order: StudioCollectOrder;
+  /** 时间窗 key：1d/7d/30d/90d/180d/365d/all（搜索参数里过滤）。 */
+  timeWindow: string;
+  /** 分页平台(如B站)翻几页；无限滚动平台按 scrolls 滚动。 */
+  pages: number;
+  status: StudioCollectStatus;
+  progress: string[];
+  /** 各平台采集结果（complete 时或逐平台回填）。 */
+  results: StudioCollectPlatformResult[];
+  detail?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateStudioCollectRequest {
+  keyword: string;
+  platforms?: StudioCollectPlatform[];
+  scrolls?: number;
+  per?: number;
+  order?: StudioCollectOrder;
+  timeWindow?: string;
+  pages?: number;
+}
+
+export interface StudioCollectJobResponse {
+  job: StudioCollectJob;
+}
+
+export interface StudioCollectWaitResponse {
+  job: StudioCollectJob;
+  cursor: number;
+}
+
+/** web 采集完回写：某平台一段结果（needsLogin 时 items 空）。 */
+export interface StudioCollectResultRequest {
+  results: StudioCollectPlatformResult[];
+  ok: boolean;
+  detail?: string;
+}

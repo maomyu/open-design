@@ -238,7 +238,7 @@ function installDesktopMenu(
         label: "Help",
         submenu: [
           {
-            label: "WorkBuild",
+            label: "爆创",
             click() {
               void shell.openExternal("https://github.com/nexu-io/open-design");
             },

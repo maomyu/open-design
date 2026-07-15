@@ -99,6 +99,10 @@ export interface AppConfigPrefs {
   privacyDecisionAt?: number | null;
   orbit?: OrbitConfigPrefs;
   customInstructions?: string | null;
+  // 爆创·自媒体定制：客户自己的飞书多维表格「数据中心」地址。装机时由客户填自己的
+  // base 链接,爆创用内置浏览器打开(客户在内置浏览器登录自己的飞书,登录态长期保持),
+  // 数据/审核/复盘都在客户自己账户名下。空则「飞书数据中心」入口引导去填。
+  feishuBitableUrl?: string | null;
   // Locally stored third-party service API keys (e.g. TIKHUB_API_KEY for
   // trending-topic scraping). Injected into spawned agent child processes
   // as environment variables, with lower precedence than the per-agent
@@ -151,6 +155,7 @@ const ALLOWED_KEYS: ReadonlySet<keyof AppConfigPrefs> = new Set([
   'privacyDecisionAt',
   'orbit',
   'customInstructions',
+  'feishuBitableUrl',
   'thirdPartyApiKeys',
   'pluginConfig',
   'pluginAccounts',
@@ -594,6 +599,14 @@ function applyConfigValue(
   if (key === 'customInstructions') {
     if (typeof value === 'string') {
       target[key] = value.slice(0, 5000);
+    } else if (value === null) {
+      target[key] = value;
+    }
+    return;
+  }
+  if (key === 'feishuBitableUrl') {
+    if (typeof value === 'string') {
+      target[key] = value.slice(0, 2000);
     } else if (value === null) {
       target[key] = value;
     }
