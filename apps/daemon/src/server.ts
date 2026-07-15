@@ -430,6 +430,11 @@ import { registerHandoffRoutes } from './handoff-routes.js';
 import { registerPluginEditRoutes } from './plugin-edit-routes.js';
 import { registerAccountRoutes } from './account-routes.js';
 import { registerMediaStudioRoutes } from './media-studio-routes.js';
+import {
+  resolveBakuanEngine,
+  warmBakuanEngine,
+  type EngineContext,
+} from './media-studio/bakuan-engine.js';
 import { registerPluginDraftRoutes } from './plugin-draft-routes.js';
 import { registerSkillDraftRoutes } from './skill-draft-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
@@ -1319,6 +1324,13 @@ export function resolveDataDir(raw, projectRoot) {
   return resolved;
 }
 const RUNTIME_DATA_DIR = resolveDataDir(process.env.OD_DATA_DIR, PROJECT_ROOT);
+// bakuan-engine 运行时上下文：dev 用仓库 .venv，packaged 用 <dataDir>/bakuan-engine
+// 首启动 provision 出的 .venv。所有短视频 Python 调用点统一走 resolveBakuanEngine。
+const BAKUAN_ENGINE_CTX: EngineContext = {
+  projectRoot: PROJECT_ROOT,
+  dataDir: RUNTIME_DATA_DIR,
+  resourceRoot: DAEMON_RESOURCE_ROOT,
+};
 const PLUGIN_LOCKFILE_PATH = path.join(RUNTIME_DATA_DIR, 'od-plugin-lock.json');
 // Canonical (realpath-resolved) form of RUNTIME_DATA_DIR for the few callers
 // that compare it against a user-supplied realpath() result. On macOS, /var
@@ -9847,11 +9859,16 @@ export async function startServer({
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const name = String(req.body?.name || '自媒体爆款数据中心').slice(0, 100);
-    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
-    const py = path.join(engineDir, '.venv', 'bin', 'python');
-    const r = await execFileBuffered(py, ['scripts/provision_datacenter.py', '--name', name], {
+    let eng;
+    try {
+      eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    } catch (err) {
+      return res.status(500).json({ error: '内置引擎准备失败：' + String(err && err.message ? err.message : err) });
+    }
+    const engineDir = eng.engineDir;
+    const r = await execFileBuffered(eng.python, ['scripts/provision_datacenter.py', '--name', name], {
       cwd: engineDir,
-      env: { ...process.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
       timeout: 240_000,
     });
     const m = r.stdout.match(/BASE_URL=(\S+)/);
@@ -9879,18 +9896,17 @@ export async function startServer({
     if (!keyword || !items || typeof items !== 'object') {
       return res.status(400).json({ error: '缺少 keyword 或 items' });
     }
-    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
-    const py = path.join(engineDir, '.venv', 'bin', 'python');
     const platforms = Object.keys(items).join(',') || 'bilibili';
     const tmpFile = path.join(os.tmpdir(), `bc-collect-${process.pid}-${Date.now()}.json`);
     try {
+      const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
       await fs.promises.writeFile(tmpFile, JSON.stringify(items), 'utf8');
       const args = ['-m', 'src.pipeline', '--radar', '--keyword', keyword,
         '--platforms', platforms, '--collect-file', tmpFile];
       if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
-      const r = await execFileBuffered(py, args, {
-        cwd: engineDir,
-        env: { ...process.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_MAX: '12' },
+      const r = await execFileBuffered(eng.python, args, {
+        cwd: eng.engineDir,
+        env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_MAX: '12' },
         timeout: 240_000,
       });
       // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
@@ -9907,6 +9923,52 @@ export async function startServer({
     }
   });
 
+  // 【TikHub 直采选题】真抓爆款的新主通道(2026-07-14):不经内置浏览器采集,直接给关键词+平台+
+  // 爆款标准,让引擎走 TikHub 搜索(翻页累积→按标准筛→评分),秒级出选题候选。比浏览器采集更快、
+  // 字段更全(带粉丝/评论/真视频id→能下载仿写)、且无登录/验证码/滚动/DOM改版问题。
+  // 关键:不传 --collect-file,引擎 _search 自动走 tik.search_keyword(TikHub)。
+  app.post('/api/media-studio/collect-score', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const keyword = String(req.body?.keyword || '').trim().slice(0, 100);
+    const rawPlatforms = req.body?.platforms;
+    const platforms = (Array.isArray(rawPlatforms) ? rawPlatforms : String(rawPlatforms || '').split(','))
+      .map((p) => String(p).trim()).filter(Boolean).join(',');
+    const criteria = req.body?.criteria; // { time_window, rules:[...] } 可选
+    // 页数(1-4):每页约 12 条候选。用户想多爬几页看更多爆款时调大;默认 1 页。
+    const pages = Math.max(1, Math.min(4, Math.floor(Number(req.body?.pages) || 1)));
+    const collectN = String(pages * 12);
+    if (!keyword) return res.status(400).json({ error: '缺少 keyword' });
+    if (!platforms) return res.status(400).json({ error: '缺少 platforms' });
+    let eng;
+    try {
+      eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    } catch (err) {
+      return res.status(500).json({ error: '内置引擎准备失败：' + String(err && err.message ? err.message : err) });
+    }
+    try {
+      const args = ['-m', 'src.pipeline', '--radar', '--keyword', keyword, '--platforms', platforms];
+      if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
+      const r = await execFileBuffered(eng.python, args, {
+        cwd: eng.engineDir,
+        // RADAR_FAST=1:选题列表纯数据评分(不逐条打 LLM/取评论文本),分页多条也秒出。
+        // RADAR_COLLECT/RADAR_MAX 按页数放大:采够候选 + 让所有过筛的都进列表。
+        env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_FAST: '1', RADAR_MAX: collectN, RADAR_COLLECT: collectN },
+        timeout: 240_000,
+      });
+      // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
+      const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+      let parsed;
+      try { parsed = JSON.parse(s); } catch {
+        return res.status(500).json({ error: 'TikHub 采集/评分失败：' + (r.stderr || r.stdout || '').slice(-300) });
+      }
+      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [] });
+    } catch (err) {
+      return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
   // 下载爆款原视频(给用户仿写文案用)。用 yt-dlp(开源标准,支持 B站/抖音/小红书;快手较弱)。
   // 下到 <数据目录>/downloads/,返回本地文件路径,前端可「在 Finder 显示」。
   app.post('/api/media-studio/download-video', async (req, res) => {
@@ -9917,9 +9979,15 @@ export async function startServer({
     if (!/^https?:\/\//.test(url)) return res.status(400).json({ error: '无效的视频链接' });
     // 内置浏览器导出的登录态 cookie 文件(yt-dlp 兜底路径用)。
     const cookieFile = String(req.body?.cookieFile || '').trim();
-    const ytdlp = path.join(PROJECT_ROOT, 'bakuan-engine', '.venv', 'bin', 'yt-dlp');
-    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
-    const py = path.join(engineDir, '.venv', 'bin', 'python');
+    let eng;
+    try {
+      eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    } catch (err) {
+      return res.status(500).json({ error: '内置引擎准备失败：' + String(err && err.message ? err.message : err) });
+    }
+    const ytdlp = eng.ytdlp;
+    const engineDir = eng.engineDir;
+    const py = eng.python;
     const outDir = path.join(RUNTIME_DATA_DIR, 'downloads');
     const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
@@ -9930,7 +9998,7 @@ export async function startServer({
       try {
         await fs.promises.mkdir(outDir, { recursive: true });
         const rr = await execFileBuffered(py, ['scripts/resolve_video_url.py', '--url', url], {
-          cwd: engineDir, env: { ...process.env }, timeout: 60_000,
+          cwd: engineDir, env: eng.env, timeout: 60_000,
         });
         const jsonStr = (rr.stdout || '').slice((rr.stdout || '').indexOf('{'));
         const parsed = jsonStr ? JSON.parse(jsonStr) as { mediaUrl?: string; referer?: string; title?: string; error?: string } : {};
@@ -9964,7 +10032,7 @@ export async function startServer({
       ];
       if (cookieFile && fs.existsSync(cookieFile)) args.push('--cookies', cookieFile);
       args.push(url);
-      const r = await execFileBuffered(ytdlp, args, { timeout: 300_000 });
+      const r = await execFileBuffered(ytdlp, args, { timeout: 300_000, env: eng.env });
       const file = (r.stdout || '').trim().split('\n').filter(Boolean).pop() || '';
       if (!r.ok || !file) {
         const err = (r.stderr || r.stdout || '').slice(-300);
@@ -10019,6 +10087,47 @@ export async function startServer({
     }
   });
 
+  // 把【已下载的爆款原视频】喂给前端 <video> 预览(提取文案时"展示原视频")。
+  // 只放行 <数据目录>/downloads/ 下、按文件名寻址,防目录穿越。
+  // 关键:必须支持 HTTP Range(206)——Chromium 的 <video> 播 MP4 常先发 Range 请求,
+  // 只回整块 200 会导致内置浏览器里视频不播/不能拖动。用 createReadStream 按区间流式发。
+  app.get('/api/media-studio/download-file/:file', async (req, res) => {
+    const dir = path.join(RUNTIME_DATA_DIR, 'downloads');
+    const file = path.normalize(String(req.params.file));
+    if (file.includes('..') || file.includes(path.sep) || file.startsWith('.')) {
+      return res.status(400).json({ error: 'bad file name' });
+    }
+    const full = path.join(dir, file);
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.stat(full);
+    } catch {
+      return res.status(404).json({ error: 'video not found' });
+    }
+    const contentType = /\.webm$/i.test(file) ? 'video/webm' : /\.mov$/i.test(file) ? 'video/quicktime' : 'video/mp4';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    const range = req.headers.range;
+    const m = typeof range === 'string' ? /bytes=(\d*)-(\d*)/.exec(range) : null;
+    if (m) {
+      let start = m[1] ? parseInt(m[1], 10) : 0;
+      let end = m[2] ? parseInt(m[2], 10) : stat.size - 1;
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
+        res.setHeader('Content-Range', `bytes */${stat.size}`);
+        return res.status(416).end();
+      }
+      end = Math.min(end, stat.size - 1);
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Content-Length', String(end - start + 1));
+      fs.createReadStream(full, { start, end }).on('error', () => res.destroy()).pipe(res);
+    } else {
+      res.setHeader('Content-Length', String(stat.size));
+      fs.createReadStream(full).on('error', () => res.destroy()).pipe(res);
+    }
+  });
+
   // 爆款视频 → 口播文案(仿写用)。收到【已下载的本地视频文件】,抽音频 + 火山 ASR 转写。
   // 抖音仿写的"下载→提取文案→仿写"三步里的第二步;前端先下视频(两级下载)、再把本地路径丢这里。
   app.post('/api/media-studio/extract-script', async (req, res) => {
@@ -10027,12 +10136,11 @@ export async function startServer({
     }
     const videoFile = String(req.body?.videoFile || '').trim();
     if (!videoFile || !videoFile.startsWith('/')) return res.status(400).json({ error: '缺少本地视频文件路径' });
-    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
-    const py = path.join(engineDir, '.venv', 'bin', 'python');
     try {
-      const r = await execFileBuffered(py, ['scripts/extract_script.py', '--video', videoFile], {
-        cwd: engineDir,
-        env: { ...process.env },
+      const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+      const r = await execFileBuffered(eng.python, ['scripts/extract_script.py', '--video', videoFile], {
+        cwd: eng.engineDir,
+        env: eng.env,
         timeout: 300_000,
       });
       const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
@@ -14257,6 +14365,8 @@ export async function startServer({
           console.log(`[od] daemon listening on ${url}`);
         }
         daemonUrl = url;
+        // packaged 首启动：后台预热内置 Python 引擎，让短视频第一步操作前引擎大概率就绪。
+        warmBakuanEngine(BAKUAN_ENGINE_CTX, (msg) => console.log(msg));
         resolve(returnServer ? { url, server, shutdown: shutdownDaemonRuns } : url);
       });
     } catch (error) {

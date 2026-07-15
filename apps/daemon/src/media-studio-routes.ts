@@ -1018,6 +1018,38 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     },
   );
 
+  // 封面上传(发布页用户传的封面图 → 存进作品素材目录,记 extra.coverPath;一键存草稿注入时
+  // 自动上传到抖音「设置封面」)。与 upload-video 同构,只是存图、写 coverPath。
+  app.post(
+    '/api/media-studio/:platform/articles/:id/upload-cover',
+    express.raw({ type: 'application/octet-stream', limit: '32mb' }),
+    async (req, res) => {
+      const article = getArticle(db, req.params.id);
+      if (!article) return bad(res, 404, 'article not found');
+      const buf = req.body as Buffer;
+      if (!Buffer.isBuffer(buf) || buf.length === 0) return bad(res, 400, '没有收到封面数据');
+      try {
+        const rawName = String(req.headers['x-file-name'] ?? 'cover.jpg');
+        let decoded = rawName;
+        try {
+          decoded = decodeURIComponent(rawName);
+        } catch {
+          /* keep raw */
+        }
+        const safe = decoded.replace(/[^\w.\-一-龥]+/g, '_').slice(-80) || 'cover.jpg';
+        const dir = assetsDirFor(article.id);
+        await mkdir(dir, { recursive: true });
+        const file = `cover-${Date.now()}-${safe}`;
+        const abs = path.join(dir, file);
+        await writeFile(abs, buf);
+        const updated = updateArticle(db, article.id, { extra: { coverPath: abs } });
+        res.json({ path: abs, article: updated });
+      } catch (err) {
+        bad(res, 500, err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
   // ---- short-video: sau 登录态与矩阵发布（对外动作,人工确认后才会打到这里） ----
   app.post('/api/media-studio/:platform/sau/check', async (req, res) => {
     try {

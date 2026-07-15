@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 
 from src.adapters.normalize import RawContent
@@ -52,8 +53,13 @@ def evaluate(rc: RawContent, *, transcript: str = "", comments: list[str] | None
             account_excess = min(1.0, (rc.likes / med) / H.S.ANOMALY_S)
     growth = _norm(growth_per_hour, 5000) if growth_per_hour is not None else None
 
-    # ── 流量爆款分：内容类维度(模型) ──
-    cdims = router.chat_json(
+    # RADAR_FAST(选题列表分页速采):跳过每条 2 次 LLM(内容维度 + 评论意图)与逐条取评论文本,
+    # 纯用内联数据(点赞/播放/评论数/粉丝)算分。爆款列表本就按热度(点赞)排序,内容维度用中性
+    # 默认 0.5,不影响"谁是爆款"的判断;换来分页多条也能秒出、且省 TikHub/LLM 成本。
+    fast = os.getenv("RADAR_FAST") == "1"
+
+    # ── 流量爆款分：内容类维度(模型) ── fast 模式下跳过 LLM,用中性默认。
+    cdims = {} if fast else router.chat_json(
         [{"role": "system", "content": prompts.CONTENT_DIM_SYS},
          {"role": "user", "content": prompts.content_dims_user(rc.title, transcript)}],
         tier="mid")
@@ -74,7 +80,7 @@ def evaluate(rc: RawContent, *, transcript: str = "", comments: list[str] | None
     pain_level = 0
     recommend_service = ""
     intent_dims: dict[str, float] = {}
-    if comments:
+    if comments and not fast:
         idims = router.chat_json(
             [{"role": "system", "content": prompts.INTENT_SYS},
              {"role": "user", "content": prompts.intent_user(comments)}], tier="mid")
@@ -85,6 +91,11 @@ def evaluate(rc: RawContent, *, transcript: str = "", comments: list[str] | None
                        ("ask_help", "method_query", "self_projection",
                         "pain_specific", "save_tendency", "audience_match", "high_ticket")}
         intent_dims["comment_density"] = min(1.0, len(comments) / 200)
+    else:
+        # 无评论文本(或 fast 模式):用【内联评论数】给个基线意向密度,不取评论文本、不打 LLM。
+        # 这样意向分不至于恒为 0,评论多的爆款意向相应更高。
+        if rc.comments:
+            intent_dims = {"comment_density": min(1.0, rc.comments / 200)}
     intent, idetail = H.intent_score(intent_dims) if intent_dims else (0.0, {"missing": list(H.S.INTENT_WEIGHTS)})
 
     _f = lambda x: f"{x:.2f}" if x is not None else "缺失"

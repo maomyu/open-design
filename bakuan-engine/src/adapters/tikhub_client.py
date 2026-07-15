@@ -41,7 +41,7 @@ _PLAT: dict[str, dict[str, Any]] = {
         "params": lambda kw, n: {"keyword": kw, "page": 1, "sort_type": 0, "note_type": 0},
         "list": ["data.data.items", "data.items", "data.data", "data.notes"], "item_key": "note",
         "comments": ("GET", "/api/v1/xiaohongshu/app/get_note_comments", "note_id"),
-        "detail": ("GET", "/api/v1/xiaohongshu/web/get_note_info_v7", "note_id"),
+        "detail": ("GET", "/api/v1/xiaohongshu/app_v2/get_video_note_detail", "note_id"),
     },
     "bilibili": {
         "method": "GET",
@@ -57,7 +57,9 @@ _PLAT: dict[str, dict[str, Any]] = {
         "params": lambda kw, n: {"keyword": kw, "pcursor": ""},
         "list": ["data.mixFeeds", "data.feeds", "data.data.feeds", "data.data"], "item_key": "feed",
         "comments": ("GET", "/api/v1/kuaishou/web/fetch_one_video_comment", "photo_id"),
-        "detail": ("GET", "/api/v1/kuaishou/app/fetch_one_video", "photo_id"),
+        # 2026-07-15 实测:app/fetch_one_video 端点【超时】(下载失败根因);web/fetch_one_video_v2
+        # 快(~2.7s)且返回 photo.mainMvUrls 直链。详情/下载统一走 v2。
+        "detail": ("GET", "/api/v1/kuaishou/web/fetch_one_video_v2", "photo_id"),
     },
     "channels": {
         "method": "POST",
@@ -106,12 +108,59 @@ class TikHubClient:
 
     def search_keyword(self, platform: str, keyword: str, *,
                        count: int = 20, time_window: str = "7d") -> list[dict]:
+        # 抖音走【真分页】累积到 count(2026-07-14 实测:cursor+backtrace+search_id 可翻页,
+        # 单页仅 ~8 条,不翻页选不出稀有爆款如低粉爆款)。其它平台暂用单页(各自返回 8-20 条,
+        # 够选题;后续按各自游标 pcursor/page 补分页)。
+        if platform == "douyin":
+            return self._douyin_search_paged(keyword, count=count, time_window=time_window)
         cfg = _PLAT[platform]
         if cfg["method"] == "POST":
             data = self._call("POST", cfg["search"], body=cfg["body"](keyword, count))
         else:
             data = self._call("GET", cfg["search"], params=cfg["params"](keyword, count))
         return _extract_items(data, cfg["list"], cfg.get("item_key"))[:count]
+
+    @staticmethod
+    def _douyin_publish_time(time_window: str | None) -> str:
+        """app 时间窗 key → 抖音搜索 publish_time 档(API 只有 0/1/7/180)。
+        30d/90d/180d/365d 统一用最长档 180 做服务端粗筛,精确时间窗由 criteria 按 create_time 再筛。"""
+        tw = (time_window or "").strip()
+        if not tw or tw == "all":
+            return "0"
+        if tw == "1d":
+            return "1"
+        if tw == "7d":
+            return "7"
+        return "180"
+
+    def _douyin_search_paged(self, keyword: str, *, count: int = 30,
+                             time_window: str = "180d", sort_type: str = "1") -> list[dict]:
+        """抖音视频搜索翻页累积。sort_type: 0综合/1最多点赞/2最新。翻页三件套
+        cursor + backtrace + search_id(=log_pb.impr_id)必须一起带,只带 cursor 会 400。"""
+        pt = self._douyin_publish_time(time_window)
+        out: list[dict] = []
+        seen: set[str] = set()
+        cursor, backtrace, search_id = 0, "", ""
+        for _ in range(8):  # 最多 8 页(~60 条候选),够筛
+            body = {"keyword": keyword, "sort_type": sort_type, "publish_time": pt,
+                    "content_type": "1", "cursor": cursor,
+                    "backtrace": backtrace, "search_id": search_id}
+            try:
+                data = self._call("POST", _PLAT["douyin"]["search"], body=body)
+            except Exception:
+                break  # 翻页途中失败:用已累积的,不整体失败
+            d = data.get("data", {}) if isinstance(data, dict) else {}
+            for it in _extract_items(data, _PLAT["douyin"]["list"], _PLAT["douyin"]["item_key"]):
+                aid = it.get("aweme_id")
+                if aid and aid not in seen:
+                    seen.add(aid)
+                    out.append(it)
+            if len(out) >= count or not d.get("has_more"):
+                break
+            cursor = d.get("cursor", cursor)
+            backtrace = d.get("backtrace", "") or backtrace
+            search_id = (d.get("log_pb") or {}).get("impr_id") or search_id
+        return out[:count]
 
     def fetch_detail(self, platform: str, aweme_id: str) -> dict:
         cfg = _PLAT[platform]
@@ -120,6 +169,12 @@ class TikHubClient:
             return {}
         data = self._call(m or "GET", path, params={idp: aweme_id})
         node = data.get("data", data)
+        # 小红书 get_video_note_detail 二次服务包裹 {code,success,data:[note...]},取首条笔记。
+        # 用顶层 "code" 标记识别服务包裹(抖音/快手/B站 的详情对象无此顶层键),避免误伤。
+        if isinstance(node, dict) and "code" in node and isinstance(node.get("data"), list) and node["data"]:
+            node = node["data"][0]
+        elif isinstance(node, list):
+            node = node[0] if node else {}
         for k in ("aweme_detail", "aweme_info", "note", "note_card", "data"):
             if isinstance(node, dict) and isinstance(node.get(k), dict):
                 return node[k]

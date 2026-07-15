@@ -76,12 +76,16 @@ class Pipeline:
             return self.dajiala.search_articles(keyword)
         if platform == "channels":                 # 视频号走极致了
             return self.dajiala.search_videos(keyword)
-        return self.tik.search_keyword(platform, keyword, count=count)
+        # 时间窗透传给 TikHub 搜索(抖音据此选 publish_time 档 + 翻页累积到 count)。
+        tw = (self._criteria or {}).get("time_window", "180d") if self._criteria else "180d"
+        return self.tik.search_keyword(platform, keyword, count=count, time_window=tw)
 
     def _comments(self, platform: str, content_id: str) -> list[str]:
         if self.dry_run:
             from src.adapters import mock
             return mock.mock_comments(platform, content_id)
+        if os.getenv("RADAR_FAST") == "1":
+            return []   # 选题列表速采:不逐条取评论文本(意向用内联评论数估),让分页多条也能秒出
         if self._collect_data is not None:
             return []   # 内置浏览器采集模式:不打 TikHub 取评论文本(绕开成本/风控)
         try:
@@ -280,8 +284,13 @@ class Pipeline:
                     # 该关键词自定「最低阈值」：主指标(点赞/播放/阅读)未达标直接跳过
                     if min_threshold and max(rc.likes, rc.plays) < min_threshold:
                         continue
-                    # 补作者粉丝数（搜索不带；按作者ID单独查，用于低粉爆款判定）
-                    if rc.fans == 0 and rc.author_id and p in ("douyin", "xiaohongshu", "bilibili", "kuaishou"):
+                    # 补作者粉丝数（搜索不带；按作者ID单独查，用于低粉爆款判定）。
+                    # RADAR_FAST(选题列表速采)跳过:快手/小红书/B站粉丝不内联,逐个作者查会几十次
+                    # TikHub 调用→采集超时(2026-07-15 实测快手 180s 超时的根因)。快速模式下这些平台
+                    # 粉丝按 0 计(低粉爆款规则对它们失效,但默认热度门槛/高赞/高互动都不受影响;抖音粉丝
+                    # 内联不受影响)。想按低粉筛这些平台可关 RADAR_FAST。
+                    if (rc.fans == 0 and rc.author_id and os.getenv("RADAR_FAST") != "1"
+                            and p in ("douyin", "xiaohongshu", "bilibili", "kuaishou")):
                         rc.fans = self._get_fans(p, rc.author_id)
                     # 公众号粉丝走极致了 follower_stats（0.5元/次，按账号缓存；GZH_FANS=0 可关）
                     elif (p == "gzh" and rc.fans == 0 and rc.url
@@ -734,7 +743,11 @@ def main():
         # 雷达精评条数：默认 8(取头部选题，约 1 分钟出结果)；量大想更全可设 RADAR_MAX。
         os.environ["MAX_PROCESS"] = os.getenv("RADAR_MAX", "8")
         os.environ["ASR_OFF"] = "1"                  # 选题阶段不转写,提速
-        pipe.run_keyword(args.keyword, args.platforms.split(","), min_threshold=args.min_threshold)
+        # 采集候选量:TikHub 直采时多翻几页(默认 30)让筛选(尤其低粉爆款这类稀有条件)有足够
+        # 候选;浏览器采集(collect-file)则用其提供的量,count 不影响。
+        collect_n = int(os.getenv("RADAR_COLLECT", "30"))
+        pipe.run_keyword(args.keyword, args.platforms.split(","),
+                         count=collect_n, min_threshold=args.min_threshold)
         items = sorted(pipe.radar_items, key=lambda x: (x["流量爆款分"] + x["精准意向分"]), reverse=True)
         print(json.dumps({"keyword": args.keyword, "count": len(items), "选题候选": items},
                          ensure_ascii=False, indent=2))
