@@ -133,6 +133,10 @@ const residualAllowedPathPrefixes = [
   // short-video pipeline (真抓爆款/下载/ASR) inside the installer and are
   // git-ignored, downloaded locally; never project-owned code.
   "tools/pack/vendor/",
+  // Vendored 视频号(WeChat Channels)DRM 解密 runtime:微信官方 wasm_video_decode.wasm +
+  // 其 Emscripten glue + Node 解密脚本(WxIsaac64 密钥流生成)。upstream 二进制/胶水,
+  // 非项目自有代码;视频号视频前 128KB ISAAC64 加密,只能靠这个 WASM 解。
+  "bakuan-engine/scripts/sph/",
 ];
 
 const residualAllowedPathPatterns: RegExp[] = [
