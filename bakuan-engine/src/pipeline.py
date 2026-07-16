@@ -748,15 +748,27 @@ def _script_modes() -> list[str]:
     return modes or ["rewrite"]
 
 
+_PLAT_CODES = {"douyin", "xiaohongshu", "bilibili", "kuaishou", "gzh", "channels"}
+
+
 def _parse_platforms(v) -> list[str]:
-    """把「平台」多选字段(中文标签，list 或顿号串)转成内部代号列表。空→[]（上层用默认全平台）。"""
+    """把「平台」多选字段转成内部代号列表。中文标签(抖音/小红书…)和内部代号
+    (douyin/xiaohongshu…)【两种都认】——od baokuan/监控库传中文名,web 传代号,都要能跑。
+    list 或顿号/逗号串均可;空→[]（上层用默认全平台）。"""
     if not v:
         return []
     if isinstance(v, list):
         names = [x.get("text", x) if isinstance(x, dict) else x for x in v]
     else:
         names = str(v).replace("、", ",").replace(" ", ",").split(",")
-    return [_PLAT_CN[n.strip()] for n in names if n and n.strip() in _PLAT_CN]
+    out: list[str] = []
+    for n in names:
+        n = str(n).strip()
+        if n in _PLAT_CN:
+            out.append(_PLAT_CN[n])
+        elif n in _PLAT_CODES:
+            out.append(n)
+    return out
 
 
 def main():
@@ -779,6 +791,8 @@ def main():
                     help="小红书内容类型:2 图文(图文笔记台)/1 视频(短视频台);不传=综合。前后端对应用。")
     ap.add_argument("--time-window", default="7d", help="竞品账号采集时间窗(1d/7d/30d/180d)")
     args = ap.parse_args()
+    # 平台名归一化:od baokuan/监控库传中文名(小红书),web 传代号(xiaohongshu),两种都转成代号跑。
+    _plats = _parse_platforms(args.platforms) or list(S.PLATFORMS)
     pipe = Pipeline(dry_run=args.dry_run)
     if args.xhs_note_type:
         pipe.xhs_note_type = args.xhs_note_type
@@ -805,7 +819,7 @@ def main():
         # 采集候选量:TikHub 直采时多翻几页(默认 30)让筛选(尤其低粉爆款这类稀有条件)有足够
         # 候选;浏览器采集(collect-file)则用其提供的量,count 不影响。
         collect_n = int(os.getenv("RADAR_COLLECT", "30"))
-        pipe.run_keyword(args.keyword, args.platforms.split(","),
+        pipe.run_keyword(args.keyword, _plats,
                          count=collect_n, min_threshold=args.min_threshold)
         items = sorted(pipe.radar_items, key=lambda x: (x["流量爆款分"] + x["精准意向分"]), reverse=True)
         # feishu_synced=False 说明本轮飞书数据中心回写失败(多为 lark-cli 未装/未连接)——上报给前端
@@ -820,13 +834,13 @@ def main():
     elif args.regenerate:
         print(json.dumps(pipe.regenerate(), ensure_ascii=False, indent=2))
     elif args.account:
-        print(json.dumps(pipe.run_account(args.account, args.platforms.split(","),
+        print(json.dumps(pipe.run_account(args.account, _plats,
                                           time_window=args.time_window),
                          ensure_ascii=False, indent=2))
     elif args.link:
         print(json.dumps(pipe.run_single_link(args.link), ensure_ascii=False, indent=2))
     elif args.keyword:
-        print(json.dumps(pipe.run_keyword(args.keyword, args.platforms.split(","),
+        print(json.dumps(pipe.run_keyword(args.keyword, _plats,
                                           min_threshold=args.min_threshold),
                          ensure_ascii=False, indent=2))
     else:
