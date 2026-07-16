@@ -312,6 +312,10 @@ class Pipeline:
                     if not rc.content_id.strip("_"):
                         continue
                     if not self._radar_mode and store.is_duplicate(rc.content_id, rc.fingerprint):
+                        # 重复抓取(验收3):不重复建主记录,但记最新快照(供增速/快速起量)并把
+                        # 最新互动数据刷回原始库那条既有主记录。
+                        store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
+                        self._refresh_raw_stats(rc)
                         continue
                     # 该关键词自定「最低阈值」：主指标(点赞/播放/阅读)未达标直接跳过
                     if min_threshold and max(rc.likes, rc.plays) < min_threshold:
@@ -359,10 +363,19 @@ class Pipeline:
         if auto_mode:
             pending, self.radar_tier = self._apply_tier_ladder(all_cands, auto_target)
             logger.info(f"[自动降档] 命中档位「{self.radar_tier}」→ {len(pending)} 条(候选 {len(all_cands)})")
-        # 批量写原始库（一次 lark-cli 调用，避免 N 个子进程拖慢）
-        raw_fields = []
-        gzh_xhs = sum(1 for rc, _ in pending if rc.platform in ("gzh", "xiaohongshu"))
+        # 批量写原始库（一次 lark-cli 调用，避免 N 个子进程拖慢）。
+        # 已入库过的内容(radar 重复采集常见)不重建主记录(验收3)——复用既有 record_id。
+        new_pending: list[tuple] = []   # 真正要新建主记录的 (rc, hits)
+        dup_pending: list[tuple] = []   # 已有主记录的 (rc, 既有record_id)
         for rc, hits in pending:
+            prev = store.feishu_rid(rc.content_id)
+            if prev:
+                dup_pending.append((rc, prev))
+            else:
+                new_pending.append((rc, hits))
+        raw_fields = []
+        gzh_xhs = sum(1 for rc, _ in new_pending if rc.platform in ("gzh", "xiaohongshu"))
+        for rc, hits in new_pending:
             f = rc.to_feishu()
             f["命中规则"] = hits
             f["处理状态"] = "待转写"
@@ -377,10 +390,16 @@ class Pipeline:
             logger.info(f"图文全文提取：{gzh_xhs} 条(公众号/小红书)")
         ids = self._add_batch("爆款内容原始库", raw_fields)
         candidates: list[normalize.RawContent] = []
-        for (rc, hits), rid in zip(pending, ids + [""] * (len(pending) - len(ids))):
+        for (rc, hits), rid in zip(new_pending, ids + [""] * (len(new_pending) - len(ids))):
             store.mark_seen(rc.content_id, rc.fingerprint, rc.platform, rid)
             self._rid_by_cid[rc.content_id] = rid   # 原始库 record_id，供下游关联字段
             candidates.append(rc)
+        for rc, prev in dup_pending:
+            store.mark_seen(rc.content_id, rc.fingerprint, rc.platform, prev)  # 只刷 last_seen
+            self._rid_by_cid[rc.content_id] = prev
+            candidates.append(rc)
+        if dup_pending:
+            logger.info(f"重复内容 {len(dup_pending)} 条:不重建主记录,复用既有原始库记录")
         logger.info(f"入候选池 {len(candidates)} 条")
         # 脚本/封面很耗时：只精处理"优先级最高的前 N 条"，其余已入原始库，可稍后再处理。
         # 这样一次运行几分钟内完成，稳落在 Hermes/命令超时内。
@@ -433,7 +452,17 @@ class Pipeline:
                                      f"需带 xsec_token 的分享链接);小红书建议改用关键词采集 od baokuan collect。aid={aid}"}
                 return {"error": f"取详情失败(可能是短链需先跳转或ID解析问题)：aid={aid}"}
         rc = normalize.normalize(platform, item)
-        raw_rid = self._write_raw(rc, ["单链接手动"])
+        # 验收3:已入库过的内容不重复建主记录——复用既有 record_id 并刷新最新数据,
+        # 拆解/脚本照常重跑(用户点名要处理这条链接,产出新版成品)。
+        prev = store.feishu_rid(rc.content_id)
+        if prev:
+            store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
+            self._refresh_raw_stats(rc)
+            raw_rid = prev
+            logger.info(f"[单链接] 内容已在原始库,复用主记录 {prev}")
+        else:
+            raw_rid = self._write_raw(rc, ["单链接手动"])
+            store.mark_seen(rc.content_id, rc.fingerprint, platform, raw_rid)
         ok = self._process_candidate(rc, raw_rid=raw_rid)
         if self.dry_run:
             self._dump()
@@ -461,13 +490,23 @@ class Pipeline:
             except Exception as e:
                 logger.warning(f"账号采集失败 {p}: {e}")
                 continue
+            skipped_window = 0
             for it in raw:
                 rc = normalize.normalize(p, it)
+                # 验收2:按指定时间窗采集——窗口外发布的作品不收(此前 time_window 只打日志没生效)。
+                if not _within_window(rc.publish_time, time_window):
+                    skipped_window += 1
+                    continue
                 if store.is_duplicate(rc.content_id, rc.fingerprint):
+                    # 重复抓取(验收3):不重建主记录,但记快照+刷新最新数据。
+                    store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
+                    self._refresh_raw_stats(rc)
                     continue
                 rid = self._write_raw(rc, ["竞品账号监控"])
                 store.mark_seen(rc.content_id, rc.fingerprint, p, rid)
                 candidates.append((rc, recent, rid))
+            if skipped_window:
+                logger.info(f"[竞品账号] {p} 窗口外跳过 {skipped_window} 条(时间窗 {time_window})")
         generated = sum(1 for rc, recent, rid in candidates
                         if self._process_candidate(rc, account_recent_likes=recent, raw_rid=rid))
         if self.dry_run:
@@ -642,6 +681,26 @@ class Pipeline:
             return ""
         raise exc
 
+    def _refresh_raw_stats(self, rc: normalize.RawContent) -> None:
+        """重复抓取时把最新互动数据刷回「爆款内容原始库」既有主记录(不新建,best-effort)。
+
+        验收3 的后半句:同一内容重复抓取→不重复建主记录,但更新最新数据快照。本地
+        snapshot 表负责增速计算;这里把飞书主记录的可见数据也刷新,客户看到的是最新值。"""
+        if self.dry_run:
+            return
+        rid = store.feishu_rid(rc.content_id)
+        if not rid:
+            return
+        try:
+            import time as _t
+            self.fs.update_record("爆款内容原始库", rid, {
+                "播放/阅读": rc.plays, "点赞": rc.likes, "评论": rc.comments,
+                "收藏/投币": rc.collects, "转发": rc.shares,
+                "最近更新": normalize._fmt_time(int(_t.time())),
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"刷新原始库数据跳过 {rc.content_id}: {type(e).__name__}: {str(e)[:80]}")
+
     def _write_raw(self, rc: normalize.RawContent, hits: list[str]) -> str:
         fields = rc.to_feishu()
         fields["命中规则"] = hits
@@ -744,6 +803,23 @@ def _txt(v) -> str:
 
 _PLAT_CN = {"抖音": "douyin", "小红书": "xiaohongshu", "b站": "bilibili", "B站": "bilibili",
             "快手": "kuaishou", "公众号": "gzh", "视频号": "channels"}
+
+
+def _win_seconds(window: str) -> int:
+    """时间窗字符串→秒。支持 1d/7d/30d/180d(及任意 Nd/Nh);解析失败按 7d。"""
+    m = re.match(r"^\s*(\d+)\s*([dh])\s*$", str(window or "").lower())
+    if not m:
+        return 7 * 86400
+    return int(m.group(1)) * (86400 if m.group(2) == "d" else 3600)
+
+
+def _within_window(publish_ts: int | float, window: str) -> bool:
+    """发布时间是否落在时间窗内。无发布时间(0/缺失)不淘汰——宁可多收不漏。"""
+    if not publish_ts:
+        return True
+    import time as _t
+    ts = publish_ts / 1000 if publish_ts > 1e12 else publish_ts
+    return (_t.time() - ts) <= _win_seconds(window)
 
 
 def _script_modes() -> list[str]:

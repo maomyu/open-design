@@ -61,6 +61,15 @@ def mark_seen(content_id: str, fingerprint: str, platform: str, feishu_record_id
             (content_id, fingerprint, platform, feishu_record_id, now, now, now))
 
 
+def feishu_rid(content_id: str) -> str | None:
+    """已入库内容对应的飞书「爆款内容原始库」record_id。
+    没见过→None;见过但当时没写成飞书(dry-run/飞书断)→""(上层视为可重建)。"""
+    with _conn() as con:
+        row = con.execute("SELECT feishu_record_id FROM seen WHERE content_id=?",
+                          (content_id,)).fetchone()
+        return row[0] if row else None
+
+
 def add_snapshot(content_id: str, likes: int, comments: int, collects: int, plays: int) -> None:
     with _conn() as con:
         con.execute(
