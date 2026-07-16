@@ -9979,6 +9979,42 @@ export async function startServer({
     }
   });
 
+  // 图文笔记台「提取图文仿写」:把【采集时随这条爆款带回的】原图直链下到文章图集 + 收原文案。
+  // 关键:文案/图片直接来自【用户点的那条搜索结果】(引擎采集时已把 desc + images_list 挂进选题),
+  // 不再按 id 取详情——小红书 get_video_note_detail 按 id 返回的是推荐流、不是本条,内容对不上号
+  // (2026-07-16 用户报「提取的根本不是要的那条」)。这里只负责下载图片进资产目录。
+  app.post('/api/media-studio/import-xhs-note', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const articleId = String(req.body?.articleId || '').trim();
+    const text = String(req.body?.text || '');
+    const images = Array.isArray(req.body?.images)
+      ? (req.body.images as unknown[]).filter((u): u is string => typeof u === 'string' && /^https?:\/\//.test(u)).slice(0, 18)
+      : [];
+    if (!articleId) return res.status(400).json({ error: '缺少 articleId' });
+    try {
+      const dir = path.resolve(RUNTIME_DATA_DIR, 'media-studio', articleId);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+      const imageUrls: string[] = [];
+      for (let i = 0; i < images.length; i++) {
+        try {
+          const resp = await fetch(images[i]!, { headers: { 'User-Agent': UA, Referer: 'https://www.xiaohongshu.com/' } });
+          if (!resp.ok) continue;
+          const buf = Buffer.from(await resp.arrayBuffer());
+          if (buf.length < 1000) continue;   // 跳过占位/坏图
+          const fname = `xhs-${Date.now()}-${i}.jpg`;
+          await fs.promises.writeFile(path.join(dir, fname), buf);
+          imageUrls.push(`/api/media-studio/assets/${articleId}/${fname}`);
+        } catch { /* 单张失败不影响其余 */ }
+      }
+      return res.json({ text, imageUrls });
+    } catch (err) {
+      return res.status(500).json({ error: '下载图文失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
   // 下载爆款原视频(给用户仿写文案用)。用 yt-dlp(开源标准,支持 B站/抖音/小红书;快手较弱)。
   // 下到 <数据目录>/downloads/,返回本地文件路径,前端可「在 Finder 显示」。
   app.post('/api/media-studio/download-video', async (req, res) => {

@@ -247,6 +247,11 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     // 图文笔记（小红书为主）——标题/正文硬限制平台化，图集画面建议单独落 extra。
     const researchMd = String((article.extra as Record<string, unknown>).researchMd ?? '').trim();
     const topicUrl = String((article.extra as Record<string, unknown>).topicUrl ?? '');
+    // 「提取图文仿写」带来的小红书原文案(下载原图进图集时一并存的)——按它仿写。
+    const sourceContent = String((article.extra as Record<string, unknown>).sourceContent ?? '').trim();
+    const sourceBlock = sourceContent
+      ? `## 原文参考（这是要【仿写】的小红书爆款原文案——学它的钩子/结构/表达节奏，但换你自己的角度、素材和话术，绝不照抄，避免判重）\n${sourceContent.slice(0, 1500)}`
+      : '';
     const researchPhase = researchMd
       ? `## 素材简报（已调研——事实优先用这里的，不必重查）\n${researchMd.slice(0, 3000)}`
       : [
@@ -264,6 +269,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         note.trim() ? `补充要求：${note.trim()}` : '',
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
+        sourceBlock,
         researchPhase,
         '## 硬限制（平台规则，超了发不出去）',
         '- 标题 ≤20 个字：钩子前置（数字/反差/身份代入），可带 1 个 emoji；',

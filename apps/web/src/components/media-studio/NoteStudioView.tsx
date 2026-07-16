@@ -25,6 +25,7 @@ import {
   fetchStudioPublishes,
   fetchStudioTopics,
   generateArticleImage,
+  importXhsNote,
   lintStudioArticle,
   updateStudioArticle,
   uploadStudioAsset,
@@ -340,6 +341,33 @@ export function NoteStudioView(): JSX.Element {
     if (fromTopic) setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
   }
 
+  // 图文笔记台「提取图文仿写」:采到的小红书图文爆款 → 建笔记 → 下载原图进图集 + 取原文案 →
+  // 按知识库风格 AI 仿写成新图文笔记(原图/原文案存进文章,文案页展示原文参考)。
+  async function handleExtractNote(hitTitle: string, text: string, images: string[]) {
+    if (!images.length) { studioToast.err('这条没带回图文内容(可能是视频/已删),换一条'); return; }
+    await flushSave();
+    studioToast.info('正在下载原图进图集…(稍候别切走)');
+    const created = await createStudioArticle(PLATFORM, { title: hitTitle, topic: hitTitle });
+    if (!created) { studioToast.err('建笔记失败'); return; }
+    window.localStorage.setItem(LAST_ARTICLE_KEY, created.id);
+    const r = await importXhsNote(created.id, text, images);
+    if ('error' in r) {
+      await refreshArticles(); setArticle(created); setTab('copy');
+      studioToast.err(`下载图文失败:${r.error}`);
+      return;
+    }
+    const updated = await updateStudioArticle(PLATFORM, created.id, {
+      extra: { noteImages: r.imageUrls, sourceContent: text, targetPlatform: '小红书' },
+    });
+    await refreshArticles();
+    setArticle(updated ?? created);
+    setTab('copy');
+    // 让 articleRef 更新到新文章后再发 AI 任务(startAiTask 按 articleRef.current 挂 articleId)。
+    await new Promise((res) => setTimeout(res, 60));
+    studioToast.ok(`已下 ${r.imageUrls.length} 张原图进图集 + 取到原文案 ✓ 正按你的风格仿写成新笔记…`);
+    await startAiTask('write');
+  }
+
   async function handleDeleteArticle() {
     if (!article) return;
     if (!window.confirm(`删除「${article.title || '(未命名)'}」？发布记录一并删除。`)) return;
@@ -569,6 +597,7 @@ export function NoteStudioView(): JSX.Element {
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
+              onExtractNote={(title, text, images) => void handleExtractNote(title, text, images)}
               aiBusy={effectiveAiRunning}
             />
           ) : null}
@@ -578,6 +607,22 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('还没有笔记。从「选题」挑一个开始，或新建一篇。')
             ) : (
               <>
+                {/* 「提取图文仿写」带来的小红书原文案参考(原图已进「图集」)。 */}
+                {typeof (article.extra as Record<string, unknown>).sourceContent === 'string'
+                  && (article.extra as Record<string, unknown>).sourceContent ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      原文参考 · 小红书图文
+                      <span className={c('cardHint')}>原图已进「图集」；下面是原文案，AI 按它 + 你的知识库风格仿写（不照抄）</span>
+                    </div>
+                    <div className={c('cardHint')} style={{ whiteSpace: 'pre-wrap', maxHeight: 170, overflow: 'auto', lineHeight: 1.6 }}>
+                      {String((article.extra as Record<string, unknown>).sourceContent)}
+                    </div>
+                    {typeof (article.extra as Record<string, unknown>).sourceUrl === 'string' ? (
+                      <a href={String((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
+                    ) : null}
+                  </div>
+                ) : null}
                 {hasFeature(license, 'cap.ai') ? (
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>

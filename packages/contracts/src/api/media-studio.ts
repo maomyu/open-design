@@ -280,6 +280,10 @@ export interface MediaTopicHit {
   /** 爆值 from the trending feed, opaque string. */
   hot: string | null;
   desc: string | null;
+  /** 小红书图文爆款采集时随本条带回的原文案(desc)——图文笔记台「提取图文仿写」用,保证和本条一致。 */
+  sourceContent?: string;
+  /** 小红书图文爆款采集时随本条带回的原图直链——「提取图文仿写」下载进图集。 */
+  sourceImages?: string[];
 }
 
 export interface TopicFeedSearchRequest {

@@ -646,7 +646,7 @@ class Pipeline:
     def _write_topic(self, rc: normalize.RawContent, ev: EV.Evaluation,
                      link: list[dict] | None = None) -> str:
         # 收集给爆创「选题步骤」的选题候选(标题/平台/热度/来源/评分/推荐承接)
-        self.radar_items.append({
+        item = {
             "标题": rc.title, "平台": normalize.cn_platform(rc.platform),
             "流量爆款分": ev.traffic, "精准意向分": ev.intent,
             "热度": ev.traffic_grade, "所属榜单": EV.classify_boards(ev),
@@ -655,7 +655,21 @@ class Pipeline:
             "收藏": rc.collects, "粉丝": rc.fans,
             "高频用户问题": ev.top_questions, "推荐承接服务": ev.recommend_service,
             "评分理由": ev.reason,
-        })
+        }
+        # 小红书图文:把【本条】原文案(desc)+ 原图直链一并带出,给图文笔记台「提取图文仿写」用。
+        # 搜索结果自带完整 desc + images_list,直接用它保证【和用户点的这条一致】——详情接口
+        # (get_video_note_detail)按 id 返回的是推荐流不是本条,内容对不上号(2026-07-16 用户报)。
+        raw = rc.raw if isinstance(getattr(rc, "raw", None), dict) else {}
+        if rc.platform == "xiaohongshu" and raw.get("images_list"):
+            imgs = []
+            for it in raw.get("images_list") or []:
+                if isinstance(it, dict):
+                    u = it.get("url_size_large") or it.get("url") or it.get("original")
+                    if u:
+                        imgs.append(u)
+            item["原文案"] = (raw.get("desc") or raw.get("title") or "").strip()
+            item["原图"] = imgs
+        self.radar_items.append(item)
         # 选题池「来源内容」是真双向关联字段 → 指向「爆款内容原始库」那条记录,
         # 客户在飞书点一下即可跳到原始爆款。返回本条选题的 record_id,供审核库反查关联。
         return self._add("今日爆款选题池", {

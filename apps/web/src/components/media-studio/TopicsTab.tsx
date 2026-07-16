@@ -142,6 +142,9 @@ export interface TopicsTabProps {
   /** 【提取文案仿写】拿到真实口播 transcript 后,直接建稿写一版可开拍的仿写口播稿(短视频台)。
    *  没传(如公众号)则回退到 onAiFind('topics') 老路。 */
   onRewriteToScript?: (title: string, transcript: string, sourceUrl: string, videoFile: string) => void;
+  /** 图文笔记台:采到的小红书图文爆款 → 下载原图进图集 + 取原文案 → 按知识库风格仿写成新笔记。
+   *  text/images 是随本条带回的原文案+原图直链(保证和用户点的这条一致)。 */
+  onExtractNote?: (title: string, text: string, images: string[]) => void;
   aiBusy: boolean;
   /** TikHub 平台分流模式(短视频台,2026-07-09 用户拍板):选题数据按目标
    *  平台走它自己的接口(抖音↔抖音、小红书↔小红书、快手↔快手),传了此
@@ -156,7 +159,7 @@ export interface TopicsTabProps {
   collectPlatforms?: string[];
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, aiBusy, tikhubTargets, browserCollect = false, collectPlatforms }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, browserCollect = false, collectPlatforms }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
@@ -254,6 +257,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           zanNum: Number(t['点赞']) || null,
           hot: `${t['热度'] ?? ''}级 · 流量分${t['流量爆款分'] ?? ''}`,
           desc: `${String(t['评分理由'] ?? '')}${Number(t['评论']) ? ` · 评论${t['评论']}` : ''}${Number(t['粉丝']) ? ` · 粉丝${t['粉丝']}` : ''}`,
+          // 小红书图文:随本条带回的原文案+原图直链(给「提取图文仿写」用,保证和这条一致)。
+          ...(typeof t['原文案'] === 'string' && t['原文案'] ? { sourceContent: String(t['原文案']) } : {}),
+          ...(Array.isArray(t['原图']) ? { sourceImages: (t['原图'] as unknown[]).filter((u): u is string => typeof u === 'string') } : {}),
         }));
       // 写模块存储(按平台分桶)+ 广播:即使采集把选题页卸载过,重新挂载也能读到本平台这批爆款。
       latestBaokuanHitsByPlat[baokuanPlatKey] = hitList;
@@ -806,9 +812,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         : (hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—')}
                     </td>
                     <td className={c('tdActions')}>
-                      {/* 「提取文案仿写」是短视频专属(下载原视频→ASR→口播稿),只在提供了
-                          onRewriteToScript 的短视频台出现;图文笔记台(browserCollect 但无 onRewriteToScript)
-                          走「AI 转题」把小红书爆款图文转成笔记选题——图文没有口播稿可提取。 */}
+                      {/* 短视频台(onRewriteToScript):下原视频→ASR→口播稿仿写。
+                          图文笔记台(onExtractNote):下原图进图集+取原文案→仿写成新图文笔记。
+                          其余(公众号等):AI 转题把原文转成差异化选题。 */}
                       {browserCollect && onRewriteToScript ? (
                         <button
                           type="button"
@@ -818,6 +824,18 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                           onClick={() => void runExtractAndRewrite(hit)}
                         >
                           <Icon name="sparkles" size={13} /> {dlBusy === (hit.url || hit.title) ? '提取中…' : '提取文案仿写'}
+                        </button>
+                      ) : browserCollect && onExtractNote ? (
+                        <button
+                          type="button"
+                          className={`${c('btn')} ${c('btnPrimary')}`}
+                          disabled={aiBusy || !(hit.sourceImages && hit.sourceImages.length > 0)}
+                          title={hit.sourceImages && hit.sourceImages.length > 0
+                            ? '一步到位:下载原图进图集 + 取原文案 → 按你的知识库风格 AI 仿写成新图文笔记'
+                            : '这条没带回图文内容(可能是视频/已删),换一条'}
+                          onClick={() => onExtractNote(hit.title, hit.sourceContent || '', hit.sourceImages || [])}
+                        >
+                          <Icon name="sparkles" size={13} /> 提取图文仿写
                         </button>
                       ) : (
                         <button

@@ -300,6 +300,27 @@ export async function collectScoreTopics(
   }
 }
 
+/** 图文笔记台「提取图文仿写」:把采集时随这条爆款带回的原图直链下到图集(text/images 均取自
+ *  用户点的那条搜索结果,保证一致)。返回下好的图集资产 URL。 */
+export async function importXhsNote(
+  articleId: string,
+  text: string,
+  images: string[],
+): Promise<{ text: string; imageUrls: string[] } | { error: string }> {
+  try {
+    const resp = await fetchWithTimeout(`${ROOT}/import-xhs-note`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ articleId, text, images }),
+    }, 90_000);
+    const d = (await resp.json()) as { text?: string; imageUrls?: string[]; error?: string };
+    if (!resp.ok) return { error: d.error || '下载图文失败' };
+    return { text: d.text ?? text, imageUrls: d.imageUrls ?? [] };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** 把采集到的条目 { 平台: [条目] } 交爆款引擎 --radar 评分,返回选题候选。 */
 export async function radarScoreCollected(
   keyword: string,
