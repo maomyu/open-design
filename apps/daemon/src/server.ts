@@ -9630,8 +9630,13 @@ export async function startServer({
       orbitService.configure(config.orbit);
       // task#5:客户手动粘贴/改「飞书数据中心链接」时,同样把它同步进引擎 .env,
       // 保证爆款引擎回写永远落到客户当前的真 base(与 provision 建表路径一致)。
+      // 引擎目录必须【解析真身】——打包版引擎在 <dataDir>/bakuan-engine,不是 PROJECT_ROOT;
+      // 之前写死 PROJECT_ROOT 会把 .env 写到打包环境不存在/不生效的目录,引擎仍回写旧 base。
       if (typeof config.feishuBitableUrl === 'string' && config.feishuBitableUrl) {
-        try { await syncEngineFeishuEnv(path.join(PROJECT_ROOT, 'bakuan-engine'), config.feishuBitableUrl); } catch { /* 不阻断 */ }
+        try {
+          const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+          await syncEngineFeishuEnv(eng.engineDir, config.feishuBitableUrl);
+        } catch { /* 不阻断 */ }
       }
       res.json({ config });
     } catch (err) {
@@ -9915,7 +9920,7 @@ export async function startServer({
       try { parsed = JSON.parse(s); } catch {
         return res.status(500).json({ error: '评分失败：' + (r.stderr || r.stdout).slice(-300) });
       }
-      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [] });
+      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null });
     } catch (err) {
       return res.status(500).json({ error: '评分失败：' + String(err && err.message ? err.message : err) });
     } finally {
@@ -9950,6 +9955,11 @@ export async function startServer({
     try {
       const args = ['-m', 'src.pipeline', '--radar', '--keyword', keyword, '--platforms', platforms];
       if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
+      // 小红书内容类型:图文笔记台只采图文(2),短视频台采视频(1)——前后端对应图文笔记模块。
+      const xhsType = req.body?.xhsContentType;
+      if (platforms.includes('xiaohongshu') && (xhsType === 'image' || xhsType === 'video')) {
+        args.push('--xhs-note-type', xhsType === 'image' ? '2' : '1');
+      }
       const r = await execFileBuffered(eng.python, args, {
         cwd: eng.engineDir,
         // RADAR_FAST=1:选题列表纯数据评分(不逐条打 LLM/取评论文本),分页多条也秒出。
@@ -9963,7 +9973,7 @@ export async function startServer({
       try { parsed = JSON.parse(s); } catch {
         return res.status(500).json({ error: 'TikHub 采集/评分失败：' + (r.stderr || r.stdout || '').slice(-300) });
       }
-      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [] });
+      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null });
     } catch (err) {
       return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
     }

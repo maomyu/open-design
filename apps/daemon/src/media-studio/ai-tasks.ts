@@ -80,7 +80,26 @@ function cliBlock(cliPath: string): string {
   ].join('\n');
 }
 
+// 知识库分类标签/顺序(2026-07-16 拆个人/企业两套,daemon 需覆盖两套 id,
+// 否则注入时按 ORDER 迭代会把不在表里的分类【静默丢掉】——历史上个人库的
+// persona/viewpoint 等就是这么被漏注入的)。前缀:个人库裸 id、企业库 ent-、
+// 另保留一批老 id(company/trust/card…)向后兼容存量数据。
 const KNOWLEDGE_CATEGORY_LABEL: Record<string, string> = {
+  // 个人自媒体库
+  persona: '账号人设（你是谁——定位、人设标签、赛道）',
+  viewpoint: '核心观点（反复输出的核心主张）',
+  style: '口播风格（语气、开场习惯、口头禅、禁用词）',
+  story: '个人故事/案例（真实经历、学员/粉丝案例）',
+  goldenline: '金句/话术（钩子、金句、引流话术、CTA）',
+  audience: '目标人群（人群画像、痛点）',
+  // 企业库
+  'ent-company': '公司主体（我们是谁——介绍、业务、发展历程、核心优势）',
+  'ent-credential': '资质背书（为什么信我们——荣誉资质、权威认证、媒体报道、合作大牌）',
+  'ent-product': '产品/服务（我们卖什么——产品线、卖点、适用场景、价格政策）',
+  'ent-case': '客户案例（我们做成过什么——成功案例、数据成果、客户评价）',
+  'ent-brandvoice': '品牌调性（怎么说话——语气、slogan、价值观、禁用表达）',
+  'ent-faq': '常见问答（客户高频问题 + 标准口径回答）',
+  // 老 id(存量数据向后兼容)
   company: '公司介绍（我们是谁——定位、团队、资质背景）',
   product: '产品/服务（我们卖什么——功能、流程、服务口径）',
   trust: '信任背书（为什么信我们——资质、奖项、数据、媒体报道）',
@@ -88,24 +107,35 @@ const KNOWLEDGE_CATEGORY_LABEL: Record<string, string> = {
   card: 'AI 名片（对外话术——一句话介绍、联系方式、CTA 口径）',
   other: '其他资料',
 };
-const KNOWLEDGE_CATEGORY_ORDER = ['company', 'product', 'trust', 'case', 'card', 'other'];
+const KNOWLEDGE_CATEGORY_ORDER = [
+  'persona', 'viewpoint', 'style', 'story', 'goldenline', 'audience',
+  'ent-company', 'ent-credential', 'ent-product', 'ent-case', 'ent-brandvoice', 'ent-faq',
+  'company', 'product', 'trust', 'case', 'card', 'other',
+];
 
 function knowledgeBlock(items: ComposeAiTaskInput['knowledge']): string {
   if (!items || items.length === 0) return '';
-  const lines = ['## 公司知识库（客户挂载的背景资料——事实、口径、案例以此为准；写作时按各分类的用途使用，如信任背书用于增强说服力、AI 名片用于结尾 CTA）'];
+  const lines = ['## 知识库（客户挂载的背景资料——人设/事实/口径/案例以此为准；写作时按各分类用途使用，如资质背书增强说服力、人设风格贴合本人语气、金句用于钩子与 CTA）'];
   const byCat = new Map<string, typeof items>();
   for (const item of items) {
     const cat = (item as { category?: string }).category || 'other';
     if (!byCat.has(cat)) byCat.set(cat, []);
     byCat.get(cat)!.push(item);
   }
-  for (const cat of KNOWLEDGE_CATEGORY_ORDER) {
-    const group = byCat.get(cat);
-    if (!group || group.length === 0) continue;
+  const emit = (cat: string, group: typeof items): void => {
+    if (!group || group.length === 0) return;
     lines.push(`### ${KNOWLEDGE_CATEGORY_LABEL[cat] ?? cat}`);
     for (const item of group) {
       lines.push(`#### ${item.name}\n${item.contentMd}`);
     }
+  };
+  const emitted = new Set<string>();
+  for (const cat of KNOWLEDGE_CATEGORY_ORDER) {
+    if (byCat.has(cat)) { emit(cat, byCat.get(cat)!); emitted.add(cat); }
+  }
+  // 兜底:ORDER 里没列的分类(未来新增/自定义)也注入,绝不静默丢(历史坑)。
+  for (const [cat, group] of byCat) {
+    if (!emitted.has(cat)) emit(cat, group);
   }
   return lines.join('\n\n');
 }

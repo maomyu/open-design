@@ -39,6 +39,8 @@ class Pipeline:
         self._collect_data: dict | None = None  # 内置浏览器采集数据 {平台:[条目]}；非空则替代 API 采集
         self._criteria: dict | None = None       # 灵活爆款标准(时间窗+多组条件)；非空则替代默认初筛
         self._materials: list[dict] | None = None  # 我的素材库缓存（本次运行读一次）
+        self.xhs_note_type: int | None = None    # 小红书采集内容类型:2 图文(图文笔记台)/1 视频(短视频台)/None 综合
+        self.radar_tier: str | None = None       # 自动降档命中的档位名(给前端显示"按【热门】采到N条")
         if dry_run:
             os.environ["DRY_RUN"] = "1"
             self.tik = self.dajiala = self.fs = None
@@ -78,7 +80,9 @@ class Pipeline:
             return self.dajiala.search_videos(keyword)
         # 时间窗透传给 TikHub 搜索(抖音据此选 publish_time 档 + 翻页累积到 count)。
         tw = (self._criteria or {}).get("time_window", "180d") if self._criteria else "180d"
-        return self.tik.search_keyword(platform, keyword, count=count, time_window=tw)
+        # 小红书内容类型透传:图文笔记台只采图文(note_type=2),短视频台采视频(1)——前后端对应。
+        nt = self.xhs_note_type if platform == "xiaohongshu" else None
+        return self.tik.search_keyword(platform, keyword, count=count, time_window=tw, note_type=nt)
 
     def _comments(self, platform: str, content_id: str) -> list[str]:
         if self.dry_run:
@@ -258,11 +262,39 @@ class Pipeline:
         return re.sub(r"\s+\n|\n\s+", "\n", re.sub(r"[ \t]+", " ", text)).strip()
 
     # ── 入口 1：关键词 ──
+    # 自动降档档位阶梯(严→松):视频号(channels)纯点赞走 LIKES,其余平台走 PLAYS(播放)。
+    _LADDER_PLAYS = [("大爆款", 1_000_000), ("爆款", 300_000), ("热门", 100_000), ("小热", 30_000)]
+    _LADDER_LIKES = [("大爆款", 50_000), ("爆款", 20_000), ("热门", 5_000), ("小热", 2_000)]
+
+    def _apply_tier_ladder(self, cands: list, target: int) -> tuple[list, str]:
+        """自动降档:从严到松逐档筛候选,第一个凑够 target 条的档即用;每档都不够则【取头部】兜底
+        (按指标降序,不设下线,保证永远有货)。返回 (pending=[(rc,[档名]),...], 命中档名)。
+        视频号看点赞,其余平台看播放(缺播放退点赞)。"""
+        if not cands:
+            return [], "无候选"
+        # 有播放量的(短视频)按播放档;没播放量的(小红书图文/视频号纯点赞)按点赞档——
+        # 否则拿播放档的 30万+ 门槛套点赞(赞才几千),图文永远只能到「取头部」兜底。
+        metric = lambda rc: rc.plays if rc.plays > 0 else rc.likes
+        ladder = lambda rc: self._LADDER_PLAYS if rc.plays > 0 else self._LADDER_LIKES
+        for i in range(len(self._LADDER_PLAYS)):   # 两套档数一致
+            tier_hits = [(rc, [ladder(rc)[i][0]]) for rc in cands if metric(rc) >= ladder(rc)[i][1]]
+            if len(tier_hits) >= target:
+                return tier_hits, ladder(cands[0])[i][0]   # 档名与平台无关(同档同名)
+        # 兜底:取头部(按指标降序取 max(target*2,12) 条),不设下线。
+        top = sorted(cands, key=metric, reverse=True)[:max(target * 2, 12)]
+        return [(rc, ["热门候选"]) for rc in top], "热门候选(取头部)"
+
     def run_keyword(self, keyword: str, platforms: list[str], *, count: int = 10,
                     min_threshold: int = 0) -> dict:
         logger.info(f"[关键词] {keyword} 平台={platforms} dry_run={self.dry_run}"
                     + (f" 自定门槛≥{min_threshold}" if min_threshold else ""))
         pending: list[tuple[normalize.RawContent, list[str]]] = []
+        # 【自动·智能降档】criteria.auto=true:先把全部候选收集起来,循环后按档位阶梯(严→松)统一筛,
+        # 凑够 target 条就停在那一档;每档都不够就取头部兜底。解决"标准太高冷门词一条采不到"。
+        auto_mode = bool(self._criteria and self._criteria.get("auto"))
+        auto_target = int((self._criteria or {}).get("target", 5)) if auto_mode else 5
+        all_cands: list[normalize.RawContent] = []
+        self.radar_tier = None
         for p in platforms:
             try:
                 raw = self._search(p, keyword, count)
@@ -300,6 +332,10 @@ class Pipeline:
                             self._fans_cache[ck] = self.dajiala.account_followers(rc.url)
                         rc.fans = self._fans_cache[ck]
                     store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
+                    # 自动降档模式:先收集全部候选,判定移到循环后按阶梯统一做。
+                    if auto_mode:
+                        all_cands.append(rc)
+                        continue
                     # 用户传了灵活标准(时间窗+组合条件)就按它判；否则用默认初筛规则。
                     if self._criteria is not None:
                         from src.scoring import criteria as CR
@@ -319,6 +355,10 @@ class Pipeline:
                 except Exception as e:   # 单条脏数据不影响本平台其余条目
                     logger.warning(f"跳过异常条目 {p}: {e}")
                     continue
+        # 【自动·智能降档】所有平台候选采齐后,按档位阶梯统一筛,凑够 auto_target 停,不够取头部兜底。
+        if auto_mode:
+            pending, self.radar_tier = self._apply_tier_ladder(all_cands, auto_target)
+            logger.info(f"[自动降档] 命中档位「{self.radar_tier}」→ {len(pending)} 条(候选 {len(all_cands)})")
         # 批量写原始库（一次 lark-cli 调用，避免 N 个子进程拖慢）
         raw_fields = []
         gzh_xhs = sum(1 for rc, _ in pending if rc.platform in ("gzh", "xiaohongshu"))
@@ -721,8 +761,12 @@ def main():
                     help="内置浏览器采集的数据文件(JSON: {平台:[条目...]}),提供后绕过 TikHub/极致了 API 采集")
     ap.add_argument("--criteria",
                     help='灵活爆款标准 JSON(或 @文件): {"time_window":"7d","rules":[{"fans_max":3000,"plays_min":100000}]}')
+    ap.add_argument("--xhs-note-type", type=int, choices=[1, 2],
+                    help="小红书内容类型:2 图文(图文笔记台)/1 视频(短视频台);不传=综合。前后端对应用。")
     args = ap.parse_args()
     pipe = Pipeline(dry_run=args.dry_run)
+    if args.xhs_note_type:
+        pipe.xhs_note_type = args.xhs_note_type
     if args.criteria:
         raw = args.criteria
         if raw.startswith("@"):
@@ -749,7 +793,8 @@ def main():
         pipe.run_keyword(args.keyword, args.platforms.split(","),
                          count=collect_n, min_threshold=args.min_threshold)
         items = sorted(pipe.radar_items, key=lambda x: (x["流量爆款分"] + x["精准意向分"]), reverse=True)
-        print(json.dumps({"keyword": args.keyword, "count": len(items), "选题候选": items},
+        print(json.dumps({"keyword": args.keyword, "count": len(items),
+                          "tier": pipe.radar_tier, "选题候选": items},
                          ensure_ascii=False, indent=2))
         return
     if args.scheduled:

@@ -1076,6 +1076,136 @@ async function injectBilibili(wv: DraftWebview, draft: DraftPayload, progress: D
   return { ok: true, detail: '已存到B站草稿箱(投稿管理 → 草稿箱)——核对分区后自己点投稿即可(封面已带上)' };
 }
 
+// ---- 视频号(channels.weixin.qq.com·半自动填标题+描述) ----
+// 两个硬约束决定了这是【半自动】而非全自动:
+//  1. 视频号发布页(platform/post/create)的编辑表单在一个【同源 iframe】里,顶层
+//     document.querySelector 够不到——所有填充 JS 必须先钻进 iframe.contentDocument。
+//  2. 视频号【拒绝程序化上传视频】(和 B站 一样:CDP setFiles 塞进去的文件被微信重
+//     渲染抹掉,input.files 恒空、不触发上传)——所以视频必须【用户手动选文件上传】。
+// 因此本适配器只做三件事:轮询等用户把视频传完(编辑表单字段出现)→ 自动填「短标题」
+// +「视频描述」→ 视频号【没有草稿箱】,提醒用户自己点「发表」。铁律:绝不点「发表」。
+
+/** 视频号编辑表单是否就绪(顶层或任一同源 iframe 里出现短标题输入框/描述编辑器)。
+ *  出现即代表用户已把视频上传成功、进入了编辑态。 */
+async function shipinhaoFormReady(wv: DraftWebview): Promise<boolean> {
+  const ok = await wvEval<boolean>(
+    wv,
+    `(() => {
+      const docs = [document];
+      for (const f of document.querySelectorAll('iframe')) {
+        try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) { /* 跨域 iframe 跳过 */ }
+      }
+      return docs.some((d) => d.querySelector('input[placeholder*="短标题"]') || d.querySelector('.input-editor[contenteditable]'));
+    })()`,
+  );
+  return ok === true;
+}
+
+/** 在视频号表单里填「短标题」(受控 input:native value setter)+「视频描述」
+ *  (contenteditable:优先 execCommand insertText 处理换行,失败退回 textContent)。
+ *  两个字段都只在传入非空值时才写,空值只探测不改写(不误清用户已填内容)。 */
+async function shipinhaoFillForm(
+  wv: DraftWebview,
+  shortTitle: string,
+  desc: string,
+): Promise<{ titleSet: boolean; descSet: boolean }> {
+  const r = await wvEval<{ titleSet: boolean; descSet: boolean }>(
+    wv,
+    `(() => {
+      const docs = [document];
+      for (const f of document.querySelectorAll('iframe')) {
+        try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) { /* 跨域 iframe 跳过 */ }
+      }
+      let d = null;
+      for (const doc of docs) {
+        if (doc.querySelector('input[placeholder*="短标题"]') || doc.querySelector('.input-editor[contenteditable]')) { d = doc; break; }
+      }
+      if (!d) return { titleSet: false, descSet: false };
+      const win = d.defaultView || window;
+      let titleSet = false, descSet = false;
+      // 短标题:受控 input,native value setter + input/change(用 iframe 自身 realm 的原型)
+      const ti = d.querySelector('input[placeholder*="短标题"]');
+      const st = ${JSON.stringify(shortTitle)};
+      if (ti && st) {
+        const set = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set;
+        set.call(ti, st);
+        ti.dispatchEvent(new win.Event('input', { bubbles: true }));
+        ti.dispatchEvent(new win.Event('change', { bubbles: true }));
+        titleSet = (ti.value || '').indexOf(st.slice(0, 2)) >= 0;
+      }
+      // 视频描述:contenteditable。先清空,再插入(insertText 会把 \\n 处理成换行、
+      // 并触发微信编辑器的 input 处理);失败退回 textContent + input 事件。
+      const ce = d.querySelector('.input-editor[contenteditable]');
+      const dv = ${JSON.stringify(desc)};
+      if (ce && dv) {
+        ce.focus();
+        try { const s = win.getSelection(); s.selectAllChildren(ce); d.execCommand('delete'); } catch (e) { /* 清空失败无妨 */ }
+        let ok = false;
+        try { ok = d.execCommand('insertText', false, dv); } catch (e) { ok = false; }
+        if (!ok || !(ce.textContent || '').trim()) {
+          ce.textContent = dv;
+          ce.dispatchEvent(new win.InputEvent('input', { bubbles: true }));
+        }
+        descSet = (ce.textContent || '').trim().length > 0;
+      }
+      return { titleSet, descSet };
+    })()`,
+  );
+  return r ?? { titleSet: false, descSet: false };
+}
+
+async function injectShipinhao(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
+  // 登录由 runDraftInjection 的 waitForLogin 统一处理(视频号登录页 channels…/login 会被识别)。
+  const video = draft.filePaths[0] || '';
+  // 先【尝试自动上传】:CDP setFiles 通道能跨进视频号发表页的同源 iframe 找到视频输入
+  // (embedded-browser 的 performSearch 跨框架搜索)。微信接受→全自动;若微信拒收
+  // (个别版本会重渲染抹掉注入的文件)→ 靠下面的提示引导用户手动上传兜底。
+  if (video) {
+    progress('1/3 提交视频(自动上传)…');
+    await setFiles(wv, [video], 'input[type=file][accept*="video"], input[type=file]');
+  }
+  // 轮询等编辑表单(短标题/描述)出现——出现即代表视频已上传成功、进入编辑态。
+  // 自动上传被接受→很快出现;若微信拒收→用户看提示手动传,一并等(选文件+上传+转码,最多 5 分钟)。
+  progress('1/3 处理视频中…若下方没在上传,请手动把视频拖入/选择(视频号个别版本会拒绝自动上传)');
+  const deadline = Date.now() + 5 * 60_000;
+  let ready = false;
+  while (Date.now() < deadline) {
+    if (await shipinhaoFormReady(wv)) { ready = true; break; }
+    await sleep(2500);
+  }
+  if (!ready) {
+    return {
+      ok: false,
+      detail: '没等到视频号编辑表单——请确认视频已上传(自动上传没成功时请在下方页面手动拖入视频);传好后再点一次「一键存草稿」,我会自动填短标题和视频描述',
+    };
+  }
+
+  progress('2/3 自动填写短标题 + 视频描述…');
+  // 短标题:视频号规则 6-16 字,过短会标红。取标题前 16 字;不足 6 字则跳过(可选字段,
+  // 靠视频描述兜底)。视频描述(=看点标题风格的短文案,与抖音/快手一致用 title)+ 话题标签
+  // (视频号 #话题 内联,发表时自动成话题)。
+  const stFull = (draft.title || '').trim();
+  const shortTitle = stFull.length >= 6 ? stFull.slice(0, 16) : '';
+  const tagLine = draft.tags.length ? ' ' + draft.tags.map((t) => `#${t}`).join(' ') : '';
+  const descText = (stFull + tagLine).slice(0, 1000);
+  // 微信 React 编辑器偶发首次写入被重渲染吃掉,重试一次填充。
+  let res = await shipinhaoFillForm(wv, shortTitle, descText);
+  if (!res.descSet) {
+    await sleep(900);
+    res = await shipinhaoFillForm(wv, shortTitle, descText);
+  }
+  if (!res.titleSet && !res.descSet) {
+    return { ok: false, detail: '视频号表单结构对不上(可能改版了)——文案在剪贴板,请手动粘贴到短标题/视频描述' };
+  }
+
+  progress('3/3 已填好');
+  const filled = [res.titleSet ? '短标题' : '', res.descSet ? '视频描述' : ''].filter(Boolean).join('+');
+  return {
+    ok: true,
+    detail: `已自动填写${filled}——视频号没有草稿箱,请在下方页面核对无误后自己点「发表」发布(发布动作永远由你确认)`,
+  };
+}
+
 const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgress) => Promise<DraftResult>> = {
   xiaohongshu: injectXiaohongshu,
   douyin: injectDouyin,
@@ -1083,6 +1213,9 @@ const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgr
   bilibili: injectBilibili,
   zhihu: injectZhihu,
   weibo: injectWeibo,
+  // 视频号:内容平台 id 叫 shipinhao,短视频台/sau 发布链叫 tencent——两个键都指同一后台。
+  tencent: injectShipinhao,
+  shipinhao: injectShipinhao,
 };
 
 export function draftInjectionSupported(platform: string): boolean {
@@ -1091,6 +1224,7 @@ export function draftInjectionSupported(platform: string): boolean {
 
 const DRAFT_PLATFORM_LABEL: Record<string, string> = {
   xiaohongshu: '小红书', douyin: '抖音', kuaishou: '快手', bilibili: 'B站', zhihu: '知乎', weibo: '微博',
+  tencent: '视频号', shipinhao: '视频号',
 };
 // 各平台发布页 URL(与 daemon media-studio/browser.ts 对齐):登录成功后导回这里再注入。
 const DRAFT_PUBLISH_URL: Record<string, string> = {
@@ -1100,6 +1234,8 @@ const DRAFT_PUBLISH_URL: Record<string, string> = {
   bilibili: 'https://member.bilibili.com/platform/upload/video/frame',
   zhihu: 'https://zhuanlan.zhihu.com/write',
   weibo: 'https://weibo.com',
+  tencent: 'https://channels.weixin.qq.com/platform/post/create',
+  shipinhao: 'https://channels.weixin.qq.com/platform/post/create',
 };
 
 /**

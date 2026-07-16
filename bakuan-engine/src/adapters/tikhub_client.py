@@ -107,18 +107,28 @@ class TikHubClient:
         return r.json()
 
     def search_keyword(self, platform: str, keyword: str, *,
-                       count: int = 20, time_window: str = "7d") -> list[dict]:
+                       count: int = 20, time_window: str = "7d",
+                       note_type: int | None = None) -> list[dict]:
         # 抖音走【真分页】累积到 count(2026-07-14 实测:cursor+backtrace+search_id 可翻页,
         # 单页仅 ~8 条,不翻页选不出稀有爆款如低粉爆款)。其它平台暂用单页(各自返回 8-20 条,
         # 够选题;后续按各自游标 pcursor/page 补分页)。
+        # note_type 仅小红书用:0 综合 / 1 视频 / 2 图文——图文笔记台采图文(2),短视频台采视频(1)。
         if platform == "douyin":
             return self._douyin_search_paged(keyword, count=count, time_window=time_window)
         cfg = _PLAT[platform]
         if cfg["method"] == "POST":
             data = self._call("POST", cfg["search"], body=cfg["body"](keyword, count))
         else:
-            data = self._call("GET", cfg["search"], params=cfg["params"](keyword, count))
-        return _extract_items(data, cfg["list"], cfg.get("item_key"))[:count]
+            params = cfg["params"](keyword, count)
+            if platform == "xiaohongshu" and note_type is not None:
+                params["note_type"] = note_type   # 覆盖默认 0(综合)→ 只采图文/视频
+            data = self._call("GET", cfg["search"], params=params)
+        items = _extract_items(data, cfg["list"], cfg.get("item_key"))
+        # 小红书 note_type 只是软过滤(偶有漏网),这里再按 type 硬过滤,保证「只出图文/只出视频」。
+        if platform == "xiaohongshu" and note_type is not None:
+            want_video = (note_type == 1)
+            items = [it for it in items if _xhs_is_video(it) == want_video]
+        return items[:count]
 
     @staticmethod
     def _douyin_publish_time(time_window: str | None) -> str:
@@ -284,6 +294,20 @@ def _deep_find(o, key: str) -> int:
             if r:
                 return r
     return 0
+
+
+def _xhs_is_video(item: dict) -> bool:
+    """小红书笔记是否视频(用于图文/视频硬过滤)。优先看 type 字段('video'/'normal'),
+    兜底看是否带视频信息字段。item 可能是裸 note 或带 note_card 包裹。"""
+    if not isinstance(item, dict):
+        return False
+    nc = item.get("note_card") if isinstance(item.get("note_card"), dict) else {}
+    t = str(item.get("type") or nc.get("type") or item.get("note_type") or "").lower()
+    if t == "video":
+        return True
+    if t in ("normal", "图文", "image", "note"):
+        return False
+    return bool(item.get("video") or item.get("video_info") or nc.get("video"))
 
 
 def _extract_items(data: dict, list_paths: list[str], item_key: str | None) -> list[dict]:

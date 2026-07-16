@@ -194,12 +194,11 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   // 爆款筛选 → 引擎 criteria 对象(直接采集管线用)。
   const buildCriteria = () => {
     const rules = RADAR_RULES.filter((r) => radarRules.has(r.key)).map((r) => ({ ...r.rule }));
-    // 没勾任何规则时给个默认爆款门槛:否则冷门词会拿低赞视频凑数当"爆款"(2026-07-14 用户报
-    // "才2个赞也算爆款")。视频号走极致数据【没有播放量、热度=点赞】,1万点赞门槛太高常常采不出
-    // (2026-07-15 用户报),给它 2000 的较低默认;其余平台维持 1 万。勾了规则就按规则来。
+    // 没勾规则 =【自动·智能降档】(2026-07-16 用户:标准太高常抓不到,要能自动降档):引擎按档位
+    // 阶梯(大爆款→爆款→热门→小热)从严到松找,凑够 5 条就停在那档;每档都不够就取头部兜底——
+    // 冷门词也不空手。勾了具体规则 = 手动:尊重选择,只按规则筛、不降档。
     if (rules.length === 0) {
-      const floor = collectTargets.includes('channels') ? 2000 : 10000;
-      rules.push({ plays_min: floor });
+      return { time_window: radarWindow, auto: true, target: 5 };
     }
     return { time_window: radarWindow, rules };
   };
@@ -209,11 +208,14 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   // ── 真抓爆款·直接采集(纯可视化,不经 AI 智能体)：点一下 → 内置浏览器【当前选中平台】可见
   //    采集 → 引擎按爆款筛选评分 → 选题候选直接进「候选选题」表。选抖音就只抓抖音。 ──
   const collectTargets = collectPlatforms ?? ['douyin', 'xiaohongshu', 'kuaishou', 'bilibili'];
-  // 爆款结果模块存储的分桶 key = 当前采集平台组合(短视频台每个子平台单独一桶,互不串台)。
-  const baokuanPlatKey = collectTargets.join(',');
+  // 爆款结果模块存储的分桶 key = 创作台 + 采集平台组合(短视频台每个子平台单独一桶;且笔记台的
+  // 小红书采集与短视频台的小红书采集分属不同桶,互不串台——2026-07-16 图文笔记接入小红书选题时
+  // 若只按平台分桶,两个台的小红书结果会互相覆盖显示)。
+  const baokuanPlatKey = `${platform}|${collectTargets.join(',')}`;
   // 采集数据源标签:视频号走极致数据(dajiala),其余走 TikHub 直采。UI 文案据此显示,别再写死 TikHub。
   const collectSource = collectTargets.includes('channels') ? '极致数据' : 'TikHub';
   const [collectBusy, setCollectBusy] = useState(false);
+  const [collectTier, setCollectTier] = useState('');   // 自动降档命中的档位名(显示在爆款列表上方)
   const [collectMsg, setCollectMsg] = useState(() => (browserCollect ? baokuanStatus : ''));
   // 采集进度:挂载即从模块状态读回(采集期间本组件可能被切走卸载过),并监听更新——保证采集
   // 的 1 分多钟里界面一直有"正在采集/评分中…"的加载反馈,而不是看着像空白。
@@ -234,7 +236,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       // 关键词+平台+爆款标准,引擎走 TikHub 搜索(翻页累积→按标准筛→评分)秒出选题。
       const names = collectTargets.map((p) => (COLLECT_PLATFORM_LABEL[p] ?? p)).join('、');
       setBaokuanStatus(`正在用 ${collectSource} 直采【${names}】${radarPages} 页并按爆款标准筛选评分…(约十几秒${radarPages > 1 ? '~' + radarPages * 8 + '秒' : ''})`);
-      const scored = await collectScoreTopics(kw, collectTargets, buildCriteria(), radarPages);
+      // 小红书内容类型按创作台区分:图文笔记台(platform==='note')只采【图文】,短视频台采【视频】。
+      const xhsType = platform === 'note' ? 'image' : 'video';
+      const scored = await collectScoreTopics(kw, collectTargets, buildCriteria(), radarPages, xhsType);
       if ('error' in scored) { setBaokuanStatus(''); studioToast.err(scored.error); return; }
       // 评出的爆款 → hits 列表(带链接/点赞/播放/评论,可勾选),像公众号那样先列出来,
       // 再由用户勾选 +「AI 帮我选题」推荐成候选选题。不直接进候选表。
@@ -256,10 +260,14 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       window.dispatchEvent(new CustomEvent<{ plat: string; hits: MediaTopicHit[] }>(BAOKUAN_HITS_EVENT, { detail: { plat: baokuanPlatKey, hits: hitList } }));
       setHits(hitList);
       setBaokuanStatus('');
+      // 自动降档命中的档位(引擎回传):存起来显示在爆款列表上方,让用户知道这批是哪个质量档。
+      const tier = 'tier' in scored ? (scored.tier ?? '') : '';
+      setCollectTier(hitList.length > 0 ? tier : '');
       if (hitList.length === 0) {
-        studioToast.info('没筛出符合「爆款筛选」的爆款。放宽标准(降低门槛/勾更多规则/换「不限时间」)或换关键词再试。');
+        studioToast.info('这个词实在没采到内容(可能太冷门/太新)。换个词,或勾具体爆款规则再试。');
       } else {
-        studioToast.ok(`真抓到 ${hitList.length} 个爆款,已列在下面(带链接·点赞·粉丝)。勾选想做的,再点「AI 帮我选题」生成候选选题。`);
+        const tierLabel = tier ? `按【${tier}】档 · ` : '';
+        studioToast.ok(`${tierLabel}真抓到 ${hitList.length} 个爆款,已列在下面(带链接·点赞·粉丝)。勾选想做的,再点「AI 帮我选题」生成候选选题。`);
       }
     } finally {
       setCollectBusy(false);
@@ -748,6 +756,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             <style>{'@keyframes od-spin{to{transform:rotate(360deg)}}'}</style>
           </div>
         ) : null}
+        {hits.length > 0 && browserCollect && collectTier ? (
+          <div className={c('notice')} style={{ marginBottom: 8 }}>
+            智能降档:按 <b>【{collectTier}】</b> 档采到 {hits.length} 条
+            {collectTier.includes('取头部') ? '（这个词没有明显爆款,已按互动取头部——可换更热的词或勾具体规则）' : '（自动找到能出货的最高档;想更严可在下方勾具体爆款规则）'}
+          </div>
+        ) : null}
         {hits.length > 0 ? (
           <table className={c('table')}>
             <thead>
@@ -792,7 +806,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         : (hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—')}
                     </td>
                     <td className={c('tdActions')}>
-                      {browserCollect ? (
+                      {/* 「提取文案仿写」是短视频专属(下载原视频→ASR→口播稿),只在提供了
+                          onRewriteToScript 的短视频台出现;图文笔记台(browserCollect 但无 onRewriteToScript)
+                          走「AI 转题」把小红书爆款图文转成笔记选题——图文没有口播稿可提取。 */}
+                      {browserCollect && onRewriteToScript ? (
                         <button
                           type="button"
                           className={`${c('btn')} ${c('btnPrimary')}`}

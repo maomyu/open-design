@@ -1,0 +1,4 @@
+# 签发出的 license 是派生产物(由 manifest.json + 运营方私钥签名生成,带签发/到期日),
+# 打包时由 license-tool 现签、tools-pack seed-license 内嵌——不入库,避免提交签名产物+过期。
+# 源(manifest.json)与文档(README.md)照常提交。
+*/license.json

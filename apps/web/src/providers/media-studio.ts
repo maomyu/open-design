@@ -283,16 +283,18 @@ export async function collectScoreTopics(
   platforms: string[],
   criteria?: unknown,
   pages = 1,
-): Promise<{ topics: Array<Record<string, unknown>>; count: number } | { error: string }> {
+  /** 小红书内容类型:'image' 图文(图文笔记台)/'video' 视频(短视频台)——前后端对应图文笔记模块。 */
+  xhsContentType?: 'image' | 'video',
+): Promise<{ topics: Array<Record<string, unknown>>; count: number; tier?: string | null } | { error: string }> {
   try {
     const resp = await fetch(`${ROOT}/collect-score`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword, platforms, pages, ...(criteria ? { criteria } : {}) }),
+      body: JSON.stringify({ keyword, platforms, pages, ...(criteria ? { criteria } : {}), ...(xhsContentType ? { xhsContentType } : {}) }),
     });
-    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string };
+    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string; tier?: string | null };
     if (!resp.ok) return { error: d.error || 'TikHub 采集/评分失败' };
-    return { topics: d.topics ?? [], count: d.count ?? 0 };
+    return { topics: d.topics ?? [], count: d.count ?? 0, tier: d.tier ?? null };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

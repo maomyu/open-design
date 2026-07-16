@@ -555,7 +555,10 @@ export function NoteStudioView(): JSX.Element {
           {tab === 'topics' ? (
             <TopicsTab
               platform={PLATFORM}
-              aiOnly
+              /* 图文笔记=小红书图文笔记:选题走【小红书爆款采集】(与短视频台小红书一致,TikHub 直采),
+                 而不是纯 AI 找题。图文笔记只面向小红书,采集平台固定小红书。 */
+              browserCollect
+              collectPlatforms={['xiaohongshu']}
               topics={topics}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);
