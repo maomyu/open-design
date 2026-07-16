@@ -324,6 +324,14 @@ function migrate(db: SqliteDb): void {
   if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'category')) {
     db.exec(`ALTER TABLE media_knowledge ADD COLUMN category TEXT`);
   }
+  // 飞书数据中心双写：界面知识写本地的同时推到飞书「我的素材库/风格画像库」，存回 record_id
+  // 便于更新幂等 + 删除时同步删飞书那条（feishu_table 记录落在哪张飞书表）。
+  if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'feishu_record_id')) {
+    db.exec(`ALTER TABLE media_knowledge ADD COLUMN feishu_record_id TEXT`);
+  }
+  if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'feishu_table')) {
+    db.exec(`ALTER TABLE media_knowledge ADD COLUMN feishu_table TEXT`);
+  }
   // 知识库升级为公司级全局资产(2026-07-08 用户拍板):对所有创作台生效,不再
   // 按平台隔离。历史上按平台挂载的条目归并到 'global'(幂等,归并后零行更新)。
   if (knowledgeCols.length > 0) {

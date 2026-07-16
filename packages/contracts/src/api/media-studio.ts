@@ -116,6 +116,10 @@ export interface MediaKnowledge {
   /** 公司知识分类：company/product/trust/case/card/other（历史数据默认 other）. */
   category: string;
   updatedAt: number;
+  /** 飞书数据中心双写后的 record_id（我的素材库/风格画像库那条），用于更新幂等 + 删除同步。 */
+  feishuRecordId?: string | null;
+  /** 该条落在哪张飞书表（我的素材库 / 风格画像库）。 */
+  feishuTable?: string | null;
 }
 export interface MediaKnowledgeListResponse {
   items: MediaKnowledge[];

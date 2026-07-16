@@ -16,6 +16,7 @@ import type {
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
+  pushStudioReview,
   createStudioArticle,
   createStudioTopic,
   deleteStudioArticle,
@@ -962,7 +963,10 @@ export function NoteStudioView(): JSX.Element {
                       onChange={(e) => editArticle({ extra: { reviewData: e.target.value } })}
                     />
                     <div className={c('row')}>
-                      <button type="button" className={c('btn')} onClick={() => void startAiTask('review')}>
+                      <button type="button" className={c('btn')} onClick={() => {
+                        void startAiTask('review');
+                        void pushStudioReview(PLATFORM, article.id);
+                      }}>
                         <Icon name="sparkles" size={14} /> AI 复盘并给下一篇建议
                       </button>
                     </div>

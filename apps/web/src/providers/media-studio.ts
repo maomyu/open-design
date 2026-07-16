@@ -1198,4 +1198,46 @@ export async function markStudioPublished(
   }
 }
 
+// 发布复盘 → 写飞书「发布复盘库」（复盘按钮点「AI 复盘」时同时调用;未连飞书 daemon 返 503,静默忽略）。
+export async function pushStudioReview(
+  platform: string,
+  articleId: string,
+  conclusion?: string,
+): Promise<{ ok: boolean; recordId?: string | null }> {
+  try {
+    const resp = await fetch(
+      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/push-review`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(conclusion ? { conclusion } : {}),
+      },
+    );
+    if (!resp.ok) return { ok: false };
+    return (await resp.json()) as { ok: boolean; recordId?: string | null };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// 把本地知识库全量重推飞书「我的素材库/风格画像库」（知识库界面「同步到飞书」按钮 + 历史知识迁移）。
+export async function syncStudioKnowledgeToFeishu(): Promise<
+  { synced: number; ok?: boolean } | { error: string }
+> {
+  try {
+    const resp = await fetch(`${ROOT}/knowledge/sync-feishu`, { method: 'POST' });
+    if (!resp.ok) {
+      let msg = `同步失败（${resp.status}）`;
+      try {
+        const d = (await resp.json()) as { error?: string };
+        if (d.error) msg = d.error;
+      } catch { /* keep fallback */ }
+      return { error: msg };
+    }
+    return (await resp.json()) as { synced: number; ok?: boolean };
+  } catch {
+    return { error: '连接失败' };
+  }
+}
+
 export { errorMessage as studioErrorMessage };

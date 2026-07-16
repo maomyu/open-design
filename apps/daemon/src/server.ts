@@ -5587,7 +5587,7 @@ export async function startServer({
     licenseRef.current = await loadLicenseState(RUNTIME_DATA_DIR);
     res.json(licenseStatusResponse(licenseRef.current));
   });
-  registerMediaStudioRoutes(app, { db, paths: pathDeps });
+  registerMediaStudioRoutes(app, { db, paths: pathDeps, feishuSync: runDatacenterCli });
   registerPluginDraftRoutes(app, { db, http: httpDeps, paths: pathDeps });
   registerDeploymentCheckRoutes(app, { db, http: httpDeps, deploy: deployDeps });
   app.use('/frames', express.static(FRAMES_DIR));
@@ -9886,6 +9886,60 @@ export async function startServer({
     // 而不是开发写死的旧 base(引擎 config/settings.py 是 load_dotenv(override=True),.env 为准)。
     try { await syncEngineFeishuEnv(engineDir, url); } catch { /* 同步失败不阻断建表 */ }
     return res.json({ url });
+  });
+
+  // 飞书数据中心·界面回流统一 spawn:把 payload 写临时文件,调引擎 scripts/datacenter.py <cmd>,
+  // 解析 stdout 首个 { 起的 JSON。块1 知识库双写 / 块2 成品复盘回写 / 块3 监控配置共用这一个通道
+  // (同 radar-score:LARK_PROFILE=baochuang-client 写进客户自己的 base;失败抛错,由各端点兜底)。
+  async function runDatacenterCli(subcommand: string, payload: unknown = {}): Promise<any> {
+    const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    const tmpFile = path.join(os.tmpdir(), `bc-dc-${process.pid}-${Date.now()}.json`);
+    await fs.promises.writeFile(tmpFile, JSON.stringify(payload ?? {}), 'utf8');
+    try {
+      const r = await execFileBuffered(eng.python,
+        ['scripts/datacenter.py', subcommand, '--json-file', tmpFile], {
+          cwd: eng.engineDir,
+          env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+          timeout: 120_000,
+        });
+      const out = String(r.stdout || '');
+      const start = out.indexOf('{');
+      if (start < 0) {
+        throw new Error(`datacenter ${subcommand}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
+      }
+      return JSON.parse(out.slice(start));
+    } finally {
+      try { await fs.promises.unlink(tmpFile); } catch { /* ignore */ }
+    }
+  }
+
+  // ── 块3:监控配置库 + 系统配置表 界面 CRUD(飞书数据中心;引擎定时任务读监控配置库,
+  // 启动读系统配置表热更新阈值/频率/模型)。全走 runDatacenterCli → scripts/datacenter.py。──
+  const dcErr = (err: unknown) => String(err && (err as any).message ? (err as any).message : err);
+  app.get('/api/feishu/monitor', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('list-monitor')); }
+    catch (err) { res.status(500).json({ error: '读监控配置失败：' + dcErr(err) }); }
+  });
+  app.post('/api/feishu/monitor', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('push-monitor', req.body ?? {})); }
+    catch (err) { res.status(500).json({ error: '存监控配置失败：' + dcErr(err) }); }
+  });
+  app.delete('/api/feishu/monitor/:recordId', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('delete-monitor', { recordId: req.params.recordId })); }
+    catch (err) { res.status(500).json({ error: '删监控配置失败：' + dcErr(err) }); }
+  });
+  app.get('/api/feishu/system-config', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('list-config')); }
+    catch (err) { res.status(500).json({ error: '读系统配置失败：' + dcErr(err) }); }
+  });
+  app.put('/api/feishu/system-config', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('push-config', req.body ?? {})); }
+    catch (err) { res.status(500).json({ error: '存系统配置失败：' + dcErr(err) }); }
   });
 
   // 爆款雷达·直接评分:接收【内置浏览器采集到的条目】+ 关键词 + 爆款筛选标准,跑爆款引擎
