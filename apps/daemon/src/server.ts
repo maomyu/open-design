@@ -9950,7 +9950,9 @@ export async function startServer({
     const r = await execFileBuffered(eng.python, ['-m', 'src.pipeline', ...pipeArgs], {
       cwd: eng.engineDir,
       env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
-      timeout: 600_000,
+      // 完整管道含逐条视频 ASR(约2min/条)+LLM:scheduled/account 多条串行,10min 会被掐断,
+      // 给足 30min(后台任务,cron/智能体调,无人在等)。
+      timeout: 1_800_000,
     });
     const out = String(r.stdout || '');
     const start = out.indexOf('{');

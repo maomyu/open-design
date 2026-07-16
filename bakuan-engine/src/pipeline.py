@@ -147,9 +147,17 @@ class Pipeline:
                         if txt:
                             return txt
                 elif rc.platform in ("douyin", "kuaishou", "bilibili"):
-                    media = self._media_url(rc)   # 明文直链，火山直接按 URL 转写
+                    media = self._media_url(rc)   # 明文直链
                     if media:
-                        txt = self._clean(ASR.transcribe(media))
+                        # 主路径:本地下载→抽音频→base64 转写(火山 URL 直传拉不动抖音 CDN,
+                        # 防盗链一直 Processing;本地路径与提取仿写生产路径同款,快而稳)。
+                        txt = self._clean(ASR.transcribe_media_url(media))
+                        if not txt:
+                            # 兜底:URL 直传(部分平台直链火山可直接拉),预算按时长自适应
+                            dur = normalize._to_int(normalize._pick(
+                                rc.raw, "video.duration", "duration", default=0))
+                            dur_s = dur // 1000 if dur > 3600 else dur
+                            txt = self._clean(ASR.transcribe(media, duration_s=dur_s))
                         if txt:
                             return txt
             except Exception as e:
