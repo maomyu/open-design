@@ -421,11 +421,16 @@ class Pipeline:
             item = mock.mock_search(platform, "单链接", 1)[0]
         else:
             import re
+            from urllib.parse import urlparse, parse_qs
+            xsec_token = (parse_qs(urlparse(url).query).get("xsec_token") or [""])[0]
             path = url.split("?")[0].rstrip("/")
             m = re.search(r"/(?:video|short-video|note|explore|s)/([A-Za-z0-9_-]+)", path)
             aid = m.group(1) if m else path.split("/")[-1]
-            item = self.tik.fetch_detail(platform, aid)
+            item = self.tik.fetch_detail(platform, aid, xsec_token=xsec_token)
             if not item:
+                if platform in ("xiaohongshu", "xhs"):
+                    return {"error": f"小红书单链接取详情失败:该链接取不到本条(小红书 detail 常返回推荐流,"
+                                     f"需带 xsec_token 的分享链接);小红书建议改用关键词采集 od baokuan collect。aid={aid}"}
                 return {"error": f"取详情失败(可能是短链需先跳转或ID解析问题)：aid={aid}"}
         rc = normalize.normalize(platform, item)
         raw_rid = self._write_raw(rc, ["单链接手动"])

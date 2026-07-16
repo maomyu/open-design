@@ -9,6 +9,7 @@ import re
 from typing import Any, Callable
 
 import requests
+from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config import settings as S
@@ -172,12 +173,16 @@ class TikHubClient:
             search_id = (d.get("log_pb") or {}).get("impr_id") or search_id
         return out[:count]
 
-    def fetch_detail(self, platform: str, aweme_id: str) -> dict:
+    def fetch_detail(self, platform: str, aweme_id: str, xsec_token: str = "") -> dict:
         cfg = _PLAT[platform]
         m, path, idp = cfg["detail"]
         if not path:
             return {}
-        data = self._call(m or "GET", path, params={idp: aweme_id})
+        params = {idp: aweme_id}
+        # 小红书 detail 需带 xsec_token(从分享链接 query 取)才可能定位本条。
+        if xsec_token and platform in ("xiaohongshu", "xhs"):
+            params["xsec_token"] = xsec_token
+        data = self._call(m or "GET", path, params=params)
         node = data.get("data", data)
         # 小红书 get_video_note_detail 二次服务包裹 {code,success,data:[note...]},取首条笔记。
         # 用顶层 "code" 标记识别服务包裹(抖音/快手/B站 的详情对象无此顶层键),避免误伤。
@@ -185,10 +190,23 @@ class TikHubClient:
             node = node["data"][0]
         elif isinstance(node, list):
             node = node[0] if node else {}
+        result: dict = {}
         for k in ("aweme_detail", "aweme_info", "note", "note_card", "data"):
             if isinstance(node, dict) and isinstance(node.get(k), dict):
-                return node[k]
-        return node if isinstance(node, dict) else {}
+                result = node[k]
+                break
+        else:
+            result = node if isinstance(node, dict) else {}
+        # 小红书 detail 端点按 id 常返回【推荐流】(非本条):校验返回笔记 id 是否命中请求的
+        # note_id,对不上就丢弃(返回 {})让上层报错——绝不拿错内容往下写飞书。
+        # (2026-07-16 单链接完整链路实测:传"脱单"链接却写进"跑步减肥"内容,即此坑。)
+        if platform in ("xiaohongshu", "xhs") and result:
+            nc = result.get("note_card") if isinstance(result.get("note_card"), dict) else {}
+            rid = str(result.get("note_id") or result.get("id") or nc.get("note_id") or "")
+            if aweme_id and rid and aweme_id not in rid and rid not in aweme_id:
+                logger.warning(f"小红书 detail 返回非本条(请求 {aweme_id} 得到 {rid}),判为推荐流,丢弃")
+                return {}
+        return result
 
     def fetch_account_videos(self, platform: str, ref: str, *, count: int = 20) -> list[dict]:
         """抓指定账号自己的近期作品。ref 可为主页链接或作者ID(抖音sec_uid/B站mid)。
