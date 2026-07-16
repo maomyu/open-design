@@ -619,12 +619,24 @@ async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress
     }
   } else {
     progress('1/6 切换到「上传图文」…');
+    // 图文 tab 用【真实鼠标点击】切换(小红书 React tab,JS el.click() 常不生效);兜底再 JS 点。
+    await clickRealByText(wv, ['上传图文']);
     await clickByText(wv, ['上传图文']);
-    await sleep(1200);
+    // 轮询等【图片输入】进 DOM(tab 切过去才渲染出来)。文件输入常隐藏,waitFor 的可见性判定
+    // 抓不到,这里直接查 DOM 存在性。最多 8 秒。
+    const IMG_INPUT = 'input[type=file][accept*="jpg"], input[type=file][accept*="png"], input[type=file][accept*="image"]';
+    for (let i = 0; i < 8; i++) {
+      if (await wvEval<boolean>(wv, `Boolean(document.querySelector(${JSON.stringify(IMG_INPUT)}))`)) break;
+      await sleep(1000);
+    }
     progress(`2/6 上传 ${draft.filePaths.length} 张图…`);
-    const put = await setFiles(wv, draft.filePaths);
+    // 关键:图文输入 accept=`.jpg,.jpeg,.png,.webp`,和【视频输入同 class .upload-input】——用默认
+    // input[type=file] 会命中【视频】输入(它拒收 jpg)→ 图集传不上去、后面表单全不出(2026-07-16
+    // 用户报"图集传不上、标题正文没填、按钮没点到"的根因)。这里按 accept 精确命中【图片】输入。
+    let put = await setFiles(wv, draft.filePaths, IMG_INPUT);
+    if (!put.ok) put = await setFiles(wv, draft.filePaths);   // 兜底:通用第一个文件输入
     if (!put.ok) {
-      return { ok: false, detail: `图片注入失败(${put.reason ?? '未知'})——请手动拖入(图集文件夹已可从发布步打开)` };
+      return { ok: false, detail: `图片注入失败(${put.reason ?? '未知'})——请确认已切到「上传图文」页,或手动拖入(图集文件夹已可从发布步打开)` };
     }
   }
 
