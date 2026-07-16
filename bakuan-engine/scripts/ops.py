@@ -32,6 +32,7 @@ def retry(limit: int) -> dict:
     rows = store.list_failures("pending", limit=limit)
     if not rows:
         return {"ok": True, "retried": 0, "results": []}
+    os.environ["BC_NO_ENQUEUE"] = "1"   # 重试仍失败→原条目留 pending,不重复入队
     pipe = Pipeline()
     results = []
     for r in rows:

@@ -654,11 +654,17 @@ class Pipeline:
             return False
 
     def _report_failure(self, kind: str, payload: dict, exc: Exception) -> None:
-        """失败上报三件套:本地失败队列 + 日志 + 飞书复盘库错误摘要(可见原因)。绝不再抛。"""
+        """失败上报三件套:本地失败队列 + 日志 + 飞书复盘库错误摘要(可见原因)。绝不再抛。
+
+        重试期间(ops.py retry 设 BC_NO_ENQUEUE=1)不再重复入队——原条目还在 pending,
+        再入队会让队列越滚越多(2026-07-17 打包实测发现)。"""
         reason = f"{type(exc).__name__}: {str(exc)[:200]}"
         try:
-            fid = store.enqueue_failure(kind, payload, reason)
-            logger.warning(f"[失败队列] #{fid} {kind} 已入队:{reason[:80]}")
+            if os.getenv("BC_NO_ENQUEUE") != "1":
+                fid = store.enqueue_failure(kind, payload, reason)
+                logger.warning(f"[失败队列] #{fid} {kind} 已入队:{reason[:80]}")
+            else:
+                logger.warning(f"[失败队列] 重试仍失败(保留原条目):{reason[:80]}")
         except Exception:  # noqa: BLE001
             pass
         try:
