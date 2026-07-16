@@ -135,6 +135,11 @@ def _volc_run(audio_obj: dict, *, duration_s: int = 0) -> str:
         code = q.headers.get("X-Api-Status-Code", "")
         if code == "20000000":            # 完成
             res = (q.json() or {}).get("result") or {}
+            try:  # 成本台账:一次成功转写记一笔
+                from src import store as _store
+                _store.add_cost("asr", 1, detail="volc-bigmodel")
+            except Exception:  # noqa: BLE001
+                pass
             if isinstance(res, dict):
                 if res.get("text"):
                     return res["text"]

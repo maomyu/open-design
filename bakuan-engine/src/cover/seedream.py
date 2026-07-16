@@ -60,6 +60,11 @@ class SeedreamCover:
                           headers={"Authorization": f"Bearer {self.key}"},
                           json=payload, timeout=120)
         r.raise_for_status()
+        try:  # 成本台账:一张图记一笔
+            from src import store as _store
+            _store.add_cost("image", 1, detail=self.model)
+        except Exception:  # noqa: BLE001
+            pass
         return base64.b64decode(r.json()["data"][0]["b64_json"])
 
     def render(self, req: CoverRequest, out_path: str) -> str:

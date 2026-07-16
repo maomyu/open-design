@@ -10039,6 +10039,78 @@ export async function startServer({
     catch (err) { res.status(500).json({ error: '改标题重排版失败：' + dcErr(err) }); }
   });
 
+  // ── 运维(模块9/10,验收11/13):成本报表 / 失败队列 / 重试 / 备份 / 开机自启。──
+  async function runOps(argv: string[], timeoutMs = 300_000): Promise<any> {
+    const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    const r = await execFileBuffered(eng.python, ['scripts/ops.py', ...argv], {
+      cwd: eng.engineDir,
+      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      timeout: timeoutMs,
+    });
+    const out = String(r.stdout || '');
+    const start = out.indexOf('{');
+    if (start < 0) throw new Error(`ops ${argv[0]}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
+    return JSON.parse(out.slice(start));
+  }
+  app.get('/api/baokuan/cost', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const days = Math.max(1, Math.min(90, Number(req.query?.days ?? 7) || 7));
+    try { res.json(await runOps(['cost-report', '--days', String(days)], 60_000)); }
+    catch (err) { res.status(500).json({ error: '成本报表失败：' + dcErr(err) }); }
+  });
+  app.get('/api/baokuan/failed', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runOps(['failed-list'], 60_000)); }
+    catch (err) { res.status(500).json({ error: '失败队列查询失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/retry', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const limit = Math.max(1, Math.min(20, Number(req.body?.limit ?? 5) || 5));
+    try { res.json(await runOps(['retry', '--limit', String(limit)], 1_800_000)); }
+    catch (err) { res.status(500).json({ error: '失败重试失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/backup', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const argv = ['backup', '--daemon-data', RUNTIME_DATA_DIR];
+    if (req.body?.out) argv.push('--out', String(req.body.out));
+    try { res.json(await runOps(argv, 300_000)); }
+    catch (err) { res.status(500).json({ error: '备份失败：' + dcErr(err) }); }
+  });
+  // 开机自启:daemon 从自身 execPath 推出 .app bundle,写/删 ~/Library/LaunchAgents 的
+  // LaunchAgent(RunAtLoad)。dev 环境(非 .app 内运行)不支持,如实报错。
+  const AUTOSTART_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.workbuild.autostart.plist');
+  function appBundlePath(): string | null {
+    const segs = process.execPath.split(path.sep);
+    const i = segs.findIndex((s) => s.endsWith('.app'));
+    return i >= 0 ? segs.slice(0, i + 1).join(path.sep) : null;
+  }
+  app.get('/api/baokuan/autostart', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    res.json({ enabled: fs.existsSync(AUTOSTART_PLIST), plist: AUTOSTART_PLIST, appBundle: appBundlePath() });
+  });
+  app.post('/api/baokuan/autostart', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const enable = Boolean(req.body?.enable);
+    try {
+      if (!enable) {
+        if (fs.existsSync(AUTOSTART_PLIST)) fs.unlinkSync(AUTOSTART_PLIST);
+        return res.json({ ok: true, enabled: false });
+      }
+      const bundle = appBundlePath();
+      if (!bundle) return res.status(400).json({ error: '当前不是打包应用(dev 环境),无法配置开机自启' });
+      const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.workbuild.autostart</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/open</string><string>-a</string><string>${bundle}</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>\n`;
+      fs.mkdirSync(path.dirname(AUTOSTART_PLIST), { recursive: true });
+      fs.writeFileSync(AUTOSTART_PLIST, plist, 'utf8');
+      res.json({ ok: true, enabled: true, plist: AUTOSTART_PLIST, appBundle: bundle });
+    } catch (err) { res.status(500).json({ error: '开机自启配置失败：' + dcErr(err) }); }
+  });
+
   // 爆款雷达·直接评分:接收【内置浏览器采集到的条目】+ 关键词 + 爆款筛选标准,跑爆款引擎
   // (--radar 只评分选题、不写脚本;顺带按 .env 回写客户飞书数据中心),返回选题候选。
   // 这是「真抓爆款采集」直连管线的评分环节(前端先 /collect 采集,再把结果丢这里评分)。

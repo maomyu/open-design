@@ -317,7 +317,8 @@ class Pipeline:
                     rc = normalize.normalize(p, it)
                     # 空 ID 的脏数据跳过。去重仅用于完整入库管道；radar 是实时选题视图，
                     # 每次都该看到当前爆款，不做「见过就跳」，否则重跑就空了。
-                    if not rc.content_id.strip("_"):
+                    # 空 ID 后缀=脏数据("平台_");strip("_")判不出(剩平台名为真值),判后缀。
+                    if not rc.content_id.split("_", 1)[-1].strip("_ "):
                         continue
                     if not self._radar_mode and store.is_duplicate(rc.content_id, rc.fingerprint):
                         # 重复抓取(验收3):不重复建主记录,但记最新快照(供增速/快速起量)并把
@@ -458,8 +459,18 @@ class Pipeline:
                 if platform in ("xiaohongshu", "xhs"):
                     return {"error": f"小红书单链接取详情失败:该链接取不到本条(小红书 detail 常返回推荐流,"
                                      f"需带 xsec_token 的分享链接);小红书建议改用关键词采集 od baokuan collect。aid={aid}"}
-                return {"error": f"取详情失败(可能是短链需先跳转或ID解析问题)：aid={aid}"}
+                # 失败不丢任务(验收11):进失败队列,od baokuan retry 可重跑
+                self._report_failure("link", {"url": url, "platform": platform},
+                                     RuntimeError(f"取详情失败 aid={aid}"))
+                return {"error": f"取详情失败(可能是短链需先跳转或ID解析问题)：aid={aid},已进失败队列"}
         rc = normalize.normalize(platform, item)
+        # 详情返回空壳(如无效ID时 TikHub 返回空对象)→ content_id 为「平台_」空后缀,拒收并
+        # 入失败队列,绝不带垃圾数据往下走(2026-07-16 真测:假ID曾以 content_id="douyin_" 继续跑;
+        # 注意 strip("_") 判不出这种——"douyin_".strip("_")=="douyin" 为真值,必须判 ID 后缀)。
+        if not rc.content_id.split("_", 1)[-1].strip("_ "):
+            self._report_failure("link", {"url": url, "platform": platform},
+                                 RuntimeError(f"详情返回空数据(无内容ID),aid={aid}"))
+            return {"error": "取详情失败(返回空数据),已进失败队列"}
         # 验收3:已入库过的内容不重复建主记录——复用既有 record_id 并刷新最新数据,
         # 拆解/脚本照常重跑(用户点名要处理这条链接,产出新版成品)。
         prev = store.feishu_rid(rc.content_id)
@@ -529,18 +540,21 @@ class Pipeline:
         logger.info(f"[重新生成] 待处理 {len(rows)} 条")
         done = 0
         for r in rows:
-            f = r.get("fields", {})
-            old_ver = int(f.get("生成版本", 1) or 1)
-            title = _txt(f.get("平台标题"))
-            decon = {"hook": title, "structure": "沿用"}
-            style = self._current_style()
-            materials = self._recall_materials(title)
-            for mode in _script_modes():
-                script = GEN.generate(decon, materials, style, mode)
-                fields = script.to_feishu(_txt(f.get("平台版本")), version=old_ver + 1)
-                self._add("成品内容审核库", fields)   # 新版本，旧版保留
-            self.fs.update_record("成品内容审核库", r["record_id"], {"审核状态": "已重生成"})
-            done += 1
+            try:
+                f = r.get("fields", {})
+                old_ver = int(f.get("生成版本", 1) or 1)
+                title = _txt(f.get("平台标题"))
+                decon = {"hook": title, "structure": "沿用"}
+                style = self._current_style()
+                materials = self._recall_materials(title)
+                for mode in _script_modes():
+                    script = GEN.generate(decon, materials, style, mode)
+                    fields = script.to_feishu(_txt(f.get("平台版本")), version=old_ver + 1)
+                    self._add("成品内容审核库", fields)   # 新版本，旧版保留
+                self.fs.update_record("成品内容审核库", r["record_id"], {"审核状态": "已重生成"})
+                done += 1
+            except Exception as e:  # noqa: BLE001  单条失败不拖垮整轮,进失败队列
+                self._report_failure("regenerate", {"record_id": r.get("record_id", "")}, e)
         return {"regenerated": done}
 
     # ── 入口 3：定时批量 ──
@@ -560,11 +574,18 @@ class Pipeline:
             thr = int(float(_txt(f.get("最低阈值")) or 0)) if _txt(f.get("最低阈值")) else 0
             if not kw:
                 continue
-            if _txt(f.get("类型")) == "竞品账号":
-                summary.append(self.run_account(kw, platforms,
-                                                time_window=_txt(f.get("时间窗")) or "7d"))
-            else:
-                summary.append(self.run_keyword(kw, platforms, min_threshold=thr))
+            try:
+                if _txt(f.get("类型")) == "竞品账号":
+                    summary.append(self.run_account(kw, platforms,
+                                                    time_window=_txt(f.get("时间窗")) or "7d"))
+                else:
+                    summary.append(self.run_keyword(kw, platforms, min_threshold=thr))
+            except Exception as e:  # noqa: BLE001  单项失败不拖垮整轮定时,进失败队列可重跑
+                kind = "account" if _txt(f.get("类型")) == "竞品账号" else "keyword"
+                self._report_failure(kind, {"keyword": kw, "platforms": platforms,
+                                            "min_threshold": thr,
+                                            "time_window": _txt(f.get("时间窗")) or "7d"}, e)
+                summary.append({"keyword": kw, "error": str(e)[:120]})
         self.regenerate()   # 每轮顺带处理「重新生成」
         return {"runs": summary}
 
@@ -625,7 +646,29 @@ class Pipeline:
             return True
         except Exception as e:
             logger.exception(f"处理失败 {rc.content_id}: {e}")
+            # 验收11:失败不丢任务——进本地失败队列(od baokuan retry 可重跑),
+            # 并写一条复盘库「错误摘要」让客户在飞书直接看到失败原因。
+            self._report_failure("candidate",
+                                 {"platform": rc.platform, "content_id": rc.content_id, "url": rc.url},
+                                 e)
             return False
+
+    def _report_failure(self, kind: str, payload: dict, exc: Exception) -> None:
+        """失败上报三件套:本地失败队列 + 日志 + 飞书复盘库错误摘要(可见原因)。绝不再抛。"""
+        reason = f"{type(exc).__name__}: {str(exc)[:200]}"
+        try:
+            fid = store.enqueue_failure(kind, payload, reason)
+            logger.warning(f"[失败队列] #{fid} {kind} 已入队:{reason[:80]}")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._add("发布复盘库", {
+                "平台": normalize.cn_platform(str(payload.get("platform") or "")) or "",
+                "复盘结论": f"任务失败({kind}),已进失败队列,可用 od baokuan retry 重跑",
+                "错误摘要": reason,
+            })
+        except Exception:  # noqa: BLE001
+            pass
 
     def _make_cover(self, rc: normalize.RawContent, script, record_id: str = "") -> None:
         """封面：Seedream 出背景+中文叠字，上传到成品记录的「封面成品」附件字段。"""
@@ -882,6 +925,17 @@ def main():
     args = ap.parse_args()
     # 平台名归一化:od baokuan/监控库传中文名(小红书),web 传代号(xiaohongshu),两种都转成代号跑。
     _plats = _parse_platforms(args.platforms) or list(S.PLATFORMS)
+    # 成本台账的任务上下文(store.add_cost 读 BC_TASK,按任务归因)
+    if args.link:
+        os.environ.setdefault("BC_TASK", f"link:{args.link[:60]}")
+    elif args.account:
+        os.environ.setdefault("BC_TASK", f"account:{args.account[:40]}")
+    elif args.scheduled:
+        os.environ.setdefault("BC_TASK", "scheduled")
+    elif args.regenerate:
+        os.environ.setdefault("BC_TASK", "regenerate")
+    elif args.keyword:
+        os.environ.setdefault("BC_TASK", f"keyword:{args.keyword[:40]}")
     pipe = Pipeline(dry_run=args.dry_run)
     if args.xhs_note_type:
         pipe.xhs_note_type = args.xhs_note_type

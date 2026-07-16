@@ -48,12 +48,9 @@ def _dry_response(messages: list[dict]) -> str:
 
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=10))
-def chat(messages: list[dict], *, tier: str = "mid", json_mode: bool = False,
-         temperature: float = 0.7, max_tokens: int = 2048) -> str:
-    if os.getenv("DRY_RUN") == "1":
-        _COST["calls"] += 1
-        return _dry_response(messages)
-    base, key, model = _endpoint(tier)
+def _chat_once(model: str, base: str, key: str, messages: list[dict], *,
+               json_mode: bool, temperature: float, max_tokens: int) -> str:
+    """单模型调用(超时重试 2 次由 tenacity 管)。"""
     payload: dict[str, Any] = {
         "model": model, "messages": messages,
         "temperature": temperature, "max_tokens": max_tokens,
@@ -70,7 +67,33 @@ def chat(messages: list[dict], *, tier: str = "mid", json_mode: bool = False,
     _COST["prompt"] += usage.get("prompt_tokens", 0)
     _COST["completion"] += usage.get("completion_tokens", 0)
     _COST["calls"] += 1
+    # 成本台账(模块9):tokens 落本地库,供日报/周报
+    try:
+        from src import store as _store
+        _store.add_cost("llm", usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0),
+                        detail=model)
+    except Exception:  # noqa: BLE001
+        pass
     return data["choices"][0]["message"]["content"]
+
+
+def chat(messages: list[dict], *, tier: str = "mid", json_mode: bool = False,
+         temperature: float = 0.7, max_tokens: int = 2048) -> str:
+    if os.getenv("DRY_RUN") == "1":
+        _COST["calls"] += 1
+        return _dry_response(messages)
+    base, key, model = _endpoint(tier)
+    kw = dict(json_mode=json_mode, temperature=temperature, max_tokens=max_tokens)
+    try:
+        return _chat_once(model, base, key, messages, **kw)
+    except Exception as e:  # noqa: BLE001
+        # 验收11:主模型失败(重试后仍失败)→ 自动切备用模型;备用也挂才向上抛(进失败队列)。
+        backup = os.getenv("LLM_FALLBACK_MODEL", "deepseek-chat")
+        if not backup or backup == model:
+            raise
+        from loguru import logger
+        logger.warning(f"主模型 {model} 失败({type(e).__name__}),切备用 {backup} 重试")
+        return _chat_once(backup, base, key, messages, **kw)
 
 
 def chat_json(messages: list[dict], *, tier: str = "mid", **kw) -> dict:

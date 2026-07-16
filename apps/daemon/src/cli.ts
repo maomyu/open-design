@@ -7899,6 +7899,11 @@ async function runBaokuan(args) {
         '                                    参考图条件生成+中文程序叠字;背景另存 *_bg.png',
         '  od baokuan cover rerender --bg <背景png> --title <新标题> [--out 路径]',
         '                                    改标题不重出背景,仅重渲染文字(秒出)',
+        '  od baokuan cost [--days 7]       成本报表(LLM tokens/ASR次/图像张/TikHub次,按天)',
+        '  od baokuan failed                失败队列(失败不丢任务,原因可见)',
+        '  od baokuan retry [--limit 5]     重跑失败队列',
+        '  od baokuan backup [--out 路径]   备份引擎数据+.env+应用数据(迁移新电脑用)',
+        '  od baokuan autostart on|off|status   开机自启(LaunchAgent)',
         '',
         '定时任务: 用系统 cron 或 AI 智能体定时调 `od baokuan scheduled` 即实现全自动采集。',
         '',
@@ -7912,7 +7917,8 @@ async function runBaokuan(args) {
   try {
     flags = parseFlags(rest, {
       string: ['keyword', 'platforms', 'pages', 'name', 'window', 'url', 'daemon-url', 'daemon-port',
-               'title', 'subtitle', 'ref', 'style-json', 'versions', 'record-id', 'bg', 'out', 'out-dir', 'platform'],
+               'title', 'subtitle', 'ref', 'style-json', 'versions', 'record-id', 'bg', 'out', 'out-dir', 'platform',
+               'days', 'limit'],
       boolean: ['json'],
     });
   } catch (err) {
@@ -8035,8 +8041,80 @@ async function runBaokuan(args) {
       console.error('用法: od baokuan cover <analyze|gen|rerender> ...');
       process.exit(2);
     }
+    case 'cost': {
+      const days = Number(flags.days || 7);
+      let resp;
+      try {
+        resp = await fetch(`${base}/api/baokuan/cost?days=${days}`);
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return writeJson(data);
+      console.log(`近 ${data.days} 天成本汇总:`);
+      for (const k of data.by_kind || []) {
+        const unit = k.kind === 'llm' ? 'tokens' : k.kind === 'image' ? '张' : '次';
+        console.log(`  ${k.kind}: ${k.calls} 次调用, ${k.units} ${unit}`);
+      }
+      if (!(data.by_kind || []).length) console.log('  (暂无记录)');
+      return;
+    }
+    case 'failed': {
+      let resp;
+      try {
+        resp = await fetch(`${base}/api/baokuan/failed`);
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return writeJson(data);
+      const rows = data.rows || [];
+      console.log(`失败队列: ${rows.length} 条待重试`);
+      for (const r of rows) console.log(`  #${r.id} [${r.kind}] ${r.reason?.slice(0, 80)}`);
+      return;
+    }
+    case 'retry': {
+      const data = await post('/api/baokuan/retry', { limit: Number(flags.limit || 5) });
+      if (flags.json) return writeJson(data);
+      console.log(`重试完成: ${data.retried} 条`);
+      for (const r of data.results || []) console.log(`  #${r.id} [${r.kind}] ${r.ok ? '✓' : '✗'} ${r.summary?.slice(0, 60)}`);
+      return;
+    }
+    case 'backup': {
+      const data = await post('/api/baokuan/backup', flags.out ? { out: flags.out } : {});
+      if (flags.json) return writeJson(data);
+      console.log(`备份完成: ${data.path} (${Math.round((data.bytes || 0) / 1024 / 1024)}MB)`);
+      console.log(`  包含: ${(data.included || []).join(', ')}`);
+      console.log(`  ${data.note || ''}`);
+      return;
+    }
+    case 'autostart': {
+      const op = rest.find((a) => a && !a.startsWith('--'));
+      if (op === 'status' || !op) {
+        let resp;
+        try {
+          resp = await fetch(`${base}/api/baokuan/autostart`);
+        } catch (err) {
+          surfaceFetchError(err, base);
+          process.exit(3);
+        }
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const data = await resp.json();
+        if (flags.json) return writeJson(data);
+        console.log(`开机自启: ${data.enabled ? '已开启' : '未开启'}`);
+        return;
+      }
+      const data = await post('/api/baokuan/autostart', { enable: op === 'on' });
+      if (flags.json) return writeJson(data);
+      console.log(`开机自启已${data.enabled ? '开启' : '关闭'}${data.plist ? ' → ' + data.plist : ''}`);
+      return;
+    }
     default:
-      console.error(`未知子命令: ${sub}（collect|scheduled|account|link|regenerate|cover）`);
+      console.error(`未知子命令: ${sub}（collect|scheduled|account|link|regenerate|cover|cost|failed|retry|backup|autostart）`);
       process.exit(2);
   }
 }

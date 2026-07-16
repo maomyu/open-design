@@ -105,6 +105,11 @@ class TikHubClient:
         else:
             r = self.session.get(url, params=params or {}, timeout=40)
         r.raise_for_status()
+        try:  # 成本台账:每次 TikHub 接口调用记一笔(接口按次计费)
+            from src import store as _store
+            _store.add_cost("tikhub", 1, detail=path.rsplit("/", 2)[-1][:40])
+        except Exception:  # noqa: BLE001
+            pass
         return r.json()
 
     def search_keyword(self, platform: str, keyword: str, *,

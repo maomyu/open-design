@@ -26,6 +26,7 @@ import {
 import { openStudioBrowser } from '../providers/media-studio';
 import { FeishuDataCenterSection } from './FeishuDataCenterSection';
 import { MonitorConfigSection } from './MonitorConfigSection';
+import { OpsSection } from './OpsSection';
 import './AccountsView.css';
 import './PluginEditView.css';
 
@@ -102,6 +103,7 @@ export function AccountsView() {
       </div>
 
       <MonitorConfigSection />
+      <OpsSection />
 
       {/* ── 发布账号 ──
           各平台登录只为【发布】(一键存草稿/发送)和下载原视频用,不用于选题采集。 */}

@@ -18,6 +18,7 @@ export * from './api/live-artifacts.js';
 export * from './api/media.js';
 export * from './api/mcp.js';
 export * from './api/monitor-config.js';
+export * from './api/baokuan-ops.js';
 export * from './api/memory.js';
 export * from './api/media-studio.js';
 export * from './api/orbit.js';

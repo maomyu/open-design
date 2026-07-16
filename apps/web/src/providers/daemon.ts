@@ -757,6 +757,62 @@ async function feishuCfgErr(resp: Response, fallback: string): Promise<string> {
   return `${fallback}（${resp.status}）`;
 }
 
+// ── 爆款引擎运维面(模块9/10):成本报表/失败队列/重试/备份/开机自启 ──
+export async function fetchBaokuanCost(days = 7): Promise<import('@open-design/contracts').BaokuanCostReport | null> {
+  try {
+    const resp = await fetch(`/api/baokuan/cost?days=${days}`);
+    if (!resp.ok) return null;
+    return (await resp.json()) as import('@open-design/contracts').BaokuanCostReport;
+  } catch { return null; }
+}
+
+export async function fetchBaokuanFailed(): Promise<import('@open-design/contracts').BaokuanFailedTask[]> {
+  try {
+    const resp = await fetch('/api/baokuan/failed');
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as { rows?: import('@open-design/contracts').BaokuanFailedTask[] };
+    return Array.isArray(data.rows) ? data.rows : [];
+  } catch { return []; }
+}
+
+export async function retryBaokuanFailed(limit = 5): Promise<import('@open-design/contracts').BaokuanRetryResult | { error: string }> {
+  try {
+    const resp = await fetch('/api/baokuan/retry', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit }),
+    });
+    if (!resp.ok) return { error: await feishuCfgErr(resp, '失败重试失败') };
+    return (await resp.json()) as import('@open-design/contracts').BaokuanRetryResult;
+  } catch { return { error: 'daemon unreachable' }; }
+}
+
+export async function backupBaokuan(): Promise<import('@open-design/contracts').BaokuanBackupResult | { error: string }> {
+  try {
+    const resp = await fetch('/api/baokuan/backup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    if (!resp.ok) return { error: await feishuCfgErr(resp, '备份失败') };
+    return (await resp.json()) as import('@open-design/contracts').BaokuanBackupResult;
+  } catch { return { error: 'daemon unreachable' }; }
+}
+
+export async function fetchBaokuanAutostart(): Promise<import('@open-design/contracts').BaokuanAutostartStatus | null> {
+  try {
+    const resp = await fetch('/api/baokuan/autostart');
+    if (!resp.ok) return null;
+    return (await resp.json()) as import('@open-design/contracts').BaokuanAutostartStatus;
+  } catch { return null; }
+}
+
+export async function setBaokuanAutostart(enable: boolean): Promise<{ ok?: boolean; enabled?: boolean; error?: string }> {
+  try {
+    const resp = await fetch('/api/baokuan/autostart', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable }),
+    });
+    if (!resp.ok) return { error: await feishuCfgErr(resp, '开机自启配置失败') };
+    return (await resp.json()) as { ok: boolean; enabled: boolean };
+  } catch { return { error: 'daemon unreachable' }; }
+}
+
 export async function fetchMonitorConfigs(): Promise<MonitorConfigRow[]> {
   try {
     const resp = await fetch('/api/feishu/monitor');
