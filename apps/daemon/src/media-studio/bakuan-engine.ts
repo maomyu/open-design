@@ -16,6 +16,7 @@
  */
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -52,7 +53,17 @@ function handleFor(ctx: EngineContext, engineDir: string): EngineHandle {
   const venvBin = path.join(engineDir, '.venv', 'bin');
   // packaged 自带静态 ffmpeg（首启动从 tar 解到 engine-runtime）；dev 依赖系统 PATH。
   const ffmpegDir = ctx.resourceRoot ? path.join(runtimeRootFor(ctx), 'ffmpeg') : null;
-  const pathParts = [venvBin, ffmpegDir, process.env.PATH].filter(Boolean) as string[];
+  // 飞书回写要跑 lark-cli(brew/npm 装的 node CLI,在 /opt/homebrew/bin 等)。GUI app 从 Finder
+  // 启动时 launchd 只给最小 PATH(/usr/bin:/bin:…),没有 /opt/homebrew/bin → lark-cli 找不到 →
+  // 飞书写入静默失败、数据不同步(2026-07-16 用户报"没和飞书数据中心同步")。这里把常见 CLI
+  // 安装目录并进 PATH,不依赖 app 的启动方式(不存在的目录 OS 会自动跳过,无害)。
+  const commonBins = [
+    '/opt/homebrew/bin', '/usr/local/bin',
+    path.join(os.homedir(), '.npm-global', 'bin'),
+    path.join(os.homedir(), '.local', 'bin'),
+    '/usr/bin', '/bin',
+  ];
+  const pathParts = [venvBin, ffmpegDir, ...commonBins, process.env.PATH].filter(Boolean) as string[];
   return {
     engineDir,
     python: path.join(venvBin, 'python'),

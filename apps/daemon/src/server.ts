@@ -9920,7 +9920,7 @@ export async function startServer({
       try { parsed = JSON.parse(s); } catch {
         return res.status(500).json({ error: '评分失败：' + (r.stderr || r.stdout).slice(-300) });
       }
-      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null });
+      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null, feishuSynced: parsed.feishu_synced !== false });
     } catch (err) {
       return res.status(500).json({ error: '评分失败：' + String(err && err.message ? err.message : err) });
     } finally {
@@ -9973,7 +9973,7 @@ export async function startServer({
       try { parsed = JSON.parse(s); } catch {
         return res.status(500).json({ error: 'TikHub 采集/评分失败：' + (r.stderr || r.stdout || '').slice(-300) });
       }
-      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null });
+      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null, feishuSynced: parsed.feishu_synced !== false });
     } catch (err) {
       return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
     }

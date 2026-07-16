@@ -275,6 +275,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
         const tierLabel = tier ? `按【${tier}】档 · ` : '';
         studioToast.ok(`${tierLabel}真抓到 ${hitList.length} 个爆款,已列在下面(带链接·点赞·粉丝)。勾选想做的,再点「AI 帮我选题」生成候选选题。`);
       }
+      // 飞书数据中心回写失败时明确提示(不再静默)——多为未连接飞书/lark-cli 不可用。
+      if ('feishuSynced' in scored && scored.feishuSynced === false) {
+        studioToast.err('⚠️ 采到的爆款没同步到飞书数据中心(飞书未连接或回写失败)——去「账号/数据中心」连接飞书后重采即可回写。');
+      }
     } finally {
       setCollectBusy(false);
       setBaokuanStatus('');

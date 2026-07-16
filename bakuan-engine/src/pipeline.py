@@ -807,8 +807,11 @@ def main():
         pipe.run_keyword(args.keyword, args.platforms.split(","),
                          count=collect_n, min_threshold=args.min_threshold)
         items = sorted(pipe.radar_items, key=lambda x: (x["流量爆款分"] + x["精准意向分"]), reverse=True)
+        # feishu_synced=False 说明本轮飞书数据中心回写失败(多为 lark-cli 未装/未连接)——上报给前端
+        # 提示用户,不再静默(2026-07-16 用户报"没和飞书数据中心同步")。
         print(json.dumps({"keyword": args.keyword, "count": len(items),
-                          "tier": pipe.radar_tier, "选题候选": items},
+                          "tier": pipe.radar_tier, "feishu_synced": not pipe._feishu_broken,
+                          "选题候选": items},
                          ensure_ascii=False, indent=2))
         return
     if args.scheduled:
