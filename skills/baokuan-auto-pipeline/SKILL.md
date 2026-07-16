@@ -30,6 +30,7 @@ compatible_with: Open Design v0.6+
 | `od baokuan regenerate` | 处理飞书标「重新生成」的成品 | ④ |
 | `od monitor add / list / rm` | 增删改监控配置 | 监控配置库⑥ |
 | `od monitor config` | 看 / 改系统全局参数(阈值 / 频率 / 模型) | 系统配置表⑨ |
+| `od baokuan cover analyze/gen/rerender` | 类似封面:参考图解析 / 生成 / 改标题重排版 | ④(--record-id 时传附件) |
 
 所有命令加 `--json` 得机器可读输出。
 
@@ -68,7 +69,18 @@ od baokuan account --name "某某情感博主" --window 7d --platforms 抖音 --
 - 调 `od baokuan regenerate` 处理飞书里客户标记「重新生成」的成品
 - 汇报"今天采了多少爆款、生成了几条脚本、有没有同步失败"
 
-### 5. 处理飞书「重新生成」
+### 5. 类似封面生成(客户给参考封面)
+```bash
+# 参考封面 → 同类视觉语言新封面(抖音竖版+B站横版),中文标题程序叠字 100% 不错字
+od baokuan cover gen --title "月薪3000的直男,相亲现场有多惨?" --ref /path/参考封面.jpg \
+  --platforms douyin,bilibili --record-id <审核库record_id> --json
+# 客户只想改标题:不重出背景(不花图像模型钱),秒出新版本
+od baokuan cover rerender --bg <上一步的 *_bg.png> --title "新标题" --json
+```
+`--record-id` 传审核库成品记录时,成品图自动传到该记录「封面成品」附件。风格解析:客户 ARK
+开通任一 doubao vision 模型后自动升级为结构化视觉解析;未开通时用参考图直接条件生成+主色提取。
+
+### 6. 处理飞书「重新生成」
 客户在飞书成品审核库把某条状态改成「重新生成」后:
 ```bash
 od baokuan regenerate --json

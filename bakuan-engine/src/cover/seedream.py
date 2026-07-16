@@ -118,7 +118,11 @@ def _wrap(draw, text: str, font, max_w: int) -> list[str]:
     return lines
 
 
-def _overlay_title(bg_bytes: bytes, title: str, subtitle: str, platform: str, out_path: str) -> None:
+def _overlay_title(bg_bytes: bytes, title: str, subtitle: str, platform: str, out_path: str) -> dict:
+    """在背景上程序叠中文标题(验收9 的「改标题仅重渲染文字」也走这里)。
+
+    返回程序规则校验指标:{lines,y_end,H,overflow}——overflow=标题区超出画布安全区
+    (溢出/裁切类问题在渲染侧直接量出来,不依赖 OCR)。"""
     from PIL import Image, ImageDraw, ImageFont
 
     img = Image.open(io.BytesIO(bg_bytes)).convert("RGB")
@@ -143,6 +147,8 @@ def _overlay_title(bg_bytes: bytes, title: str, subtitle: str, platform: str, ou
         y += line_h
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     img.save(out_path, "PNG")
+    return {"lines": len(lines), "y_end": y, "H": H,
+            "overflow": y > int(H * 0.97)}
 
 
 def ocr_check(img_path: str, expected_title: str) -> tuple[bool, str]:

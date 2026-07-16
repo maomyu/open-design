@@ -9987,6 +9987,58 @@ export async function startServer({
     catch (err) { res.status(500).json({ error: '飞书重新生成处理失败：' + dcErr(err) }); }
   });
 
+  // ── 类似封面生成(模块7,验收8-9):参考封面解析 / 生成(背景另存) / 改标题重排版。
+  // 引擎 scripts/cover_gen.py,中文标题程序叠字保证不错字。──
+  async function runCoverGen(argv: string[]): Promise<any> {
+    const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    const r = await execFileBuffered(eng.python, ['scripts/cover_gen.py', ...argv], {
+      cwd: eng.engineDir,
+      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      timeout: 300_000,
+    });
+    const out = String(r.stdout || '');
+    const start = out.indexOf('{');
+    if (start < 0) throw new Error(`cover ${argv[0]}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
+    return JSON.parse(out.slice(start));
+  }
+  app.post('/api/baokuan/cover-analyze', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const ref = String(req.body?.ref ?? '').trim();
+    if (!ref) return res.status(400).json({ error: '缺少 ref(参考封面路径或URL)' });
+    try { res.json(await runCoverGen(['analyze', '--ref', ref])); }
+    catch (err) { res.status(500).json({ error: '参考封面解析失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/cover-gen', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const title = String(req.body?.title ?? '').trim();
+    if (!title) return res.status(400).json({ error: '缺少 title(封面主标题)' });
+    const argv = ['gen', '--title', title];
+    if (req.body?.subtitle) argv.push('--subtitle', String(req.body.subtitle));
+    if (req.body?.ref) argv.push('--ref', String(req.body.ref));
+    if (req.body?.styleJson) argv.push('--style-json', typeof req.body.styleJson === 'string' ? req.body.styleJson : JSON.stringify(req.body.styleJson));
+    if (req.body?.platforms) {
+      const p = Array.isArray(req.body.platforms) ? req.body.platforms.join(',') : String(req.body.platforms);
+      argv.push('--platforms', p);
+    }
+    if (req.body?.versions) argv.push('--versions', String(req.body.versions));
+    if (req.body?.outDir) argv.push('--out-dir', String(req.body.outDir));
+    if (req.body?.recordId) argv.push('--record-id', String(req.body.recordId));
+    try { res.json(await runCoverGen(argv)); }
+    catch (err) { res.status(500).json({ error: '封面生成失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/cover-rerender', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const bg = String(req.body?.bg ?? '').trim();
+    const title = String(req.body?.title ?? '').trim();
+    if (!bg || !title) return res.status(400).json({ error: '缺少 bg(背景路径)或 title(新标题)' });
+    const argv = ['rerender', '--bg', bg, '--title', title];
+    if (req.body?.subtitle) argv.push('--subtitle', String(req.body.subtitle));
+    if (req.body?.platform) argv.push('--platform', String(req.body.platform));
+    if (req.body?.out) argv.push('--out', String(req.body.out));
+    try { res.json(await runCoverGen(argv)); }
+    catch (err) { res.status(500).json({ error: '改标题重排版失败：' + dcErr(err) }); }
+  });
+
   // 爆款雷达·直接评分:接收【内置浏览器采集到的条目】+ 关键词 + 爆款筛选标准,跑爆款引擎
   // (--radar 只评分选题、不写脚本;顺带按 .env 回写客户飞书数据中心),返回选题候选。
   // 这是「真抓爆款采集」直连管线的评分环节(前端先 /collect 采集,再把结果丢这里评分)。

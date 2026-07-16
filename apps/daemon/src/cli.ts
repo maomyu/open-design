@@ -7893,6 +7893,12 @@ async function runBaokuan(args) {
         '  od baokuan account --name <账号> [--window 7d] [--platforms ...] [--json]  竞品账号采集',
         '  od baokuan link <url> [--json]    单链接完整链路（采集→拆解→脚本→复盘,全写飞书）',
         '  od baokuan regenerate [--json]    处理飞书审核库标「重新生成」的记录',
+        '  od baokuan cover analyze --ref <图|URL>              参考封面→视觉解析(风格JSON)',
+        '  od baokuan cover gen --title <标题> [--ref <图>] [--subtitle 副]',
+        '                       [--platforms douyin,bilibili] [--versions 1-3] [--record-id rec..]',
+        '                                    参考图条件生成+中文程序叠字;背景另存 *_bg.png',
+        '  od baokuan cover rerender --bg <背景png> --title <新标题> [--out 路径]',
+        '                                    改标题不重出背景,仅重渲染文字(秒出)',
         '',
         '定时任务: 用系统 cron 或 AI 智能体定时调 `od baokuan scheduled` 即实现全自动采集。',
         '',
@@ -7905,7 +7911,8 @@ async function runBaokuan(args) {
   let flags;
   try {
     flags = parseFlags(rest, {
-      string: ['keyword', 'platforms', 'pages', 'name', 'window', 'url', 'daemon-url', 'daemon-port'],
+      string: ['keyword', 'platforms', 'pages', 'name', 'window', 'url', 'daemon-url', 'daemon-port',
+               'title', 'subtitle', 'ref', 'style-json', 'versions', 'record-id', 'bg', 'out', 'out-dir', 'platform'],
       boolean: ['json'],
     });
   } catch (err) {
@@ -7988,8 +7995,48 @@ async function runBaokuan(args) {
       console.log(`重新生成处理完成: ${JSON.stringify(data).slice(0, 300)}`);
       return;
     }
+    case 'cover': {
+      const op = rest.find((a) => a && !a.startsWith('--'));
+      if (op === 'analyze') {
+        if (!flags.ref) { console.error('需要 --ref <参考封面路径或URL>'); process.exit(2); }
+        const data = await post('/api/baokuan/cover-analyze', { ref: flags.ref });
+        return writeJson(data);
+      }
+      if (op === 'gen') {
+        if (!flags.title) { console.error('需要 --title <封面主标题>'); process.exit(2); }
+        const data = await post('/api/baokuan/cover-gen', {
+          title: flags.title,
+          ...(flags.subtitle ? { subtitle: flags.subtitle } : {}),
+          ...(flags.ref ? { ref: flags.ref } : {}),
+          ...(flags['style-json'] ? { styleJson: flags['style-json'] } : {}),
+          ...(flags.platforms ? { platforms: splitList(flags.platforms) } : {}),
+          ...(flags.versions ? { versions: Number(flags.versions) } : {}),
+          ...(flags['out-dir'] ? { outDir: flags['out-dir'] } : {}),
+          ...(flags['record-id'] ? { recordId: flags['record-id'] } : {}),
+        });
+        if (flags.json) return writeJson(data);
+        const covers = data.covers || [];
+        console.log(`封面生成完成: ${covers.length} 张`);
+        for (const c of covers) console.log(`  ${c.platform} v${c.version}: ${c.path}${c.check?.ok ? '' : ' ⚠校验未过'}`);
+        return;
+      }
+      if (op === 'rerender') {
+        if (!flags.bg || !flags.title) { console.error('需要 --bg <背景png> --title <新标题>'); process.exit(2); }
+        const data = await post('/api/baokuan/cover-rerender', {
+          bg: flags.bg, title: flags.title,
+          ...(flags.subtitle ? { subtitle: flags.subtitle } : {}),
+          ...(flags.platform ? { platform: flags.platform } : {}),
+          ...(flags.out ? { out: flags.out } : {}),
+        });
+        if (flags.json) return writeJson(data);
+        console.log(`改标题重排版完成: ${data.path}${data.ok ? '' : ' ⚠校验未过'}`);
+        return;
+      }
+      console.error('用法: od baokuan cover <analyze|gen|rerender> ...');
+      process.exit(2);
+    }
     default:
-      console.error(`未知子命令: ${sub}（collect|scheduled|account|link|regenerate）`);
+      console.error(`未知子命令: ${sub}（collect|scheduled|account|link|regenerate|cover）`);
       process.exit(2);
   }
 }
