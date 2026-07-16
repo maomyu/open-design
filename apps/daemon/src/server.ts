@@ -9942,6 +9942,49 @@ export async function startServer({
     catch (err) { res.status(500).json({ error: '存系统配置失败：' + dcErr(err) }); }
   });
 
+  // ── 采集调度·完整管道入口(给 od baokuan CLI + 外部AI智能体/cron 定时调度)。引擎能力现成
+  // (pipeline.py --scheduled/--account/--link/--regenerate),照 collect-score 包成端点。这些走
+  // 【非 radar 完整链路】:采集→评分→拆解③→脚本④→复盘⑤,慢,timeout 给足 10 分钟。──
+  async function runBaokuanPipeline(pipeArgs: string[]): Promise<any> {
+    const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    const r = await execFileBuffered(eng.python, ['-m', 'src.pipeline', ...pipeArgs], {
+      cwd: eng.engineDir,
+      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      timeout: 600_000,
+    });
+    const out = String(r.stdout || '');
+    const start = out.indexOf('{');
+    if (start < 0) throw new Error(`baokuan ${pipeArgs.join(' ')}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
+    return JSON.parse(out.slice(start));
+  }
+  app.post('/api/baokuan/scheduled', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runBaokuanPipeline(['--scheduled'])); }
+    catch (err) { res.status(500).json({ error: '定时批量跑失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/account', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const account = String((req.body?.account ?? '')).trim().slice(0, 100);
+    if (!account) return res.status(400).json({ error: '缺少 account(竞品账号名或主页链接)' });
+    const platforms = (Array.isArray(req.body?.platforms) ? req.body.platforms : String(req.body?.platforms ?? '').split(','))
+      .map((p: unknown) => String(p).trim()).filter(Boolean).join(',') || 'douyin';
+    const timeWindow = String(req.body?.timeWindow ?? '7d');
+    try { res.json(await runBaokuanPipeline(['--account', account, '--platforms', platforms, '--time-window', timeWindow])); }
+    catch (err) { res.status(500).json({ error: '竞品账号采集失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/link', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const url = String((req.body?.url ?? '')).trim();
+    if (!url) return res.status(400).json({ error: '缺少 url' });
+    try { res.json(await runBaokuanPipeline(['--link', url])); }
+    catch (err) { res.status(500).json({ error: '单链接完整链路失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/regenerate', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runBaokuanPipeline(['--regenerate'])); }
+    catch (err) { res.status(500).json({ error: '飞书重新生成处理失败：' + dcErr(err) }); }
+  });
+
   // 爆款雷达·直接评分:接收【内置浏览器采集到的条目】+ 关键词 + 爆款筛选标准,跑爆款引擎
   // (--radar 只评分选题、不写脚本;顺带按 .env 回写客户飞书数据中心),返回选题候选。
   // 这是「真抓爆款采集」直连管线的评分环节(前端先 /collect 采集,再把结果丢这里评分)。

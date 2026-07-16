@@ -777,6 +777,7 @@ def main():
                     help='灵活爆款标准 JSON(或 @文件): {"time_window":"7d","rules":[{"fans_max":3000,"plays_min":100000}]}')
     ap.add_argument("--xhs-note-type", type=int, choices=[1, 2],
                     help="小红书内容类型:2 图文(图文笔记台)/1 视频(短视频台);不传=综合。前后端对应用。")
+    ap.add_argument("--time-window", default="7d", help="竞品账号采集时间窗(1d/7d/30d/180d)")
     args = ap.parse_args()
     pipe = Pipeline(dry_run=args.dry_run)
     if args.xhs_note_type:
@@ -815,11 +816,12 @@ def main():
                          ensure_ascii=False, indent=2))
         return
     if args.scheduled:
-        print(pipe.run_scheduled())
+        print(json.dumps(pipe.run_scheduled(), ensure_ascii=False, indent=2))
     elif args.regenerate:
-        print(pipe.regenerate())
+        print(json.dumps(pipe.regenerate(), ensure_ascii=False, indent=2))
     elif args.account:
-        print(json.dumps(pipe.run_account(args.account, args.platforms.split(",")),
+        print(json.dumps(pipe.run_account(args.account, args.platforms.split(","),
+                                          time_window=args.time_window),
                          ensure_ascii=False, indent=2))
     elif args.link:
         print(json.dumps(pipe.run_single_link(args.link), ensure_ascii=False, indent=2))

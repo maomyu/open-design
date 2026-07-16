@@ -228,6 +228,7 @@ const SUBCOMMAND_MAP = {
   automation: runAutomation,
   automations: runAutomation,
   monitor: runMonitor,
+  baokuan: runBaokuan,
   memory: runMemory,
   run: runRun,
   files: runFiles,
@@ -7877,6 +7878,120 @@ Output:
 
 Common options:
   --daemon-url <url>   Open Design daemon HTTP base.`);
+}
+
+// od baokuan — 采集调度·完整管道入口（原子命令,供外部AI智能体/cron 定时调度）。每个子命令
+// 打 daemon 端点 spawn 引擎 pipeline.py;工作流（串完整链路/定时批量）交给 Claude skills 编排。
+async function runBaokuan(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(
+      [
+        'od baokuan — 爆款采集调度（原子命令,供外部AI智能体/cron 定时调度）',
+        '  od baokuan collect --keyword <kw> [--platforms 抖音,小红书] [--pages N] [--json]',
+        '                                    关键词采集评分→写飞书原始库+选题池（radar,快）',
+        '  od baokuan scheduled [--json]     读监控配置库所有启用项,批量跑完整链路（定时用）',
+        '  od baokuan account --name <账号> [--window 7d] [--platforms ...] [--json]  竞品账号采集',
+        '  od baokuan link <url> [--json]    单链接完整链路（采集→拆解→脚本→复盘,全写飞书）',
+        '  od baokuan regenerate [--json]    处理飞书审核库标「重新生成」的记录',
+        '',
+        '定时任务: 用系统 cron 或 AI 智能体定时调 `od baokuan scheduled` 即实现全自动采集。',
+        '',
+      ].join('\n') + '\n',
+    );
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  let flags;
+  try {
+    flags = parseFlags(rest, {
+      string: ['keyword', 'platforms', 'pages', 'name', 'window', 'url', 'daemon-url', 'daemon-port'],
+      boolean: ['json'],
+    });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJson = (d) => process.stdout.write(JSON.stringify(d, null, 2) + '\n');
+  const splitList = (v) => String(v).split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
+  const post = async (url, body) => {
+    let resp;
+    try {
+      resp = await fetch(`${base}${url}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    return resp.json();
+  };
+
+  switch (sub) {
+    case 'collect': {
+      if (!flags.keyword) {
+        console.error('需要 --keyword <关键词>');
+        process.exit(2);
+      }
+      const body = {
+        keyword: flags.keyword,
+        ...(flags.platforms ? { platforms: splitList(flags.platforms) } : {}),
+        ...(flags.pages ? { pages: Number(flags.pages) } : {}),
+      };
+      const data = await post('/api/media-studio/collect-score', body);
+      if (flags.json) return writeJson(data);
+      console.log(
+        `采集完成: 关键词「${data.keyword ?? flags.keyword}」候选 ${data.count ?? 0} 条` +
+          `${data.tier ? ' · 档位' + data.tier : ''}${data.feishuSynced === false ? ' · ⚠飞书未同步' : ''}`,
+      );
+      return;
+    }
+    case 'scheduled': {
+      const data = await post('/api/baokuan/scheduled', {});
+      if (flags.json) return writeJson(data);
+      console.log(`定时批量跑完成: ${JSON.stringify(data).slice(0, 300)}`);
+      return;
+    }
+    case 'account': {
+      if (!flags.name) {
+        console.error('需要 --name <竞品账号名或主页链接>');
+        process.exit(2);
+      }
+      const body = {
+        account: flags.name,
+        ...(flags.platforms ? { platforms: splitList(flags.platforms) } : {}),
+        ...(flags.window ? { timeWindow: flags.window } : {}),
+      };
+      const data = await post('/api/baokuan/account', body);
+      if (flags.json) return writeJson(data);
+      console.log(`竞品账号采集完成: ${JSON.stringify(data).slice(0, 300)}`);
+      return;
+    }
+    case 'link': {
+      const url = flags.url || rest.find((a) => a && !a.startsWith('--'));
+      if (!url) {
+        console.error('用法: od baokuan link <url>');
+        process.exit(2);
+      }
+      const data = await post('/api/baokuan/link', { url });
+      if (flags.json) return writeJson(data);
+      console.log(`单链接完整链路完成: ${JSON.stringify(data).slice(0, 300)}`);
+      return;
+    }
+    case 'regenerate': {
+      const data = await post('/api/baokuan/regenerate', {});
+      if (flags.json) return writeJson(data);
+      console.log(`重新生成处理完成: ${JSON.stringify(data).slice(0, 300)}`);
+      return;
+    }
+    default:
+      console.error(`未知子命令: ${sub}（collect|scheduled|account|link|regenerate）`);
+      process.exit(2);
+  }
 }
 
 // od monitor — 飞书数据中心·定时监控配置库 + 系统配置表（块3 双轨 CLI）。打
