@@ -16,9 +16,10 @@ type CustomerManifest = { customer?: string; slug?: string; aliases?: string[] }
  * 未设 `OD_PACK_CUSTOMER` = 不内嵌 = 无 license = 全功能（开发/超集包，行为不变）。
  * DMG 交付给客户时另走 `workbuild license import license.json`（见 customers/README.md）。
  */
-export async function seedPackagedLicense(config: ToolPackConfig): Promise<void> {
+/** 解析 OD_PACK_CUSTOMER 命中的客户 license 原文(未设/未命中→null,命中但没签发→抛)。 */
+async function resolveCustomerLicense(config: ToolPackConfig): Promise<{ customer: string; raw: string } | null> {
   const want = (process.env.OD_PACK_CUSTOMER ?? "").trim();
-  if (!want || config.portable) return;
+  if (!want || config.portable) return null;
 
   const customersDir = join(config.workspaceRoot, "customers");
   let dirNames: string[];
@@ -65,11 +66,26 @@ export async function seedPackagedLicense(config: ToolPackConfig): Promise<void>
     );
   }
 
+  return { customer: matchManifest.customer ?? matchDir, raw: licenseRaw };
+}
+
+export async function seedPackagedLicense(config: ToolPackConfig): Promise<void> {
+  const lic = await resolveCustomerLicense(config);
+  if (!lic) return;
   const target = join(config.roots.runtime.namespaceRoot, "data", "license.json");
   await mkdir(dirname(target), { recursive: true });
   // license 不是用户数据：每次打包按当前客户【覆盖】(与 app-config 的合并保用户数据策略相反)。
-  await writeFile(target, licenseRaw, "utf8");
-  process.stderr.write(
-    `[tools-pack mac] seeded license customer=${matchManifest.customer ?? matchDir} → ${target}\n`,
-  );
+  await writeFile(target, lic.raw, "utf8");
+  process.stderr.write(`[tools-pack mac] seeded license customer=${lic.customer} → ${target}\n`);
+}
+
+/** 把客户 license 嵌进 dmg 资源(<resourceRoot>/customer-license.json)——daemon 首启发现
+ *  dataDir 没有 license 时自动安装,交付自包含零操作(2026-07-17:此前只种本机测试
+ *  runtime,dmg 不带 license,客户装机=无license=全功能解锁,门控形同虚设)。 */
+export async function bundleCustomerLicense(config: ToolPackConfig, resourceRoot: string): Promise<void> {
+  const lic = await resolveCustomerLicense(config);
+  if (!lic) return;
+  const target = join(resourceRoot, "customer-license.json");
+  await writeFile(target, lic.raw, "utf8");
+  process.stderr.write(`[tools-pack mac] bundled license customer=${lic.customer} → dmg 资源\n`);
 }

@@ -317,7 +317,7 @@ import {
   setToken,
 } from './mcp-tokens.js';
 import { accountCredentialKeysFromManifest, accountPlatformFromManifest, agentCliEnvForAgent, applyExclusiveCredentialRule, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, platformAccountsForPlatform, readAppConfig, readPluginEnvKnobs, resolvePlatformAccountCredentials, writeAppConfig } from './app-config.js';
-import { licenseFilePath, licenseGuard, licenseStatusResponse, loadLicenseState, verifyLicenseFile, type LicenseStateRef } from './license.js';
+import { ensureBundledLicenseInstalled, licenseFilePath, licenseGuard, licenseStatusResponse, loadLicenseState, verifyLicenseFile, type LicenseStateRef } from './license.js';
 import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
@@ -5556,6 +5556,8 @@ export async function startServer({
   registerAccountRoutes(app, { http: httpDeps, paths: pathDeps });
   // 功能授权强制(定制版):挂在 media-studio 之前——daemon 是唯一强制点,
   // UI 隐藏只是体验层。无授权文件时 licenseGuard 直接放行。
+  // 定制包自带授权首启自动安装(dmg 资源 customer-license.json → dataDir),已有不覆盖。
+  await ensureBundledLicenseInstalled(RUNTIME_DATA_DIR, BAKUAN_ENGINE_CTX.resourceRoot ?? null);
   const licenseRef: LicenseStateRef = { current: await loadLicenseState(RUNTIME_DATA_DIR) };
   if (licenseRef.current.status !== 'none') {
     const lp = licenseRef.current.payload;

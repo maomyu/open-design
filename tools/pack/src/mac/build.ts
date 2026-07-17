@@ -2,7 +2,7 @@ import { ToolPackCache } from "../cache.js";
 import type { ToolPackConfig } from "../config.js";
 import { collectWorkspaceTarballs, copyResourceTree, writeAssembledApp } from "./app.js";
 import { seedPackagedAppConfig } from "./app-config.js";
-import { seedPackagedLicense } from "./license-seed.js";
+import { bundleCustomerLicense, seedPackagedLicense } from "./license-seed.js";
 import { finalizeMacArtifacts } from "./artifacts.js";
 import { resolveElectronBuilderTargets, runElectronBuilder } from "./builder.js";
 import { clearQuarantine } from "./fs.js";
@@ -53,6 +53,7 @@ export async function packMac(config: ToolPackConfig): Promise<MacPackResult> {
   });
   await runPhase("resource-tree", async () => {
     await copyResourceTree(config, paths);
+    await bundleCustomerLicense(config, paths.resourceRoot);
   });
   const tarballs = await runPhase("workspace-tarballs", async () => collectWorkspaceTarballs(config, paths));
   await runPhase("assembled-app", async () => {

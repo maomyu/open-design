@@ -11,7 +11,7 @@
 //
 // 轻量时钟回拨防护:<dataDir>/license-state.json 记录见过的最大时间戳,
 // 当前时间早于它 24h 以上按无效处理(防「改系统时间续命」)。
-import { readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
@@ -46,6 +46,27 @@ const UNLOCKED: LicenseState = { status: 'none', features: new Set() };
 
 export function licenseFilePath(dataDir: string): string {
   return path.join(dataDir, 'license.json');
+}
+
+/** 定制包自带 license 首启自动安装(交付自包含,2026-07-17)。
+ *  dmg 资源里有 customer-license.json 且 dataDir 还没有 license.json 时拷入;
+ *  已有的(含 `od license import` 导入的)绝不覆盖。dev(无 resourceRoot)直接跳过。 */
+export async function ensureBundledLicenseInstalled(dataDir: string, resourceRoot: string | null): Promise<boolean> {
+  if (!resourceRoot) return false;
+  const target = licenseFilePath(dataDir);
+  try {
+    await access(target);
+    return false; // 已有,不覆盖
+  } catch { /* 不存在,继续 */ }
+  try {
+    const raw = await readFile(path.join(resourceRoot, 'customer-license.json'), 'utf8');
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, raw, 'utf8');
+    console.log('[license] 已从安装包内置授权完成首启安装 →', target);
+    return true;
+  } catch {
+    return false; // 包内没带(开发/超集包)——无license=全功能,行为不变
+  }
 }
 
 function stateFilePath(dataDir: string): string {
