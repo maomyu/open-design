@@ -59,13 +59,17 @@ import { BrowserError, openProfileBrowser, PLATFORM_PUBLISH_URLS, revealInFinder
 import { createHandoffBus, HANDOFF_PLATFORMS, HandoffError, isHandoffPlatform } from './media-studio/handoff-jobs.js';
 import { createCollectBus, COLLECT_PLATFORMS, CollectError, isCollectPlatform } from './media-studio/collect-jobs.js';
 import { createInteractionBus, InteractionError } from './media-studio/interaction-jobs.js';
+import { createCommentReadBus, CommentReadError } from './media-studio/comment-read-jobs.js';
 import { DEFAULT_INTERACTION_POLICY } from './media-studio/interaction-quota.js';
 import type {
+  CommentNode,
   CreateStudioCollectRequest,
   CreateStudioInteractionRequest,
+  CreateStudioCommentReadRequest,
   InteractionAction,
   StudioCollectPlatform,
   StudioCollectResultRequest,
+  StudioCommentReadResultRequest,
 } from '@open-design/contracts';
 import { sauCheck, sauLogin, sauUploadNote, sauUploadVideo, SauError } from './media-studio/sau.js';
 import { scriptToSpeech, synthesizeVoice, TtsError } from './media-studio/volc-tts.js';
@@ -1017,6 +1021,87 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     if (typeof req.query.platform === 'string' && req.query.platform) filter.platform = String(req.query.platform);
     if (req.query.account !== undefined) filter.accountId = req.query.account ? String(req.query.account) : null;
     res.json({ items: listInteractions(db, filter) });
+  });
+
+  // ---- 读评论派发桥（读一条笔记的评论树 → 桌面端应用内标签执行，不耗互动配额）----
+  // 与 collect 同构。互动执行器「先读评论→关键词匹配→自动回复」的读环节；也可 CLI 单独触发看评论。
+  const commentReadBus = createCommentReadBus();
+
+  app.post('/api/media-studio/read-comments', (req, res) => {
+    const body = (req.body ?? {}) as CreateStudioCommentReadRequest;
+    const platform = String(body.platform ?? '').trim();
+    const noteRef = String(body.noteRef ?? '').trim();
+    const account = typeof body.account === 'string' && body.account ? body.account : null;
+    if (!platform) return bad(res, 400, '缺少 platform');
+    if (!noteRef) return bad(res, 400, '缺少 noteRef');
+    try {
+      const job = commentReadBus.create({ platform, account, noteRef });
+      res.json({ job });
+    } catch (err) {
+      if (err instanceof CommentReadError) return bad(res, 409, err.message);
+      bad(res, 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.get('/api/media-studio/read-comments/events', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    });
+    res.write(': connected\n\n');
+    const unsubscribe = commentReadBus.subscribe((job) => {
+      res.write(`event: job\ndata: ${JSON.stringify(job)}\n\n`);
+    });
+    const keepalive = setInterval(() => res.write(': keepalive\n\n'), 30_000);
+    req.on('close', () => { clearInterval(keepalive); unsubscribe(); });
+  });
+
+  app.post('/api/media-studio/read-comments/:id/claim', (req, res) => {
+    const job = commentReadBus.claim(req.params.id);
+    if (!job) {
+      const existing = commentReadBus.get(req.params.id);
+      if (!existing) return bad(res, 404, 'job not found');
+      return bad(res, 409, `job 已被认领(${existing.status})`);
+    }
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/read-comments/:id/progress', (req, res) => {
+    const message = String((req.body ?? {}).message ?? '').trim();
+    if (!message) return bad(res, 400, '缺少 message');
+    const job = commentReadBus.progress(req.params.id, message);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/read-comments/:id/result', (req, res) => {
+    const body = (req.body ?? {}) as StudioCommentReadResultRequest;
+    const comments = Array.isArray(body.comments) ? (body.comments as CommentNode[]) : [];
+    const job = commentReadBus.setComments(req.params.id, comments, body.needsLogin === true);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/read-comments/:id/complete', (req, res) => {
+    const body = (req.body ?? {}) as { ok?: boolean; detail?: string };
+    const job = commentReadBus.complete(req.params.id, body.ok === true, String(body.detail ?? ''));
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/read-comments/:id', (req, res) => {
+    const job = commentReadBus.get(req.params.id);
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/read-comments/:id/wait', async (req, res) => {
+    const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
+    const timeoutMs = Number.isFinite(Number(req.query.timeoutMs)) ? Number(req.query.timeoutMs) : 25_000;
+    const snap = await commentReadBus.wait(req.params.id, since, timeoutMs);
+    if (!snap) return bad(res, 404, 'job not found');
+    res.json(snap);
   });
 
   // 打开文章的资产目录（图集/封面拖拽进浏览器发布页用）。

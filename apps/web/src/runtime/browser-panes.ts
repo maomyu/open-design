@@ -23,6 +23,13 @@ export interface CollectPaneSpec {
   nowSec: number;
 }
 
+/** 读评论载荷:面板导航到笔记页后跑评论树提取器,回写 daemon read-comments job(一次性)。 */
+export interface CommentReadPaneSpec {
+  jobId: string;
+  platform: string;
+  noteRef: string;
+}
+
 export interface BrowserPaneRequest {
   platform: string;
   account: string;
@@ -33,6 +40,8 @@ export interface BrowserPaneRequest {
   draftJobId?: string;
   /** 爆款雷达采集:面板加载后在标签里抓真实爆款卡片(一次性)。 */
   collect?: CollectPaneSpec;
+  /** 读评论:面板导航到笔记页后抓评论树(一次性)。 */
+  readComments?: CommentReadPaneSpec;
   /** 「边播边抓」下载:面板导航到 url(视频页)、抓 <video> 直链后回报(一次性)。 */
   grab?: { grabId: string };
 }

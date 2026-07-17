@@ -645,6 +645,49 @@ export interface StudioInteractionResultRequest {
   detail?: string;
 }
 
+// ── 读评论派发（读一条笔记的评论树 → 回结构化结果；读操作不耗互动配额）──
+// 与 collect 同构:daemon 建 job + SSE 广播 → 桌面端 web 在应用内标签打开笔记页、
+// executeJavaScript 跑评论提取器 → 回写 comments → 调用方 wait 长轮询取。
+// 互动执行器的「先读评论 → 关键词匹配 → 自动回复」里的读环节；也可单独 CLI 触发看评论。
+export interface StudioCommentReadJob {
+  id: string;
+  platform: MediaStudioPlatform;
+  account: string | null;
+  /** 目标笔记：URL 或 note id。 */
+  noteRef: string;
+  status: StudioInteractionStatus;
+  progress: string[];
+  comments: CommentNode[];
+  /** 页面判为未登录（交由上层引导扫码补登）。 */
+  needsLogin?: boolean;
+  detail?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateStudioCommentReadRequest {
+  platform: MediaStudioPlatform;
+  account?: string | null;
+  noteRef: string;
+}
+
+export interface StudioCommentReadJobResponse {
+  job: StudioCommentReadJob;
+}
+
+export interface StudioCommentReadWaitResponse {
+  job: StudioCommentReadJob;
+  cursor: number;
+}
+
+/** web 读完回写：comments + 是否需登录。 */
+export interface StudioCommentReadResultRequest {
+  comments: CommentNode[];
+  needsLogin?: boolean;
+  ok: boolean;
+  detail?: string;
+}
+
 /** 一条评论（可含楼中楼子回复）。互动执行器读评论树 → 关键词匹配 → 自动回复的输入。 */
 export interface CommentNode {
   /** 评论 id（页面能拿到则用真 id，否则用 作者+文本 前缀合成，仅供去重/回复定位）。 */

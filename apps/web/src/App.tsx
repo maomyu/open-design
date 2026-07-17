@@ -28,6 +28,7 @@ import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBa
 import { BrowserPanesHost } from './components/BrowserPanesHost';
 import { startHandoffListener } from './runtime/handoff-listener';
 import { startCollectListener } from './runtime/collect-listener';
+import { startCommentReadListener } from './runtime/comment-read-listener';
 import { fetchLicenseInfo, LicenseContext, UNLOCKED_LICENSE, type LicenseInfo } from './state/license';
 import {
   DesignSystemCreationFlow,
@@ -213,6 +214,7 @@ function AppInner() {
   // handoff 桥:CLI「od studio handoff」派发的注入 job 由桌面端执行
   // (监听器内部自判桌面端,网页版空载)。
   useEffect(() => startHandoffListener(), []);
+  useEffect(() => startCommentReadListener(), []);
   // 爆款雷达采集桥:引擎「od media collect」派发的采集 job 由桌面端在应用内标签执行。
   useEffect(() => startCollectListener(), []);
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());

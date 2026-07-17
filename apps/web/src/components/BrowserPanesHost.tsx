@@ -28,11 +28,13 @@ import {
   browserPanePartition,
   type BrowserPaneRequest,
   type CollectPaneSpec,
+  type CommentReadPaneSpec,
 } from '../runtime/browser-panes';
 import { runDraftInjection, humanSearch, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
 import { CARD_PROBE_SEL, EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, PLATFORM_HOMEPAGE, SEARCH_BY_TYPING, buildSearchUrl } from '../runtime/collect-extractors';
-import { postCollectResult, reportCollectProgress } from '../providers/media-studio';
-import type { StudioCollectItem } from '@open-design/contracts';
+import { COMMENT_EXTRACTORS, COMMENT_LOGIN_WALL, buildNoteUrl, type CommentPlatform } from '../runtime/comment-extractors';
+import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress } from '../providers/media-studio';
+import type { CommentNode, StudioCollectItem } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -274,6 +276,64 @@ async function runCollect(
   done(items, false, items.length ? '' : '未提取到条目(选择器需校准或结果未加载)');
 }
 
+/**
+ * 在本面板 webview 里读一条笔记的评论树，回写 read-comments job。
+ * 导航到笔记页 → 等就绪 → 判登录墙 → 滚动加载评论 → 跑评论提取器 → postCommentReadResult。
+ */
+async function runReadComments(
+  el: DraftWebview | null,
+  spec: CommentReadPaneSpec,
+  isCancelled: () => boolean,
+): Promise<void> {
+  const { jobId, platform, noteRef } = spec;
+  const say = (t: string) => { if (!isCancelled()) reportCommentReadProgress(jobId, t); };
+  const finish = (comments: CommentNode[], needsLogin: boolean) => {
+    if (isCancelled()) return;
+    postCommentReadResult(jobId, comments, needsLogin);
+  };
+  if (!el) return finish([], false);
+  const evalJs = async (js: string, timeoutMs = 4000): Promise<unknown> => {
+    try {
+      return await Promise.race([
+        el.executeJavaScript(js),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+      ]);
+    } catch { return undefined; }
+  };
+  const url = buildNoteUrl(platform as CommentPlatform, noteRef);
+  say(`打开笔记页…`);
+  await evalJs(`location.href = ${JSON.stringify(url)}`, 4000);
+  // 等就绪。
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline) {
+    if (isCancelled()) return;
+    const state = await evalJs('document.readyState', 2000);
+    if (state === 'complete' || state === 'interactive') break;
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  await new Promise((r) => setTimeout(r, 1800));
+  if (isCancelled()) return;
+  // 登录墙判定。
+  const walls = COMMENT_LOGIN_WALL[platform as CommentPlatform] ?? [];
+  const bodyText = String((await evalJs('document.body ? document.body.innerText.slice(0, 3000) : ""', 3000)) || '');
+  if (walls.some((w) => bodyText.includes(w)) && bodyText.length < 200) {
+    say('未登录：请在标签里扫码登录后重试');
+    return finish([], true);
+  }
+  // 滚动到评论区并多滚几次加载楼中楼（小红书评论懒加载）。
+  for (let i = 0; i < 6; i++) {
+    if (isCancelled()) return;
+    await evalJs('window.scrollTo(0, document.body.scrollHeight)', 2000);
+    await new Promise((r) => setTimeout(r, 900));
+  }
+  say('读取评论树…');
+  const raw = await evalJs(COMMENT_EXTRACTORS[platform as CommentPlatform], 6000);
+  const comments = Array.isArray(raw) ? (raw as CommentNode[]) : [];
+  const total = comments.reduce((n, c2) => n + 1 + (c2.subReplies?.length ?? 0), 0);
+  say(`读到 ${comments.length} 条一级评论 / 共 ${total} 条(含楼中楼)`);
+  finish(comments, false);
+}
+
 interface PaneSpec {
   key: string;
   platform: string;
@@ -287,6 +347,9 @@ interface PaneSpec {
   /** 爆款雷达采集载荷:面板就绪后消费一次,seq 递增触发重新采集。 */
   collect?: CollectPaneSpec;
   collectSeq?: number;
+  /** 读评论载荷:导航到笔记页后抓评论树,seq 递增触发。 */
+  readComments?: CommentReadPaneSpec;
+  readCommentsSeq?: number;
   /** 「边播边抓」下载:导航到视频页、抓 <video> 直链后回报,seq 递增触发。 */
   grab?: { grabId: string };
   grabSeq?: number;
@@ -331,6 +394,13 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
                 : p,
             );
           }
+          if (req.readComments) {
+            return list.map((p) =>
+              p.key === key
+                ? { ...p, url: req.url, readComments: req.readComments!, readCommentsSeq: (p.readCommentsSeq ?? 0) + 1 }
+                : p,
+            );
+          }
           if (!req.draft) return list;
           return list.map((p) =>
             p.key === key
@@ -348,6 +418,7 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
             ...(req.draft ? { draft: req.draft, draftSeq: 1 } : {}),
             ...(req.draftJobId ? { draftJobId: req.draftJobId } : {}),
             ...(req.collect ? { collect: req.collect, collectSeq: 1 } : {}),
+            ...(req.readComments ? { readComments: req.readComments, readCommentsSeq: 1 } : {}),
             ...(req.grab ? { grab: req.grab, grabSeq: 1 } : {}),
           },
         ];
@@ -548,6 +619,23 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     // 中途取消,快平台已采完躲过,于是并发下慢平台稳定 0 条。用 seq 后重渲染不再误杀采集。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec.collectSeq]);
+
+  // 读评论:面板加载后在【本标签 webview】里导航到笔记页、抓评论树,回写 read-comments job。
+  const ranReadRef = useRef(0);
+  useEffect(() => {
+    const seq = spec.readCommentsSeq ?? 0;
+    if (!spec.readComments || seq === 0 || seq === ranReadRef.current) return;
+    const readSpec = spec.readComments;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      ranReadRef.current = seq;
+      navigate({ kind: 'browser', platform: spec.platform, account: spec.account });
+      void runReadComments(ref.current as unknown as DraftWebview | null, readSpec, () => cancelled);
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec.readCommentsSeq]);
 
   // 「边播边抓」下载:导航到视频页 → 播放触发加载 → 抓 <video> 直链(或页面里的 mp4)→ 回报。
   const ranGrabRef = useRef(0);

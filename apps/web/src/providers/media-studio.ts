@@ -1129,6 +1129,44 @@ export function completeCollectJob(jobId: string, ok: boolean, detail: string): 
   }).catch(() => undefined);
 }
 
+// ── 读评论桥（桌面端执行侧回写 daemon read-comments job）──
+export async function claimCommentReadJob(jobId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ROOT}/read-comments/${encodeURIComponent(jobId)}/claim`, { method: 'POST' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function reportCommentReadProgress(jobId: string, message: string): void {
+  void fetch(`${ROOT}/read-comments/${encodeURIComponent(jobId)}/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  }).catch(() => undefined);
+}
+
+export function postCommentReadResult(
+  jobId: string,
+  comments: import('@open-design/contracts').CommentNode[],
+  needsLogin: boolean,
+): void {
+  void fetch(`${ROOT}/read-comments/${encodeURIComponent(jobId)}/result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comments, needsLogin, ok: true }),
+  }).catch(() => undefined);
+}
+
+export function completeCommentReadJob(jobId: string, ok: boolean, detail: string): void {
+  void fetch(`${ROOT}/read-comments/${encodeURIComponent(jobId)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ok, detail }),
+  }).catch(() => undefined);
+}
+
 /** 图片资产的本机绝对路径(「一键存草稿」CDP 注入用)。 */
 export async function fetchStudioAssetPaths(
   platform: string,
