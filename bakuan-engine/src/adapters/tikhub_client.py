@@ -179,39 +179,72 @@ class TikHubClient:
         return out[:count]
 
     def fetch_detail(self, platform: str, aweme_id: str, xsec_token: str = "") -> dict:
+        if platform in ("xiaohongshu", "xhs"):
+            return self._xhs_note_detail(aweme_id, xsec_token)
         cfg = _PLAT[platform]
         m, path, idp = cfg["detail"]
         if not path:
             return {}
-        params = {idp: aweme_id}
-        # 小红书 detail 需带 xsec_token(从分享链接 query 取)才可能定位本条。
-        if xsec_token and platform in ("xiaohongshu", "xhs"):
-            params["xsec_token"] = xsec_token
-        data = self._call(m or "GET", path, params=params)
+        data = self._call(m or "GET", path, params={idp: aweme_id})
         node = data.get("data", data)
-        # 小红书 get_video_note_detail 二次服务包裹 {code,success,data:[note...]},取首条笔记。
-        # 用顶层 "code" 标记识别服务包裹(抖音/快手/B站 的详情对象无此顶层键),避免误伤。
-        if isinstance(node, dict) and "code" in node and isinstance(node.get("data"), list) and node["data"]:
-            node = node["data"][0]
-        elif isinstance(node, list):
+        if isinstance(node, list):
             node = node[0] if node else {}
-        result: dict = {}
-        for k in ("aweme_detail", "aweme_info", "note", "note_card", "data"):
+        for k in ("aweme_detail", "aweme_info", "data"):
             if isinstance(node, dict) and isinstance(node.get(k), dict):
-                result = node[k]
-                break
-        else:
-            result = node if isinstance(node, dict) else {}
-        # 小红书 detail 端点按 id 常返回【推荐流】(非本条):校验返回笔记 id 是否命中请求的
-        # note_id,对不上就丢弃(返回 {})让上层报错——绝不拿错内容往下写飞书。
-        # (2026-07-16 单链接完整链路实测:传"脱单"链接却写进"跑步减肥"内容,即此坑。)
-        if platform in ("xiaohongshu", "xhs") and result:
-            nc = result.get("note_card") if isinstance(result.get("note_card"), dict) else {}
-            rid = str(result.get("note_id") or result.get("id") or nc.get("note_id") or "")
-            if aweme_id and rid and aweme_id not in rid and rid not in aweme_id:
-                logger.warning(f"小红书 detail 返回非本条(请求 {aweme_id} 得到 {rid}),判为推荐流,丢弃")
-                return {}
-        return result
+                return node[k]
+        return node if isinstance(node, dict) else {}
+
+    def _xhs_note_detail(self, note_id: str, xsec_token: str = "") -> dict:
+        """小红书按 id 精确取【本条】笔记。
+
+        坑(2026-07-17 实测定位):get_video_note_detail 对【图文】笔记返回的是推荐流
+        (别人的笔记)——之前所有小红书都走它,图文单链接内容全串台。图文有专门端点
+        get_image_note_detail(实测精确命中本条)。级联策略:
+          ① 带 xsec_token(分享长链) → web_v3/fetch_note_detail,两种类型都精确;
+          ② app_v2/get_image_note_detail(图文笔记);
+          ③ app_v2/get_video_note_detail(视频笔记)。
+        每步都校验「返回笔记 id == 请求 id」,命中才采用;全不中返回 {}(绝不拿
+        推荐流内容往下写飞书)。"""
+        def _extract(data: dict) -> dict:
+            node = data.get("data", data)
+            # 服务包裹 {code,success,data:[...]}
+            if isinstance(node, dict) and isinstance(node.get("data"), list) and node["data"]:
+                node = node["data"][0]
+            elif isinstance(node, list):
+                node = node[0] if node else {}
+            # 图文/视频详情把笔记再包一层 note_list:[note]
+            if isinstance(node, dict) and isinstance(node.get("note_list"), list) and node["note_list"]:
+                node = node["note_list"][0]
+            for k in ("note", "note_card", "data"):
+                if isinstance(node, dict) and isinstance(node.get(k), dict):
+                    node = node[k]
+            return node if isinstance(node, dict) else {}
+
+        def _nid(n: dict) -> str:
+            nc = n.get("note_card") if isinstance(n.get("note_card"), dict) else {}
+            return str(n.get("note_id") or n.get("id") or nc.get("note_id") or "")
+
+        attempts: list[tuple[str, dict]] = []
+        if xsec_token:
+            attempts.append(("/api/v1/xiaohongshu/web_v3/fetch_note_detail",
+                             {"note_id": note_id, "xsec_token": xsec_token}))
+        attempts += [
+            ("/api/v1/xiaohongshu/app_v2/get_image_note_detail", {"note_id": note_id}),
+            ("/api/v1/xiaohongshu/app_v2/get_video_note_detail", {"note_id": note_id}),
+        ]
+        for path, params in attempts:
+            name = path.rsplit("/", 1)[-1]
+            try:
+                n = _extract(self._call("GET", path, params=params))
+            except Exception as e:  # noqa: BLE001  单端点失败(404/超时)→ 试下一个
+                logger.warning(f"小红书详情 {name} 调用失败: {type(e).__name__}: {str(e)[:60]}")
+                continue
+            rid = _nid(n)
+            if n and rid and (note_id in rid or rid in note_id):
+                logger.info(f"小红书详情命中本条({name})")
+                return n
+            logger.warning(f"小红书详情 {name} 返回非本条(得到 {rid or '空'}),试下一端点")
+        return {}
 
     def fetch_account_videos(self, platform: str, ref: str, *, count: int = 20) -> list[dict]:
         """抓指定账号自己的近期作品。ref 可为主页链接或作者ID(抖音sec_uid/B站mid)。

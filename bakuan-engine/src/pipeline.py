@@ -457,8 +457,9 @@ class Pipeline:
             item = self.tik.fetch_detail(platform, aid, xsec_token=xsec_token)
             if not item:
                 if platform in ("xiaohongshu", "xhs"):
-                    return {"error": f"小红书单链接取详情失败:该链接取不到本条(小红书 detail 常返回推荐流,"
-                                     f"需带 xsec_token 的分享链接);小红书建议改用关键词采集 od baokuan collect。aid={aid}"}
+                    # 已级联 精确(xsec_token)/图文/视频 三端点仍不中:多为笔记已删或 ID 不对。
+                    return {"error": f"小红书单链接取不到本条(已试 图文/视频/精确 三端点)——笔记可能已删除"
+                                     f"或链接不完整;可换带 xsec_token 的完整分享链接重试,或用关键词采集。aid={aid}"}
                 # 失败不丢任务(验收11):进失败队列,od baokuan retry 可重跑
                 self._report_failure("link", {"url": url, "platform": platform},
                                      RuntimeError(f"取详情失败 aid={aid}"))
