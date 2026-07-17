@@ -14,7 +14,7 @@ type CustomerManifest = { customer?: string; slug?: string; aliases?: string[] }
  *
  * 边界：签发在 `license-tool`（持私钥），这里**只拷贝已签好的 license**，不跨界签名。
  * 未设 `OD_PACK_CUSTOMER` = 不内嵌 = 无 license = 全功能（开发/超集包，行为不变）。
- * DMG 交付给客户时另走 `workbuild license import license.json`（见 customers/README.md）。
+ * DMG 交付给客户时另走 `multimedia license import license.json`（见 customers/README.md）。
  */
 export async function seedPackagedLicense(config: ToolPackConfig): Promise<void> {
   const want = (process.env.OD_PACK_CUSTOMER ?? "").trim();

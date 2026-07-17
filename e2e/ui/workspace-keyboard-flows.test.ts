@@ -386,8 +386,8 @@ async function createProject(
 
 async function gotoEntryHome(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await page.getByText('Loading WorkBuild…').waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
-  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve WorkBuild' });
+  await page.getByText('Loading Multimedia…').waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
+  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve Multimedia' });
   if (await privacyDialog.isVisible()) {
     await privacyDialog.getByRole('button', { name: /not now/i }).click();
     await expect(privacyDialog).toHaveCount(0);
@@ -411,7 +411,7 @@ async function expectProjectsView(page: Page) {
 
 async function expectWorkspaceReady(page: Page) {
   await expect(page).toHaveURL(/\/projects\//);
-  await expect(page.getByText('Loading WorkBuild…')).toHaveCount(0);
+  await expect(page.getByText('Loading Multimedia…')).toHaveCount(0);
   await expect(page.getByTestId('chat-composer')).toBeVisible();
   await expect(page.getByTestId('chat-composer-input')).toBeVisible();
   await expect(page.getByTestId('file-workspace')).toBeVisible();

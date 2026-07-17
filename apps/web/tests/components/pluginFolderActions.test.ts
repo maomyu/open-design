@@ -49,7 +49,7 @@ describe('buildPluginFolderAgentActionPrompt', () => {
         /Do NOT (call|route through) `?od plugin publish --to open-design`?/i,
       );
       expect(prompt).toMatch(
-        /registry[- ]submission|registry-submission flow|WorkBuild PR/i,
+        /registry[- ]submission|registry-submission flow|Multimedia PR/i,
       );
     });
 
@@ -76,7 +76,7 @@ describe('buildPluginFolderAgentActionPrompt', () => {
   describe('contribute (PR-based flow)', () => {
     const prompt = buildPluginFolderAgentActionPrompt(FOLDER, 'contribute');
 
-    it('delegates WorkBuild PR creation to the deterministic plugin CLI helper', () => {
+    it('delegates Multimedia PR creation to the deterministic plugin CLI helper', () => {
       expect(prompt).toContain('nexu-io/open-design');
       expect(prompt).toContain(`"$OD_NODE_BIN" "$OD_BIN" plugin open-design-pr ${FOLDER}`);
     });

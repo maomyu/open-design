@@ -44,7 +44,7 @@ function formatWritablePathError(options: {
   const message = error instanceof Error ? error.message : String(error);
   const parentPath = dirname(attemptedPath);
   const diagLines = [
-    `爆创 could not create or write to:`,
+    `Multimedia could not create or write to:`,
     attemptedPath,
     "",
     `Current user: ${currentUser}`,

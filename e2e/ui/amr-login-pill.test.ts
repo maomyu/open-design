@@ -21,13 +21,13 @@ const SETTINGS_MENU_LABEL = /^Settings$|^设置$|^設定$/i;
 test.describe.configure({ timeout: 30_000 });
 
 async function waitForLoadingToClear(page: Page) {
-  await expect(page.getByText('Loading WorkBuild…')).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByText('Loading Multimedia…')).toHaveCount(0, { timeout: 15_000 });
 }
 
 async function gotoEntryHome(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
-  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve WorkBuild' });
+  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve Multimedia' });
   if (await privacyDialog.isVisible().catch(() => false)) {
     await privacyDialog.getByRole('button', { name: /not now/i }).click();
   }

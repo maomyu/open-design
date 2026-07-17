@@ -305,7 +305,7 @@ export async function writeAssembledApp(
     `${JSON.stringify(
       {
         dependencies,
-        description: "WorkBuild packaged runtime",
+        description: "Multimedia packaged runtime",
         main: "./main.cjs",
         name: "open-design-packaged-app",
         private: true,

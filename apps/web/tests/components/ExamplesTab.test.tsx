@@ -165,7 +165,7 @@ describe('ExamplesTab', () => {
           }),
           skill({
             id: 'open-design-landing',
-            name: 'WorkBuild landing',
+            name: 'Multimedia landing',
             examplePrompt: 'Unique prompt',
           }),
         ]}

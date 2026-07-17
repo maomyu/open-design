@@ -235,7 +235,7 @@ function sanitizeProfileSegment(raw: unknown): string | null {
 function cleanUserAgent(): string {
   return app.userAgentFallback
     .split(" ")
-    .filter((token) => !/^(Electron|open-design|OpenDesign|爆创|WorkBuild)\//i.test(token))
+    .filter((token) => !/^(Electron|open-design|OpenDesign|爆创|Multimedia)\//i.test(token))
     .join(" ");
 }
 
@@ -493,7 +493,7 @@ export function hardenWebviewEmbeddedBrowser(window: BrowserWindow): void {
   window.webContents.on("did-attach-webview", (_event, contents) => {
     // will-attach 已保证走到这里的只有 od-browser 分区。
     // session UA 管网络请求;webContents UA 管 JS 可见的 navigator.userAgent。两个都要清成干净
-    // Chrome——微信视频号登录页会读 navigator.userAgent 检测内置浏览器(带 Electron/WorkBuild 就
+    // Chrome——微信视频号登录页会读 navigator.userAgent 检测内置浏览器(带 Electron/Multimedia 就
     // 拒绝渲染登录二维码、只给"浏览器不支持"占位图),只清 session 不够。
     contents.session.setUserAgent(cleanUserAgent());
     contents.setUserAgent(cleanUserAgent());

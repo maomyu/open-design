@@ -9728,7 +9728,7 @@ export async function startServer({
   });
   // 开机自启:daemon 从自身 execPath 推出 .app bundle,写/删 ~/Library/LaunchAgents 的
   // LaunchAgent(RunAtLoad)。dev 环境(非 .app 内运行)不支持,如实报错。
-  const AUTOSTART_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.workbuild.autostart.plist');
+  const AUTOSTART_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.multimedia.autostart.plist');
   function appBundlePath(): string | null {
     const segs = process.execPath.split(path.sep);
     const i = segs.findIndex((s) => s.endsWith('.app'));
@@ -9751,7 +9751,7 @@ export async function startServer({
       const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.workbuild.autostart</string>
+  <key>Label</key><string>com.multimedia.autostart</string>
   <key>ProgramArguments</key><array><string>/usr/bin/open</string><string>-a</string><string>${bundle}</string></array>
   <key>RunAtLoad</key><true/>
 </dict></plist>\n`;

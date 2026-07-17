@@ -216,16 +216,16 @@ describe('resolvePackagedElectronNodeCommand', () => {
   it('uses the hidden Electron helper as the macOS Electron-as-Node command when available', async () => {
     const root = mkdtempSync(join(tmpdir(), 'od-packaged-electron-helper-'));
     try {
-      const appPath = join(root, 'WorkBuild.app');
-      const execPath = join(appPath, 'Contents', 'MacOS', 'WorkBuild');
+      const appPath = join(root, 'Multimedia.app');
+      const execPath = join(appPath, 'Contents', 'MacOS', 'Multimedia');
       const helperPath = join(
         appPath,
         'Contents',
         'Frameworks',
-        'WorkBuild Helper.app',
+        'Multimedia Helper.app',
         'Contents',
         'MacOS',
-        'WorkBuild Helper',
+        'Multimedia Helper',
       );
 
       mkdirSync(join(appPath, 'Contents', 'MacOS'), { recursive: true });
@@ -242,7 +242,7 @@ describe('resolvePackagedElectronNodeCommand', () => {
   it('falls back to the main executable when the macOS helper is unavailable', async () => {
     const root = mkdtempSync(join(tmpdir(), 'od-packaged-no-electron-helper-'));
     try {
-      const execPath = join(root, 'WorkBuild.app', 'Contents', 'MacOS', 'WorkBuild');
+      const execPath = join(root, 'Multimedia.app', 'Contents', 'MacOS', 'Multimedia');
       mkdirSync(dirname(execPath), { recursive: true });
       writeFileSync(execPath, '#!/bin/sh\n', 'utf8');
 
@@ -253,7 +253,7 @@ describe('resolvePackagedElectronNodeCommand', () => {
   });
 
   it('keeps the main executable on non-macOS platforms', async () => {
-    const execPath = '/opt/WorkBuild/open-design';
+    const execPath = '/opt/Multimedia/open-design';
 
     await expect(resolvePackagedElectronNodeCommand(execPath, 'linux')).resolves.toBe(execPath);
   });

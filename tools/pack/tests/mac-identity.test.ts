@@ -46,11 +46,11 @@ function makeConfig(root: string, namespace: string): ToolPackConfig {
 describe("resolveMacInstallIdentity", () => {
   it("keeps stable builds on the canonical mac identity", () => {
     expect(resolveMacInstallIdentity(makeConfig("/work", "release-stable"))).toMatchObject({
-      appId: "com.workbuild.desktop",
-      installerTitle: "WorkBuild",
-      productName: "WorkBuild",
-      publicAppBundleName: "WorkBuild.app",
-      systemAppBundleName: "WorkBuild.app",
+      appId: "com.multimedia.desktop",
+      installerTitle: "Multimedia",
+      productName: "Multimedia",
+      publicAppBundleName: "Multimedia.app",
+      systemAppBundleName: "Multimedia.app",
     });
   });
 
@@ -58,28 +58,28 @@ describe("resolveMacInstallIdentity", () => {
     const config = makeConfig("/work", "release-beta");
 
     expect(resolveMacInstallIdentity(config)).toEqual({
-      appId: "com.workbuild.desktop.beta",
-      executableName: "WorkBuild Beta",
-      installerTitle: "WorkBuild Beta",
-      productName: "WorkBuild Beta",
-      publicAppBundleName: "WorkBuild Beta.app",
-      systemAppBundleName: "WorkBuild Beta.app",
+      appId: "com.multimedia.desktop.beta",
+      executableName: "Multimedia Beta",
+      installerTitle: "Multimedia Beta",
+      productName: "Multimedia Beta",
+      publicAppBundleName: "Multimedia Beta.app",
+      systemAppBundleName: "Multimedia Beta.app",
     });
-    expect(resolveMacPaths(config).appPath).toMatch(/WorkBuild Beta\.app$/);
+    expect(resolveMacPaths(config).appPath).toMatch(/Multimedia Beta\.app$/);
   });
 
   it("uses first-class preview app identity for preview release namespaces", () => {
     const config = makeConfig("/work", "release-preview");
 
     expect(resolveMacInstallIdentity(config)).toEqual({
-      appId: "com.workbuild.desktop.preview",
-      executableName: "WorkBuild Preview",
-      installerTitle: "WorkBuild Preview",
-      productName: "WorkBuild Preview",
-      publicAppBundleName: "WorkBuild Preview.app",
-      systemAppBundleName: "WorkBuild Preview.app",
+      appId: "com.multimedia.desktop.preview",
+      executableName: "Multimedia Preview",
+      installerTitle: "Multimedia Preview",
+      productName: "Multimedia Preview",
+      publicAppBundleName: "Multimedia Preview.app",
+      systemAppBundleName: "Multimedia Preview.app",
     });
-    expect(resolveMacPaths(config).appPath).toMatch(/WorkBuild Preview\.app$/);
+    expect(resolveMacPaths(config).appPath).toMatch(/Multimedia Preview\.app$/);
   });
 
   it("uses first-class nightly app identity for nightly release versions and namespaces", () => {
@@ -90,17 +90,17 @@ describe("resolveMacInstallIdentity", () => {
     const nightlyNamespaceConfig = makeConfig("/work", "release-nightly");
 
     expect(resolveMacInstallIdentity(nightlyVersionConfig)).toEqual({
-      appId: "com.workbuild.desktop.nightly",
-      executableName: "WorkBuild Nightly",
-      installerTitle: "WorkBuild Nightly",
-      productName: "WorkBuild Nightly",
-      publicAppBundleName: "WorkBuild Nightly.app",
-      systemAppBundleName: "WorkBuild Nightly.app",
+      appId: "com.multimedia.desktop.nightly",
+      executableName: "Multimedia Nightly",
+      installerTitle: "Multimedia Nightly",
+      productName: "Multimedia Nightly",
+      publicAppBundleName: "Multimedia Nightly.app",
+      systemAppBundleName: "Multimedia Nightly.app",
     });
-    expect(resolveMacPaths(nightlyVersionConfig).appPath).toMatch(/WorkBuild Nightly\.app$/);
+    expect(resolveMacPaths(nightlyVersionConfig).appPath).toMatch(/Multimedia Nightly\.app$/);
     expect(resolveMacInstallIdentity(nightlyNamespaceConfig)).toMatchObject({
-      productName: "WorkBuild Nightly",
-      publicAppBundleName: "WorkBuild Nightly.app",
+      productName: "Multimedia Nightly",
+      publicAppBundleName: "Multimedia Nightly.app",
     });
   });
 });

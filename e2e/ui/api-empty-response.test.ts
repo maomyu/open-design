@@ -80,7 +80,7 @@ async function createProject(page: Page, name: string) {
 async function gotoEntryHome(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
-  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve WorkBuild' });
+  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve Multimedia' });
   if (await privacyDialog.isVisible()) {
     await privacyDialog.getByRole('button', { name: /not now/i }).click();
     await expect(privacyDialog).toHaveCount(0);
@@ -122,5 +122,5 @@ async function sendPrompt(page: Page, prompt: string) {
 }
 
 async function waitForLoadingToClear(page: Page) {
-  await page.getByText('Loading WorkBuild…').waitFor({ state: 'hidden', timeout: T.medium });
+  await page.getByText('Loading Multimedia…').waitFor({ state: 'hidden', timeout: T.medium });
 }

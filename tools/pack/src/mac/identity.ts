@@ -46,17 +46,17 @@ function productNameForChannel(channel: ReleaseChannelIdentity): string {
 }
 
 function appIdForChannel(channel: ReleaseChannelIdentity): string {
-  if (channel === "beta") return "com.workbuild.desktop.beta";
-  if (channel === "nightly") return "com.workbuild.desktop.nightly";
-  if (channel === "preview") return "com.workbuild.desktop.preview";
-  return "com.workbuild.desktop";
+  if (channel === "beta") return "com.multimedia.desktop.beta";
+  if (channel === "nightly") return "com.multimedia.desktop.nightly";
+  if (channel === "preview") return "com.multimedia.desktop.preview";
+  return "com.multimedia.desktop";
 }
 
 export function resolveMacInstallIdentity(config: Pick<ToolPackConfig, "namespace" | "appVersion">): MacInstallIdentity {
   const namespaceToken = sanitizeNamespace(config.namespace);
   const channel = channelFromVersion(config.appVersion) ?? channelFromNamespace(config.namespace);
   const channelIdentity = channel == null
-    ? { appId: "com.workbuild.desktop", productName: PRODUCT_NAME }
+    ? { appId: "com.multimedia.desktop", productName: PRODUCT_NAME }
     : { appId: appIdForChannel(channel), productName: productNameForChannel(channel) };
   const publicAppBundleName = `${channelIdentity.productName}.app`;
   const systemAppBundleName = channel != null

@@ -522,7 +522,7 @@ describe('PluginsView', () => {
         url: 'https://open-design.ai/marketplace/open-design-marketplace.json',
         trust: 'official',
         manifest: {
-          name: 'WorkBuild Official',
+          name: 'Multimedia Official',
           version: '0.1.0',
           plugins: [{
             name: 'open-design/official-plugin',
