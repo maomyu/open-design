@@ -101,8 +101,12 @@ pnpm tools-pack mac stop    --namespace <ns>                 # 只停对应包�
 
 - **后续按包做功能开发时**：改动先想清楚归哪个包——纯文章功能不影响视频包(反之亦然)，
   横切改动两个包都要重打+重验。授权粒度动了要重签对应 license 并同步 manifest。
-- 短视频 Python 引擎（bakuan-engine）默认**不打进包**（缺 `tools/pack/vendor/{python-runtime,ffmpeg,wheels}`
-  时打包器自动跳过）。视频包要真跑采集/ASR/仿写需先备好 vendor 再打。
+- 短视频 Python 引擎(bakuan-engine)**随视频包发布**(2026-07-18 起 vendor 已备齐:
+  `tools/pack/vendor/{python-runtime.tar.gz,wheels/,ffmpeg.tar.gz}`,mac arm64,git 忽略)。
+  客户首启自动 provision(约 1 分钟)。视频包 DMG 因此 ~370M。vendor 丢失重建:
+  python-build-standalone cpython3.12 aarch64-darwin install_only 改名 python-runtime 打 tar;
+  bundled python `pip download -r bakuan-engine/requirements.txt -d wheels`;
+  eugeneware/ffmpeg-static darwin-arm64 放 ffmpeg/ffmpeg 打 tar。真抓爆款还需配 TikHub key。
 - 未签名（`identity=null`）：客户首开可能要右键→打开过 Gatekeeper。要签名/公证配证书跑 `--signed`。
 
 ## 本客户功能范围
