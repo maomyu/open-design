@@ -378,7 +378,8 @@ export function registerEmbeddedBrowserCookieBridge(): void {
           [domain, includeSub, c.path || "/", secure, String(expiry), c.name, c.value].join("\t"),
         );
       }
-      const dir = path.join(os.tmpdir(), "baochuang-cookies");
+      // 目录名带产品身份:本机多客户包并行,cookies 导出绝不能跨客户共享目录。
+      const dir = path.join(os.tmpdir(), "social-auto-cookies");
       await fs.mkdir(dir, { recursive: true });
       const cookieFile = path.join(dir, `${profileKey}.txt`);
       await fs.writeFile(cookieFile, lines.join("\n"), "utf8");

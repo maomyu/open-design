@@ -5,9 +5,9 @@
 
 用法：
   python scripts/browser_collect.py --keyword "相亲" --platforms xiaohongshu,douyin \
-      --out /tmp/collect.json [--session baochuang] [--scrolls 6] [--per 20]
+      --out /tmp/collect.json [--session social-auto] [--scrolls 6] [--per 20]
 
-- 持久会话 `--session`（默认 baochuang）：登录一次长期有效。
+- 持久会话 `--session`（默认 social-auto）：登录一次长期有效。
 - 某平台若未登录，脚本不会硬爬，会在输出里标 needs_login，并把该平台留空，
   提示你去那个已打开的窗口登录后重跑。
 - 每个平台一个提取器 JS（EXTRACTORS），返回统一扁平字段：
@@ -22,7 +22,7 @@ import sys
 import time
 from urllib.parse import quote
 
-SESSION_DEFAULT = "baochuang"
+SESSION_DEFAULT = "social-auto"
 
 # 各平台搜索页 URL（关键词已 urlencode 占位）
 SEARCH_URL = {
