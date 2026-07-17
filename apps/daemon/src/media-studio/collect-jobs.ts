@@ -112,7 +112,7 @@ export function createCollectBus(now: () => number = Date.now): CollectBus {
       if (listeners.size === 0) {
         throw new CollectError(
           'desktop-offline',
-          '桌面端未连接——内置浏览器采集需要 爆创 桌面应用在运行（登录态在桌面端浏览器标签里）。打开桌面应用后重试。',
+          '桌面端未连接——内置浏览器采集需要 WorkBuild 桌面应用在运行（登录态在桌面端浏览器标签里）。打开桌面应用后重试。',
         );
       }
       const t = now();

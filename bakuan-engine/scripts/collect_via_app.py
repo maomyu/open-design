@@ -1,6 +1,6 @@
-"""通过爆创【应用内标签】采集各平台真实爆款，输出统一 collect-file（喂引擎 --collect-file）。
+"""通过WorkBuild【应用内标签】采集各平台真实爆款，输出统一 collect-file（喂引擎 --collect-file）。
 
-这是内置浏览器采集的【首选】路径：采集跑在爆创桌面端的应用内标签 webview 里，
+这是内置浏览器采集的【首选】路径：采集跑在WorkBuild桌面端的应用内标签 webview 里，
 不弹独立窗口，登录态在标签的持久分区。流程：
   POST /api/media-studio/collect 建采集 job → 桌面端 web 在各平台标签抓卡片回写 →
   这里长轮询 /wait 直到完成 → 把 job.results 落成 {平台:[条目]} 文件。
@@ -9,7 +9,7 @@
   python scripts/collect_via_app.py --keyword "相亲" --platforms xiaohongshu,douyin \
       --out /tmp/collect.json [--daemon http://127.0.0.1:4700] [--scrolls 6] [--per 20]
 
-退出码：0=有数据；2=有平台需登录（已在爆创标签打开，请扫码后重跑）；1=失败/桌面端离线。
+退出码：0=有数据；2=有平台需登录（已在WorkBuild标签打开，请扫码后重跑）；1=失败/桌面端离线。
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _req(url: str, method: str = "GET", body: dict | None = None, timeout: int =
 
 
 def main():
-    ap = argparse.ArgumentParser(description="爆创应用内标签采集（绕 API，不弹窗）")
+    ap = argparse.ArgumentParser(description="WorkBuild应用内标签采集（绕 API，不弹窗）")
     ap.add_argument("--keyword", required=True)
     ap.add_argument("--platforms", default="xiaohongshu,douyin,bilibili")
     ap.add_argument("--out", required=True)
@@ -57,10 +57,10 @@ def main():
     except urllib.error.HTTPError as e:  # type: ignore[attr-defined]
         detail = e.read().decode()[:200] if hasattr(e, "read") else str(e)
         print(json.dumps({"error": f"建采集任务失败({e.code})：{detail}",
-                          "hint": "桌面端未连接？请确认爆创桌面应用在运行。"}, ensure_ascii=False))
+                          "hint": "桌面端未连接？请确认WorkBuild桌面应用在运行。"}, ensure_ascii=False))
         sys.exit(1)
     except Exception as e:  # noqa: BLE001
-        print(json.dumps({"error": f"连不上爆创服务：{e}"}, ensure_ascii=False)); sys.exit(1)
+        print(json.dumps({"error": f"连不上WorkBuild服务：{e}"}, ensure_ascii=False)); sys.exit(1)
 
     job_id = created.get("job", {}).get("id")
     if not job_id:

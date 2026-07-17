@@ -6,7 +6,7 @@ import '../src/index.css';
 import '../src/styles/home/index.css';
 
 export const metadata: Metadata = {
-  title: '爆创',
+  title: 'WorkBuild',
   icons: {
     icon: '/app-icon.png',
     apple: '/app-icon.png',

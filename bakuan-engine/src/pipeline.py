@@ -8,7 +8,7 @@
 用法：python -m src.pipeline --keyword "长期单身" --platforms douyin,xiaohongshu [--dry-run]
 
 说明：成品数据不再回写外部数据中心；采集/评分/ASR/脚本/选题(radar)结果由各入口直接返回，
-选题候选走 radar_items(供爆创选题步骤)。内部 _sink 仍保留供 dry-run 汇总。
+选题候选走 radar_items(供WorkBuild选题步骤)。内部 _sink 仍保留供 dry-run 汇总。
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ class Pipeline:
         self._sink: list[dict] = []          # dry-run 时收集写入项
         self._fans_cache: dict[str, int] = {}  # 作者粉丝数缓存
         self._rid_by_cid: dict[str, str] = {}  # content_id → 原始库 record_id（关联字段用）
-        self.radar_items: list[dict] = []      # --radar 模式：吐给爆创选题步骤的选题候选
+        self.radar_items: list[dict] = []      # --radar 模式：吐给WorkBuild选题步骤的选题候选
         self._radar_mode: bool = False         # 雷达模式：只评分选题，跳过脚本/封面
         self._collect_data: dict | None = None  # 内置浏览器采集数据 {平台:[条目]}；非空则替代 API 采集
         self._criteria: dict | None = None       # 灵活爆款标准(时间窗+多组条件)；非空则替代默认初筛
@@ -751,7 +751,7 @@ class Pipeline:
 
     def _write_topic(self, rc: normalize.RawContent, ev: EV.Evaluation,
                      link: list[dict] | None = None) -> str:
-        # 收集给爆创「选题步骤」的选题候选(标题/平台/热度/来源/评分/推荐承接)
+        # 收集给WorkBuild「选题步骤」的选题候选(标题/平台/热度/来源/评分/推荐承接)
         item = {
             "标题": rc.title, "平台": normalize.cn_platform(rc.platform),
             "流量爆款分": ev.traffic, "精准意向分": ev.intent,
@@ -922,7 +922,7 @@ def main():
     ap.add_argument("--min-threshold", type=int, default=0, help="本关键词自定最低点赞/热度门槛")
     ap.add_argument("--dry-run", action="store_true", help="离线假数据跑通全链路，无需 Key")
     ap.add_argument("--radar", action="store_true",
-                    help="爆款雷达：只输出选题候选JSON(给爆创选题步骤用),不出脚本")
+                    help="爆款雷达：只输出选题候选JSON(给WorkBuild选题步骤用),不出脚本")
     ap.add_argument("--collect-file",
                     help="内置浏览器采集的数据文件(JSON: {平台:[条目...]}),提供后绕过 TikHub/极致了 API 采集")
     ap.add_argument("--criteria",

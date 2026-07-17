@@ -95,7 +95,7 @@ export async function exportDiagnosticsToFile(
   const defaultPath = join(downloadsDir, filename);
 
   const dialogOptions = {
-    title: "Export 爆创 diagnostics",
+    title: "Export WorkBuild diagnostics",
     defaultPath,
     filters: [{ name: "Zip archive", extensions: ["zip"] }],
   };
@@ -124,11 +124,11 @@ export async function exportDiagnosticsToFile(
       sources: buildSidecarLogSources(runtime),
       redaction: { username: safeUsername() },
       crashReports: {
-        // Restrict to 爆创's own process names. A generic "Electron"
+        // Restrict to WorkBuild's own process names. A generic "Electron"
         // substring would sweep up crash reports from any other Electron app
         // on the host (VS Code, Slack, …) and leak unrelated user data into
         // the support bundle.
-        matchSubstrings: ["爆创", "open-design"],
+        matchSubstrings: ["WorkBuild", "open-design"],
         withinDays: 7,
         maxReports: 10,
         homeDir: homedir(),

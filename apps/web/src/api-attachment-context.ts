@@ -56,7 +56,7 @@ async function buildApiAttachmentContext(
   for (const attachment of attachments) {
     if (remaining <= 0) {
       blocks.push(
-        '[爆创 omitted remaining attached files because the attachment context budget was exhausted.]',
+        '[WorkBuild omitted remaining attached files because the attachment context budget was exhausted.]',
       );
       break;
     }
@@ -169,7 +169,7 @@ function inferProjectFileKind(name: string): ProjectFileKind {
 function clipAttachmentText(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   const omitted = text.length - maxChars;
-  return `${text.slice(0, maxChars)}\n\n[爆创 truncated ${omitted} chars from this attachment before sending it to the API provider.]`;
+  return `${text.slice(0, maxChars)}\n\n[WorkBuild truncated ${omitted} chars from this attachment before sending it to the API provider.]`;
 }
 
 function escapeMarkdownFence(text: string): string {

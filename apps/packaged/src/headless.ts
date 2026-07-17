@@ -146,7 +146,7 @@ async function main(): Promise<void> {
   }
 
   const shutdown = async (): Promise<void> => {
-    process.stdout.write("\n Shutting down 爆创...\n");
+    process.stdout.write("\n Shutting down WorkBuild...\n");
     await ipcServer.close().catch(() => undefined);
     await sidecars.close().catch(() => undefined);
     await identity.close().catch(() => undefined);
@@ -175,7 +175,7 @@ async function main(): Promise<void> {
     url: webUrl,
   });
 
-  process.stdout.write(`\n 爆创 is running\n\n`);
+  process.stdout.write(`\n WorkBuild is running\n\n`);
   process.stdout.write(` ➜ ${colorize(webUrl)}\n\n`);
   process.stdout.write(` Press Ctrl+C to stop\n\n`);
 
