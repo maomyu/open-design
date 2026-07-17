@@ -15,6 +15,7 @@ import type {
 } from '@open-design/contracts';
 import { IMAGE_RATIO_OPTIONS, IMAGE_STYLE_PRESETS } from '@open-design/contracts';
 import { ImageStyleSamples } from './ImageStyleSamples';
+import { FinalPromptPreview } from './FinalPromptPreview';
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
@@ -860,6 +861,7 @@ export function NoteStudioView(): JSX.Element {
                     </select>
                   </div>
                   <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
+                  <FinalPromptPreview style={galleryStyle} description={galleryPrompt} />
                   <div className={c('row')}>
                     <input
                       className={`${c('input')} ${c('grow')}`}
