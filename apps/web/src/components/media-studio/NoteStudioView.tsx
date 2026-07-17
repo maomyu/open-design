@@ -14,6 +14,7 @@ import type {
   UpdateMediaArticleRequest,
 } from '@open-design/contracts';
 import { IMAGE_STYLE_PRESETS } from '@open-design/contracts';
+import { ImageStyleSamples } from './ImageStyleSamples';
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
@@ -722,27 +723,44 @@ export function NoteStudioView(): JSX.Element {
                       AI 给的图集建议（{ideaLines.length} 张）
                       <span className={c('cardHint')}>每条可单独生图,也可一键全部（第 1 张当封面）</span>
                     </div>
-                    {/* 逐条一行:建议文本 + 各自的「生图」按钮(2026-07-17 用户反馈:别挤成一坨) */}
+                    {/* 逐条一行:可编辑的提示词输入框 + 各自的「生图」按钮(2026-07-17 用户反馈:
+                        别挤成一坨 + 提示词要能改)。失焦把修改回存 extra.imageIdeas,切页不丢。 */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '6px 0 10px' }}>
                       {ideaLines.map((idea, i) => (
                         <div
-                          key={`${i}-${idea.slice(0, 16)}`}
+                          key={`${i}-${idea}`}
                           className={c('row')}
                           style={{ alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}
                         >
-                          <div
-                            className={c('grow')}
-                            style={{ fontSize: 12.5, lineHeight: 1.5, minWidth: 0, wordBreak: 'break-all' }}
-                          >
-                            {idea}
-                          </div>
+                          <input
+                            className={`${c('input')} ${c('grow')}`}
+                            style={{ minWidth: 0, fontSize: 12.5 }}
+                            defaultValue={idea}
+                            title="可直接修改这条画面提示词,改完点右侧「生图」"
+                            onBlur={(e) => {
+                              const v = e.target.value.trim();
+                              if (v === idea) return;
+                              const next = [...ideaLines];
+                              if (v) next[i] = v;
+                              else next.splice(i, 1);   // 清空=删除这条建议
+                              editArticle({ extra: { imageIdeas: next.join('\n') } });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                            }}
+                          />
                           <button
                             type="button"
                             className={c('btn')}
                             style={{ flexShrink: 0 }}
                             disabled={galleryBusy !== null}
-                            title="只生成这一张,按当前选中的风格/模型"
-                            onClick={() => void generateGalleryImage(idea)}
+                            title="按左侧(可编辑的)提示词只生成这一张,用当前选中的风格/模型"
+                            onClick={(e) => {
+                              // 就地取输入框当前值:没失焦的最新编辑也要生效
+                              const input = (e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement | null);
+                              const text = (input?.value ?? idea).trim();
+                              if (text) void generateGalleryImage(text);
+                            }}
                           >
                             {galleryBusy === idea ? '生成中…' : '生图'}
                           </button>
@@ -780,6 +798,7 @@ export function NoteStudioView(): JSX.Element {
                             : '按建议生成全部'}
                       </button>
                     </div>
+                    <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
                   </div>
                 ) : null}
                 <div className={c('card')}>
@@ -817,6 +836,7 @@ export function NoteStudioView(): JSX.Element {
                       ))}
                     </select>
                   </div>
+                  <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
                   <div className={c('row')}>
                     <input
                       className={`${c('input')} ${c('grow')}`}

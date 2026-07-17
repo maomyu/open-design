@@ -17,6 +17,7 @@ import type {
   UpdateMediaArticleRequest,
 } from '@open-design/contracts';
 import { IMAGE_STYLE_PRESETS } from '@open-design/contracts';
+import { ImageStyleSamples } from './ImageStyleSamples';
 import { Icon } from '../Icon';
 import { fetchPlatformAccounts } from '../../providers/daemon';
 import {
@@ -2045,6 +2046,7 @@ function MarkerRow({
         placeholder="画面描述：有什么、什么氛围…"
         onChange={(e) => setDesc(e.target.value)}
       />
+      <ImageStyleSamples value={style} onSelect={setStyle} />
       <div className={c('row')}>
         <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
           {IMAGE_STYLES.map((s) => (
