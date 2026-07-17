@@ -669,12 +669,26 @@ export const IMAGE_STYLE_PRESETS: ReadonlyArray<ImageStylePreset> = [
 // 2026-07-17 用户拍板移除:暖插画(illustrated)/纯净插画(clean)/赛博霓虹(cyber)。
 // daemon composeStylePrompt 仍保留 illustrated/clean 的兼容分支(老稿/旧偏好可能还带)。
 
-/** 组装最终生图提示词(前端预览与 daemon 实发共用,所见即所发)。 */
+/** 画风词清洗:选了内置风格时,把描述里混入的画风词剥掉(老稿的图集建议/配图标注里
+ *  常有 AI 写死的"扁平插画风"之类,和所选风格打架)。只剥「××风/风格/画风/感」后缀形态
+ *  与少量固定短语,不伤内容名词("水彩颜料小碗"不受影响);none 风格不清洗(用户全权)。 */
+export function stripStyleWords(description: string): string {
+  return description
+    .replace(/(扁平插画|白板手绘|手绘插画|扁平|插画|手绘|水彩|油画|素描|卡通|漫画|Q版|3D渲染|3D|三维|C4D|赛博朋克|霓虹|胶片|摄影|写实|极简|国潮|水墨|像素|波普|孟菲斯)(风格|画风|风)/g, '')
+    .replace(/(插画感|手绘感|卡通感|3D感|渲染感)/g, '')
+    .replace(/^[,，、:：;；.。\s]+/, '')
+    .replace(/[,，、]{2,}/g, '，')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/** 组装最终生图提示词(前端预览与 daemon 实发共用,所见即所发;含画风词清洗)。 */
 export function composeImagePrompt(styleId: string, description: string): string {
   const preset = IMAGE_STYLE_PRESETS.find((s) => s.id === styleId);
   const stylePrompt = preset?.prompt ?? '';
   if (!stylePrompt) return description;
-  return `${IMAGE_STYLE_WRAP.styleHead}${stylePrompt}\n${IMAGE_STYLE_WRAP.contentHead}${description}`;
+  const cleaned = stripStyleWords(description) || description;
+  return `${IMAGE_STYLE_WRAP.styleHead}${stylePrompt}\n${IMAGE_STYLE_WRAP.contentHead}${cleaned}`;
 }
 
 /** 生图比例选项(图文笔记台等)。默认 3:4(小红书竖图)。 */
