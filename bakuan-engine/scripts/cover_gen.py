@@ -56,27 +56,34 @@ def analyze(ref: str) -> dict:
     base = (S.KEYS.ark_base or "").rstrip("/")
     key = S.KEYS.ark_key
     model = os.getenv("VISION_MODEL", "")
-    # 防呆:VISION_MODEL 误配成图像生成模型(seedream/seedance)时,换真·视觉理解模型
-    # (2026-07-16 实测客户 .env 配的是 doubao-seedream-5.0 → chat/completions 404)。
-    if not model or "seedream" in model or "seedance" in model:
-        model = "doubao-1.5-vision-pro-250328"
+    # 火山方舟视觉理解走 /responses 端点 + input_image/input_text 格式(不是 /chat/completions);
+    # model 填客户方舟「推理接入点」ID(ep-xxxx)或已开通的视觉模型名。2026-07-17 客户 curl 验证。
     if base and key and model:
         try:
             r = requests.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {key}"},
-                json={"model": model, "messages": [{"role": "user", "content": [
-                    {"type": "text", "text": _ANALYZE_PROMPT},
-                    {"type": "image_url", "image_url": {"url": _ref_to_data_url(ref)}},
-                ]}], "temperature": 0.2},
-                timeout=60)
+                f"{base}/responses",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": model, "input": [{"role": "user", "content": [
+                    {"type": "input_image", "image_url": _ref_to_data_url(ref)},
+                    {"type": "input_text", "text": _ANALYZE_PROMPT},
+                ]}],
+                    # 封面解析只需"看图→出JSON",关掉深度推理提速(reasoning 会拖到分钟级)
+                    "reasoning": {"effort": "minimal"}, "max_output_tokens": 800},
+                timeout=int(os.getenv("VISION_TIMEOUT", "180")))
             r.raise_for_status()
-            txt = r.json()["choices"][0]["message"]["content"]
+            data = r.json()
+            # output 是数组:reasoning + message;取 message 里 output_text 的正文。
+            txt = ""
+            for o in data.get("output", []):
+                if o.get("type") == "message":
+                    txt = "".join(c.get("text", "") for c in (o.get("content") or [])
+                                  if c.get("type") == "output_text")
             start, end = txt.find("{"), txt.rfind("}")
             if start >= 0 and end > start:
                 d = json.loads(txt[start:end + 1])
                 d["来源"] = "vision"
                 return d
+            fallback_reason = f"视觉返回无JSON: {txt[:60]}"
         except Exception as e:  # noqa: BLE001
             fallback_reason = f"{type(e).__name__}: {str(e)[:80]}"
     else:
