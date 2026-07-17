@@ -407,8 +407,6 @@ function knowledgeFromRow(r: Row): import('@open-design/contracts').MediaKnowled
     contentMd: str(r.content_md),
     category: str(r.category) || 'other',
     updatedAt: numOrNull(r.updated_at) ?? 0,
-    feishuRecordId: strOrNull(r.feishu_record_id),
-    feishuTable: strOrNull(r.feishu_table),
   };
 }
 
@@ -445,15 +443,4 @@ export function deleteKnowledge(db: Database.Database, id: string): boolean {
 export function getKnowledge(db: Database.Database, id: string) {
   const row = db.prepare(`SELECT * FROM media_knowledge WHERE id = ?`).get(id) as Row | undefined;
   return row ? knowledgeFromRow(row) : null;
-}
-
-/** 飞书双写成功后回写 record_id + 落表（供更新幂等 / 删除同步）。 */
-export function setKnowledgeFeishuRef(
-  db: Database.Database,
-  id: string,
-  table: string,
-  recordId: string,
-): void {
-  db.prepare(`UPDATE media_knowledge SET feishu_record_id = ?, feishu_table = ? WHERE id = ?`)
-    .run(recordId, table, id);
 }

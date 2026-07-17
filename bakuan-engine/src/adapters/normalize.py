@@ -13,7 +13,7 @@ from typing import Any
 
 @dataclass
 class RawContent:
-    """标准化后的一条内容（写入飞书「爆款内容原始库」前的中间态）。"""
+    """标准化后的一条内容（进入「爆款内容原始库」记录前的中间态）。"""
     content_id: str          # 平台+作品ID，全局唯一
     platform: str
     content_type: str        # 视频 / 图文 / 文章
@@ -32,7 +32,7 @@ class RawContent:
     fingerprint: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
-    def to_feishu(self) -> dict[str, Any]:
+    def to_record(self) -> dict[str, Any]:
         return {
             "内容唯一ID": self.content_id, "平台": cn_platform(self.platform),
             "内容类型": self.content_type, "标题": self.title, "原始链接": self.url,
@@ -44,7 +44,7 @@ class RawContent:
 
 
 def _fmt_time(ts: int) -> str:
-    """unix 秒/毫秒时间戳 → 'YYYY-MM-DD HH:MM:SS'（飞书 datetime）；无效返回空串。"""
+    """unix 秒/毫秒时间戳 → 'YYYY-MM-DD HH:MM:SS'；无效返回空串。"""
     if not ts:
         return ""
     try:
@@ -94,7 +94,7 @@ _CN_PLATFORM = {"douyin": "抖音", "xiaohongshu": "小红书", "bilibili": "B�
 
 
 def cn_platform(code: str) -> str:
-    """平台代号→中文（写飞书用，展示更友好、与监控配置库一致）。"""
+    """平台代号→中文（展示更友好）。"""
     return _CN_PLATFORM.get(code, code)
 
 

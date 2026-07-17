@@ -24,8 +24,6 @@ import {
   deletePlatformAccountApi,
 } from '../providers/daemon';
 import { openStudioBrowser } from '../providers/media-studio';
-import { FeishuDataCenterSection } from './FeishuDataCenterSection';
-import { MonitorConfigSection } from './MonitorConfigSection';
 import { OpsSection } from './OpsSection';
 import './AccountsView.css';
 import './PluginEditView.css';
@@ -89,20 +87,15 @@ export function AccountsView() {
         </div>
       </header>
 
-      {/* ── 数据源 / 结果存储 ──
-          飞书数据中心:选题/评分/脚本结果都沉淀到客户自己的飞书表格。选题采集本身已改用
-          TikHub 内置数据源(无需在此配置或登录)。 */}
+      {/* ── 数据源 ──
+          选题采集用 TikHub 内置数据源(无需在此配置或登录)。 */}
       <div style={{ margin: '4px 0 8px' }}>
-        <div style={{ fontWeight: 700, fontSize: 15 }}>📊 数据源 · 结果存储</div>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>📊 数据源</div>
         <div style={{ fontSize: 12.5, opacity: 0.72, marginTop: 2 }}>
-          选题采集已用 <b>TikHub</b> 内置数据源(带粉丝/点赞/评论,无需登录);结果存到你自己的飞书数据中心。
+          选题采集已用 <b>TikHub</b> 内置数据源(带粉丝/点赞/评论,无需登录)。
         </div>
       </div>
-      <div className="accounts-view__feishu" style={{ marginBottom: 18 }}>
-        <FeishuDataCenterSection />
-      </div>
 
-      <MonitorConfigSection />
       <OpsSection />
 
       {/* ── 发布账号 ──

@@ -48,7 +48,7 @@ th{{background:#1F4E79;color:#fff}} .score{{font-weight:700;color:#d83931}} .sma
 .tag{{background:#1F4E79;color:#fff;font-size:12px;padding:2px 8px;border-radius:10px}} .ct{{color:#d83931}}
 .note{{background:#fff8e6;border:1px solid #ffe08a;padding:10px;border-radius:6px;font-size:13px}}</style></head><body>
 <h1>自媒体爆款监控 · 成品演示（离线 dry-run 生成）</h1>
-<p class=note>本页由离线假数据跑通全链路后生成，用于直观展示成品形态；实盘接入真实 Key 后，同样的内容会写入您的飞书多维表格。</p>
+<p class=note>本页由离线假数据跑通全链路后生成，用于直观展示成品形态。</p>
 <h2>① 今日爆款选题池（{len(pool)} 条）</h2>
 <table><tr><th>类型</th><th>流量爆款分</th><th>精准意向分</th><th>优先级</th><th>所属榜单</th><th>高频用户问题</th></tr>{pool_html}</table>
 <h2>② 生成的口播脚本（{len(scripts)} 份，仿写×自有风格）</h2>

@@ -53,18 +53,15 @@ function handleFor(ctx: EngineContext, engineDir: string): EngineHandle {
   const venvBin = path.join(engineDir, '.venv', 'bin');
   // packaged 自带静态 ffmpeg（首启动从 tar 解到 engine-runtime）；dev 依赖系统 PATH。
   const ffmpegDir = ctx.resourceRoot ? path.join(runtimeRootFor(ctx), 'ffmpeg') : null;
-  // 飞书数据中心连接/建表/回写都跑 lark-cli(原生二进制)。packaged 自带(首启动从 tar 解到
-  // engine-runtime/lark-cli),放 PATH 最前——不依赖客户机装没装 lark-cli(2026-07-16 用户拍板打进包)。
-  const larkCliDir = ctx.resourceRoot ? path.join(runtimeRootFor(ctx), 'lark-cli') : null;
   // dev/兜底:再把常见 CLI 安装目录并进 PATH。GUI app 从 Finder 启动时 launchd 只给最小 PATH
-  // (/usr/bin:/bin:…),没有 /opt/homebrew/bin;dev 态没打包 lark-cli 时靠这个找到系统装的。
+  // (/usr/bin:/bin:…),没有 /opt/homebrew/bin;引擎子进程要用的系统工具靠这个找到。
   const commonBins = [
     '/opt/homebrew/bin', '/usr/local/bin',
     path.join(os.homedir(), '.npm-global', 'bin'),
     path.join(os.homedir(), '.local', 'bin'),
     '/usr/bin', '/bin',
   ];
-  const pathParts = [larkCliDir, venvBin, ffmpegDir, ...commonBins, process.env.PATH].filter(Boolean) as string[];
+  const pathParts = [venvBin, ffmpegDir, ...commonBins, process.env.PATH].filter(Boolean) as string[];
   return {
     engineDir,
     python: path.join(venvBin, 'python'),
@@ -123,9 +120,6 @@ async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
     runtimeRoot,
     path.join(runtimeRoot, 'ffmpeg', 'ffmpeg'),
   );
-  // 自带 lark-cli 原生二进制(飞书数据中心连接/建表/回写)。见 ensureLarkCli(幂等,已 provision
-  // 的引擎在 app 更新后也会补上——否则老用户升级拿不到 lark-cli、飞书仍不可用)。
-  await ensureLarkCli(ctx);
 
   // 2) 源码复制到可写目录（含 .env）。venv 若残留（上次 provision 中断）先清掉。
   await fs.promises.mkdir(path.dirname(engineDir), { recursive: true });
@@ -221,29 +215,14 @@ async function resyncEngineSourceIfStale(ctx: EngineContext, engineDir: string):
   await writeEngineSourceStamp(resourceRoot, engineDir);
 }
 
-/** 解压自带 lark-cli 二进制到 engine-runtime/lark-cli(飞书数据中心用)。幂等(extractTarOnce 按
- *  二进制存在与否判定);已 provision 的引擎在 app 更新后也调它,保证老用户升级后拿到 lark-cli。 */
-async function ensureLarkCli(ctx: EngineContext): Promise<void> {
-  const resourceRoot = ctx.resourceRoot;
-  if (!resourceRoot) return;
-  const larkCliTar = path.join(resourceRoot, 'lark-cli.tar.gz');
-  if (!fs.existsSync(larkCliTar)) return;
-  const runtimeRoot = runtimeRootFor(ctx);
-  await fs.promises.mkdir(runtimeRoot, { recursive: true });
-  await extractTarOnce(larkCliTar, runtimeRoot, path.join(runtimeRoot, 'lark-cli', 'lark-cli'));
-}
-
 /** 确保 packaged 引擎已 provision（幂等、防并发）；dev 直接返回。 */
 export function ensureBakuanEngineProvisioned(ctx: EngineContext): Promise<void> {
   if (!ctx.resourceRoot) return Promise.resolve();
   const engineDir = engineDirFor(ctx);
   if (fs.existsSync(handleFor(ctx, engineDir).python)) {
-    // 已 provision:①同步源码(引擎升级随 app 更新到达)②补 lark-cli(老用户从无 lark-cli 版本升级)。
-    return Promise.all([
-      resyncEngineSourceIfStale(ctx, engineDir),
-      ensureLarkCli(ctx),
-    ]).then(() => undefined).catch((err) => {
-      console.warn('[bakuan-engine] 源码同步/lark-cli 补全失败(继续):', err instanceof Error ? err.message : String(err));
+    // 已 provision:同步源码(引擎升级随 app 更新到达)。
+    return resyncEngineSourceIfStale(ctx, engineDir).catch((err) => {
+      console.warn('[bakuan-engine] 源码同步失败(继续):', err instanceof Error ? err.message : String(err));
     });
   }
   if (!provisionPromise) {

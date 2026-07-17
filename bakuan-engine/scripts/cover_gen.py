@@ -3,10 +3,9 @@
 三个子命令,均输出一行 JSON(loguru 不开,daemon 从首个 { 解析):
   analyze  --ref <本地路径|URL>                       参考封面 → 视觉模型解析 → 结构化风格 JSON
   gen      --title <主标题> [--subtitle 副] [--ref ..] [--style-json '<json>|@file']
-           [--platforms douyin,bilibili] [--versions 1-3] [--out-dir D] [--record-id rec..]
+           [--platforms douyin,bilibili] [--versions 1-3] [--out-dir D]
                                                       背景生成(Seedream/渐变兜底)+程序叠字,
-                                                      背景另存 *_bg.png 供「改标题重排版」复用;
-                                                      --record-id 时上传「成品内容审核库.封面成品」
+                                                      背景另存 *_bg.png 供「改标题重排版」复用
   rerender --bg <既有背景png> --title <新标题> [--subtitle 副] [--platform douyin] [--out 路径]
                                                       验收9:不重出背景,仅重渲染文字出新版本
 
@@ -23,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import settings as S  # noqa: E402  载入 .env(ARK/VISION_MODEL/飞书)
+from config import settings as S  # noqa: E402  载入 .env(ARK/VISION_MODEL)
 from src.cover import seedream as SD  # noqa: E402
 
 _ANALYZE_PROMPT = (
@@ -142,16 +141,7 @@ def gen(a) -> dict:
             covers.append({"platform": plat, "version": v, "path": os.path.abspath(out_path),
                            "bg_path": os.path.abspath(bg_path),
                            "check": {"overflow": metrics.get("overflow"), "ocr": note, "ok": ok and not metrics.get("overflow")}})
-    uploaded = 0
-    if a.record_id:
-        from src.feishu.larkcli_bitable import LarkCliBitable
-        fs = LarkCliBitable()
-        for c in covers:
-            rel = os.path.relpath(c["path"])   # lark-cli 要求 cwd 相对路径
-            if fs.upload_attachment("成品内容审核库", a.record_id, "封面成品", rel):
-                uploaded += 1
-    return {"ok": True, "style": style, "covers": covers,
-            **({"uploaded": uploaded} if a.record_id else {})}
+    return {"ok": True, "style": style, "covers": covers}
 
 
 def rerender(a) -> dict:
@@ -177,7 +167,6 @@ def main() -> None:
     p2.add_argument("--platforms", default="douyin")
     p2.add_argument("--versions", type=int, default=1)
     p2.add_argument("--out-dir", default="")
-    p2.add_argument("--record-id", default="")
     p3 = sub.add_parser("rerender")
     p3.add_argument("--bg", required=True)
     p3.add_argument("--title", required=True)

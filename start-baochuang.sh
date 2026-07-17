@@ -3,5 +3,4 @@
 export NVM_DIR="$HOME/.nvm"; source "$NVM_DIR/nvm.sh" >/dev/null 2>&1; nvm use 24 >/dev/null 2>&1
 cd "$(dirname "$0")"
 export OD_DATA_DIR="$HOME/.baochuang"
-# 飞书连接走 lark-cli 官方引导(config init --new),客户用自己的飞书授权,平台零 App Secret。
 pnpm exec tools-dev "${1:-start}" --namespace baochuang --daemon-port 4700 --web-port 4800

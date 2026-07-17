@@ -1,5 +1,5 @@
 # ── 核心 ──
-requests>=2.31            # HTTP 调用 TikHub / 极致了 / 火山 / 飞书
+requests>=2.31            # HTTP 调用 TikHub / 极致了 / 火山
 httpx>=0.27               # 异步采集（可选）
 python-dotenv>=1.0        # .env 加载
 pydantic>=2.6             # 数据模型/校验

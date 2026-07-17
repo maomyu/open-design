@@ -1,7 +1,7 @@
 """一键上线：凭据齐了就跑这个，自动完成实盘交付的最后一公里。
 
-步骤：自检 Key → 建飞书 12 表(缺则建) → 实盘跑多平台一轮(采集→评分→脚本→封面→回写飞书)
-     → 打印验收报告。任一 Key 缺失会明确指出，并降级跳过对应环节而非报错。
+步骤：自检 Key → 实盘跑多平台一轮(采集→评分→脚本→封面) → 打印验收报告。
+     任一 Key 缺失会明确指出，并降级跳过对应环节而非报错。
 用法：填好 .env 后  ./.venv/bin/python scripts/go_live.py
 """
 from __future__ import annotations
@@ -31,35 +31,22 @@ def main():
     tik = _has("TIKHUB_API_KEY")
     llm = _has("DEEPSEEK_API_KEY")
     ark = _has("ARK_API_KEY")
-    feishu = _has("FEISHU_APP_ID") and _has("FEISHU_BITABLE_APP_TOKEN")
-    print(f"\n[凭据] TikHub={tik} DeepSeek={llm} 火山ARK={ark} 飞书App={feishu}")
+    print(f"\n[凭据] TikHub={tik} DeepSeek={llm} 火山ARK={ark}")
 
     if not (tik and llm):
         print("\n✋ TikHub + DeepSeek 是主干必需，请先填这两个再运行。")
         return
 
-    # 1) 飞书建表
-    if feishu:
-        try:
-            import subprocess
-            print("\n[1/3] 建飞书 12 表 …")
-            subprocess.run([sys.executable, str(ROOT / "scripts" / "init_feishu.py")], check=False)
-            report.append("✅ 飞书建表已执行")
-        except Exception as e:
-            report.append(f"⚠️ 飞书建表异常：{e}")
-    else:
-        report.append("⬜ 跳过飞书（未配置 App）——产物暂不回写")
-
-    # 2) 实盘跑一轮
-    print("\n[2/3] 实盘采集→评分→脚本 …")
+    # 1) 实盘跑一轮
+    print("\n[1/2] 实盘采集→评分→脚本 …")
     from src.pipeline import Pipeline
-    pipe = Pipeline(dry_run=not feishu)   # 无飞书则 dry-run 收集到本地
+    pipe = Pipeline()
     platforms = ["douyin", "xiaohongshu", "bilibili", "kuaishou"]
     res = pipe.run_keyword("长期单身", platforms)
     report.append(f"✅ 实盘跑通：候选 {res['candidates']} 条，生成 {res['generated']} 组脚本")
 
-    # 3) 封面
-    print("\n[3/3] 生成封面 …")
+    # 2) 封面
+    print("\n[2/2] 生成封面 …")
     try:
         from src.cover.seedream import CoverRequest, SeedreamCover
         out = str(ROOT / "data" / "covers" / "go_live_demo.png")

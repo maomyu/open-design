@@ -1,6 +1,6 @@
 // 运维卡片(模块9/10,验收11/13):成本统计 / 失败队列+重试 / 一键备份 / 开机自启。
 // 与 od baokuan cost/failed/retry/backup/autostart 同源同端点(/api/baokuan/*),
-// 界面按钮=CLI 命令的等价物。挂在账号页 MonitorConfigSection 下方。
+// 界面按钮=CLI 命令的等价物。挂在账号页。
 import { useEffect, useState, type JSX } from 'react';
 import type { BaokuanCostReport, BaokuanFailedTask } from '@open-design/contracts';
 import {

@@ -23,21 +23,6 @@ def _r(name: str, status: str, detail: str = ""):
     print(f"{icon} {name:14} {detail}")
 
 
-def check_feishu():
-    aid, sec = os.getenv("FEISHU_APP_ID"), os.getenv("FEISHU_APP_SECRET")
-    if not aid or not sec or "待填" in (aid + sec) or aid.startswith("cli_xxx"):
-        return _r("飞书", "skip", "未配置")
-    try:
-        r = requests.post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-                          json={"app_id": aid, "app_secret": sec}, timeout=15).json()
-        if r.get("code") == 0:
-            _r("飞书", "ok", "tenant_token 获取成功")
-        else:
-            _r("飞书", "err", f"{r.get('code')}: {r.get('msg')}")
-    except Exception as e:
-        _r("飞书", "err", str(e)[:80])
-
-
 def check_tikhub():
     key = os.getenv("TIKHUB_API_KEY")
     if not key or "待填" in key:
@@ -86,7 +71,7 @@ def check_dajiala():
 
 def main():
     print("=== 平台连通自检（只读探测）===")
-    for fn in (check_feishu, check_tikhub, check_deepseek, check_ark, check_dajiala):
+    for fn in (check_tikhub, check_deepseek, check_ark, check_dajiala):
         try:
             fn()
         except Exception as e:

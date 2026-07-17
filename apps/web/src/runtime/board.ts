@@ -1,4 +1,4 @@
-// Structured "board" data model — a Feishu/Lark Bitable-style base the agent
+// Structured "board" data model — a multidimensional-table style base the agent
 // writes as `board.json` instead of generating presentation HTML each step.
 // The agent only inserts/updates DATA (tables → fields → rows); the host owns
 // rendering (see components/BoardView.tsx). This keeps per-step model output

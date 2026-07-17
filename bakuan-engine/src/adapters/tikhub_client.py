@@ -204,7 +204,7 @@ class TikHubClient:
           ② app_v2/get_image_note_detail(图文笔记);
           ③ app_v2/get_video_note_detail(视频笔记)。
         每步都校验「返回笔记 id == 请求 id」,命中才采用;全不中返回 {}(绝不拿
-        推荐流内容往下写飞书)。"""
+        推荐流内容当成本条往下用)。"""
         def _extract(data: dict) -> dict:
             node = data.get("data", data)
             # 服务包裹 {code,success,data:[...]}

@@ -1,9 +1,9 @@
-"""主链路编排：配置 → 采集 → 标准化 → 去重 → 初筛 → 评分 → 拆解 → 召回 → 脚本 → 封面 → 回写。
+"""主链路编排：配置 → 采集 → 标准化 → 去重 → 初筛 → 评分 → 拆解 → 召回 → 脚本 → 封面。
 
-三种入口：
-  run_keyword(kw, platforms)      按关键词跑全链路
+入口：
+  run_keyword(kw, platforms)      按关键词跑全链路（--radar 只出选题候选）
   run_single_link(url)            手工单链接跑完整链路
-  run_scheduled()                 读飞书监控配置库，按启用项定时批量跑
+  run_account(account, platforms) 竞品账号按时间窗采集
 离线自检：加 --dry-run，用假数据+假模型跑通全链路，无需任何 Key，结果写 data/dryrun_output.json。
 用法：python -m src.pipeline --keyword "长期单身" --platforms douyin,xiaohongshu [--dry-run]
 """
@@ -20,7 +20,6 @@ from config import settings as S
 from src.adapters import normalize
 from src.asr import transcribe as ASR
 from src.llm import router
-from src.rag import recall
 from src.scoring import evaluate as EV
 from src.scoring import hot_score as H
 from src.script import generate as GEN
@@ -30,39 +29,22 @@ from src import store
 class Pipeline:
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
-        self._sink: list[dict] = []          # dry-run 时收集写入项
+        self._sink: list[dict] = []          # 运行产物记录（dry-run 结束时落盘供自检）
         self._fans_cache: dict[str, int] = {}  # 作者粉丝数缓存
-        self._rid_by_cid: dict[str, str] = {}  # content_id → 原始库 record_id（关联字段用）
         self.radar_items: list[dict] = []      # --radar 模式：吐给爆创选题步骤的选题候选
         self._radar_mode: bool = False         # 雷达模式：只评分选题，跳过脚本/封面
-        self._feishu_broken: bool = False      # radar 下飞书回写一旦失败即上锁，后续跳过不再慢重试
         self._collect_data: dict | None = None  # 内置浏览器采集数据 {平台:[条目]}；非空则替代 API 采集
         self._criteria: dict | None = None       # 灵活爆款标准(时间窗+多组条件)；非空则替代默认初筛
-        self._materials: list[dict] | None = None  # 我的素材库缓存（本次运行读一次）
         self.xhs_note_type: int | None = None    # 小红书采集内容类型:2 图文(图文笔记台)/1 视频(短视频台)/None 综合
         self.radar_tier: str | None = None       # 自动降档命中的档位名(给前端显示"按【热门】采到N条")
         if dry_run:
             os.environ["DRY_RUN"] = "1"
-            self.tik = self.dajiala = self.fs = None
+            self.tik = self.dajiala = None
         else:
             from src.adapters.dajiala_client import DajialaClient
             from src.adapters.tikhub_client import TikHubClient
             self.tik = TikHubClient()
             self.dajiala = DajialaClient()
-            if os.getenv("FEISHU_BACKEND") == "larkcli":
-                from src.feishu.larkcli_bitable import LarkCliBitable
-                self.fs = LarkCliBitable()       # 用已授权的 lark-cli，免 App Secret
-            else:
-                from src.feishu.bitable import Bitable
-                self.fs = Bitable()
-            # 启动即读「系统配置表」热更新阈值/频率/模型（所有入口都生效，不止定时）
-            try:
-                from src.feishu import config_sync
-                applied = config_sync.sync_from_feishu(self.fs)
-                if applied:
-                    logger.info(f"飞书系统配置表已生效：{applied}")
-            except Exception as e:
-                logger.warning(f"系统配置表读取跳过：{e}")
 
     # ── 采集封装（内置浏览器采集文件 / 真实 API / mock 三选一）──
     def _search(self, platform: str, keyword: str, count: int) -> list[dict]:
@@ -321,10 +303,8 @@ class Pipeline:
                     if not rc.content_id.split("_", 1)[-1].strip("_ "):
                         continue
                     if not self._radar_mode and store.is_duplicate(rc.content_id, rc.fingerprint):
-                        # 重复抓取(验收3):不重复建主记录,但记最新快照(供增速/快速起量)并把
-                        # 最新互动数据刷回原始库那条既有主记录。
+                        # 重复抓取(验收3):不重复处理,但记最新快照(供增速/快速起量)。
                         store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
-                        self._refresh_raw_stats(rc)
                         continue
                     # 该关键词自定「最低阈值」：主指标(点赞/播放/阅读)未达标直接跳过
                     if min_threshold and max(rc.likes, rc.plays) < min_threshold:
@@ -372,20 +352,11 @@ class Pipeline:
         if auto_mode:
             pending, self.radar_tier = self._apply_tier_ladder(all_cands, auto_target)
             logger.info(f"[自动降档] 命中档位「{self.radar_tier}」→ {len(pending)} 条(候选 {len(all_cands)})")
-        # 批量写原始库（一次 lark-cli 调用，避免 N 个子进程拖慢）。
-        # 已入库过的内容(radar 重复采集常见)不重建主记录(验收3)——复用既有 record_id。
-        new_pending: list[tuple] = []   # 真正要新建主记录的 (rc, hits)
-        dup_pending: list[tuple] = []   # 已有主记录的 (rc, 既有record_id)
-        for rc, hits in pending:
-            prev = store.feishu_rid(rc.content_id)
-            if prev:
-                dup_pending.append((rc, prev))
-            else:
-                new_pending.append((rc, hits))
+        # 批量登记原始库(运行产物;dry-run 落 sink 供自检)。已见过的内容只刷 last_seen。
         raw_fields = []
-        gzh_xhs = sum(1 for rc, _ in new_pending if rc.platform in ("gzh", "xiaohongshu"))
-        for rc, hits in new_pending:
-            f = rc.to_feishu()
+        gzh_xhs = sum(1 for rc, _ in pending if rc.platform in ("gzh", "xiaohongshu"))
+        for rc, hits in pending:
+            f = rc.to_record()
             f["命中规则"] = hits
             f["处理状态"] = "待转写"
             # 图文(公众号/小红书)正文≠标题、价值高：入库阶段就抓全文（视频口播原文靠 ASR，仅精处理时抓）
@@ -397,18 +368,11 @@ class Pipeline:
             raw_fields.append(f)
         if gzh_xhs:
             logger.info(f"图文全文提取：{gzh_xhs} 条(公众号/小红书)")
-        ids = self._add_batch("爆款内容原始库", raw_fields)
+        self._add_batch("爆款内容原始库", raw_fields)
         candidates: list[normalize.RawContent] = []
-        for (rc, hits), rid in zip(new_pending, ids + [""] * (len(new_pending) - len(ids))):
-            store.mark_seen(rc.content_id, rc.fingerprint, rc.platform, rid)
-            self._rid_by_cid[rc.content_id] = rid   # 原始库 record_id，供下游关联字段
+        for rc, hits in pending:
+            store.mark_seen(rc.content_id, rc.fingerprint, rc.platform)
             candidates.append(rc)
-        for rc, prev in dup_pending:
-            store.mark_seen(rc.content_id, rc.fingerprint, rc.platform, prev)  # 只刷 last_seen
-            self._rid_by_cid[rc.content_id] = prev
-            candidates.append(rc)
-        if dup_pending:
-            logger.info(f"重复内容 {len(dup_pending)} 条:不重建主记录,复用既有原始库记录")
         logger.info(f"入候选池 {len(candidates)} 条")
         # 脚本/封面很耗时：只精处理"优先级最高的前 N 条"，其余已入原始库，可稍后再处理。
         # 这样一次运行几分钟内完成，稳落在 Hermes/命令超时内。
@@ -426,8 +390,7 @@ class Pipeline:
                     if len(to_process) >= max_process:
                         break
         logger.info(f"本轮精处理 {len(to_process)} 条（平台轮流，其余 {len(candidates)-len(to_process)} 条仅入库）")
-        generated = sum(1 for rc in to_process
-                        if self._process_candidate(rc, raw_rid=self._rid_by_cid.get(rc.content_id, "")))
+        generated = sum(1 for rc in to_process if self._process_candidate(rc))
         result = {"keyword": keyword, "candidates": len(candidates),
                   "processed": len(to_process), "generated": generated,
                   "archived_only": len(candidates) - len(to_process),
@@ -472,18 +435,14 @@ class Pipeline:
             self._report_failure("link", {"url": url, "platform": platform},
                                  RuntimeError(f"详情返回空数据(无内容ID),aid={aid}"))
             return {"error": "取详情失败(返回空数据),已进失败队列"}
-        # 验收3:已入库过的内容不重复建主记录——复用既有 record_id 并刷新最新数据,
-        # 拆解/脚本照常重跑(用户点名要处理这条链接,产出新版成品)。
-        prev = store.feishu_rid(rc.content_id)
-        if prev:
+        # 验收3:重复内容不重复登记,但记最新快照;拆解/脚本照常重跑(用户点名要处理这条链接)。
+        if store.is_duplicate(rc.content_id, rc.fingerprint):
             store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
-            self._refresh_raw_stats(rc)
-            raw_rid = prev
-            logger.info(f"[单链接] 内容已在原始库,复用主记录 {prev}")
+            logger.info("[单链接] 内容已见过,重跑拆解/脚本")
         else:
-            raw_rid = self._write_raw(rc, ["单链接手动"])
-            store.mark_seen(rc.content_id, rc.fingerprint, platform, raw_rid)
-        ok = self._process_candidate(rc, raw_rid=raw_rid)
+            self._write_raw(rc, ["单链接手动"])
+        store.mark_seen(rc.content_id, rc.fingerprint, platform)
+        ok = self._process_candidate(rc)
         if self.dry_run:
             self._dump()
         return {"platform": platform, "content_id": rc.content_id, "generated": ok}
@@ -518,98 +477,30 @@ class Pipeline:
                     skipped_window += 1
                     continue
                 if store.is_duplicate(rc.content_id, rc.fingerprint):
-                    # 重复抓取(验收3):不重建主记录,但记快照+刷新最新数据。
+                    # 重复抓取(验收3):不重复处理,但记最新快照。
                     store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
-                    self._refresh_raw_stats(rc)
                     continue
-                rid = self._write_raw(rc, ["竞品账号监控"])
-                store.mark_seen(rc.content_id, rc.fingerprint, p, rid)
-                candidates.append((rc, recent, rid))
+                self._write_raw(rc, ["竞品账号监控"])
+                store.mark_seen(rc.content_id, rc.fingerprint, p)
+                candidates.append((rc, recent))
             if skipped_window:
                 logger.info(f"[竞品账号] {p} 窗口外跳过 {skipped_window} 条(时间窗 {time_window})")
-        generated = sum(1 for rc, recent, rid in candidates
-                        if self._process_candidate(rc, account_recent_likes=recent, raw_rid=rid))
+        generated = sum(1 for rc, recent in candidates
+                        if self._process_candidate(rc, account_recent_likes=recent))
         if self.dry_run:
             self._dump()
         return {"account": account, "candidates": len(candidates), "generated": generated}
 
-    # ── 入口 4：重新生成（验收：飞书状态改「重新生成」→ 出新版本保留旧版）──
-    def regenerate(self) -> dict:
-        rows = self.fs.list_records("成品内容审核库")
-        # lark-cli 后端不下推筛选，这里客户端过滤出"重新生成"的记录
-        rows = [r for r in rows if _txt(r.get("fields", {}).get("审核状态")) == "重新生成"]
-        logger.info(f"[重新生成] 待处理 {len(rows)} 条")
-        done = 0
-        for r in rows:
-            try:
-                f = r.get("fields", {})
-                old_ver = int(f.get("生成版本", 1) or 1)
-                title = _txt(f.get("平台标题"))
-                decon = {"hook": title, "structure": "沿用"}
-                style = self._current_style()
-                materials = self._recall_materials(title)
-                for mode in _script_modes():
-                    script = GEN.generate(decon, materials, style, mode)
-                    fields = script.to_feishu(_txt(f.get("平台版本")), version=old_ver + 1)
-                    self._add("成品内容审核库", fields)   # 新版本，旧版保留
-                self.fs.update_record("成品内容审核库", r["record_id"], {"审核状态": "已重生成"})
-                done += 1
-            except Exception as e:  # noqa: BLE001  单条失败不拖垮整轮,进失败队列
-                self._report_failure("regenerate", {"record_id": r.get("record_id", "")}, e)
-        return {"regenerated": done}
-
-    # ── 入口 3：定时批量 ──
-    def run_scheduled(self) -> dict:
-        if not self.dry_run:
-            from src.feishu import config_sync
-            applied = config_sync.sync_from_feishu(self.fs)
-            if applied:
-                logger.info(f"飞书配置热更新生效：{applied}")
-        rows = self.fs.list_records("监控配置库", filter_="CurrentValue.[是否启用]=true")
-        logger.info(f"[定时] 启用配置 {len(rows)} 条")
-        summary = []
-        for r in rows:
-            f = r.get("fields", {})
-            kw = _txt(f.get("关键词/账号"))
-            platforms = _parse_platforms(f.get("平台")) or S.PLATFORMS
-            thr = int(float(_txt(f.get("最低阈值")) or 0)) if _txt(f.get("最低阈值")) else 0
-            if not kw:
-                continue
-            try:
-                if _txt(f.get("类型")) == "竞品账号":
-                    summary.append(self.run_account(kw, platforms,
-                                                    time_window=_txt(f.get("时间窗")) or "7d"))
-                else:
-                    summary.append(self.run_keyword(kw, platforms, min_threshold=thr))
-            except Exception as e:  # noqa: BLE001  单项失败不拖垮整轮定时,进失败队列可重跑
-                kind = "account" if _txt(f.get("类型")) == "竞品账号" else "keyword"
-                self._report_failure(kind, {"keyword": kw, "platforms": platforms,
-                                            "min_threshold": thr,
-                                            "time_window": _txt(f.get("时间窗")) or "7d"}, e)
-                summary.append({"keyword": kw, "error": str(e)[:120]})
-        self.regenerate()   # 每轮顺带处理「重新生成」
-        return {"runs": summary}
-
     # ── 候选 → 评分 → 脚本 → 封面 → 复盘/成本 ──
     def _process_candidate(self, rc: normalize.RawContent, *,
-                           account_recent_likes: list[int] | None = None,
-                           raw_rid: str = "") -> bool:
+                           account_recent_likes: list[int] | None = None) -> bool:
         try:
-            # 原生关联字段值：指向「爆款内容原始库」那条记录（空则不写关联）
-            link = [{"id": raw_rid}] if raw_rid else None
             transcript = self._transcript(rc)
-            # 原视频文案(口播原文/图文正文)回写原始库那条记录，供审核与追溯
-            if raw_rid and transcript and transcript != rc.title:
-                try:
-                    self.fs.update_record("爆款内容原始库", raw_rid, {"原视频文案": transcript})
-                except Exception as e:
-                    logger.warning(f"回写原视频文案跳过：{e}")
             comments = self._comments(rc.platform, rc.content_id)
             ev = EV.evaluate(rc, transcript=transcript, comments=comments,
                              account_recent_likes=account_recent_likes,
                              growth_per_hour=store.growth_per_hour(rc.content_id))
-            topic_rid = self._write_topic(rc, ev, link)   # 选题池 record_id(供审核库关联)
-            topic_link = [{"id": topic_rid}] if topic_rid else None
+            self._write_topic(rc, ev)
             if self._radar_mode:
                 return True    # 雷达模式：评分选题即止，跳过拆解/脚本/封面
             if ev.traffic < 65 and ev.intent < 65:
@@ -618,7 +509,7 @@ class Pipeline:
                                     {"likes": rc.likes, "comments": rc.comments})
             # 把 AI 爆点拆解写进「爆点拆解库」（关联爆款=原始库记录）
             self._add("爆点拆解库", {
-                "关联内容": link, "选题类型": str(decon.get("selectopic", "")),
+                "选题类型": str(decon.get("selectopic", "")),
                 "前3秒钩子": str(decon.get("hook", "")), "核心矛盾": str(decon.get("conflict", "")),
                 "用户痛点": str(decon.get("pain", "")),
                 "情绪点": decon.get("emotion") if isinstance(decon.get("emotion"), list) else str(decon.get("emotion", "")),
@@ -630,32 +521,27 @@ class Pipeline:
             materials = self._recall_materials(rc.title)
             style = self._current_style()
             last_script = None
-            last_rid = ""
             for mode in _script_modes():
                 last_script = GEN.generate(decon, materials, style, mode, original_text=transcript)
-                script_fields = last_script.to_feishu(rc.platform, version=1)
-                script_fields["关联选题"] = topic_link   # 审核库→选题池 真双向关联
-                last_rid = self._add("成品内容审核库", script_fields)
-            # 封面(Seedream)最慢：批量默认不出图，需要时设 COVER_IN_BATCH=1；出图后上传到该脚本记录
+                self._add("成品内容审核库", last_script.to_record(rc.platform, version=1))
+            # 封面(Seedream)最慢：批量默认不出图，需要时设 COVER_IN_BATCH=1
             if last_script and os.getenv("COVER_IN_BATCH") == "1":
-                self._make_cover(rc, last_script, last_rid)
+                self._make_cover(rc, last_script)
             review = {"平台": normalize.cn_platform(rc.platform),
                       "模型/接口成本": router.cost_summary().get("calls", 0),
-                      "复盘结论": f"待发布；判定理由：{ev.reason}",
-                      "关联成品": [{"id": last_rid}] if last_rid else None}   # 复盘库→审核库 真双向关联
+                      "复盘结论": f"待发布；判定理由：{ev.reason}"}
             self._add("发布复盘库", review)
             return True
         except Exception as e:
             logger.exception(f"处理失败 {rc.content_id}: {e}")
-            # 验收11:失败不丢任务——进本地失败队列(od baokuan retry 可重跑),
-            # 并写一条复盘库「错误摘要」让客户在飞书直接看到失败原因。
+            # 验收11:失败不丢任务——进本地失败队列(od baokuan retry 可重跑)。
             self._report_failure("candidate",
                                  {"platform": rc.platform, "content_id": rc.content_id, "url": rc.url},
                                  e)
             return False
 
     def _report_failure(self, kind: str, payload: dict, exc: Exception) -> None:
-        """失败上报三件套:本地失败队列 + 日志 + 飞书复盘库错误摘要(可见原因)。绝不再抛。
+        """失败上报:本地失败队列 + 日志。绝不再抛。
 
         重试期间(ops.py retry 设 BC_NO_ENQUEUE=1)不再重复入队——原条目还在 pending,
         再入队会让队列越滚越多(2026-07-17 打包实测发现)。"""
@@ -668,17 +554,9 @@ class Pipeline:
                 logger.warning(f"[失败队列] 重试仍失败(保留原条目):{reason[:80]}")
         except Exception:  # noqa: BLE001
             pass
-        try:
-            self._add("发布复盘库", {
-                "平台": normalize.cn_platform(str(payload.get("platform") or "")) or "",
-                "复盘结论": f"任务失败({kind}),已进失败队列,可用 od baokuan retry 重跑",
-                "错误摘要": reason,
-            })
-        except Exception:  # noqa: BLE001
-            pass
 
-    def _make_cover(self, rc: normalize.RawContent, script, record_id: str = "") -> None:
-        """封面：Seedream 出背景+中文叠字，上传到成品记录的「封面成品」附件字段。"""
+    def _make_cover(self, rc: normalize.RawContent, script) -> None:
+        """封面：Seedream 出背景+中文叠字，落到 data/covers/。"""
         title = script.cover_titles[0] if script.cover_titles else script.platform_title
         plat = "bilibili" if rc.platform == "bilibili" else "douyin"
         if self.dry_run:
@@ -688,85 +566,26 @@ class Pipeline:
             out = f"./data/covers/{rc.content_id}_{plat}.png"
             os.makedirs(os.path.dirname(out), exist_ok=True)
             SeedreamCover().render(CoverRequest(platform=plat, main_title=title), out)
-            if record_id and hasattr(self.fs, "upload_attachment"):
-                ok = self.fs.upload_attachment("成品内容审核库", record_id, "封面成品", out)
-                logger.info(f"封面{'已上传飞书' if ok else '上传失败'}: {title}")
+            logger.info(f"封面已生成: {out}")
         except Exception as e:
-            logger.warning(f"封面生成/上传跳过：{e}")
+            logger.warning(f"封面生成跳过：{e}")
 
-    # ── 写入抽象：真实写飞书 / dry-run 收集 ──
+    # ── 写入抽象：产物统一收进内存 sink（dry-run 结束时落 data/dryrun_output.json 供自检）──
     def _add(self, table: str, fields: dict) -> str:
-        fields = {k: v for k, v in fields.items() if v is not None}  # 丢掉空值(如无关联时)
-        if self.dry_run:
-            self._sink.append({"table": table, "fields": fields})
-            return f"dry_{len(self._sink)}"
-        if self._radar_mode and self._feishu_broken:
-            return ""  # radar 下飞书已判定不可用：瞬间跳过，别再慢重试
-        try:
-            return self.fs.add_record(table, fields)
-        except Exception as e:  # noqa: BLE001
-            return self._feishu_soft_fail(table, e)
+        fields = {k: v for k, v in fields.items() if v is not None}  # 丢掉空值
+        self._sink.append({"table": table, "fields": fields})
+        return f"rec_{len(self._sink)}"
 
     def _add_batch(self, table: str, fields_list: list[dict]) -> list[str]:
-        """批量写入（真实模式一次 lark-cli 调用，最多 200/批）。"""
-        if not fields_list:
-            return []
-        if self.dry_run:
-            for f in fields_list:
-                self._sink.append({"table": table, "fields": f})
-            return [f"dry_{i}" for i in range(len(fields_list))]
-        if self._radar_mode and self._feishu_broken:
-            return []
-        ids: list[str] = []
-        try:
-            for i in range(0, len(fields_list), 200):
-                ids.extend(self.fs.batch_add(table, fields_list[i:i + 200]))
-        except Exception as e:  # noqa: BLE001
-            self._feishu_soft_fail(table, e)
-        return ids
-
-    def _feishu_soft_fail(self, table: str, exc: Exception) -> str:
-        """飞书回写失败的统一兜底。
-
-        radar 模式(给爆创选题步骤用)必须稳出选题 JSON，飞书数据中心是加分项：
-        第一次写失败即「上锁」(_feishu_broken)，后续所有写入瞬间跳过，不再慢重试，
-        保证雷达秒级产出选题。非 radar 的完整管道遇到飞书写失败时如实抛出。
-        """
-        if self._radar_mode:
-            if not self._feishu_broken:
-                self._feishu_broken = True
-                logger.warning(f"[radar] 飞书数据中心暂不可用(未连接/未建表)，本轮跳过回写、只产出选题：{type(exc).__name__}: {str(exc)[:100]}")
-            return ""
-        raise exc
-
-    def _refresh_raw_stats(self, rc: normalize.RawContent) -> None:
-        """重复抓取时把最新互动数据刷回「爆款内容原始库」既有主记录(不新建,best-effort)。
-
-        验收3 的后半句:同一内容重复抓取→不重复建主记录,但更新最新数据快照。本地
-        snapshot 表负责增速计算;这里把飞书主记录的可见数据也刷新,客户看到的是最新值。"""
-        if self.dry_run:
-            return
-        rid = store.feishu_rid(rc.content_id)
-        if not rid:
-            return
-        try:
-            import time as _t
-            self.fs.update_record("爆款内容原始库", rid, {
-                "播放/阅读": rc.plays, "点赞": rc.likes, "评论": rc.comments,
-                "收藏/投币": rc.collects, "转发": rc.shares,
-                "最近更新": normalize._fmt_time(int(_t.time())),
-            })
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"刷新原始库数据跳过 {rc.content_id}: {type(e).__name__}: {str(e)[:80]}")
+        return [self._add(table, f) for f in fields_list]
 
     def _write_raw(self, rc: normalize.RawContent, hits: list[str]) -> str:
-        fields = rc.to_feishu()
+        fields = rc.to_record()
         fields["命中规则"] = hits
         fields["处理状态"] = "待转写"
         return self._add("爆款内容原始库", fields)
 
-    def _write_topic(self, rc: normalize.RawContent, ev: EV.Evaluation,
-                     link: list[dict] | None = None) -> str:
+    def _write_topic(self, rc: normalize.RawContent, ev: EV.Evaluation) -> str:
         # 收集给爆创「选题步骤」的选题候选(标题/平台/热度/来源/评分/推荐承接)
         item = {
             "标题": rc.title, "平台": normalize.cn_platform(rc.platform),
@@ -792,10 +611,7 @@ class Pipeline:
             item["原文案"] = (raw.get("desc") or raw.get("title") or "").strip()
             item["原图"] = imgs
         self.radar_items.append(item)
-        # 选题池「来源内容」是真双向关联字段 → 指向「爆款内容原始库」那条记录,
-        # 客户在飞书点一下即可跳到原始爆款。返回本条选题的 record_id,供审核库反查关联。
         return self._add("今日爆款选题池", {
-            "来源内容": link,
             "流量爆款分": ev.traffic, "精准意向分": ev.intent,
             "内容类型": EV.content_type(ev), "推荐优先级": ev.traffic_grade,
             "所属榜单": EV.classify_boards(ev), "评分理由": ev.reason,
@@ -804,59 +620,19 @@ class Pipeline:
         })
 
     def _recall_materials(self, query: str, *, topk: int = 5) -> list[str]:
-        """从飞书「我的素材库」按主题标签匹配，返回你自己的素材喂给脚本。
-
-        简单标签/关键词匹配（素材量小足够，无需向量库）；无匹配也给几条，保证脚本有料。
-        只取「是否可召回」打勾的。
-        """
+        """素材召回：无外部素材源，返回空（脚本生成走通用路径）。dry-run 给假素材供自检。"""
         if self.dry_run:
             return ["我的观点素材A", "我的方法素材B"]
-        if self._materials is None:
-            try:
-                rows = self.fs.list_records("我的素材库", filter_="CurrentValue.[是否可召回]=true")
-            except Exception:
-                rows = []
-            self._materials = []
-            for r in rows:
-                f = r.get("fields", {})
-                content = _txt(f.get("原始内容"))
-                if not content:
-                    continue
-                tags = [t for t in _txt(f.get("主题标签")).replace("、", " ").split() if t]
-                self._materials.append({"title": _txt(f.get("素材标题")),
-                                        "content": content, "tags": tags})
-            if self._materials:
-                logger.info(f"我的素材库：加载可召回素材 {len(self._materials)} 条")
-        if not self._materials:
-            return []
-        q = query or ""
-
-        def score(m):
-            return sum(1 for t in m["tags"] if t in q)
-        ranked = sorted(self._materials, key=score, reverse=True)
-        picked = [m for m in ranked if score(m) > 0][:topk] or ranked[:min(topk, 3)]
-        return [f"{m['title']}：{m['content']}" if m["title"] else m["content"] for m in picked]
+        return []
 
     def _current_style(self) -> dict | None:
-        if self.dry_run:
-            return None
-        try:
-            rows = self.fs.list_records("风格画像库", filter_="CurrentValue.[是否生效]=true")
-            return rows[0].get("fields") if rows else None
-        except Exception:
-            return None
+        return None
 
     def _dump(self) -> None:
         os.makedirs("./data", exist_ok=True)
         with open("./data/dryrun_output.json", "w", encoding="utf-8") as f:
             json.dump(self._sink, f, ensure_ascii=False, indent=2)
         logger.info(f"dry-run 结果已写入 data/dryrun_output.json（{len(self._sink)} 条）")
-
-
-def _txt(v) -> str:
-    if isinstance(v, list) and v:
-        return v[0].get("text", "") if isinstance(v[0], dict) else str(v[0])
-    return str(v or "")
 
 
 _PLAT_CN = {"抖音": "douyin", "小红书": "xiaohongshu", "b站": "bilibili", "B站": "bilibili",
@@ -916,8 +692,6 @@ def main():
     ap.add_argument("--account", help="竞品账号监控")
     ap.add_argument("--platforms", default=",".join(S.PLATFORMS))
     ap.add_argument("--link")
-    ap.add_argument("--scheduled", action="store_true")
-    ap.add_argument("--regenerate", action="store_true", help="处理飞书「重新生成」")
     ap.add_argument("--min-threshold", type=int, default=0, help="本关键词自定最低点赞/热度门槛")
     ap.add_argument("--dry-run", action="store_true", help="离线假数据跑通全链路，无需 Key")
     ap.add_argument("--radar", action="store_true",
@@ -937,10 +711,6 @@ def main():
         os.environ.setdefault("BC_TASK", f"link:{args.link[:60]}")
     elif args.account:
         os.environ.setdefault("BC_TASK", f"account:{args.account[:40]}")
-    elif args.scheduled:
-        os.environ.setdefault("BC_TASK", "scheduled")
-    elif args.regenerate:
-        os.environ.setdefault("BC_TASK", "regenerate")
     elif args.keyword:
         os.environ.setdefault("BC_TASK", f"keyword:{args.keyword[:40]}")
     pipe = Pipeline(dry_run=args.dry_run)
@@ -961,7 +731,7 @@ def main():
         logger.info(f"[采集] 用内置浏览器数据 {collect_path}："
                     + "、".join(f"{k}×{len(v)}" for k, v in pipe._collect_data.items()))
     if args.radar and args.keyword:
-        # 雷达模式:采集+评分选题,跳过脚本/封面(快);数据照常回写飞书(数据中心)
+        # 雷达模式:采集+评分选题,跳过脚本/封面(快)
         pipe._radar_mode = True
         # 雷达精评条数：默认 8(取头部选题，约 1 分钟出结果)；量大想更全可设 RADAR_MAX。
         os.environ["MAX_PROCESS"] = os.getenv("RADAR_MAX", "8")
@@ -972,18 +742,12 @@ def main():
         pipe.run_keyword(args.keyword, _plats,
                          count=collect_n, min_threshold=args.min_threshold)
         items = sorted(pipe.radar_items, key=lambda x: (x["流量爆款分"] + x["精准意向分"]), reverse=True)
-        # feishu_synced=False 说明本轮飞书数据中心回写失败(多为 lark-cli 未装/未连接)——上报给前端
-        # 提示用户,不再静默(2026-07-16 用户报"没和飞书数据中心同步")。
         print(json.dumps({"keyword": args.keyword, "count": len(items),
-                          "tier": pipe.radar_tier, "feishu_synced": not pipe._feishu_broken,
+                          "tier": pipe.radar_tier,
                           "选题候选": items},
                          ensure_ascii=False, indent=2))
         return
-    if args.scheduled:
-        print(json.dumps(pipe.run_scheduled(), ensure_ascii=False, indent=2))
-    elif args.regenerate:
-        print(json.dumps(pipe.regenerate(), ensure_ascii=False, indent=2))
-    elif args.account:
+    if args.account:
         print(json.dumps(pipe.run_account(args.account, _plats,
                                           time_window=args.time_window),
                          ensure_ascii=False, indent=2))

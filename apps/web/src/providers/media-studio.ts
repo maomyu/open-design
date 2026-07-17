@@ -285,16 +285,16 @@ export async function collectScoreTopics(
   pages = 1,
   /** 小红书内容类型:'image' 图文(图文笔记台)/'video' 视频(短视频台)——前后端对应图文笔记模块。 */
   xhsContentType?: 'image' | 'video',
-): Promise<{ topics: Array<Record<string, unknown>>; count: number; tier?: string | null; feishuSynced?: boolean } | { error: string }> {
+): Promise<{ topics: Array<Record<string, unknown>>; count: number; tier?: string | null } | { error: string }> {
   try {
     const resp = await fetch(`${ROOT}/collect-score`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keyword, platforms, pages, ...(criteria ? { criteria } : {}), ...(xhsContentType ? { xhsContentType } : {}) }),
     });
-    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string; tier?: string | null; feishuSynced?: boolean };
+    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string; tier?: string | null };
     if (!resp.ok) return { error: d.error || 'TikHub 采集/评分失败' };
-    return { topics: d.topics ?? [], count: d.count ?? 0, tier: d.tier ?? null, feishuSynced: d.feishuSynced };
+    return { topics: d.topics ?? [], count: d.count ?? 0, tier: d.tier ?? null };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -1195,48 +1195,6 @@ export async function markStudioPublished(
     return (await resp.json()) as { record?: MediaPublishRecord; article?: MediaArticle };
   } catch {
     return {};
-  }
-}
-
-// 发布复盘 → 写飞书「发布复盘库」（复盘按钮点「AI 复盘」时同时调用;未连飞书 daemon 返 503,静默忽略）。
-export async function pushStudioReview(
-  platform: string,
-  articleId: string,
-  conclusion?: string,
-): Promise<{ ok: boolean; recordId?: string | null }> {
-  try {
-    const resp = await fetch(
-      `${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/push-review`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(conclusion ? { conclusion } : {}),
-      },
-    );
-    if (!resp.ok) return { ok: false };
-    return (await resp.json()) as { ok: boolean; recordId?: string | null };
-  } catch {
-    return { ok: false };
-  }
-}
-
-// 把本地知识库全量重推飞书「我的素材库/风格画像库」（知识库界面「同步到飞书」按钮 + 历史知识迁移）。
-export async function syncStudioKnowledgeToFeishu(): Promise<
-  { synced: number; ok?: boolean } | { error: string }
-> {
-  try {
-    const resp = await fetch(`${ROOT}/knowledge/sync-feishu`, { method: 'POST' });
-    if (!resp.ok) {
-      let msg = `同步失败（${resp.status}）`;
-      try {
-        const d = (await resp.json()) as { error?: string };
-        if (d.error) msg = d.error;
-      } catch { /* keep fallback */ }
-      return { error: msg };
-    }
-    return (await resp.json()) as { synced: number; ok?: boolean };
-  } catch {
-    return { error: '连接失败' };
   }
 }
 

@@ -3,7 +3,7 @@
 均输出一行 JSON(daemon 从首个 { 解析):
   cost-report [--days 7]                 近N天成本汇总(llm tokens/asr次/image张/tikhub次,按天分布)
   failed-list [--limit 50]               待重试的失败任务
-  retry [--limit 5]                      重跑失败队列(link/keyword/account/regenerate/candidate)
+  retry [--limit 5]                      重跑失败队列(link/keyword/account/candidate)
   backup [--out 路径.tar.gz] [--daemon-data 目录]   引擎数据+.env(+daemon数据)打包
   restore --from 路径.tar.gz [--daemon-data 目录]   还原备份(重启应用后生效)
 """
@@ -49,9 +49,6 @@ def retry(limit: int) -> dict:
             elif kind == "account" and p.get("keyword"):
                 res = pipe.run_account(p["keyword"], p.get("platforms") or list(S.PLATFORMS),
                                        time_window=str(p.get("time_window") or "7d"))
-                ok = True
-            elif kind == "regenerate":
-                res = pipe.regenerate()
                 ok = True
             else:
                 res = {"skip": f"无法分发的任务:kind={kind} payload缺关键字段"}

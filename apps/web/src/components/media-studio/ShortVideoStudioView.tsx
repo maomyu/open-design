@@ -18,7 +18,6 @@ import type {
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
-  pushStudioReview,
   createStudioArticle,
   createStudioTopic,
   deleteStudioArticle,
@@ -1052,7 +1051,6 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
                     <div className={c('row')}>
                       <button type="button" className={c('btn')} onClick={() => {
                         void startAiTask('review');
-                        void pushStudioReview(PLATFORM, article.id);
                       }}>
                         <Icon name="sparkles" size={14} /> AI 复盘并给下一条建议
                       </button>

@@ -1,6 +1,6 @@
 """素材库 RAG 召回：主题标签过滤 + 向量语义检索 TopK + 风格画像固定规则。
 
-不把整库塞进 Prompt（降本增稳）。素材来自飞书「我的素材库」，更新后可重建索引。
+不把整库塞进 Prompt（降本增稳）。素材更新后可重建索引。
 向量后端用 Chroma；嵌入用兼容 OpenAI 的 embeddings 接口（可切换）。
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _embed(texts: list[str]) -> list[list[float]]:
 
 
 def rebuild_index(materials: list[dict]) -> int:
-    """用飞书「我的素材库」记录重建向量索引。materials: [{id,title,content,tags,recallable}]"""
+    """用素材记录重建向量索引。materials: [{id,title,content,tags,recallable}]"""
     try:
         col = _client().get_or_create_collection(_COLLECTION)
     except Exception as e:   # chromadb 未装/损坏 → 明确报错但不崩全局

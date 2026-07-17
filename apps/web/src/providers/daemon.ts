@@ -30,11 +30,6 @@ import type {
   PlatformAccountsResponse,
   UpsertAccountProfileRequest,
   UpsertAccountProfileResponse,
-  MonitorConfigRow,
-  MonitorConfigListResponse,
-  MonitorConfigMutateResponse,
-  SystemConfigRow,
-  SystemConfigListResponse,
   AssistEditRequest,
   AssistEditResponse,
   AssistFieldRequest,
@@ -747,8 +742,7 @@ export async function deletePlatformAccountApi(
   }
 }
 
-// ── 飞书数据中心·监控配置库 + 系统配置表（块3）。打 /api/feishu/* 端点,daemon 转 datacenter.py。──
-async function feishuCfgErr(resp: Response, fallback: string): Promise<string> {
+async function daemonRespErr(resp: Response, fallback: string): Promise<string> {
   try {
     const data = (await resp.json()) as { error?: unknown; message?: unknown };
     if (typeof data.error === 'string' && data.error) return data.error;
@@ -780,7 +774,7 @@ export async function retryBaokuanFailed(limit = 5): Promise<import('@open-desig
     const resp = await fetch('/api/baokuan/retry', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit }),
     });
-    if (!resp.ok) return { error: await feishuCfgErr(resp, '失败重试失败') };
+    if (!resp.ok) return { error: await daemonRespErr(resp, '失败重试失败') };
     return (await resp.json()) as import('@open-design/contracts').BaokuanRetryResult;
   } catch { return { error: 'daemon unreachable' }; }
 }
@@ -790,7 +784,7 @@ export async function backupBaokuan(): Promise<import('@open-design/contracts').
     const resp = await fetch('/api/baokuan/backup', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
     });
-    if (!resp.ok) return { error: await feishuCfgErr(resp, '备份失败') };
+    if (!resp.ok) return { error: await daemonRespErr(resp, '备份失败') };
     return (await resp.json()) as import('@open-design/contracts').BaokuanBackupResult;
   } catch { return { error: 'daemon unreachable' }; }
 }
@@ -808,57 +802,8 @@ export async function setBaokuanAutostart(enable: boolean): Promise<{ ok?: boole
     const resp = await fetch('/api/baokuan/autostart', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable }),
     });
-    if (!resp.ok) return { error: await feishuCfgErr(resp, '开机自启配置失败') };
+    if (!resp.ok) return { error: await daemonRespErr(resp, '开机自启配置失败') };
     return (await resp.json()) as { ok: boolean; enabled: boolean };
-  } catch { return { error: 'daemon unreachable' }; }
-}
-
-export async function fetchMonitorConfigs(): Promise<MonitorConfigRow[]> {
-  try {
-    const resp = await fetch('/api/feishu/monitor');
-    if (!resp.ok) return [];
-    const data = (await resp.json()) as MonitorConfigListResponse;
-    return Array.isArray(data.rows) ? data.rows : [];
-  } catch { return []; }
-}
-
-export async function saveMonitorConfig(
-  row: MonitorConfigRow,
-): Promise<MonitorConfigMutateResponse | { error: string }> {
-  try {
-    const resp = await fetch('/api/feishu/monitor', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(row),
-    });
-    if (!resp.ok) return { error: await feishuCfgErr(resp, '存监控配置失败') };
-    return (await resp.json()) as MonitorConfigMutateResponse;
-  } catch { return { error: 'daemon unreachable' }; }
-}
-
-export async function deleteMonitorConfig(recordId: string): Promise<boolean> {
-  try {
-    const resp = await fetch(`/api/feishu/monitor/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
-    return resp.ok;
-  } catch { return false; }
-}
-
-export async function fetchSystemConfigs(): Promise<SystemConfigRow[]> {
-  try {
-    const resp = await fetch('/api/feishu/system-config');
-    if (!resp.ok) return [];
-    const data = (await resp.json()) as SystemConfigListResponse;
-    return Array.isArray(data.rows) ? data.rows : [];
-  } catch { return []; }
-}
-
-export async function saveSystemConfig(
-  row: SystemConfigRow,
-): Promise<MonitorConfigMutateResponse | { error: string }> {
-  try {
-    const resp = await fetch('/api/feishu/system-config', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(row),
-    });
-    if (!resp.ok) return { error: await feishuCfgErr(resp, '存系统配置失败') };
-    return (await resp.json()) as MonitorConfigMutateResponse;
   } catch { return { error: 'daemon unreachable' }; }
 }
 
