@@ -665,7 +665,8 @@ export function EntryShell({
             {view === 'accounts' ? <AccountsView /> : null}
             {view === 'studio' ? <ArticleStudioShell /> : null}
             {view === 'studio-zhihu' ? <ArticleStudioShell initial="zhihu" /> : null}
-            {view === 'studio-weibo' ? <ArticleStudioShell initial="weibo" /> : null}
+            {/* 微博已移除(翟总):历史 studio-weibo 深链降级到默认文章台(公众号)。 */}
+            {view === 'studio-weibo' ? <ArticleStudioShell /> : null}
             {view === 'studio-video' ? <ShortVideoStudioShell /> : null}
             {view === 'studio-note' ? <NoteStudioView /> : null}
             {view === 'knowledge' ? <KnowledgeView /> : null}

@@ -791,7 +791,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               type="button"
               className={c('btn')}
               disabled={aiBusy}
-              onClick={() => onAiFind((direction.trim() + buildRadarNote()).trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
+              onClick={() => onAiFind((direction.trim() + (browserCollect ? buildRadarNote() : '')).trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
               title={
                 aiBusy
                   ? '有 AI 任务正在运行——等它结束（或在底部面板中止）再发起'
@@ -809,7 +809,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             </button>
           ) : null}
         </div>
-        {/* 🎯 爆款筛选：时间窗 + 可组合的爆款规则（喂给「AI 帮我选题」的爆款雷达采集+评分） */}
+        {/* 🎯 爆款筛选：短视频专属(时间窗+播放/点赞规则,喂给爆款雷达采集+评分)。文章台
+            (公众号走极致了/知乎走登录态直取/微博走 TikHub)不是视频指标,不显示。 */}
+        {browserCollect ? (
         <div className={c('row')} style={{ flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
           <span className={c('cardHint')}>🎯 爆款筛选：</span>
           <select
@@ -856,6 +858,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             {collectTargets.includes('channels') ? '视频号是纯点赞,默认门槛已自动降到 2000。' : ''}
           </span>
         </div>
+        ) : null}
         {sugWords.length > 0 ? (
           <div className={c('row')} style={{ flexWrap: 'wrap' }}>
             <span className={c('cardHint')}>💡 大家在搜：</span>

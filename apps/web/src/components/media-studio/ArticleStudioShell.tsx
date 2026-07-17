@@ -10,17 +10,16 @@
 import { useState } from 'react';
 import { MediaStudioView } from './MediaStudioView';
 import { ZhihuStudioView } from './ZhihuStudioView';
-import { WeiboStudioView } from './WeiboStudioView';
 import { hasFeature, useLicense } from '../../state/license';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
-type ArticlePlatform = 'wechat' | 'zhihu' | 'weibo';
-const PLATFORMS: Array<{ id: ArticlePlatform; label: string; feature: 'article.wechat-mp' | 'article.zhihu' | 'article.weibo' }> = [
+// 微博已移除(2026-07-17 翟总:客户不需要微博)。文章 = 公众号 + 知乎。
+type ArticlePlatform = 'wechat' | 'zhihu';
+const PLATFORMS: Array<{ id: ArticlePlatform; label: string; feature: 'article.wechat-mp' | 'article.zhihu' }> = [
   { id: 'wechat', label: '公众号', feature: 'article.wechat-mp' },
   { id: 'zhihu', label: '知乎', feature: 'article.zhihu' },
-  { id: 'weibo', label: '微博', feature: 'article.weibo' },
 ];
 const STORE_KEY = 'open-design:studio:article-platform';
 
@@ -63,7 +62,7 @@ export function ArticleStudioShell({ initial }: { initial?: ArticlePlatform }): 
       ) : null}
       {/* 子创作台各自维护当前文章/自动保存;切平台=卸载重挂,各台 localStorage
           记忆自己的当前文章,回来还在原处。 */}
-      {effective === 'wechat' ? <MediaStudioView /> : effective === 'zhihu' ? <ZhihuStudioView /> : <WeiboStudioView />}
+      {effective === 'wechat' ? <MediaStudioView /> : <ZhihuStudioView />}
     </div>
   );
 }
