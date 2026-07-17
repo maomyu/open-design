@@ -10101,22 +10101,50 @@ export async function startServer({
     try { res.json(await runOps(argv, 300_000)); }
     catch (err) { res.status(500).json({ error: '备份失败：' + dcErr(err) }); }
   });
-  // 开机自启:daemon 从自身 execPath 推出 .app bundle,写/删 ~/Library/LaunchAgents 的
-  // LaunchAgent(RunAtLoad)。dev 环境(非 .app 内运行)不支持,如实报错。
+  // 开机自启,分平台:mac 写/删 ~/Library/LaunchAgents 的 LaunchAgent(RunAtLoad);
+  // win 写/删 HKCU\...\Run 注册表值(reg add/delete,免管理员)。此前无 win 分支时,win 上
+  // 会把 plist 写进 %USERPROFILE%\Library\...(没人读)还报 enabled=true——假成功,客户以为
+  // 开了自启其实没开。dev 环境(非打包应用)不支持,如实报错。
+  const IS_WIN_HOST = process.platform === 'win32';
   const AUTOSTART_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.workbuild.autostart.plist');
+  const WIN_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  const WIN_RUN_VALUE = 'WorkBuild';
   function appBundlePath(): string | null {
+    if (IS_WIN_HOST) {
+      // win 打包应用的 execPath 就是安装目录里的 WorkBuild*.exe;dev(node.exe)不支持。
+      return /node(\.exe)?$/i.test(process.execPath) ? null : process.execPath;
+    }
     const segs = process.execPath.split(path.sep);
     const i = segs.findIndex((s) => s.endsWith('.app'));
     return i >= 0 ? segs.slice(0, i + 1).join(path.sep) : null;
   }
+  async function winAutostartEnabled(): Promise<boolean> {
+    const r = await execFileBuffered('reg', ['query', WIN_RUN_KEY, '/v', WIN_RUN_VALUE], { timeout: 8_000 });
+    return r.ok;
+  }
   app.get('/api/baokuan/autostart', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    if (IS_WIN_HOST) {
+      return res.json({ enabled: await winAutostartEnabled(), runKey: `${WIN_RUN_KEY}\\${WIN_RUN_VALUE}`, appBundle: appBundlePath() });
+    }
     res.json({ enabled: fs.existsSync(AUTOSTART_PLIST), plist: AUTOSTART_PLIST, appBundle: appBundlePath() });
   });
   app.post('/api/baokuan/autostart', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
     const enable = Boolean(req.body?.enable);
     try {
+      if (IS_WIN_HOST) {
+        if (!enable) {
+          await execFileBuffered('reg', ['delete', WIN_RUN_KEY, '/v', WIN_RUN_VALUE, '/f'], { timeout: 8_000 });
+          return res.json({ ok: true, enabled: false });
+        }
+        const exe = appBundlePath();
+        if (!exe) return res.status(400).json({ error: '当前不是打包应用(dev 环境),无法配置开机自启' });
+        const r = await execFileBuffered('reg',
+          ['add', WIN_RUN_KEY, '/v', WIN_RUN_VALUE, '/t', 'REG_SZ', '/d', `"${exe}"`, '/f'], { timeout: 8_000 });
+        if (!r.ok) return res.status(500).json({ error: '写注册表失败：' + (r.stderr || r.stdout).slice(0, 200) });
+        return res.json({ ok: true, enabled: true, runKey: `${WIN_RUN_KEY}\\${WIN_RUN_VALUE}`, appBundle: exe });
+      }
       if (!enable) {
         if (fs.existsSync(AUTOSTART_PLIST)) fs.unlinkSync(AUTOSTART_PLIST);
         return res.json({ ok: true, enabled: false });

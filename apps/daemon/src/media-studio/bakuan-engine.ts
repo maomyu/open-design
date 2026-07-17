@@ -104,13 +104,15 @@ export function isBakuanEngineReady(ctx: EngineContext): boolean {
   return fs.existsSync(handleFor(ctx, engineDirFor(ctx)).python);
 }
 
-/** 解压用的 tar:win32 钉死 System32 的 bsdtar(Win10 1803+ 自带)。裸 'tar' 在 win 上可能
- *  解析到 PATH 里 Git/MSYS 的 GNU tar——它把 `C:\...` 的冒号当 host:path 远程语法,直接
- *  "Error is not recoverable" 拒开盘符路径;bsdtar 原生吃盘符。POSIX 维持系统 tar。 */
-function tarBinary(): string {
-  if (!IS_WIN) return 'tar';
+/** 解压用的 tar 命令(argv 前缀):win32 钉死 System32 的 bsdtar(Win10 1803+ 自带)。裸 'tar'
+ *  在 win 上可能解析到 PATH 里 Git/MSYS 的 GNU tar——它把 `C:\...` 的冒号当 host:path 远程
+ *  语法,直接 "Error is not recoverable" 拒开盘符路径;bsdtar 原生吃盘符。System32 缺席
+ *  (LTSC/Server 精简版)兜底裸 tar 时补 `--force-local` 禁用远程语义,GNU tar 也能吃盘符。
+ *  POSIX 维持系统 tar。 */
+function tarCommand(): string[] {
+  if (!IS_WIN) return ['tar'];
   const system32Tar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
-  return fs.existsSync(system32Tar) ? system32Tar : 'tar';
+  return fs.existsSync(system32Tar) ? [system32Tar] : ['tar', '--force-local'];
 }
 
 /** 把 opaque tar.gz 解到目标目录（幂等：目标标记文件已在则跳过）。 */
@@ -120,7 +122,8 @@ async function extractTarOnce(tarPath: string, destRoot: string, marker: string)
     throw new Error(`安装包缺少运行时归档：${path.basename(tarPath)}`);
   }
   await fs.promises.mkdir(destRoot, { recursive: true });
-  await execFileAsync(tarBinary(), ['xzf', tarPath, '-C', destRoot], { timeout: 180_000 });
+  const [tarBin = 'tar', ...tarArgs] = tarCommand();
+  await execFileAsync(tarBin, [...tarArgs, 'xzf', tarPath, '-C', destRoot], { timeout: 180_000 });
 }
 
 async function provision(ctx: EngineContext, engineDir: string): Promise<void> {

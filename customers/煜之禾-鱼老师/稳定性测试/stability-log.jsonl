@@ -1,1 +1,5 @@
 {"ts":"2026-07-17T17:26:54","exit":0,"durationSec":221,"summary":"{   \"runs\": [     {       \"keyword\": \"男性情感成长\",       \"candidates\": 4,       \"processed\": 4,       \"generated\": 4,       \"archived_only\": 0,       \"cost\": {         \"prompt\": 6892,         \"completion\": 4221,         \"calls\": 13       }     }   ] } "}
+{"ts":"2026-07-17T18:00:00","exit":127,"durationSec":0,"summary":"/Users/maoyu/开发/自媒体营销/customers/煜之禾-鱼老师/稳定性测试/run-stability.sh: line 11: timeout: command not found "}
+{"ts":"2026-07-17T20:00:01","exit":127,"durationSec":0,"summary":"/Users/maoyu/开发/自媒体营销/customers/煜之禾-鱼老师/稳定性测试/run-stability.sh: line 11: timeout: command not found "}
+{"ts":"2026-07-17T22:00:01","exit":127,"durationSec":0,"summary":"/Users/maoyu/开发/自媒体营销/customers/煜之禾-鱼老师/稳定性测试/run-stability.sh: line 11: timeout: command not found "}
+{"ts":"2026-07-18T00:00:01","exit":127,"durationSec":0,"summary":"/Users/maoyu/开发/自媒体营销/customers/煜之禾-鱼老师/稳定性测试/run-stability.sh: line 11: timeout: command not found "}

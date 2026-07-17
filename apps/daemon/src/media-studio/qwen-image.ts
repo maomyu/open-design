@@ -60,7 +60,13 @@ export async function generateGeminiImageFallback(opts: {
     '多媒体自动发布',
   );
   const script = path.join(workbench, '.claude', 'skills', 'MY-wechat-shared', 'scripts', 'generate_image_gemini.py');
+  // 工作台是 mac 开发机的本地目录(POSIX venv),客户机(尤其 win)没有——缺席时人话报错,
+  // 别让 spawn ENOENT 的原始报错吓客户;主通道(千问/火山 HTTP)不受影响。
   const py = path.join(workbench, '.venv', 'bin', 'python3');
+  const fsMod = await import('node:fs');
+  if (!fsMod.existsSync(py) || !fsMod.existsSync(script)) {
+    throw new QwenImageError('备用生图通道不可用(本机未安装多媒体工作台),请检查主生图模型配置');
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(py, [script, '--prompt', opts.prompt, '--output', opts.outFile, '--aspect-ratio', opts.ratio ?? '4:3'], {
       cwd: workbench,
