@@ -40,7 +40,7 @@ test('prototype project creation reaches the workspace shell', async ({ page }) 
 async function gotoEntryHome(page: Page) {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForLoadingToClear(page);
-  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve Multimedia' });
+  const privacyDialog = page.getByRole('dialog').filter({ hasText: 'Help us improve social-auto' });
   if (await privacyDialog.isVisible()) {
     await privacyDialog.getByRole('button', { name: /not now/i }).click();
     await expect(privacyDialog).toHaveCount(0);
@@ -64,5 +64,5 @@ async function expectWorkspaceReady(page: Page) {
 }
 
 async function waitForLoadingToClear(page: Page) {
-  await page.getByText('Loading Multimedia…').waitFor({ state: 'hidden', timeout: T.medium });
+  await page.getByText('Loading social-auto…').waitFor({ state: 'hidden', timeout: T.medium });
 }

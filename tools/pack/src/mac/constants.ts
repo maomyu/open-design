@@ -1,4 +1,4 @@
-export const PRODUCT_NAME = "Multimedia";
+export const PRODUCT_NAME = "social-auto";
 
 export const INTERNAL_PACKAGES = [
   { directory: "packages/contracts", name: "@open-design/contracts" },

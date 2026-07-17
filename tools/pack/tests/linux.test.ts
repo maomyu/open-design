@@ -339,7 +339,7 @@ describe("stopPackedLinuxHeadless", () => {
       await writeFile(
         markerPath,
         `${JSON.stringify({
-          appPath: "/tmp/Multimedia.AppImage",
+          appPath: "/tmp/social-auto.AppImage",
           executablePath: "/tmp/.mount_od/AppRun",
           logPath: join(namespaceRoot, "logs", "desktop", "latest.log"),
           namespaceRoot,
@@ -400,7 +400,7 @@ describe("stopPackedLinuxHeadless", () => {
       await writeFile(
         markerPath,
         `${JSON.stringify({
-          appPath: "/tmp/Multimedia.AppImage",
+          appPath: "/tmp/social-auto.AppImage",
           executablePath: "/tmp/.mount_od/AppRun",
           logPath: join(namespaceRoot, "logs", "desktop", "latest.log"),
           namespaceRoot,
@@ -469,7 +469,7 @@ describe("stopPackedLinuxHeadless", () => {
       await writeFile(
         markerPath,
         `${JSON.stringify({
-          appPath: "/tmp/Multimedia.AppImage",
+          appPath: "/tmp/social-auto.AppImage",
           executablePath: "/tmp/.mount_od/AppRun",
           logPath: join(namespaceRoot, "logs", "desktop", "latest.log"),
           namespaceRoot,
@@ -546,7 +546,7 @@ describe("resolveProductionInstallCommand", () => {
 describe("renderDesktopTemplate", () => {
   const template = `[Desktop Entry]
 Type=Application
-Name=Multimedia (@@NAMESPACE@@)
+Name=social-auto (@@NAMESPACE@@)
 Exec=env OD_PACKAGED_NAMESPACE=@@NAMESPACE@@ @@EXEC_PATH@@ --appimage-extract-and-run %U
 Icon=@@ICON_PATH@@
 MimeType=x-scheme-handler/od;
@@ -555,12 +555,12 @@ MimeType=x-scheme-handler/od;
   it("substitutes all @@TOKEN@@ placeholders", () => {
     const out = renderDesktopTemplate(template, {
       namespace: "default",
-      execPath: "/home/u/.local/bin/Multimedia.default.AppImage",
+      execPath: "/home/u/.local/bin/social-auto.default.AppImage",
       iconName: "open-design-default",
     });
-    expect(out).toContain("Name=Multimedia (default)");
+    expect(out).toContain("Name=social-auto (default)");
     expect(out).toContain(
-      "Exec=env OD_PACKAGED_NAMESPACE=default /home/u/.local/bin/Multimedia.default.AppImage --appimage-extract-and-run %U",
+      "Exec=env OD_PACKAGED_NAMESPACE=default /home/u/.local/bin/social-auto.default.AppImage --appimage-extract-and-run %U",
     );
     expect(out).toContain("Icon=open-design-default");
   });
@@ -663,7 +663,7 @@ describe("inspectPackedLinuxApp", () => {
     requestJsonIpcMock.mockReset();
     requestJsonIpcMock
       .mockResolvedValueOnce({ state: "running", url: "od://app/" })
-      .mockResolvedValueOnce({ ok: true, value: "Multimedia" })
+      .mockResolvedValueOnce({ ok: true, value: "social-auto" })
       .mockResolvedValueOnce({ path: "/tmp/open-design-linux.png" });
 
     const result = await inspectPackedLinuxApp(makeConfig(), {
@@ -672,7 +672,7 @@ describe("inspectPackedLinuxApp", () => {
     });
 
     expect(result).toEqual({
-      eval: { ok: true, value: "Multimedia" },
+      eval: { ok: true, value: "social-auto" },
       screenshot: { path: "/tmp/open-design-linux.png" },
       status: { state: "running", url: "od://app/" },
     });
@@ -681,7 +681,7 @@ describe("inspectPackedLinuxApp", () => {
 });
 
 describe("matchesAppImageProcess", () => {
-  const installPath = "/home/u/.local/bin/Multimedia.default.AppImage";
+  const installPath = "/home/u/.local/bin/social-auto.default.AppImage";
 
   it("matches FUSE-mode (executable === installPath)", () => {
     const ok = matchesAppImageProcess(
@@ -727,7 +727,7 @@ describe("matchesAppImageProcess", () => {
     const ok = matchesAppImageProcess(
       {
         pid: 1234,
-        executable: "/tmp/appimage_extracted_fe548e54/Multimedia",
+        executable: "/tmp/appimage_extracted_fe548e54/social-auto",
         env: { APPIMAGE: installPath },
       },
       installPath,
@@ -739,7 +739,7 @@ describe("matchesAppImageProcess", () => {
     const ok = matchesAppImageProcess(
       {
         pid: 1234,
-        executable: "/tmp/appimage_extracted_fe548e54/Multimedia",
+        executable: "/tmp/appimage_extracted_fe548e54/social-auto",
         env: { APPIMAGE: "/elsewhere/Other.AppImage" },
       },
       installPath,

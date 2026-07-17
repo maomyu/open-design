@@ -142,9 +142,9 @@ interface PendingPluginUseHandoff {
 }
 
 const AUTHORING_DEFAULT_SCENARIO_INPUTS = {
-  artifactKind: '爆创 plugin',
-  audience: '爆创 plugin authors',
-  topic: 'packaging a reusable workflow as a 爆创 plugin',
+  artifactKind: 'social-auto plugin',
+  audience: 'social-auto plugin authors',
+  topic: 'packaging a reusable workflow as a social-auto plugin',
 };
 
 type HomeDesignSystemOption = {

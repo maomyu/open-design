@@ -22,7 +22,7 @@ od:
 - **本插件的工作台 = `$WB/多媒体自动发布`**(下文叫「工作台」)。它的 `.claude/skills/MY-wechat-*` 是各环节方法论、`.venv` 跑脚本、`MY-wechat-shared/.env` 放凭据、`MY-wechat-shared/scripts/` 放脚本、`archives/{date}/` 收产物。(若该目录不存在,如实告诉用户把工作台拷一份到 `$WB/多媒体自动发布`,别去别处乱找。)
 - **每个环节先读工作台对应的 `MY-wechat-*/SKILL.md` 再照它做**(写作风格、API 调法、配图脚本参数都在里面,别自己另发明)。
 - **Python 一律用工作台的 `.venv`**:`WB="${OD_WORKBENCH_DIR:-$HOME/.open-design/workbenches}"; cd "$WB/多媒体自动发布" && ./.venv/bin/python3 .claude/skills/MY-wechat-shared/scripts/<脚本>.py ...`(系统 Python 有 SSL 偶发问题)。
-- **凭据由 Multimedia 注入到环境变量**(`os.environ`),脚本直接读即可,**不用、也别去改工作台的 `.env` 文件,更不要手动设置/覆盖任何凭证变量**。分两类:**公众号凭证(WECHAT_APPID/SECRET/AUTHOR)按「选定账号」自动注入**——它们只来自账号档案,插件级配置和工作台 .env 对这几个键一律无效;缺了就如实告诉用户去「编辑插件 → 账号」给该账号补,**绝不换账号重试**。其它 API key(DAJIALA/QWEN/GEMINI)仍来自「插件配置」,缺哪个就引导去「编辑插件 → 插件配置」填(`od plugin config wechat-mp-publish` 也行),别瞎找、别假装有。
+- **凭据由 social-auto 注入到环境变量**(`os.environ`),脚本直接读即可,**不用、也别去改工作台的 `.env` 文件,更不要手动设置/覆盖任何凭证变量**。分两类:**公众号凭证(WECHAT_APPID/SECRET/AUTHOR)按「选定账号」自动注入**——它们只来自账号档案,插件级配置和工作台 .env 对这几个键一律无效;缺了就如实告诉用户去「编辑插件 → 账号」给该账号补,**绝不换账号重试**。其它 API key(DAJIALA/QWEN/GEMINI)仍来自「插件配置」,缺哪个就引导去「编辑插件 → 插件配置」填(`od plugin config wechat-mp-publish` 也行),别瞎找、别假装有。
 - **产物落当前 Open Build 项目目录**:配图存项目里的 `3-配图/`(board 的「配图」表用项目内相对路径引,宿主渲成缩略图);排好的公众号 HTML 存 `4-排版-article.html`(可在右侧当成单独文件预览);草稿正文等也留项目里。工作台 `archives/{date}/` 只是可选备份,**别写 /tmp**。
 
 ## 右侧看板 = 一个 `board.json`(结构化数据,不是 HTML)

@@ -2376,7 +2376,7 @@ async function runStudio(args) {
   od studio publish <id> --account <accountId>               # 公众号→草稿箱(API 直发)
   od studio handoff <id> --target zhihu|weibo|xiaohongshu|douyin|kuaishou
      [--account 账号名] [--auto 直发] [--no-wait] [--timeout 秒=300]
-     # 浏览器注入发布:需 爆创 桌面应用在运行(登录态在桌面端);缺省填到发送前一步
+     # 浏览器注入发布:需 social-auto 桌面应用在运行(登录态在桌面端);缺省填到发送前一步
   od studio publishes <id> · mark-published <id> [--label 平台名]   # 发布记录 · 手动补记
   od studio publish-note <id> --targets xiaohongshu:main,... · publish-video <id> --targets douyin:main,... [--video f]
   od studio sau check|login <平台:账号>                       # sau cookie 档案(矩阵直传老路径)

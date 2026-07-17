@@ -33,19 +33,19 @@ LangString OD_REMOVE_LOCAL_DATA_TITLE 1046 "Remover dados locais"
 LangString OD_REMOVE_LOCAL_DATA_TITLE 1049 "Удалить локальные данные"
 LangString OD_REMOVE_LOCAL_DATA_TITLE 1065 "حذف داده‌های محلی"
 
-LangString OD_REMOVE_LOCAL_DATA_HINT 1033 "Choose whether the uninstaller should remove Multimedia data stored on this computer."
-LangString OD_REMOVE_LOCAL_DATA_HINT 2052 "请选择卸载程序是否删除此电脑上保存的 Multimedia 数据。"
-LangString OD_REMOVE_LOCAL_DATA_HINT 1028 "請選擇解除安裝程式是否刪除此電腦上儲存的 Multimedia 資料。"
-LangString OD_REMOVE_LOCAL_DATA_HINT 1046 "Escolha se o desinstalador deve remover os dados do Multimedia armazenados neste computador."
-LangString OD_REMOVE_LOCAL_DATA_HINT 1049 "Выберите, должен ли деинсталлятор удалить данные Multimedia, сохраненные на этом компьютере."
-LangString OD_REMOVE_LOCAL_DATA_HINT 1065 "انتخاب کنید که حذف‌کننده داده‌های Multimedia ذخیره‌شده در این رایانه را حذف کند یا نه."
+LangString OD_REMOVE_LOCAL_DATA_HINT 1033 "Choose whether the uninstaller should remove social-auto data stored on this computer."
+LangString OD_REMOVE_LOCAL_DATA_HINT 2052 "请选择卸载程序是否删除此电脑上保存的 social-auto 数据。"
+LangString OD_REMOVE_LOCAL_DATA_HINT 1028 "請選擇解除安裝程式是否刪除此電腦上儲存的 social-auto 資料。"
+LangString OD_REMOVE_LOCAL_DATA_HINT 1046 "Escolha se o desinstalador deve remover os dados do social-auto armazenados neste computador."
+LangString OD_REMOVE_LOCAL_DATA_HINT 1049 "Выберите, должен ли деинсталлятор удалить данные social-auto, сохраненные на этом компьютере."
+LangString OD_REMOVE_LOCAL_DATA_HINT 1065 "انتخاب کنید که حذف‌کننده داده‌های social-auto ذخیره‌شده در این رایانه را حذف کند یا نه."
 
-LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1033 "Remove local Multimedia data:"
-LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 2052 "删除本地 Multimedia 数据："
-LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1028 "刪除本機 Multimedia 資料："
-LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1046 "Remover dados locais do Multimedia:"
-LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1049 "Удалить локальные данные Multimedia:"
-LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1065 "حذف داده‌های محلی Multimedia:"
+LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1033 "Remove local social-auto data:"
+LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 2052 "删除本地 social-auto 数据："
+LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1028 "刪除本機 social-auto 資料："
+LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1046 "Remover dados locais do social-auto:"
+LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1049 "Удалить локальные данные social-auto:"
+LangString OD_REMOVE_LOCAL_DATA_CHECKBOX 1065 "حذف داده‌های محلی social-auto:"
 
 !macro customUnWelcomePage
   !insertmacro MUI_UNPAGE_WELCOME
@@ -83,7 +83,7 @@ FunctionEnd
     StrCpy $odLocalDataRoot "${localDataRoot}"
   \${EndIf}
   \${If} $odRemoveLocalData != "0"
-    DetailPrint "Removing local Multimedia data: $odLocalDataRoot"
+    DetailPrint "Removing local social-auto data: $odLocalDataRoot"
     RMDir /r "$odLocalDataRoot"
   \${EndIf}
 !macroend

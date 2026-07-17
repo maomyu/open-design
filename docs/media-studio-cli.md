@@ -7,14 +7,14 @@
 **开发机（本仓库）**：`npm link`（仓库根）把 `od` 挂到全局；或直接 `node apps/daemon/dist/cli.js`。
 
 **客户装机（npm 包）**：`pnpm --filter @open-design/daemon cli-pack` 产出
-`apps/daemon/dist-cli/multimedia-cli-<版本>.tgz`（单文件瘦客户端，双命令名 `multimedia`/`od`）。
+`apps/daemon/dist-cli/social-auto-cli-<版本>.tgz`（单文件瘦客户端，双命令名 `social-auto`/`od`）。
 客户机器装好 Node ≥18 后一条命令：
 
 ```bash
-npm install -g ./multimedia-cli-<版本>.tgz
+npm install -g ./social-auto-cli-<版本>.tgz
 ```
 
-装完零配置即用：CLI 自动扫描固定 IPC 端点找到本机在跑的 daemon（桌面端自带）。客户典型形态 = Node/npm + 智能体（如 Claude Code）+ Multimedia 桌面端，智能体对话与桌面端手动操作并行不冲突。
+装完零配置即用：CLI 自动扫描固定 IPC 端点找到本机在跑的 daemon（桌面端自带）。客户典型形态 = Node/npm + 智能体（如 Claude Code）+ social-auto 桌面端，智能体对话与桌面端手动操作并行不冲突。
 
 ## 约定
 
@@ -51,7 +51,7 @@ od studio handoff <id> --target zhihu                            # 填到发送�
 od studio handoff <id> --target zhihu --auto                     # 直发(真实点击「发布」,不可撤回!)
 ```
 
-`handoff` 是唯一依赖 **Multimedia 桌面应用在运行**的命令：注入引擎跑在桌面端内嵌浏览器里（登录态在桌面端分区）。桌面端没开时 create 立即失败（exit 4，报错说清楚开桌面应用再试）。进度逐行打到 stdout，终态即退出码。`--account` 不给时用账号中心该平台第一个绑定账号。
+`handoff` 是唯一依赖 **social-auto 桌面应用在运行**的命令：注入引擎跑在桌面端内嵌浏览器里（登录态在桌面端分区）。桌面端没开时 create 立即失败（exit 4，报错说清楚开桌面应用再试）。进度逐行打到 stdout，终态即退出码。`--account` 不给时用账号中心该平台第一个绑定账号。
 
 ## 一条龙：小红书图文笔记
 
@@ -90,7 +90,7 @@ od studio handoff → daemon 建 job(内存,TTL) → SSE 广播 → 桌面端认
 
 | 现象 | 原因/处理 |
 |---|---|
-| exit 4「桌面端未连接」 | 打开 Multimedia 桌面应用后重试 |
+| exit 4「桌面端未连接」 | 打开 social-auto 桌面应用后重试 |
 | 「未绑定账号」 | 到界面「账号」页绑定，或 `--account 名` 指定 |
 | 「稿件没准备好」 | 笔记缺图集/短视频缺成片——`od studio assets <id>` 核对 |
 | 等待超时但面板还在动 | 注入未死，看桌面端面板顶部进度条；job 终态可 `GET /api/media-studio/handoff/<jobId>` 查 |
@@ -121,7 +121,7 @@ od studio handoff → daemon 建 job(内存,TTL) → SSE 广播 → 桌面端认
 
 - **无授权文件 = 全功能**（开发机/CI/存量安装零影响）。
 - 授权文件 `license.json` 放在 daemon 数据目录（与 `app-config.json` 同级）。
-- 客户侧命令：`multimedia license show` / `multimedia license import <file>` / `multimedia license reload`。
+- 客户侧命令：`social-auto license show` / `social-auto license import <file>` / `social-auto license reload`。
 - 到期后：写操作 403（`LICENSE_EXPIRED`），GET 读端点放行——锁功能、留数据。
 
 签发在运营方侧（私钥不进仓库/产品），见《定制版签发操作单》。

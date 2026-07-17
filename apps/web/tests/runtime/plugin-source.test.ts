@@ -129,7 +129,7 @@ describe('derivePluginSourceLinks · url + local + bundled sources', () => {
     expect(out.sourceKindLabel).toBe('Local');
   });
 
-  it('routes bundled official sources to the Multimedia repo', () => {
+  it('routes bundled official sources to the social-auto repo', () => {
     const out = derivePluginSourceLinks(
       makeRecord({
         sourceKind: 'bundled',
@@ -151,11 +151,11 @@ describe('derivePluginSourceLinks · author + contribute', () => {
         manifest: {
           name:    'p',
           version: '1.0.0',
-          author:  { name: 'Multimedia', url: 'https://github.com/nexu-io' },
+          author:  { name: 'social-auto', url: 'https://github.com/nexu-io' },
         } as InstalledPluginRecord['manifest'],
       }),
     );
-    expect(out.authorName).toBe('Multimedia');
+    expect(out.authorName).toBe('social-auto');
     expect(out.authorProfileUrl).toBe('https://github.com/nexu-io');
     expect(out.authorAvatarUrl).toBe('https://github.com/nexu-io.png?size=80');
   });

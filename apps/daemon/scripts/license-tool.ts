@@ -8,7 +8,7 @@
 //   pnpm --filter @open-design/daemon license-tool make --customer X --preset full --expires ...
 //   pnpm --filter @open-design/daemon license-tool inspect license.json
 //
-// 客户侧装载:`multimedia license import license.json`(或拷到数据目录重启)。
+// 客户侧装载:`social-auto license import license.json`(或拷到数据目录重启)。
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -100,7 +100,7 @@ if (cmd === 'make') {
   console.log(`已签发 → ${out}`);
   console.log(`客户: ${customer} · ${edition} · 到期 ${expires}`);
   console.log(`功能(${features.length}): ${features.join(', ')}`);
-  console.log(`交付: 发给客户后执行 multimedia license import ${path.basename(out)}`);
+  console.log(`交付: 发给客户后执行 social-auto license import ${path.basename(out)}`);
   process.exit(0);
 }
 

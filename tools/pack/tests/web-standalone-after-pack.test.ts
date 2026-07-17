@@ -112,9 +112,9 @@ async function runFixture(options: {
   const platformName = options.platformName ?? "win32";
   const appOutDir = join(root, "builder", platformName === "darwin" ? "mac-arm64" : "win-unpacked");
   const resourcesRoot = platformName === "darwin"
-    ? join(appOutDir, "Multimedia.app", "Contents", "Resources")
+    ? join(appOutDir, "social-auto.app", "Contents", "Resources")
     : join(appOutDir, "resources");
-  const appPath = join(appOutDir, "Multimedia.app");
+  const appPath = join(appOutDir, "social-auto.app");
   const auditReportPath = join(root, "audit.json");
   const configPath = join(root, "config.json");
   const oldConfigEnv = process.env[CONFIG_ENV];
@@ -130,7 +130,7 @@ async function runFixture(options: {
     await writeFile(join(electronFrameworkRoot, "Versions", "A", "Electron Framework"), "binary\n", "utf8");
     await writeFile(join(electronFrameworkRoot, "Versions", "Current", "Electron Framework"), "binary\n", "utf8");
     await mkdir(join(frameworksRoot, "ReactiveObjC.framework"), { recursive: true });
-    await mkdir(join(frameworksRoot, "Multimedia Helper.app"), { recursive: true });
+    await mkdir(join(frameworksRoot, "social-auto Helper.app"), { recursive: true });
   }
   if (options.omitRootWebPackage !== true) {
     await writeRootWebPackage(resourcesRoot);
@@ -165,7 +165,7 @@ async function runFixture(options: {
     await runWebStandaloneAfterPack({
       appOutDir,
       electronPlatformName: platformName,
-      packager: { appInfo: { productFilename: "Multimedia" } },
+      packager: { appInfo: { productFilename: "social-auto" } },
     });
   } catch (error) {
     await rm(root, { force: true, recursive: true });
@@ -323,15 +323,15 @@ describe("web standalone afterPack hook", () => {
         expect.arrayContaining([
           expect.stringMatching(/Electron Framework\.framework\/Versions\/Current$/),
           expect.stringMatching(/ReactiveObjC\.framework$/),
-          expect.stringMatching(/Multimedia Helper\.app$/),
-          expect.stringMatching(/Multimedia\.app$/),
+          expect.stringMatching(/social-auto Helper\.app$/),
+          expect.stringMatching(/social-auto\.app$/),
         ]),
       );
       expect(signedTargets).not.toContainEqual(expect.stringMatching(/Electron Framework\.framework$/));
       await expect(
         readlink(join(
           fixture.appOutDir,
-          "Multimedia.app",
+          "social-auto.app",
           "Contents",
           "Frameworks",
           "Electron Framework.framework",
@@ -342,7 +342,7 @@ describe("web standalone afterPack hook", () => {
       await expect(
         readlink(join(
           fixture.appOutDir,
-          "Multimedia.app",
+          "social-auto.app",
           "Contents",
           "Frameworks",
           "Electron Framework.framework",
@@ -352,7 +352,7 @@ describe("web standalone afterPack hook", () => {
       await expect(
         readlink(join(
           fixture.appOutDir,
-          "Multimedia.app",
+          "social-auto.app",
           "Contents",
           "Frameworks",
           "Electron Framework.framework",

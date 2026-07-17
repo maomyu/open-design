@@ -217,7 +217,7 @@ export interface UpdatePluginConfigResponse {
 // (`od.accounts.platform`); the composer's account dropdown and the runtime
 // credential/persona resolution read the platform-level store.
 
-/** The self-media platforms Multimedia can drive. Closed enum on purpose —
+/** The self-media platforms social-auto can drive. Closed enum on purpose —
  *  extending it means adding a MEDIA_PLATFORMS entry too. */
 export type MediaPlatformId =
   | 'wechat-mp'

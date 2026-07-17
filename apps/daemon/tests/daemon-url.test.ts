@@ -103,7 +103,7 @@ describe("resolveDaemonUrl", () => {
     throw new Error("unexpected message");
   };
 
-  // 零配置自发现:客户 shell 里没有任何 OD_* 环境变量,npm 装的 od/multimedia
+  // 零配置自发现:客户 shell 里没有任何 OD_* 环境变量,npm 装的 od/social-auto
   // 靠扫描固定 IPC base 找到桌面端(打包版)daemon。POSIX socket 语义,win 走
   // 命名管道枚举(此处跳过)。
   it.skipIf(process.platform === "win32")(

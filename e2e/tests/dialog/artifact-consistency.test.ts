@@ -183,7 +183,7 @@ function assertAssistantMessage(
 
 async function expectWorkspaceReady(page: Page) {
   await waitForLoadingToClear(page);
-  const privacyDialog = page.getByRole('region', { name: 'Help us improve Multimedia' });
+  const privacyDialog = page.getByRole('region', { name: 'Help us improve social-auto' });
   if (await privacyDialog.isVisible().catch(() => false)) {
     await privacyDialog.getByRole('button', { name: /don't share|not now/i }).click();
     await playwrightExpect(privacyDialog).toHaveCount(0);
@@ -195,7 +195,7 @@ async function expectWorkspaceReady(page: Page) {
 }
 
 async function waitForLoadingToClear(page: Page) {
-  const loading = page.getByText('Loading Multimedia…');
+  const loading = page.getByText('Loading social-auto…');
   await loading.waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
 }
 

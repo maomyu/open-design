@@ -46,11 +46,11 @@ function makeConfig(root: string, namespace: string): ToolPackConfig {
 describe("resolveMacInstallIdentity", () => {
   it("keeps stable builds on the canonical mac identity", () => {
     expect(resolveMacInstallIdentity(makeConfig("/work", "release-stable"))).toMatchObject({
-      appId: "com.multimedia.desktop",
-      installerTitle: "Multimedia",
-      productName: "Multimedia",
-      publicAppBundleName: "Multimedia.app",
-      systemAppBundleName: "Multimedia.app",
+      appId: "com.social-auto.desktop",
+      installerTitle: "social-auto",
+      productName: "social-auto",
+      publicAppBundleName: "social-auto.app",
+      systemAppBundleName: "social-auto.app",
     });
   });
 
@@ -58,28 +58,28 @@ describe("resolveMacInstallIdentity", () => {
     const config = makeConfig("/work", "release-beta");
 
     expect(resolveMacInstallIdentity(config)).toEqual({
-      appId: "com.multimedia.desktop.beta",
-      executableName: "Multimedia Beta",
-      installerTitle: "Multimedia Beta",
-      productName: "Multimedia Beta",
-      publicAppBundleName: "Multimedia Beta.app",
-      systemAppBundleName: "Multimedia Beta.app",
+      appId: "com.social-auto.desktop.beta",
+      executableName: "social-auto Beta",
+      installerTitle: "social-auto Beta",
+      productName: "social-auto Beta",
+      publicAppBundleName: "social-auto Beta.app",
+      systemAppBundleName: "social-auto Beta.app",
     });
-    expect(resolveMacPaths(config).appPath).toMatch(/Multimedia Beta\.app$/);
+    expect(resolveMacPaths(config).appPath).toMatch(/social-auto Beta\.app$/);
   });
 
   it("uses first-class preview app identity for preview release namespaces", () => {
     const config = makeConfig("/work", "release-preview");
 
     expect(resolveMacInstallIdentity(config)).toEqual({
-      appId: "com.multimedia.desktop.preview",
-      executableName: "Multimedia Preview",
-      installerTitle: "Multimedia Preview",
-      productName: "Multimedia Preview",
-      publicAppBundleName: "Multimedia Preview.app",
-      systemAppBundleName: "Multimedia Preview.app",
+      appId: "com.social-auto.desktop.preview",
+      executableName: "social-auto Preview",
+      installerTitle: "social-auto Preview",
+      productName: "social-auto Preview",
+      publicAppBundleName: "social-auto Preview.app",
+      systemAppBundleName: "social-auto Preview.app",
     });
-    expect(resolveMacPaths(config).appPath).toMatch(/Multimedia Preview\.app$/);
+    expect(resolveMacPaths(config).appPath).toMatch(/social-auto Preview\.app$/);
   });
 
   it("uses first-class nightly app identity for nightly release versions and namespaces", () => {
@@ -90,17 +90,17 @@ describe("resolveMacInstallIdentity", () => {
     const nightlyNamespaceConfig = makeConfig("/work", "release-nightly");
 
     expect(resolveMacInstallIdentity(nightlyVersionConfig)).toEqual({
-      appId: "com.multimedia.desktop.nightly",
-      executableName: "Multimedia Nightly",
-      installerTitle: "Multimedia Nightly",
-      productName: "Multimedia Nightly",
-      publicAppBundleName: "Multimedia Nightly.app",
-      systemAppBundleName: "Multimedia Nightly.app",
+      appId: "com.social-auto.desktop.nightly",
+      executableName: "social-auto Nightly",
+      installerTitle: "social-auto Nightly",
+      productName: "social-auto Nightly",
+      publicAppBundleName: "social-auto Nightly.app",
+      systemAppBundleName: "social-auto Nightly.app",
     });
-    expect(resolveMacPaths(nightlyVersionConfig).appPath).toMatch(/Multimedia Nightly\.app$/);
+    expect(resolveMacPaths(nightlyVersionConfig).appPath).toMatch(/social-auto Nightly\.app$/);
     expect(resolveMacInstallIdentity(nightlyNamespaceConfig)).toMatchObject({
-      productName: "Multimedia Nightly",
-      publicAppBundleName: "Multimedia Nightly.app",
+      productName: "social-auto Nightly",
+      publicAppBundleName: "social-auto Nightly.app",
     });
   });
 });

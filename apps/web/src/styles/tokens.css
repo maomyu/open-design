@@ -1,5 +1,5 @@
 /* ============================================================
-   Multimedia — neutral product workspace
+   social-auto — neutral product workspace
    ============================================================ */
 :root {
   /* Surface palette — neutral app chrome that does not bias generated artifacts.
@@ -21,7 +21,7 @@
   --text-soft: #989590;
   --text-faint: #b3b0a8;
 
-  /* Accent — Multimedia action color for app chrome only. */
+  /* Accent — social-auto action color for app chrome only. */
   --accent: #c96442;
   --accent-strong: #b45a3b;
   --accent-soft: #f5d8cb;

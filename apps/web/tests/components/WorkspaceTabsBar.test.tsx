@@ -21,7 +21,7 @@ vi.mock('../../src/i18n', async (importOriginal) => ({
   }),
   useT: () => (key: string) => {
     const labels: Record<string, string> = {
-      'app.brand': 'Multimedia',
+      'app.brand': 'social-auto',
       'common.close': 'Close',
       'common.untitled': 'Untitled',
       'entry.navDesignSystems': 'Design systems',

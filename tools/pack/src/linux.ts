@@ -34,8 +34,8 @@ import { processWebSourcemaps } from "./web-sourcemaps.js";
 
 const execFileAsync = promisify(execFile);
 
-const PRODUCT_NAME = "Multimedia";
-const APP_IMAGE_PRODUCT_NAME = "Multimedia";
+const PRODUCT_NAME = "social-auto";
+const APP_IMAGE_PRODUCT_NAME = "social-auto";
 const DESKTOP_LOG_ECHO_ENV = "OD_DESKTOP_LOG_ECHO";
 // The containerized build sets this to the standalone pnpm binary fetched by
 // buildDockerArgs; runProductionInstall reads it to avoid invoking `npm` inside
@@ -487,7 +487,7 @@ async function writeAssembledApp(
     main: "main.cjs",
     dependencies,
     description: "Local-first design product: detects your installed code-agent CLI, runs design skills + design systems, streams artifacts into a sandboxed preview.",
-    author: "Multimedia Team",
+    author: "social-auto Team",
     repository: {
       type: "git",
       url: "https://github.com/nexu-io/open-design.git"
@@ -529,7 +529,7 @@ async function writeLinuxBuilderConfig(config: ToolPackConfig, paths: LinuxPaths
   const packageVersion = electronBuilderVersionForAppVersion(packagedVersion);
 
   const builderConfig: Record<string, unknown> = {
-    appId: "com.multimedia.desktop",
+    appId: "com.social-auto.desktop",
     artifactName: `${PRODUCT_NAME}-${namespaceToken}.\${ext}`,
     asar: false,
     buildDependenciesFromSource: false,
@@ -559,8 +559,8 @@ async function writeLinuxBuilderConfig(config: ToolPackConfig, paths: LinuxPaths
       target,
       icon: linuxResources.icon,
       category: "Development",
-      synopsis: "Multimedia",
-      maintainer: "Multimedia Contributors",
+      synopsis: "social-auto",
+      maintainer: "social-auto Contributors",
     },
     nodeGypRebuild: false,
     npmRebuild: false,
@@ -1425,7 +1425,7 @@ export async function installPackedLinuxHeadless(config: ToolPackConfig): Promis
   const dataDir = dirname(config.roots.runtime.namespaceBaseRoot);
   const script = [
     "#!/bin/sh",
-    `# Multimedia headless launcher — namespace: ${config.namespace}`,
+    `# social-auto headless launcher — namespace: ${config.namespace}`,
     `OD_PACKAGED_NAMESPACE=${JSON.stringify(config.namespace)} OD_DATA_DIR=${JSON.stringify(dataDir)} OD_RESOURCE_ROOT=${JSON.stringify(paths.resourceRoot)} exec ${JSON.stringify(nodePath)} ${JSON.stringify(entryPath)} "$@"`,
   ].join("\n") + "\n";
 

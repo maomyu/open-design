@@ -742,7 +742,7 @@ export interface ConnectorActionResult {
 }
 
 function popupBlockedMessage(): string {
-  return 'Popup blocked. Allow popups for 爆创 and try again.';
+  return 'Popup blocked. Allow popups for social-auto and try again.';
 }
 
 export async function openExternalUrl(url: string): Promise<boolean> {

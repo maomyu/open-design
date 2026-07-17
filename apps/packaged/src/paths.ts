@@ -64,13 +64,13 @@ function resolvePackagedDataRoot(
     if (!isAbs) {
       throw new PackagedPathAccessError(
         [
-          "爆创's packaged runtime requires OD_DATA_DIR to be an absolute path.",
+          "social-auto's packaged runtime requires OD_DATA_DIR to be an absolute path.",
           "",
           `Configured value: ${odDataDir}`,
           "",
-          "Set OD_DATA_DIR to an absolute path (for example, C:\\\\Users\\\\You\\\\OpenDesign on Windows or /Users/you/OpenDesign on macOS/Linux) and relaunch 爆创.",
+          "Set OD_DATA_DIR to an absolute path (for example, C:\\\\Users\\\\You\\\\OpenDesign on Windows or /Users/you/OpenDesign on macOS/Linux) and relaunch social-auto.",
         ].join("\n"),
-        { title: "爆创 cannot start with this OD_DATA_DIR" },
+        { title: "social-auto cannot start with this OD_DATA_DIR" },
       );
     }
     const scopedNamespace = getScopedPackagedDataRootNamespace(expanded);
@@ -78,7 +78,7 @@ function resolvePackagedDataRoot(
       if (scopedNamespace !== namespace) {
         throw new PackagedPathAccessError(
           [
-            "爆创's packaged runtime requires OD_DATA_DIR to target the active namespace.",
+            "social-auto's packaged runtime requires OD_DATA_DIR to target the active namespace.",
             "",
             `Configured value: ${odDataDir}`,
             `Configured namespace: ${scopedNamespace}`,
@@ -86,7 +86,7 @@ function resolvePackagedDataRoot(
             "",
             "Use an unscoped absolute base path or relaunch the matching packaged namespace.",
           ].join("\n"),
-          { title: "爆创 cannot start with this OD_DATA_DIR" },
+          { title: "social-auto cannot start with this OD_DATA_DIR" },
         );
       }
       return expanded;
@@ -107,7 +107,7 @@ export function resolvePackagedNamespacePaths(
   const dataRoot = resolvePackagedDataRoot(config, normalizedNamespace, env);
   // Channel root = parent of the `namespaces/` directory. With the default
   // packaged layout this resolves to `<electronApp.userData>` — e.g.
-  // `~/Library/Application Support/爆创 Nightly/` on mac. Custom
+  // `~/Library/Application Support/social-auto Nightly/` on mac. Custom
   // `namespaceBaseRoot` overrides (tests, multi-namespace deployments)
   // still get a usable parent here.
   const installationRoot = join(config.namespaceBaseRoot, "..");

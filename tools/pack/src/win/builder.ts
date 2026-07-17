@@ -100,7 +100,7 @@ async function runElectronBuilderRaw(config: ToolPackConfig, paths: WinPaths, pr
     ? await writeWebStandaloneHookConfig(config, paths)
     : null;
   const builderConfig = {
-    appId: "com.multimedia.desktop",
+    appId: "com.social-auto.desktop",
     afterPack: webStandaloneHookConfigPath == null ? undefined : winResources.webStandaloneAfterPackHook,
     asar: ELECTRON_BUILDER_ASAR,
     buildDependenciesFromSource: ELECTRON_BUILDER_BUILD_DEPENDENCIES_FROM_SOURCE,

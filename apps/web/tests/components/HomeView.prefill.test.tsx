@@ -29,7 +29,7 @@ const AUTHORING_PLUGIN = {
     od: {
       kind: 'scenario',
       taskKind: 'new-generation',
-      useCase: { query: 'Create a Multimedia plugin for {{pluginGoal}}.' },
+      useCase: { query: 'Create a social-auto plugin for {{pluginGoal}}.' },
       inputs: [
         {
           name: 'pluginGoal',
@@ -217,14 +217,14 @@ const LIVE_ARTIFACT_PLUGIN = {
     ...DEFAULT_PLUGIN.manifest,
     name: 'example-live-artifact',
     title: 'Live Artifact',
-    description: 'Create refreshable, auditable Multimedia artifacts.',
+    description: 'Create refreshable, auditable social-auto artifacts.',
     od: {
       kind: 'scenario',
       taskKind: 'new-generation',
       mode: 'prototype',
       scenario: 'live',
       useCase: {
-        query: 'Create refreshable, auditable Multimedia artifacts backed by connector or local data.',
+        query: 'Create refreshable, auditable social-auto artifacts backed by connector or local data.',
       },
       context: {
         skills: [{ path: './SKILL.md' }],
@@ -259,9 +259,9 @@ const LIVE_ARTIFACT_IMAGE_TEMPLATE_PLUGIN = {
 };
 
 const AUTHORING_DEFAULT_SCENARIO_INPUTS = {
-  artifactKind: 'Multimedia plugin',
-  audience: 'Multimedia plugin authors',
-  topic: 'packaging a reusable workflow as a Multimedia plugin',
+  artifactKind: 'social-auto plugin',
+  audience: 'social-auto plugin authors',
+  topic: 'packaging a reusable workflow as a social-auto plugin',
 };
 
 const REFLY_DESIGN_SYSTEM = {
@@ -594,9 +594,9 @@ describe('HomeView prompt handoff', () => {
     ));
     expect(JSON.parse(String((applyCall?.[1] as RequestInit).body))).toMatchObject({
       inputs: {
-        artifactKind: 'Multimedia plugin',
-        audience: 'Multimedia plugin authors',
-        topic: 'packaging a reusable workflow as a Multimedia plugin',
+        artifactKind: 'social-auto plugin',
+        audience: 'social-auto plugin authors',
+        topic: 'packaging a reusable workflow as a social-auto plugin',
       },
     });
     await waitFor(() => {
@@ -612,9 +612,9 @@ describe('HomeView prompt handoff', () => {
       pluginId: 'od-new-generation',
       appliedPluginSnapshotId: 'snap-default',
       pluginInputs: {
-        artifactKind: 'Multimedia plugin',
-        audience: 'Multimedia plugin authors',
-        topic: 'packaging a reusable workflow as a Multimedia plugin',
+        artifactKind: 'social-auto plugin',
+        audience: 'social-auto plugin authors',
+        topic: 'packaging a reusable workflow as a social-auto plugin',
       },
       projectKind: 'other',
     }));

@@ -1,7 +1,7 @@
 # Open Design —— [Claude Design][cd] 的官方开源替代品
 
 > [!NOTE]
-> **Multimedia** —— 本仓库基于 [open-design](https://github.com/nexu-io/open-design)（Apache-2.0）二次开发并重塑品牌，用于商业交付。上游许可证原样保留于 [LICENSE](LICENSE)；内置模板 `design-templates/guizang-ppt`、`design-templates/html-ppt` 保留其原 MIT 许可。
+> **social-auto** —— 本仓库基于 [open-design](https://github.com/nexu-io/open-design)（Apache-2.0）二次开发并重塑品牌，用于商业交付。上游许可证原样保留于 [LICENSE](LICENSE)；内置模板 `design-templates/guizang-ppt`、`design-templates/html-ppt` 保留其原 MIT 许可。
 
 > **Open Design 是 [Claude Design][cd] 的开源、本地优先替代品。** 可部署到 Vercel、每一层都 BYOK —— **16 套 coding-agent CLI** 在 `PATH` 上自动检测（Claude Code, Codex, Devin for Terminal, Cursor Agent, Gemini CLI, OpenCode, Qwen, Qoder CLI, GitHub Copilot CLI, Hermes, Kimi, Pi, Kiro, Kilo, Mistral Vibe, DeepSeek TUI）就是设计引擎，由 **31 个可组合 Skills** 和 **72 套品牌级 Design System** 驱动。
 

@@ -193,7 +193,7 @@ function SkillPluginCandidateCard({
         message:
           action === "publish-github"
             ? `GitHub publish task started for ${data?.path ?? "the draft"}.`
-            : `爆创 contribution task started for ${data?.path ?? "the draft"}.`,
+            : `social-auto contribution task started for ${data?.path ?? "the draft"}.`,
       });
     } catch (err) {
       setNotice({ message: err instanceof Error ? err.message : String(err) });
@@ -1475,7 +1475,7 @@ function PluginActionPanel({
                   <span>
                     {actionBusy && busyKey === `contribute:${folder.path}`
                       ? "Sending..."
-                      : "爆创 PR"}
+                      : "social-auto PR"}
                   </span>
                 </button>
                 {onRequestOpenFile ? (
@@ -1571,7 +1571,7 @@ function pathMatchesFolderFileBasename(
 }
 
 function hasPluginFinalActionHint(content: string): boolean {
-  return /\b(Add to My plugins|爆创 PR|Publish repo|plugin publish|ready to publish|ready to add)\b/i.test(
+  return /\b(Add to My plugins|social-auto PR|Publish repo|plugin publish|ready to publish|ready to add)\b/i.test(
     content,
   );
 }

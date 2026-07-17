@@ -10,7 +10,7 @@ describe('TrustBadge', () => {
     expect(html).toContain('Official');
     expect(html).toContain('plugin-trust-badge--official');
     expect(html).toContain('data-trust-tier="official"');
-    expect(html).toContain('Multimedia official');
+    expect(html).toContain('social-auto official');
   });
 
   it('uses one visual API for marketplace trust tiers', () => {
@@ -36,6 +36,6 @@ describe('TrustBadge', () => {
 
     expect(html).toContain('Action plugin');
     expect(html).toContain('plugin-trust-badge--official');
-    expect(html).toContain('aria-label="Multimedia official: Action plugin"');
+    expect(html).toContain('aria-label="social-auto official: Action plugin"');
   });
 });

@@ -305,7 +305,7 @@ export async function writeAssembledApp(
     `${JSON.stringify(
       {
         dependencies,
-        description: "Multimedia packaged runtime",
+        description: "social-auto packaged runtime",
         main: "./main.cjs",
         name: "open-design-packaged-app",
         private: true,

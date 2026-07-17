@@ -29,7 +29,7 @@ od:
 
 ## 两个零件
 
-- **采集器**：`bakuan-engine/scripts/collect_via_app.py`（**首选**：采集跑在爆创【应用内标签】里，不弹独立窗口，登录态在标签持久分区）。备用 `browser_collect.py`（用独立 `agent-browser` 窗口，仅在桌面端不可用时兜底）。
+- **采集器**：`bakuan-engine/scripts/collect_via_app.py`（**首选**：采集跑在social-auto【应用内标签】里，不弹独立窗口，登录态在标签持久分区）。备用 `browser_collect.py`（用独立 `agent-browser` 窗口，仅在桌面端不可用时兜底）。
 - **评分引擎**：`bakuan-engine`（`--collect-file` 吃采集数据，`--radar` 只出选题候选、不写脚本）。引擎自带 venv：`bakuan-engine/.venv/bin/python`。
 
 ## 怎么做（AI 先定标准 → 灵活采集 → 评分选题）
@@ -58,10 +58,10 @@ od:
      --keyword "<关键词>" --platforms bilibili \
      --out /tmp/bc_collect.json --order hot --time-window 180d --pages 3 --per 40
    ```
-   - 在爆创**应用内标签**里逐页打开搜索页抓取（用户能看到标签在动、翻页），不弹独立窗口。`--pages` 控制翻几页（抓更多）。
+   - 在social-auto**应用内标签**里逐页打开搜索页抓取（用户能看到标签在动、翻页），不弹独立窗口。`--pages` 控制翻几页（抓更多）。
    - 输出 report（每平台采到几条、是否 `needs_login`）。
-   - **若 `needs_login: true`**：那个平台标签已开在爆创、停在登录页——告诉用户「请在爆创里那个『<平台>』标签扫码登录（一次长期有效），登录后回我说一声我重跑」。**绝不代填账号密码/验证码**。
-   - 若报「桌面端未连接」：提示用户打开爆创桌面应用。
+   - **若 `needs_login: true`**：那个平台标签已开在social-auto、停在登录页——告诉用户「请在social-auto里那个『<平台>』标签扫码登录（一次长期有效），登录后回我说一声我重跑」。**绝不代填账号密码/验证码**。
+   - 若报「桌面端未连接」：提示用户打开social-auto桌面应用。
 
 5. **第二步·按标准评分选题**（采集文件 + 同一份标准喂引擎）：
 
@@ -87,7 +87,7 @@ od:
 - **登录一次长期有效**：`agent-browser` 持久会话保存登录态，之后采集免登录。
 
 ## 数据去哪
-引擎 `--radar` 直接产出选题候选 JSON。爆创这边把选题候选展示在看板上、驱动创作。
+引擎 `--radar` 直接产出选题候选 JSON。social-auto这边把选题候选展示在看板上、驱动创作。
 
 ## 铁律
 - ❌ 绝不 `cd` 到 `bakuan-engine/` 以外乱找；绝不写 HTML 看板；绝不自己编选题——**选题必须来自真实采集+引擎评分**。

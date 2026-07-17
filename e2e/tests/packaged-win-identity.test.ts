@@ -8,7 +8,7 @@ describe("packaged windows smoke identity", () => {
       namespace: "release-stable-win",
       releaseVersion: "0.8.0.nightly.2",
     })).toEqual({
-      displayName: "Multimedia Nightly",
+      displayName: "social-auto Nightly",
       namespaceToken: "release-stable-win",
     });
     expect(releaseAppVersionArgs("0.8.0.nightly.2")).toEqual(["--app-version", "0.8.0.nightly.2"]);
@@ -19,14 +19,14 @@ describe("packaged windows smoke identity", () => {
       namespace: "release-stable-win",
       releaseVersion: "0.8.0",
     })).toEqual({
-      displayName: "Multimedia",
+      displayName: "social-auto",
       namespaceToken: "release-stable-win",
     });
     expect(resolvePackagedWinInstallIdentity({
       namespace: "default",
       releaseVersion: undefined,
     })).toEqual({
-      displayName: "Multimedia",
+      displayName: "social-auto",
       namespaceToken: "default",
     });
   });
@@ -35,11 +35,11 @@ describe("packaged windows smoke identity", () => {
     expect(resolvePackagedWinInstallIdentity({
       namespace: "release-stable-win",
       releaseVersion: "0.8.0-preview.1",
-    }).displayName).toBe("Multimedia Preview");
+    }).displayName).toBe("social-auto Preview");
     expect(resolvePackagedWinInstallIdentity({
       namespace: "release-beta-win",
       releaseVersion: undefined,
-    }).displayName).toBe("Multimedia Beta");
+    }).displayName).toBe("social-auto Beta");
   });
 
   it("keeps ad hoc namespaces isolated from release channel identities", () => {
@@ -47,7 +47,7 @@ describe("packaged windows smoke identity", () => {
       namespace: "beta-local-flow",
       releaseVersion: undefined,
     })).toEqual({
-      displayName: "Multimedia beta-local-flow",
+      displayName: "social-auto beta-local-flow",
       namespaceToken: "beta-local-flow",
     });
     expect(releaseAppVersionArgs("   ")).toEqual([]);

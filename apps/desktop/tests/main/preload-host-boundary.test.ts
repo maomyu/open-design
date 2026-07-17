@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 describe("desktop preload host boundary", () => {
-  it("exposes the canonical Multimedia host global and diagnostics bridge", () => {
+  it("exposes the canonical social-auto host global and diagnostics bridge", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const source = readFileSync(join(here, "../../src/main/preload.cts"), "utf8");
     const exposedGlobals = Array.from(source.matchAll(/contextBridge\.exposeInMainWorld\(([^,\n]+)/g))

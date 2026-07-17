@@ -119,7 +119,7 @@ export function createHandoffBus(now: () => number = Date.now): HandoffBus {
       if (listeners.size === 0) {
         throw new HandoffError(
           'desktop-offline',
-          '桌面端未连接——浏览器注入发布需要 爆创 桌面应用在运行(登录态在桌面端浏览器分区里)。打开桌面应用后重试。',
+          '桌面端未连接——浏览器注入发布需要 social-auto 桌面应用在运行(登录态在桌面端浏览器分区里)。打开桌面应用后重试。',
         );
       }
       const t = now();

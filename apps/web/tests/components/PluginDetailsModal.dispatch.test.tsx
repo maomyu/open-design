@@ -284,7 +284,7 @@ describe('PluginDetailsModal common metadata coverage', () => {
     expect(html).not.toContain('plugin-meta-sections__heading');
   });
 
-  it('routes official plugin author and source links to the Multimedia repo', () => {
+  it('routes official plugin author and source links to the social-auto repo', () => {
     const html = render(
       pluginWithMeta({
         id: 'official-link-meta',

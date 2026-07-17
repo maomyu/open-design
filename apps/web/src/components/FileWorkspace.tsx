@@ -2407,7 +2407,7 @@ function designSystemSectionRunningNotice(
   activity: DesignSystemSectionActivity,
 ): string {
   if (activity.phase === 'reading') {
-    return `爆创 is reading ${section.title} context for this section.`;
+    return `social-auto is reading ${section.title} context for this section.`;
   }
   return `${designSystemSectionPhaseLabel(section, activity)} now.`;
 }

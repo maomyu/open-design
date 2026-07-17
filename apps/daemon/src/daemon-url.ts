@@ -26,7 +26,7 @@ export interface ResolveDaemonUrlOptions {
  * roundtrip to the concrete sidecar IPC endpoint supplied by the lifecycle
  * owner in `OD_SIDECAR_IPC_PATH`, then a scan of the well-known IPC base for
  * any live daemon socket (zero-config discovery for plain customer shells —
- * an npm-installed `od`/`multimedia` finds the packaged desktop app's daemon
+ * an npm-installed `od`/`social-auto` finds the packaged desktop app's daemon
  * without any env vars). Falls back to the legacy default port last.
  */
 export async function resolveDaemonUrl(

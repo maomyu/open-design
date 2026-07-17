@@ -240,7 +240,7 @@ function installDesktopMenu(
         label: "Help",
         submenu: [
           {
-            label: "爆创",
+            label: "social-auto",
             click() {
               void shell.openExternal("https://github.com/nexu-io/open-design");
             },

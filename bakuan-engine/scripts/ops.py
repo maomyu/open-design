@@ -67,7 +67,7 @@ def backup(out: str, daemon_data: str) -> dict:
     """备份:引擎 data/(去重库+成本台账+失败队列+封面) + .env(全部 Key/配置)
     + daemon 数据目录(知识库/文章/账号配置 SQLite 等)。产物一个 tar.gz,拷走即迁移。"""
     root = Path(__file__).resolve().parent.parent
-    out = out or str(Path.home() / f"Multimedia备份-{time.strftime('%Y%m%d-%H%M%S')}.tar.gz")
+    out = out or str(Path.home() / f"social-auto备份-{time.strftime('%Y%m%d-%H%M%S')}.tar.gz")
     added = []
     with tarfile.open(out, "w:gz") as tar:
         if (root / "data").exists():
