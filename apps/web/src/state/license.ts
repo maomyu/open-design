@@ -85,6 +85,19 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
       return anyShortVideoPlatform(license);
     case 'studio-note':
       return hasFeature(license, 'note.xiaohongshu');
+    // 平台一级入口(2026-07-17):按平台授权;小红书=视频或图文任一。
+    case 'studio-douyin':
+      return hasShortVideoPlatform(license, 'douyin');
+    case 'studio-xiaohongshu':
+      return hasShortVideoPlatform(license, 'xiaohongshu') || hasFeature(license, 'note.xiaohongshu');
+    case 'studio-kuaishou':
+      return hasShortVideoPlatform(license, 'kuaishou');
+    case 'studio-bilibili':
+      return hasShortVideoPlatform(license, 'bilibili');
+    case 'studio-shipinhao':
+      return hasShortVideoPlatform(license, 'tencent');
+    case 'studio-make':
+      return hasFeature(license, 'cap.video');
     case 'knowledge':
       return hasAnyKnowledgeFeature([...license.features]); // 个人库或企业库任一在授权内
 
@@ -97,7 +110,18 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
   }
 }
 
-const VIEW_FALLBACK_ORDER = ['studio', 'studio-video', 'studio-note', 'knowledge', 'accounts', 'integrations'];
+const VIEW_FALLBACK_ORDER = [
+  'studio',
+  'studio-douyin',
+  'studio-xiaohongshu',
+  'studio-kuaishou',
+  'studio-bilibili',
+  'studio-shipinhao',
+  'studio-make',
+  'knowledge',
+  'accounts',
+  'integrations',
+];
 
 /** 未授权视图(直链/旧标签)落到第一个已授权模块。 */
 export function licensedViewOrFallback<T extends string>(view: T, license: LicenseInfo): T {

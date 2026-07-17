@@ -167,9 +167,16 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
   const lastActiveAt = typeof record.lastActiveAt === 'number' ? record.lastActiveAt : createdAt;
   if (!id) return null;
   if (record.kind === 'entry') {
-    // 知乎/微博并入「文章」入口(2026-07-10 用户拍板):历史独立 view 标签
-    // 归一为 studio,平台切换现在是外壳内部状态,不再有独立标签。
-    const view = record.view === 'studio-zhihu' || record.view === 'studio-weibo' ? 'studio' : record.view;
+    // 知乎/微博并入「文章」(2026-07-10);短视频/笔记平台化(2026-07-17):历史
+    // 形态标签归一到对应平台入口(短视频→抖音、笔记→小红书)。
+    const view =
+      record.view === 'studio-zhihu' || record.view === 'studio-weibo'
+        ? 'studio'
+        : record.view === 'studio-video'
+          ? 'studio-douyin'
+          : record.view === 'studio-note'
+            ? 'studio-xiaohongshu'
+            : record.view;
     // 'home' 不在白名单:主页对话框已下线,历史存下的主页 tab 直接丢弃。
     if (
       view === 'projects'
@@ -177,10 +184,12 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
       || view === 'plugins'
       || view === 'accounts'
       || view === 'studio'
-      || view === 'studio-video'
-      || view === 'studio-note'
-      || view === 'studio-zhihu'
-      || view === 'studio-weibo'
+      || view === 'studio-douyin'
+      || view === 'studio-xiaohongshu'
+      || view === 'studio-kuaishou'
+      || view === 'studio-bilibili'
+      || view === 'studio-shipinhao'
+      || view === 'studio-make'
       || view === 'knowledge'
       || view === 'design-systems'
       || view === 'integrations'
@@ -888,8 +897,14 @@ function displayTabFor(
     plugins: t('entry.navPlugins'),
     accounts: t('entry.navAccounts'),
     studio: '文章',
-    'studio-video': '短视频',
-    'studio-note': '笔记',
+    'studio-douyin': '抖音',
+    'studio-xiaohongshu': '小红书',
+    'studio-kuaishou': '快手',
+    'studio-bilibili': 'B站',
+    'studio-shipinhao': '视频号',
+    'studio-make': '制作视频',
+    'studio-video': '抖音',
+    'studio-note': '小红书',
     'studio-zhihu': '文章',
     'studio-weibo': '文章',
     knowledge: '知识库',
@@ -904,6 +919,12 @@ function displayTabFor(
     plugins: 'grid',
     accounts: 'grid',
     studio: 'edit',
+    'studio-douyin': 'play',
+    'studio-xiaohongshu': 'image',
+    'studio-kuaishou': 'play',
+    'studio-bilibili': 'play',
+    'studio-shipinhao': 'play',
+    'studio-make': 'sparkles',
     'studio-video': 'play',
     'studio-note': 'image',
     'studio-zhihu': 'pencil',

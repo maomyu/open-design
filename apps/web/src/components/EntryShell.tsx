@@ -86,8 +86,9 @@ import { NewProjectModal } from './NewProjectModal';
 import { PluginsView } from './PluginsView';
 import { AccountsView } from './AccountsView';
 import { ArticleStudioShell } from './media-studio/ArticleStudioShell';
-import { ShortVideoStudioShell } from './media-studio/ShortVideoStudioShell';
-import { NoteStudioView } from './media-studio/NoteStudioView';
+import { ShortVideoStudioView } from './media-studio/ShortVideoStudioView';
+import { XiaohongshuStudioShell } from './media-studio/XiaohongshuStudioShell';
+import { MakeVideoView } from './media-studio/MakeVideoView';
 import { KnowledgeView } from './media-studio/KnowledgeView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
@@ -667,8 +668,14 @@ export function EntryShell({
             {view === 'studio-zhihu' ? <ArticleStudioShell initial="zhihu" /> : null}
             {/* 微博已移除(翟总):历史 studio-weibo 深链降级到默认文章台(公众号)。 */}
             {view === 'studio-weibo' ? <ArticleStudioShell /> : null}
-            {view === 'studio-video' ? <ShortVideoStudioShell /> : null}
-            {view === 'studio-note' ? <NoteStudioView /> : null}
+            {/* 平台一级入口(2026-07-17):各平台直接渲染短视频台(单平台);小红书=
+                图文+视频双形态外壳。旧 studio-video/studio-note 深链降级到 抖音/小红书。 */}
+            {view === 'studio-douyin' || view === 'studio-video' ? <ShortVideoStudioView platform="douyin" /> : null}
+            {view === 'studio-xiaohongshu' || view === 'studio-note' ? <XiaohongshuStudioShell /> : null}
+            {view === 'studio-kuaishou' ? <ShortVideoStudioView platform="kuaishou" /> : null}
+            {view === 'studio-bilibili' ? <ShortVideoStudioView platform="bilibili" /> : null}
+            {view === 'studio-shipinhao' ? <ShortVideoStudioView platform="tencent" /> : null}
+            {view === 'studio-make' ? <MakeVideoView /> : null}
             {view === 'knowledge' ? <KnowledgeView /> : null}
             {view === 'design-systems' ? (
               designSystemsLoading ? (

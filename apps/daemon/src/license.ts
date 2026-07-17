@@ -191,6 +191,10 @@ export function requiredFeaturesFor(method: string, reqPath: string, body?: unkn
 
   // 全局段:资产/无状态排版 放行;handoff 只拦创建。
   if (head === 'assets' || head === 'render') return NONE;
+  // 制作视频(素材车间,2026-07-17):口型替换等成片能力 = cap.video;上传素材放行。
+  if (head === 'make-video') {
+    return parts[1] === 'upload' ? NONE : { all: ['cap.video'] };
+  }
   if (head === 'browser') {
     // browser/open 按目标平台拦(body.platform,anyOf);urls 放行。
     if (parts[1] === 'open' && method === 'POST') {

@@ -649,6 +649,62 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     }
   });
 
+  // ---- 制作视频(2026-07-17 用户拍板:横切素材车间;首功能=数字人口型替换) ----
+  // 上传免 article(固定 'make-video' 资产桶);口型替换接火山智能视觉「视频改口型」。
+  // 火山侧需开通该产品并配 AK/SK(VOLC_VISUAL_ACCESS_KEY/VOLC_VISUAL_SECRET_KEY,
+  // 引擎 .env 或环境变量);未配时返回明确开通指引,UI 原样展示。
+  app.post('/api/media-studio/make-video/upload', async (req, res) => {
+    try {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      await new Promise<void>((resolve, reject) => {
+        req.on('end', () => resolve());
+        req.on('error', reject);
+      });
+      const buf = Buffer.concat(chunks);
+      if (buf.length === 0) return bad(res, 400, '缺少文件数据');
+      if (buf.length > 500 * 1024 * 1024) return bad(res, 413, '文件超过 500MB');
+      const rawName = decodeURIComponent(String(req.headers['x-file-name'] ?? 'file'));
+      const ext = (path.extname(rawName) || '.bin').toLowerCase();
+      if (!['.mp4', '.mov', '.mp3', '.wav', '.m4a'].includes(ext)) {
+        return bad(res, 400, '只支持 mp4/mov 视频或 mp3/wav/m4a 音频');
+      }
+      const dir = assetsDirFor('make-video');
+      await mkdir(dir, { recursive: true });
+      const file = `mk-${Date.now()}${ext}`;
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(path.join(dir, file), buf);
+      res.json({ url: `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(file)}`, file });
+    } catch (err) {
+      bad(res, 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.post('/api/media-studio/make-video/lipsync', async (req, res) => {
+    const body = (req.body ?? {}) as { videoUrl?: string; audioUrl?: string };
+    if (!body.videoUrl || !body.audioUrl) return bad(res, 400, '缺少 videoUrl / audioUrl');
+    const ak = process.env.VOLC_VISUAL_ACCESS_KEY ?? '';
+    const sk = process.env.VOLC_VISUAL_SECRET_KEY ?? '';
+    if (!ak || !sk) {
+      return bad(
+        res,
+        503,
+        '数字人口型替换还没接通:需在火山引擎开通「智能视觉·视频改口型」并配置 ' +
+          'VOLC_VISUAL_ACCESS_KEY / VOLC_VISUAL_SECRET_KEY(火山控制台-访问控制-密钥管理)。' +
+          '开通后重启应用即可用。',
+      );
+    }
+    // TODO(下一步): 用 AK/SK 走火山 v4 签名调 visual.volcengineapi.com 提交
+    // 「视频改口型」任务(接口文档 docs/85128/1463538,req_key 按官方文档核对),
+    // 返回任务 id;此占位保证配了凭证也不误报"已提交"。
+    return bad(res, 501, '口型替换接口对接中(凭证已就位)——待按火山官方文档核对 req_key 后开通,本条报错属预期。');
+  });
+
+  app.get('/api/media-studio/make-video/lipsync/:id', (_req, res) => {
+    // 任务查询——随提交实现一起接火山查询端点;当前无任务可查。
+    bad(res, 404, 'lipsync job not found');
+  });
+
   // ---- 原文抓取（素材简报的原料;research AI 任务也走这里） ----
   app.post('/api/media-studio/:platform/article-detail', async (req, res) => {
     try {

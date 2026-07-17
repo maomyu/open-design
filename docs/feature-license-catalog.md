@@ -45,6 +45,7 @@
 - 「账号」导航 = 有任一发布平台（`hasAnyPublishingModule`）
 - 账号页「运维块」(OpsSection：近7天成本/失败队列重试/备份迁移/开机自启) = 有任一
   `sv.*`（2026-07-17 双包交付：运维是短视频引擎的面板，文章包不显示，账号页只留发布账号）
+- 平台一级导航(2026-07-17 平台化):抖音/快手/B站/视频号入口 = 对应 sv.*;小红书入口 = sv.xiaohongshu 或 note.xiaohongshu 任一(入口内 图文/视频 tab 分别按各自 feature 裁);「制作视频」入口 = cap.video(数字人口型替换,daemon make-video 路径同门禁)
 - 短视频台内 pill = 每平台按 `svFeatureOf(sauId)` 裁剪
 - 选题「爆款筛选」(时间窗/播放/点赞规则) = 仅短视频采集模式(browserCollect)渲染
 

@@ -11,7 +11,8 @@
 import { type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
-import { anyArticlePlatform, anyPublishingModule, anyShortVideoPlatform, hasFeature, useLicense } from '../state/license';
+import { anyArticlePlatform, anyPublishingModule, hasFeature, hasShortVideoPlatform, useLicense, type LicenseInfo } from '../state/license';
+import { hasAnyKnowledgeFeature } from '@open-design/contracts';
 
 export type EntryView =
   | 'home'
@@ -21,6 +22,14 @@ export type EntryView =
   | 'plugins'
   | 'accounts'
   | 'studio'
+  // 平台一级入口(2026-07-17 用户拍板:运营者按平台思考;小红书=图文+视频双形态)。
+  | 'studio-douyin'
+  | 'studio-xiaohongshu'
+  | 'studio-kuaishou'
+  | 'studio-bilibili'
+  | 'studio-shipinhao'
+  // 制作视频(横切素材车间):当前=数字人口型替换。
+  | 'studio-make'
   | 'studio-video'
   | 'studio-note'
   | 'studio-zhihu'
@@ -28,6 +37,25 @@ export type EntryView =
   | 'knowledge'
   | 'design-systems'
   | 'integrations';
+
+/** 平台一级入口清单:授权判定按平台(小红书=视频或图文任一)。sauId 用于 sv.* 判定。 */
+const PLATFORM_NAV: Array<{
+  view: EntryView;
+  label: string;
+  icon: 'play' | 'image';
+  licensed: (license: LicenseInfo) => boolean;
+}> = [
+  { view: 'studio-douyin', label: '抖音', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'douyin') },
+  {
+    view: 'studio-xiaohongshu',
+    label: '小红书',
+    icon: 'image',
+    licensed: (l) => hasShortVideoPlatform(l, 'xiaohongshu') || hasFeature(l, 'note.xiaohongshu'),
+  },
+  { view: 'studio-kuaishou', label: '快手', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'kuaishou') },
+  { view: 'studio-bilibili', label: 'B站', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'bilibili') },
+  { view: 'studio-shipinhao', label: '视频号', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'tencent') },
+];
 
 interface Props {
   view: EntryView;
@@ -107,31 +135,35 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="edit" size={18} />
           </NavButton>
         ) : null}
-        {anyShortVideoPlatform(license) ? (
+        {/* 平台一级入口(2026-07-17 用户拍板):抖音/小红书/快手/B站/视频号各自
+            一个入口,按平台授权裁剪。旧「短视频/笔记」形态入口下线(revive 归一)。 */}
+        {PLATFORM_NAV.filter((p) => p.licensed(license)).map((p) => (
           <NavButton
-            active={view === 'studio-video'}
-            ariaLabel="短视频"
-            label="短视频"
-            onClick={() => onViewChange('studio-video')}
-            testId="entry-nav-studio-video"
+            key={p.view}
+            active={view === p.view || (p.view === 'studio-douyin' && view === 'studio-video') || (p.view === 'studio-xiaohongshu' && view === 'studio-note')}
+            ariaLabel={p.label}
+            label={p.label}
+            onClick={() => onViewChange(p.view)}
+            testId={`entry-nav-${p.view}`}
           >
-            <Icon name="play" size={18} />
+            <Icon name={p.icon} size={18} />
           </NavButton>
-        ) : null}
-        {hasFeature(license, 'note.xiaohongshu') ? (
+        ))}
+        {/* 制作视频 = 横切素材车间(数字人口型替换起步),产出给各平台用。 */}
+        {hasFeature(license, 'cap.video') ? (
           <NavButton
-            active={view === 'studio-note'}
-            ariaLabel="笔记"
-            label="笔记"
-            onClick={() => onViewChange('studio-note')}
-            testId="entry-nav-studio-note"
+            active={view === 'studio-make'}
+            ariaLabel="制作视频"
+            label="制作视频"
+            onClick={() => onViewChange('studio-make')}
+            testId="entry-nav-studio-make"
           >
-            <Icon name="image" size={18} />
+            <Icon name="sparkles" size={18} />
           </NavButton>
         ) : null}
         {/* 知识库是公司级资产(2026-07-08 用户拍板):一级入口,一处维护、
-            三个创作台的 AI 全部共用,不再藏在单个创作台里。 */}
-        {hasFeature(license, 'cap.ai') ? (
+            三个创作台的 AI 全部共用。门禁跟 kb.*(2026-07-16 拆分后)。 */}
+        {license.features === null || hasAnyKnowledgeFeature([...license.features]) ? (
           <NavButton
             active={view === 'knowledge'}
             ariaLabel="知识库"

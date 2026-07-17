@@ -17,6 +17,16 @@ export type EntryHomeView =
   | 'plugins'
   | 'accounts'
   | 'studio'
+  // 平台一级入口(2026-07-17 用户拍板:运营者按平台思考,平台各自一个导航入口;
+  // 小红书=图文笔记+视频双形态)。旧 studio-video/studio-note 保留类型仅供
+  // 历史深链/标签 revive 归一映射,不再直接渲染。
+  | 'studio-douyin'
+  | 'studio-xiaohongshu'
+  | 'studio-kuaishou'
+  | 'studio-bilibili'
+  | 'studio-shipinhao'
+  // 制作视频(横切素材车间):当前=数字人口型替换(火山·视频改口型)。
+  | 'studio-make'
   | 'studio-video'
   | 'studio-note'
   | 'studio-zhihu'
@@ -119,10 +129,17 @@ export function parseRoute(pathname: string): Route {
     return { kind: 'home', view: 'accounts' };
   }
   // 创作台 — Media Studio (spec: specs/current/media-studio.md).
-  // /studio → 公众号；/studio/short-video → 短视频。
+  // /studio → 文章(公众号/知乎);/studio/<平台> → 平台一级入口(2026-07-17)。
   if (parts[0] === 'studio') {
-    if (parts[1] === 'short-video') return { kind: 'home', view: 'studio-video' };
-    if (parts[1] === 'note') return { kind: 'home', view: 'studio-note' };
+    if (parts[1] === 'douyin') return { kind: 'home', view: 'studio-douyin' };
+    if (parts[1] === 'xiaohongshu') return { kind: 'home', view: 'studio-xiaohongshu' };
+    if (parts[1] === 'kuaishou') return { kind: 'home', view: 'studio-kuaishou' };
+    if (parts[1] === 'bilibili') return { kind: 'home', view: 'studio-bilibili' };
+    if (parts[1] === 'shipinhao') return { kind: 'home', view: 'studio-shipinhao' };
+    if (parts[1] === 'make') return { kind: 'home', view: 'studio-make' };
+    // 旧深链归一:短视频→抖音、笔记→小红书(平台化重构后不再有形态入口)。
+    if (parts[1] === 'short-video') return { kind: 'home', view: 'studio-douyin' };
+    if (parts[1] === 'note') return { kind: 'home', view: 'studio-xiaohongshu' };
     if (parts[1] === 'zhihu') return { kind: 'home', view: 'studio-zhihu' };
     if (parts[1] === 'weibo') return { kind: 'home', view: 'studio-weibo' };
     return { kind: 'home', view: 'studio' };
@@ -185,6 +202,12 @@ export function buildPath(route: Route): string {
     if (route.view === 'plugins') return '/plugins';
     if (route.view === 'accounts') return '/accounts';
     if (route.view === 'studio') return '/studio';
+    if (route.view === 'studio-douyin') return '/studio/douyin';
+    if (route.view === 'studio-xiaohongshu') return '/studio/xiaohongshu';
+    if (route.view === 'studio-kuaishou') return '/studio/kuaishou';
+    if (route.view === 'studio-bilibili') return '/studio/bilibili';
+    if (route.view === 'studio-shipinhao') return '/studio/shipinhao';
+    if (route.view === 'studio-make') return '/studio/make';
     if (route.view === 'studio-video') return '/studio/short-video';
     if (route.view === 'studio-note') return '/studio/note';
     if (route.view === 'studio-zhihu') return '/studio/zhihu';
