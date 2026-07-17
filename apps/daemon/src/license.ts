@@ -201,8 +201,8 @@ export function requiredFeaturesFor(method: string, reqPath: string, body?: unkn
   }
 
   // 平台段:/:platform/...
-  // 知识库全平台共享,跟 cap.ai(2026-07-12 kb 并入 AI)。
-  if (parts[1] === 'knowledge') return { all: ['cap.ai'] };
+  // 知识库全平台共享(2026-07-16 拆分个人库/企业库):持有任一 kb.* 即放行。
+  if (parts[1] === 'knowledge') return { all: [], anyOf: ['kb.personal', 'kb.enterprise'] };
   if (parts[1] === 'skins') return NONE; // 皮肤列表只读元数据
 
   const all: FeatureId[] = [];

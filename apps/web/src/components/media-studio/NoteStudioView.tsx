@@ -13,9 +13,12 @@ import type {
   MediaTopic,
   UpdateMediaArticleRequest,
 } from '@open-design/contracts';
+import { IMAGE_RATIO_OPTIONS, IMAGE_STYLE_PRESETS } from '@open-design/contracts';
+import { ImageStyleSamples } from './ImageStyleSamples';
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
+  pushStudioReview,
   createStudioArticle,
   createStudioTopic,
   deleteStudioArticle,
@@ -25,6 +28,7 @@ import {
   fetchStudioPublishes,
   fetchStudioTopics,
   generateArticleImage,
+  importXhsNote,
   lintStudioArticle,
   updateStudioArticle,
   uploadStudioAsset,
@@ -58,12 +62,8 @@ const NOTE_PLATFORMS: Array<{ id: string; label: string }> = [
   { id: 'kuaishou', label: '快手' },
 ];
 
-const IMAGE_STYLES: Array<{ id: string; label: string }> = [
-  { id: 'whiteboard', label: '白板手绘（默认）' },
-  { id: 'illustrated', label: '暖插画（带文字）' },
-  { id: 'clean', label: '纯净插画（无文字）' },
-  { id: 'none', label: '不用模板（纯提示词）' },
-];
+// 生图风格清单收进 contracts 共享(公众号台同源;15+ 常见风格,daemon 前缀表一一对应)。
+const IMAGE_STYLES = IMAGE_STYLE_PRESETS;
 const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
   // 火山按版本选：id 里 volc: 后面就是方舟的 Model ID（不带即用最新默认）。
@@ -116,11 +116,20 @@ export function NoteStudioView(): JSX.Element {
   const [lintHits, setLintHits] = useState<StudioLintHit[]>([]);
   const [galleryBusy, setGalleryBusy] = useState<string | null>(null);
   const [galleryPrompt, setGalleryPrompt] = useState('');
-  const [galleryStyle, setGalleryStyleRaw] = useState(() => loadStudioPref('gallery-style', 'illustrated'));
+  const [galleryStyle, setGalleryStyleRaw] = useState(() => {
+    // 旧偏好可能存着已移除的风格(illustrated/clean/cyber)→ 兜底回默认白板
+    const v = loadStudioPref('gallery-style', 'whiteboard');
+    return IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : 'whiteboard';
+  });
+  const [galleryRatio, setGalleryRatioRaw] = useState(() => loadStudioPref('gallery-ratio', '3:4'));
+  const setGalleryRatio = (v: string) => {
+    setGalleryRatioRaw(v);
+    saveStudioPref('gallery-ratio', v, '3:4');
+  };
   // 记住上次选的图片风格模板当默认（用户报：选完不该每次重置）。
   const setGalleryStyle = (v: string) => {
     setGalleryStyleRaw(v);
-    saveStudioPref('gallery-style', v, 'illustrated');
+    saveStudioPref('gallery-style', v, 'whiteboard');
   };
   const [galleryModel, setGalleryModel] = useState(loadPreferredImageModel);
   // 账号中心是唯一账号来源:各平台的账号名列表(没配的平台=空数组)。
@@ -140,6 +149,8 @@ export function NoteStudioView(): JSX.Element {
   const extra = (article?.extra ?? {}) as Record<string, unknown>;
   const tags = str(extra.tags);
   const imageIdeas = str(extra.imageIdeas);
+  // 图集建议逐条化:每行一条画面建议,单独渲染+各自带「生图」按钮(不再挤成一坨文本)。
+  const ideaLines = imageIdeas.split('\n').map((l) => l.trim()).filter(Boolean);
   const noteImages: string[] = Array.isArray(extra.noteImages)
     ? (extra.noteImages as unknown[]).filter((v): v is string => typeof v === 'string')
     : [];
@@ -340,6 +351,33 @@ export function NoteStudioView(): JSX.Element {
     if (fromTopic) setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
   }
 
+  // 图文笔记台「提取图文仿写」:采到的小红书图文爆款 → 建笔记 → 下载原图进图集 + 取原文案 →
+  // 按知识库风格 AI 仿写成新图文笔记(原图/原文案存进文章,文案页展示原文参考)。
+  async function handleExtractNote(hitTitle: string, text: string, images: string[]) {
+    if (!images.length) { studioToast.err('这条没带回图文内容(可能是视频/已删),换一条'); return; }
+    await flushSave();
+    studioToast.info('正在下载原图进图集…(稍候别切走)');
+    const created = await createStudioArticle(PLATFORM, { title: hitTitle, topic: hitTitle });
+    if (!created) { studioToast.err('建笔记失败'); return; }
+    window.localStorage.setItem(LAST_ARTICLE_KEY, created.id);
+    const r = await importXhsNote(created.id, text, images);
+    if ('error' in r) {
+      await refreshArticles(); setArticle(created); setTab('copy');
+      studioToast.err(`下载图文失败:${r.error}`);
+      return;
+    }
+    const updated = await updateStudioArticle(PLATFORM, created.id, {
+      extra: { noteImages: r.imageUrls, sourceContent: text, targetPlatform: '小红书' },
+    });
+    await refreshArticles();
+    setArticle(updated ?? created);
+    setTab('copy');
+    // 让 articleRef 更新到新文章后再发 AI 任务(startAiTask 按 articleRef.current 挂 articleId)。
+    await new Promise((res) => setTimeout(res, 60));
+    studioToast.ok(`已下 ${r.imageUrls.length} 张原图进图集 + 取到原文案 ✓ 正按你的风格仿写成新笔记…`);
+    await startAiTask('write');
+  }
+
   async function handleDeleteArticle() {
     if (!article) return;
     if (!window.confirm(`删除「${article.title || '(未命名)'}」？发布记录一并删除。`)) return;
@@ -358,7 +396,7 @@ export function NoteStudioView(): JSX.Element {
       description: description.trim(),
       style: galleryStyle,
       model: galleryModel,
-      ratio: '3:4',
+      ratio: galleryRatio,
     });
     setGalleryBusy(null);
     if ('error' in result) {
@@ -393,7 +431,7 @@ export function NoteStudioView(): JSX.Element {
         description: idea,
         style: galleryStyle,
         model: galleryModel,
-        ratio: '3:4',
+        ratio: galleryRatio,
       });
       if ('error' in result) {
         studioToast.err(`第 ${i + 1} 张失败：${result.error}`);
@@ -555,7 +593,10 @@ export function NoteStudioView(): JSX.Element {
           {tab === 'topics' ? (
             <TopicsTab
               platform={PLATFORM}
-              aiOnly
+              /* 图文笔记=小红书图文笔记:选题走【小红书爆款采集】(与短视频台小红书一致,TikHub 直采),
+                 而不是纯 AI 找题。图文笔记只面向小红书,采集平台固定小红书。 */
+              browserCollect
+              collectPlatforms={['xiaohongshu']}
               topics={topics}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);
@@ -566,6 +607,7 @@ export function NoteStudioView(): JSX.Element {
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
+              onExtractNote={(title, text, images) => void handleExtractNote(title, text, images)}
               aiBusy={effectiveAiRunning}
             />
           ) : null}
@@ -575,6 +617,22 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('还没有笔记。从「选题」挑一个开始，或新建一篇。')
             ) : (
               <>
+                {/* 「提取图文仿写」带来的小红书原文案参考(原图已进「图集」)。 */}
+                {typeof (article.extra as Record<string, unknown>).sourceContent === 'string'
+                  && (article.extra as Record<string, unknown>).sourceContent ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      原文参考 · 小红书图文
+                      <span className={c('cardHint')}>原图已进「图集」；下面是原文案，AI 按它 + 你的知识库风格仿写（不照抄）</span>
+                    </div>
+                    <div className={c('cardHint')} style={{ whiteSpace: 'pre-wrap', maxHeight: 170, overflow: 'auto', lineHeight: 1.6 }}>
+                      {String((article.extra as Record<string, unknown>).sourceContent)}
+                    </div>
+                    {typeof (article.extra as Record<string, unknown>).sourceUrl === 'string' ? (
+                      <a href={String((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
+                    ) : null}
+                  </div>
+                ) : null}
                 {hasFeature(license, 'cap.ai') ? (
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
@@ -668,13 +726,56 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('图集属于某篇笔记——先去「文案」新建。')
             ) : (
               <>
-                {imageIdeas.trim() ? (
+                {ideaLines.length > 0 ? (
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>
-                      AI 给的图集建议（{imageIdeas.split('\n').filter((l) => l.trim()).length} 张）
-                      <span className={c('cardHint')}>一键按建议逐张生成（第 1 张当封面）</span>
+                      AI 给的图集建议（{ideaLines.length} 张）
+                      <span className={c('cardHint')}>每条可单独生图,也可一键全部（第 1 张当封面）</span>
                     </div>
-                    <div className={c('videoCardScript')} style={{ maxHeight: 140 }}>{imageIdeas}</div>
+                    {/* 逐条一行:可编辑的提示词输入框 + 各自的「生图」按钮(2026-07-17 用户反馈:
+                        别挤成一坨 + 提示词要能改)。失焦把修改回存 extra.imageIdeas,切页不丢。 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '6px 0 10px' }}>
+                      {ideaLines.map((idea, i) => (
+                        <div
+                          key={`${i}-${idea}`}
+                          className={c('row')}
+                          style={{ alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}
+                        >
+                          <input
+                            className={`${c('input')} ${c('grow')}`}
+                            style={{ minWidth: 0, fontSize: 12.5 }}
+                            defaultValue={idea}
+                            title="可直接修改这条画面提示词,改完点右侧「生图」"
+                            onBlur={(e) => {
+                              const v = e.target.value.trim();
+                              if (v === idea) return;
+                              const next = [...ideaLines];
+                              if (v) next[i] = v;
+                              else next.splice(i, 1);   // 清空=删除这条建议
+                              editArticle({ extra: { imageIdeas: next.join('\n') } });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className={c('btn')}
+                            style={{ flexShrink: 0 }}
+                            disabled={galleryBusy !== null}
+                            title="按左侧(可编辑的)提示词只生成这一张,用当前选中的风格/模型"
+                            onClick={(e) => {
+                              // 就地取输入框当前值:没失焦的最新编辑也要生效
+                              const input = (e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement | null);
+                              const text = (input?.value ?? idea).trim();
+                              if (text) void generateGalleryImage(text);
+                            }}
+                          >
+                            {galleryBusy === idea ? '生成中…' : '生图'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                     <div className={c('row')}>
                       <select className={c('select')} value={galleryStyle} onChange={(e) => setGalleryStyle(e.target.value)}>
                         {IMAGE_STYLES.map((s) => (
@@ -693,6 +794,13 @@ export function NoteStudioView(): JSX.Element {
                           </option>
                         ))}
                       </select>
+                      <select className={c('select')} value={galleryRatio} title="生图比例" onChange={(e) => setGalleryRatio(e.target.value)}>
+                        {IMAGE_RATIO_OPTIONS.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.label}
+                          </option>
+                        ))}
+                      </select>
                       <button
                         type="button"
                         className={`${c('btn')} ${c('btnPrimary')}`}
@@ -706,6 +814,7 @@ export function NoteStudioView(): JSX.Element {
                             : '按建议生成全部'}
                       </button>
                     </div>
+                    <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
                   </div>
                 ) : null}
                 <div className={c('card')}>
@@ -742,7 +851,15 @@ export function NoteStudioView(): JSX.Element {
                         </option>
                       ))}
                     </select>
+                    <select className={c('select')} value={galleryRatio} title="生图比例" onChange={(e) => setGalleryRatio(e.target.value)}>
+                      {IMAGE_RATIO_OPTIONS.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                  <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
                   <div className={c('row')}>
                     <input
                       className={`${c('input')} ${c('grow')}`}
@@ -914,7 +1031,10 @@ export function NoteStudioView(): JSX.Element {
                       onChange={(e) => editArticle({ extra: { reviewData: e.target.value } })}
                     />
                     <div className={c('row')}>
-                      <button type="button" className={c('btn')} onClick={() => void startAiTask('review')}>
+                      <button type="button" className={c('btn')} onClick={() => {
+                        void startAiTask('review');
+                        void pushStudioReview(PLATFORM, article.id);
+                      }}>
                         <Icon name="sparkles" size={14} /> AI 复盘并给下一篇建议
                       </button>
                     </div>

@@ -76,6 +76,7 @@ import {
   deleteSnippet,
   deleteTopic,
   getArticle,
+  getKnowledge,
   getVersion,
   listArticles,
   listKnowledge,
@@ -86,6 +87,7 @@ import {
   markArticlePublished,
   recordPublish,
   saveArticleRender,
+  setKnowledgeFeishuRef,
   updateArticle,
   updateTopic,
 } from './media-studio/store.js';
@@ -94,6 +96,9 @@ import { publishWechatDraft, WechatPublishError } from './media-studio/wechat-pu
 
 export interface RegisterMediaStudioRoutesDeps extends RouteDeps<'db'> {
   paths: Pick<PathDeps, 'RUNTIME_DATA_DIR' | 'PROJECT_ROOT'>;
+  // 飞书数据中心回流（块1 知识双写 / 块2 成品复盘回写）：server.ts 注入的 runDatacenterCli。
+  // 缺省（未连飞书/无引擎）时为 undefined，所有回流静默跳过，不影响本地功能。
+  feishuSync?: (subcommand: string, payload?: unknown) => Promise<any>;
 }
 
 /** 创作台的 AI 任务都挂在这个隐藏项目下，按任务开会话，完整过程可回看。 */
@@ -102,12 +107,20 @@ const STUDIO_PROJECT_ID = 'media-studio-hub';
 /** Web-servable asset URL prefix; the publisher maps it back to disk files. */
 export const STUDIO_ASSET_URL_PREFIX = '/api/media-studio/assets/';
 
+// 平台 id → 飞书成品审核库/复盘库的「平台版本/平台」中文标签（select 选项;缺的 _ensure_options 会补）。
+const STUDIO_PLATFORM_CN: Record<string, string> = {
+  douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书', shipinhao: '视频号',
+  bilibili: 'B站', 'wechat-mp': '公众号', wechat: '公众号', weibo: '微博', zhihu: '知乎',
+  // 创作台 id（存草稿/复盘时 req.params.platform 是台 id，非具体发布平台）。
+  'short-video': '短视频', note: '图文笔记',
+};
+
 function bad(res: any, status: number, message: string): void {
   res.status(status).json({ error: message });
 }
 
 export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudioRoutesDeps): void {
-  const { db, paths } = deps;
+  const { db, paths, feishuSync } = deps;
 
   // ---- stateless render（实时预览 / 自由排版） ----
   app.post('/api/media-studio/render', (req, res) => {
@@ -920,7 +933,53 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       error: null,
     });
     markArticlePublished(db, article.id);
+    // 存草稿成功 → 回写飞书成品内容审核库（fire-and-forget:存草稿=成品台账;拿 record_id
+    // 存进 extra.feishuProductRecordId 供后续复盘「关联成品」）。失败静默,不阻断标记。
+    if (feishuSync) {
+      const extra = (article.extra ?? {}) as Record<string, unknown>;
+      const tags = Array.isArray(extra.tags) ? (extra.tags as unknown[]).join(' ') : String(extra.tags ?? '');
+      // 平台版本优先取 targetLabel 里的具体发布平台（去掉「（账号）」后缀），否则退回台 id 中文。
+      const cleanPlatform = label.split(/[（(]/)[0]?.trim() || STUDIO_PLATFORM_CN[req.params.platform] || req.params.platform;
+      void feishuSync('push-draft', {
+        platform: cleanPlatform,
+        title: article.title,
+        script: article.bodyMd,
+        tags,
+        intro: article.digest,
+        topicTitle: article.topic ?? '',
+        status: '待发布',
+      })
+        .then((r) => {
+          if (r?.record_id) {
+            updateArticle(db, article.id, { extra: { feishuProductRecordId: r.record_id } } as UpdateMediaArticleRequest);
+          }
+        })
+        .catch(() => { /* 飞书不可用时静默 */ });
+    }
     res.json({ record, article: getArticle(db, article.id) });
+  });
+
+  // 发布复盘 → 写飞书发布复盘库（web 复盘按钮点「AI 复盘」时同时调用）。复盘结论优先取
+  // 请求体（可带 AI 复盘正文），否则用 extra.reviewData（用户填的发布后数据）;关联成品取
+  // 存草稿时存下的 feishuProductRecordId。未连飞书返回 503,web 静默忽略。
+  app.post('/api/media-studio/:platform/articles/:id/push-review', async (req, res) => {
+    if (!feishuSync) return bad(res, 503, '未连接飞书数据中心');
+    const article = getArticle(db, req.params.id);
+    if (!article) return bad(res, 404, 'article not found');
+    const extra = (article.extra ?? {}) as Record<string, unknown>;
+    const reviewData = typeof extra.reviewData === 'string' ? extra.reviewData : '';
+    const conclusion = String((req.body as any)?.conclusion ?? '').slice(0, 4000) || reviewData || '已发布复盘';
+    try {
+      const r = await feishuSync('push-review', {
+        platform: STUDIO_PLATFORM_CN[req.params.platform] ?? req.params.platform,
+        conclusion,
+        metrics: reviewData,
+        productRecordId: String(extra.feishuProductRecordId ?? ''),
+      });
+      res.json({ ok: r?.ok !== false, recordId: r?.record_id ?? null });
+    } catch (err) {
+      bad(res, 500, '写复盘库失败：' + String((err as any)?.message ?? err));
+    }
   });
 
   // ---- 敏感词扫描（发布预检的警示项;标题+摘要+三段正文一起查） ----
@@ -931,27 +990,67 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     res.json({ hits: lintContent(text) });
   });
 
-  // ---- 知识库（客户挂载,AI 任务自动注入） ----
+  // ---- 知识库（客户挂载,AI 任务自动注入;同时双写飞书数据中心「我的素材库/风格画像库」） ----
   app.get('/api/media-studio/:platform/knowledge', (req, res) => {
     res.json({ items: listKnowledge(db, req.params.platform) });
+  });
+
+  // 全量把本地知识库重推飞书（手动「同步到飞书」按钮 + od media knowledge sync-feishu）。
+  // 有 record_id 走 update 幂等,无的新建后回写。路径 knowledge/sync-feishu 三段,不与
+  // :platform/knowledge 两段冲突;注册在其前以确保优先匹配。
+  app.post('/api/media-studio/knowledge/sync-feishu', async (_req, res) => {
+    if (!feishuSync) return bad(res, 503, '未连接飞书数据中心');
+    const items = listKnowledge(db, 'global');
+    if (!items.length) return res.json({ synced: 0 });
+    try {
+      const r = await feishuSync('push-knowledge', {
+        items: items.map((k) => ({
+          id: k.id, name: k.name, contentMd: k.contentMd, category: k.category,
+          feishuRecordId: k.feishuRecordId || '',
+        })),
+      });
+      for (const rec of (r?.results ?? [])) {
+        if (rec?.id && rec?.recordId) setKnowledgeFeishuRef(db, rec.id, rec.table, rec.recordId);
+      }
+      res.json({ synced: (r?.results ?? []).length, ok: r?.ok !== false });
+    } catch (err) {
+      bad(res, 500, '同步飞书失败：' + String((err as any)?.message ?? err));
+    }
   });
 
   app.post('/api/media-studio/:platform/knowledge', (req, res) => {
     const body = (req.body ?? {}) as { name?: string; contentMd?: string; accountId?: string | null; category?: string };
     if (!body.name?.trim()) return bad(res, 400, 'name is required');
     if (!body.contentMd?.trim()) return bad(res, 400, 'contentMd is required');
-    res.json({
-      item: createKnowledge(db, req.params.platform, {
-        name: body.name.trim(),
-        contentMd: body.contentMd,
-        accountId: body.accountId ?? null,
-        ...(typeof body.category === 'string' && body.category ? { category: body.category } : {}),
-      }),
+    const item = createKnowledge(db, req.params.platform, {
+      name: body.name.trim(),
+      contentMd: body.contentMd,
+      accountId: body.accountId ?? null,
+      ...(typeof body.category === 'string' && body.category ? { category: body.category } : {}),
     });
+    // 双写飞书「我的素材库/风格画像库」（fire-and-forget:失败不阻断本地,后台回写 record_id）。
+    if (feishuSync) {
+      void feishuSync('push-knowledge', {
+        items: [{ id: item.id, name: item.name, contentMd: item.contentMd, category: item.category }],
+      })
+        .then((r) => {
+          const rec = r?.results?.[0];
+          if (rec?.recordId) setKnowledgeFeishuRef(db, item.id, rec.table, rec.recordId);
+        })
+        .catch(() => { /* 飞书不可用时静默,本地知识照常可用 */ });
+    }
+    res.json({ item });
   });
 
   app.delete('/api/media-studio/:platform/knowledge/:id', (req, res) => {
+    const existing = getKnowledge(db, req.params.id);
     if (!deleteKnowledge(db, req.params.id)) return bad(res, 404, 'knowledge not found');
+    // 同步删飞书那条（用本地存的 record_id）。fire-and-forget,飞书失败不影响本地删除。
+    if (feishuSync && existing?.feishuRecordId) {
+      void feishuSync('delete-knowledge', {
+        items: [{ feishuRecordId: existing.feishuRecordId, feishuTable: existing.feishuTable }],
+      }).catch(() => { /* ignore */ });
+    }
     res.json({ ok: true });
   });
 
@@ -1011,6 +1110,38 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         const abs = path.join(dir, file);
         await writeFile(abs, buf);
         const updated = updateArticle(db, article.id, { extra: { videoPath: abs } });
+        res.json({ path: abs, article: updated });
+      } catch (err) {
+        bad(res, 500, err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // 封面上传(发布页用户传的封面图 → 存进作品素材目录,记 extra.coverPath;一键存草稿注入时
+  // 自动上传到抖音「设置封面」)。与 upload-video 同构,只是存图、写 coverPath。
+  app.post(
+    '/api/media-studio/:platform/articles/:id/upload-cover',
+    express.raw({ type: 'application/octet-stream', limit: '32mb' }),
+    async (req, res) => {
+      const article = getArticle(db, req.params.id);
+      if (!article) return bad(res, 404, 'article not found');
+      const buf = req.body as Buffer;
+      if (!Buffer.isBuffer(buf) || buf.length === 0) return bad(res, 400, '没有收到封面数据');
+      try {
+        const rawName = String(req.headers['x-file-name'] ?? 'cover.jpg');
+        let decoded = rawName;
+        try {
+          decoded = decodeURIComponent(rawName);
+        } catch {
+          /* keep raw */
+        }
+        const safe = decoded.replace(/[^\w.\-一-龥]+/g, '_').slice(-80) || 'cover.jpg';
+        const dir = assetsDirFor(article.id);
+        await mkdir(dir, { recursive: true });
+        const file = `cover-${Date.now()}-${safe}`;
+        const abs = path.join(dir, file);
+        await writeFile(abs, buf);
+        const updated = updateArticle(db, article.id, { extra: { coverPath: abs } });
         res.json({ path: abs, article: updated });
       } catch (err) {
         bad(res, 500, err instanceof Error ? err.message : String(err));

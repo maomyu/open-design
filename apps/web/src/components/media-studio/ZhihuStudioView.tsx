@@ -14,6 +14,7 @@ import type {
   MediaTopic,
   UpdateMediaArticleRequest,
 } from '@open-design/contracts';
+import { IMAGE_STYLE_PRESETS } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
@@ -71,6 +72,15 @@ export function ZhihuStudioView(): JSX.Element {
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<ZhihuTab>('write');
+  // 统一配图风格(与公众号台同模式):CoverGenerator 受控,记忆偏好+移除风格兜底。
+  const [imgStyle, setImgStyleRaw] = useState(() => {
+    const v = loadStudioPref('zhihu-image-style', 'whiteboard');
+    return IMAGE_STYLE_PRESETS.some((st) => st.id === v) ? v : 'whiteboard';
+  });
+  const setImgStyle = (v: string) => {
+    setImgStyleRaw(v);
+    saveStudioPref('zhihu-image-style', v, 'whiteboard');
+  };
   // 授权裁剪后的 tab 回落。
   useEffect(() => {
     if ((tab === 'cover' || tab === 'images') && !hasFeature(license, 'cap.image')) setTab('write');
@@ -694,6 +704,8 @@ export function ZhihuStudioView(): JSX.Element {
                 <div className={c('cardLabel')}>生成封面</div>
                 <CoverGenerator
                   initialDescription={article.title}
+                  style={imgStyle}
+                  onStyleChange={setImgStyle}
                   busy={coverGenBusy}
                   onGenerate={(desc, style, ref, model) => void generateCover(desc, style, ref, model)}
                   onUploadReference={async (file) => {

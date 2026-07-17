@@ -47,10 +47,12 @@ const residualSkippedDirectories = new Set([
   ".opencode",
   ".task",
   ".tmp",
+  ".venv",
   ".vite",
   "dist",
   "node_modules",
   "out",
+  "venv",
 ]);
 
 const residualAllowedExactPaths = new Set([
@@ -96,6 +98,10 @@ const residualAllowedExactPaths = new Set([
   "tools/pack/resources/mac/notarize.cjs",
   // electron-builder hook path; CJS compatibility entry used by tools-pack desktop builds.
   "tools/pack/resources/web-standalone-after-pack.cjs",
+  // 视频号视频解密 glue：驱动微信官方为 Web Worker 编译的 WASM 解密模块,必须在
+  // Node 里伪造最小 worker 全局(self/importScripts)再直接执行,无法转 TS。
+  // 由 daemon 以 `node wx_decrypt.js` 子进程调用,不进 app 运行时打包。
+  "bakuan-engine/scripts/wx_decrypt.js",
 ]);
 
 const residualAllowedPathPrefixes = [
@@ -120,12 +126,18 @@ const residualAllowedPathPrefixes = [
   "design-templates/last30days/scripts/lib/vendor/",
   // Vendored upstream html-ppt runtime assets (lewislulu/html-ppt-skill, design template).
   "design-templates/html-ppt/assets/",
-  // Vendored 微信视频号 video-decrypt helper (WeChat official WASM glue + ISAAC-64
-  // keystream); must stay .js — it fakes a Web Worker env for the WASM module and
-  // is invoked as a standalone `node wx_decrypt.js` by the bakuan-engine.
-  "bakuan-engine/scripts/wx_decrypt.js",
+  // (wx_decrypt.js 已在 residualAllowedExactPaths 精确登记,此处不再重复。)
   "test-results/",
   "vendor/",
+  // Vendored packaging blobs for the bundled Python engine: relocatable CPython
+  // (python-build-standalone), offline wheels, and static ffmpeg. These ship the
+  // short-video pipeline (真抓爆款/下载/ASR) inside the installer and are
+  // git-ignored, downloaded locally; never project-owned code.
+  "tools/pack/vendor/",
+  // Vendored 视频号(WeChat Channels)DRM 解密 runtime:微信官方 wasm_video_decode.wasm +
+  // 其 Emscripten glue + Node 解密脚本(WxIsaac64 密钥流生成)。upstream 二进制/胶水,
+  // 非项目自有代码;视频号视频前 128KB ISAAC64 加密,只能靠这个 WASM 解。
+  "bakuan-engine/scripts/sph/",
 ];
 
 const residualAllowedPathPatterns: RegExp[] = [

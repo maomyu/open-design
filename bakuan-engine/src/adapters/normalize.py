@@ -270,6 +270,13 @@ def normalize(platform: str, item: dict[str, Any]) -> RawContent:
     )
     if not rc.url:
         rc.url = _build_url(platform, aid)
+    # 视频号:把 decode_key 以 fragment 挂到下载 url 上(#odk=<key>),下载时 daemon 拆出来解密。
+    # dajiala 无「按 object_id 反查」,download_url+decode_key 只在采集时有——这样随选题带走,
+    # 下载才拿得到解密 key。fragment 不发服务器、不影响 download_url 的抓取。
+    if platform == "channels" and rc.url:
+        dk = str(item.get("decode_key") or "").strip()
+        if dk and "#odk=" not in rc.url:
+            rc.url = f"{rc.url}#odk={dk}"
     rc.fingerprint = make_fingerprint(platform, aid, title)
     return rc
 

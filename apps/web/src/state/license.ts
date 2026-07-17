@@ -8,6 +8,7 @@
 import { createContext, useContext } from 'react';
 import {
   hasAnyArticleFeature,
+  hasAnyKnowledgeFeature,
   hasAnyPublishingModule,
   hasAnyShortVideoFeature,
   svFeatureOf,
@@ -85,7 +86,7 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
     case 'studio-note':
       return hasFeature(license, 'note.xiaohongshu');
     case 'knowledge':
-      return hasFeature(license, 'cap.ai'); // 知识库跟 AI 走
+      return hasAnyKnowledgeFeature([...license.features]); // 个人库或企业库任一在授权内
 
     case 'accounts':
       return anyPublishingModule(license);

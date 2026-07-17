@@ -9,6 +9,7 @@
 import { isOpenDesignHostBrowserAvailable } from '@open-design/host';
 import type { StudioCollectJob } from '@open-design/contracts';
 import { claimCollectJob, completeCollectJob } from '../providers/media-studio';
+import { fetchPlatformAccounts } from '../providers/daemon';
 import { openBrowserPane } from './browser-panes';
 import { buildSearchUrl } from './collect-extractors';
 import { navigate, parseRoute } from '../router';
@@ -31,6 +32,12 @@ async function executeCollect(job: StudioCollectJob): Promise<void> {
   // 记住用户当前所在页(通常是「选题」),采集时视图会跟着各平台浏览器标签走(用户看得见
   // 内置浏览器逐个平台搜),采完自动切回这里看结果。若本就在浏览器标签则不回跳。
   const returnRoute = parseRoute(window.location.pathname);
+  // 采集复用「账号」页登录好的专属浏览器档案(登录态在 persist:od-browser-<平台>-<账号> 里)。
+  // 用账号中心该平台的第一个账号,而不是内部兜底 'main'——否则用户在账号页登的号和采集用的
+  // 会话不是同一个档案,采集照样未登录撞验证码。账号中心不可用时才退回 'main'。
+  const acctResp = await fetchPlatformAccounts();
+  const accountFor = (p: string): string =>
+    acctResp?.platforms.find((x) => x.id === p)?.accounts?.[0]?.name ?? 'main';
   try {
     // 每个平台在应用内标签打开搜索页 + 挂采集载荷（BrowserPanesHost 执行翻页抓取）。
     const nowSec = Math.floor(Date.now() / 1000);
@@ -41,7 +48,7 @@ async function executeCollect(job: StudioCollectJob): Promise<void> {
       if (!url) continue;
       openBrowserPane({
         platform,
-        account: 'main',
+        account: accountFor(platform),
         url,
         collect: {
           jobId: job.id, platform, keyword: job.keyword,

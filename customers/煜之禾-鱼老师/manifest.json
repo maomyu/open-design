@@ -1,0 +1,28 @@
+{
+  "slug": "yuzhihe",
+  "customer": "煜之禾·鱼老师",
+  "aliases": ["鱼老师", "于老师", "煜之禾", "yuzhihe"],
+  "edition": "custom",
+  "expires": "2027-12-31",
+  "appName": "WorkBuild",
+  "status": "in-development",
+  "sourceBranch": "video-auto-煜之禾-爆款引擎",
+  "features": [
+    "article.wechat-mp",
+    "sv.douyin",
+    "sv.kuaishou",
+    "sv.shipinhao",
+    "sv.bilibili",
+    "sv.xiaohongshu",
+    "note.xiaohongshu",
+    "integrations",
+    "kb.personal",
+    "cap.ai",
+    "cap.image",
+    "cap.tts",
+    "cap.video",
+    "cap.handoff",
+    "cap.publish"
+  ],
+  "notes": "个人自媒体·短视频爆款全平台(采集/下载/仿写/存草稿) + 公众号文章 + 飞书数据中心 + 个人自媒体知识库"
+}

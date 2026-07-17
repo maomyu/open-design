@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from typing import Any, Iterable
 
 
@@ -53,8 +54,8 @@ class LarkCliBitable:
             return [s for s in str(v).replace("、", ",").split(",") if s.strip()]
         return _cell(v)
 
-    def _ensure_options(self, table_name: str, records: list[dict]) -> None:
-        """写入前给 select/多选字段补齐缺失的选项(避免批量写未知选项报错)。"""
+    def _ensure_options(self, table_name: str, records: list[dict]) -> bool:
+        """写入前给 select/多选字段补齐缺失的选项(避免批量写未知选项报错)。返回是否补了新选项。"""
         meta = self._field_meta(table_name)
         add: dict[str, set] = {}
         for r in records:
@@ -70,6 +71,7 @@ class LarkCliBitable:
                 miss = {x for x in vals if x and x not in m["options"]}
                 if miss:
                     add.setdefault(name, set()).update(miss)
+        added = False
         for name, miss in add.items():
             m = meta[name]
             allopts = sorted(m["options"] | miss)
@@ -79,8 +81,10 @@ class LarkCliBitable:
                 self._run(["+field-update", "--table-id", table_name, "--field-id", m["id"],
                            "--json", json.dumps(body, ensure_ascii=False), "--yes"])
                 m["options"] |= miss   # 更新缓存
+                added = True
             except Exception:
                 pass
+        return added
 
     def _run(self, args: list[str]) -> dict:
         base = ["lark-cli", "base", *args, "--profile", self.profile,
@@ -145,10 +149,18 @@ class LarkCliBitable:
         cols = self._keep_cols(table_name, records, cols)   # 按真实表结构过滤，避免整条被拒
         if not cols:
             return []
-        self._ensure_options(table_name, records)   # 补齐缺失的 select 选项，避免报错
+        added = self._ensure_options(table_name, records)   # 补齐缺失的 select 选项，避免报错
         rows = [[self._fmt(table_name, c, r.get(c)) for c in cols] for r in records]
-        data = self._run(["+record-batch-create", "--table-id", table_name,
-                          "--json", json.dumps({"fields": cols, "rows": rows}, ensure_ascii=False)])
+        payload = json.dumps({"fields": cols, "rows": rows}, ensure_ascii=False)
+        try:
+            data = self._run(["+record-batch-create", "--table-id", table_name, "--json", payload])
+        except Exception:
+            # 刚补的 select 选项飞书最终一致：首次写新选项值可能撞「未知选项」失败，
+            # 等选项同步后重试一次（只在本次确实补过选项时重试，其余照常抛）。
+            if not added:
+                raise
+            time.sleep(1.5)
+            data = self._run(["+record-batch-create", "--table-id", table_name, "--json", payload])
         # lark-cli 返回 record_id_list（非 records）
         return data.get("record_id_list", []) if isinstance(data, dict) else []
 
@@ -191,6 +203,17 @@ class LarkCliBitable:
                         "fields": {cols[j]: vals[j] for j in range(min(len(cols), len(vals)))}})
         # lark-cli 后端不下推筛选，简单 CurrentValue.[字段]=值 在客户端过滤
         return _apply_filter(out, filter_)
+
+    def delete_record(self, table_name: str, record_id: str) -> bool:
+        """删一条记录（界面删知识/监控配置时同步飞书）。失败返回 False，不抛。"""
+        if not record_id:
+            return False
+        try:
+            self._run(["+record-delete", "--table-id", table_name,
+                       "--record-id", record_id, "--yes"])
+            return True
+        except Exception:
+            return False
 
 
 def _apply_filter(rows: list[dict], filter_: str | None) -> list[dict]:

@@ -430,6 +430,11 @@ import { registerHandoffRoutes } from './handoff-routes.js';
 import { registerPluginEditRoutes } from './plugin-edit-routes.js';
 import { registerAccountRoutes } from './account-routes.js';
 import { registerMediaStudioRoutes } from './media-studio-routes.js';
+import {
+  resolveBakuanEngine,
+  warmBakuanEngine,
+  type EngineContext,
+} from './media-studio/bakuan-engine.js';
 import { registerPluginDraftRoutes } from './plugin-draft-routes.js';
 import { registerSkillDraftRoutes } from './skill-draft-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
@@ -1319,6 +1324,13 @@ export function resolveDataDir(raw, projectRoot) {
   return resolved;
 }
 const RUNTIME_DATA_DIR = resolveDataDir(process.env.OD_DATA_DIR, PROJECT_ROOT);
+// bakuan-engine 运行时上下文：dev 用仓库 .venv，packaged 用 <dataDir>/bakuan-engine
+// 首启动 provision 出的 .venv。所有短视频 Python 调用点统一走 resolveBakuanEngine。
+const BAKUAN_ENGINE_CTX: EngineContext = {
+  projectRoot: PROJECT_ROOT,
+  dataDir: RUNTIME_DATA_DIR,
+  resourceRoot: DAEMON_RESOURCE_ROOT,
+};
 const PLUGIN_LOCKFILE_PATH = path.join(RUNTIME_DATA_DIR, 'od-plugin-lock.json');
 // Canonical (realpath-resolved) form of RUNTIME_DATA_DIR for the few callers
 // that compare it against a user-supplied realpath() result. On macOS, /var
@@ -5575,7 +5587,7 @@ export async function startServer({
     licenseRef.current = await loadLicenseState(RUNTIME_DATA_DIR);
     res.json(licenseStatusResponse(licenseRef.current));
   });
-  registerMediaStudioRoutes(app, { db, paths: pathDeps });
+  registerMediaStudioRoutes(app, { db, paths: pathDeps, feishuSync: runDatacenterCli });
   registerPluginDraftRoutes(app, { db, http: httpDeps, paths: pathDeps });
   registerDeploymentCheckRoutes(app, { db, http: httpDeps, deploy: deployDeps });
   app.use('/frames', express.static(FRAMES_DIR));
@@ -9618,8 +9630,13 @@ export async function startServer({
       orbitService.configure(config.orbit);
       // task#5:客户手动粘贴/改「飞书数据中心链接」时,同样把它同步进引擎 .env,
       // 保证爆款引擎回写永远落到客户当前的真 base(与 provision 建表路径一致)。
+      // 引擎目录必须【解析真身】——打包版引擎在 <dataDir>/bakuan-engine,不是 PROJECT_ROOT;
+      // 之前写死 PROJECT_ROOT 会把 .env 写到打包环境不存在/不生效的目录,引擎仍回写旧 base。
       if (typeof config.feishuBitableUrl === 'string' && config.feishuBitableUrl) {
-        try { await syncEngineFeishuEnv(path.join(PROJECT_ROOT, 'bakuan-engine'), config.feishuBitableUrl); } catch { /* 不阻断 */ }
+        try {
+          const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+          await syncEngineFeishuEnv(eng.engineDir, config.feishuBitableUrl);
+        } catch { /* 不阻断 */ }
       }
       res.json({ config });
     } catch (err) {
@@ -9847,11 +9864,16 @@ export async function startServer({
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const name = String(req.body?.name || '自媒体爆款数据中心').slice(0, 100);
-    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
-    const py = path.join(engineDir, '.venv', 'bin', 'python');
-    const r = await execFileBuffered(py, ['scripts/provision_datacenter.py', '--name', name], {
+    let eng;
+    try {
+      eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    } catch (err) {
+      return res.status(500).json({ error: '内置引擎准备失败：' + String(err && err.message ? err.message : err) });
+    }
+    const engineDir = eng.engineDir;
+    const r = await execFileBuffered(eng.python, ['scripts/provision_datacenter.py', '--name', name], {
       cwd: engineDir,
-      env: { ...process.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
       timeout: 240_000,
     });
     const m = r.stdout.match(/BASE_URL=(\S+)/);
@@ -9864,6 +9886,229 @@ export async function startServer({
     // 而不是开发写死的旧 base(引擎 config/settings.py 是 load_dotenv(override=True),.env 为准)。
     try { await syncEngineFeishuEnv(engineDir, url); } catch { /* 同步失败不阻断建表 */ }
     return res.json({ url });
+  });
+
+  // 飞书数据中心·界面回流统一 spawn:把 payload 写临时文件,调引擎 scripts/datacenter.py <cmd>,
+  // 解析 stdout 首个 { 起的 JSON。块1 知识库双写 / 块2 成品复盘回写 / 块3 监控配置共用这一个通道
+  // (同 radar-score:LARK_PROFILE=baochuang-client 写进客户自己的 base;失败抛错,由各端点兜底)。
+  async function runDatacenterCli(subcommand: string, payload: unknown = {}): Promise<any> {
+    const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    const tmpFile = path.join(os.tmpdir(), `bc-dc-${process.pid}-${Date.now()}.json`);
+    await fs.promises.writeFile(tmpFile, JSON.stringify(payload ?? {}), 'utf8');
+    try {
+      const r = await execFileBuffered(eng.python,
+        ['scripts/datacenter.py', subcommand, '--json-file', tmpFile], {
+          cwd: eng.engineDir,
+          env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+          timeout: 120_000,
+        });
+      const out = String(r.stdout || '');
+      const start = out.indexOf('{');
+      if (start < 0) {
+        throw new Error(`datacenter ${subcommand}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
+      }
+      return JSON.parse(out.slice(start));
+    } finally {
+      try { await fs.promises.unlink(tmpFile); } catch { /* ignore */ }
+    }
+  }
+
+  // ── 块3:监控配置库 + 系统配置表 界面 CRUD(飞书数据中心;引擎定时任务读监控配置库,
+  // 启动读系统配置表热更新阈值/频率/模型)。全走 runDatacenterCli → scripts/datacenter.py。──
+  const dcErr = (err: unknown) => String(err && (err as any).message ? (err as any).message : err);
+  app.get('/api/feishu/monitor', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('list-monitor')); }
+    catch (err) { res.status(500).json({ error: '读监控配置失败：' + dcErr(err) }); }
+  });
+  app.post('/api/feishu/monitor', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('push-monitor', req.body ?? {})); }
+    catch (err) { res.status(500).json({ error: '存监控配置失败：' + dcErr(err) }); }
+  });
+  app.delete('/api/feishu/monitor/:recordId', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('delete-monitor', { recordId: req.params.recordId })); }
+    catch (err) { res.status(500).json({ error: '删监控配置失败：' + dcErr(err) }); }
+  });
+  app.get('/api/feishu/system-config', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('list-config')); }
+    catch (err) { res.status(500).json({ error: '读系统配置失败：' + dcErr(err) }); }
+  });
+  app.put('/api/feishu/system-config', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runDatacenterCli('push-config', req.body ?? {})); }
+    catch (err) { res.status(500).json({ error: '存系统配置失败：' + dcErr(err) }); }
+  });
+
+  // ── 采集调度·完整管道入口(给 od baokuan CLI + 外部AI智能体/cron 定时调度)。引擎能力现成
+  // (pipeline.py --scheduled/--account/--link/--regenerate),照 collect-score 包成端点。这些走
+  // 【非 radar 完整链路】:采集→评分→拆解③→脚本④→复盘⑤,慢,timeout 给足 10 分钟。──
+  async function runBaokuanPipeline(pipeArgs: string[]): Promise<any> {
+    const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    const r = await execFileBuffered(eng.python, ['-m', 'src.pipeline', ...pipeArgs], {
+      cwd: eng.engineDir,
+      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      // 完整管道含逐条视频 ASR(约2min/条)+LLM:scheduled/account 多条串行,10min 会被掐断,
+      // 给足 30min(后台任务,cron/智能体调,无人在等)。
+      timeout: 1_800_000,
+    });
+    const out = String(r.stdout || '');
+    const start = out.indexOf('{');
+    if (start < 0) throw new Error(`baokuan ${pipeArgs.join(' ')}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
+    return JSON.parse(out.slice(start));
+  }
+  app.post('/api/baokuan/scheduled', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runBaokuanPipeline(['--scheduled'])); }
+    catch (err) { res.status(500).json({ error: '定时批量跑失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/account', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const account = String((req.body?.account ?? '')).trim().slice(0, 100);
+    if (!account) return res.status(400).json({ error: '缺少 account(竞品账号名或主页链接)' });
+    const platforms = (Array.isArray(req.body?.platforms) ? req.body.platforms : String(req.body?.platforms ?? '').split(','))
+      .map((p: unknown) => String(p).trim()).filter(Boolean).join(',') || 'douyin';
+    const timeWindow = String(req.body?.timeWindow ?? '7d');
+    try { res.json(await runBaokuanPipeline(['--account', account, '--platforms', platforms, '--time-window', timeWindow])); }
+    catch (err) { res.status(500).json({ error: '竞品账号采集失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/link', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const url = String((req.body?.url ?? '')).trim();
+    if (!url) return res.status(400).json({ error: '缺少 url' });
+    try { res.json(await runBaokuanPipeline(['--link', url])); }
+    catch (err) { res.status(500).json({ error: '单链接完整链路失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/regenerate', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runBaokuanPipeline(['--regenerate'])); }
+    catch (err) { res.status(500).json({ error: '飞书重新生成处理失败：' + dcErr(err) }); }
+  });
+
+  // ── 类似封面生成(模块7,验收8-9):参考封面解析 / 生成(背景另存) / 改标题重排版。
+  // 引擎 scripts/cover_gen.py,中文标题程序叠字保证不错字。──
+  async function runCoverGen(argv: string[]): Promise<any> {
+    const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    const r = await execFileBuffered(eng.python, ['scripts/cover_gen.py', ...argv], {
+      cwd: eng.engineDir,
+      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      timeout: 300_000,
+    });
+    const out = String(r.stdout || '');
+    const start = out.indexOf('{');
+    if (start < 0) throw new Error(`cover ${argv[0]}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
+    return JSON.parse(out.slice(start));
+  }
+  app.post('/api/baokuan/cover-analyze', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const ref = String(req.body?.ref ?? '').trim();
+    if (!ref) return res.status(400).json({ error: '缺少 ref(参考封面路径或URL)' });
+    try { res.json(await runCoverGen(['analyze', '--ref', ref])); }
+    catch (err) { res.status(500).json({ error: '参考封面解析失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/cover-gen', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const title = String(req.body?.title ?? '').trim();
+    if (!title) return res.status(400).json({ error: '缺少 title(封面主标题)' });
+    const argv = ['gen', '--title', title];
+    if (req.body?.subtitle) argv.push('--subtitle', String(req.body.subtitle));
+    if (req.body?.ref) argv.push('--ref', String(req.body.ref));
+    if (req.body?.styleJson) argv.push('--style-json', typeof req.body.styleJson === 'string' ? req.body.styleJson : JSON.stringify(req.body.styleJson));
+    if (req.body?.platforms) {
+      const p = Array.isArray(req.body.platforms) ? req.body.platforms.join(',') : String(req.body.platforms);
+      argv.push('--platforms', p);
+    }
+    if (req.body?.versions) argv.push('--versions', String(req.body.versions));
+    if (req.body?.outDir) argv.push('--out-dir', String(req.body.outDir));
+    if (req.body?.recordId) argv.push('--record-id', String(req.body.recordId));
+    try { res.json(await runCoverGen(argv)); }
+    catch (err) { res.status(500).json({ error: '封面生成失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/cover-rerender', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const bg = String(req.body?.bg ?? '').trim();
+    const title = String(req.body?.title ?? '').trim();
+    if (!bg || !title) return res.status(400).json({ error: '缺少 bg(背景路径)或 title(新标题)' });
+    const argv = ['rerender', '--bg', bg, '--title', title];
+    if (req.body?.subtitle) argv.push('--subtitle', String(req.body.subtitle));
+    if (req.body?.platform) argv.push('--platform', String(req.body.platform));
+    if (req.body?.out) argv.push('--out', String(req.body.out));
+    try { res.json(await runCoverGen(argv)); }
+    catch (err) { res.status(500).json({ error: '改标题重排版失败：' + dcErr(err) }); }
+  });
+
+  // ── 运维(模块9/10,验收11/13):成本报表 / 失败队列 / 重试 / 备份 / 开机自启。──
+  async function runOps(argv: string[], timeoutMs = 300_000): Promise<any> {
+    const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    const r = await execFileBuffered(eng.python, ['scripts/ops.py', ...argv], {
+      cwd: eng.engineDir,
+      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      timeout: timeoutMs,
+    });
+    const out = String(r.stdout || '');
+    const start = out.indexOf('{');
+    if (start < 0) throw new Error(`ops ${argv[0]}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
+    return JSON.parse(out.slice(start));
+  }
+  app.get('/api/baokuan/cost', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const days = Math.max(1, Math.min(90, Number(req.query?.days ?? 7) || 7));
+    try { res.json(await runOps(['cost-report', '--days', String(days)], 60_000)); }
+    catch (err) { res.status(500).json({ error: '成本报表失败：' + dcErr(err) }); }
+  });
+  app.get('/api/baokuan/failed', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    try { res.json(await runOps(['failed-list'], 60_000)); }
+    catch (err) { res.status(500).json({ error: '失败队列查询失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/retry', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const limit = Math.max(1, Math.min(20, Number(req.body?.limit ?? 5) || 5));
+    try { res.json(await runOps(['retry', '--limit', String(limit)], 1_800_000)); }
+    catch (err) { res.status(500).json({ error: '失败重试失败：' + dcErr(err) }); }
+  });
+  app.post('/api/baokuan/backup', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const argv = ['backup', '--daemon-data', RUNTIME_DATA_DIR];
+    if (req.body?.out) argv.push('--out', String(req.body.out));
+    try { res.json(await runOps(argv, 300_000)); }
+    catch (err) { res.status(500).json({ error: '备份失败：' + dcErr(err) }); }
+  });
+  // 开机自启:daemon 从自身 execPath 推出 .app bundle,写/删 ~/Library/LaunchAgents 的
+  // LaunchAgent(RunAtLoad)。dev 环境(非 .app 内运行)不支持,如实报错。
+  const AUTOSTART_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.workbuild.autostart.plist');
+  function appBundlePath(): string | null {
+    const segs = process.execPath.split(path.sep);
+    const i = segs.findIndex((s) => s.endsWith('.app'));
+    return i >= 0 ? segs.slice(0, i + 1).join(path.sep) : null;
+  }
+  app.get('/api/baokuan/autostart', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    res.json({ enabled: fs.existsSync(AUTOSTART_PLIST), plist: AUTOSTART_PLIST, appBundle: appBundlePath() });
+  });
+  app.post('/api/baokuan/autostart', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const enable = Boolean(req.body?.enable);
+    try {
+      if (!enable) {
+        if (fs.existsSync(AUTOSTART_PLIST)) fs.unlinkSync(AUTOSTART_PLIST);
+        return res.json({ ok: true, enabled: false });
+      }
+      const bundle = appBundlePath();
+      if (!bundle) return res.status(400).json({ error: '当前不是打包应用(dev 环境),无法配置开机自启' });
+      const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.workbuild.autostart</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/open</string><string>-a</string><string>${bundle}</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>\n`;
+      fs.mkdirSync(path.dirname(AUTOSTART_PLIST), { recursive: true });
+      fs.writeFileSync(AUTOSTART_PLIST, plist, 'utf8');
+      res.json({ ok: true, enabled: true, plist: AUTOSTART_PLIST, appBundle: bundle });
+    } catch (err) { res.status(500).json({ error: '开机自启配置失败：' + dcErr(err) }); }
   });
 
   // 爆款雷达·直接评分:接收【内置浏览器采集到的条目】+ 关键词 + 爆款筛选标准,跑爆款引擎
@@ -9879,18 +10124,17 @@ export async function startServer({
     if (!keyword || !items || typeof items !== 'object') {
       return res.status(400).json({ error: '缺少 keyword 或 items' });
     }
-    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
-    const py = path.join(engineDir, '.venv', 'bin', 'python');
     const platforms = Object.keys(items).join(',') || 'bilibili';
     const tmpFile = path.join(os.tmpdir(), `bc-collect-${process.pid}-${Date.now()}.json`);
     try {
+      const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
       await fs.promises.writeFile(tmpFile, JSON.stringify(items), 'utf8');
       const args = ['-m', 'src.pipeline', '--radar', '--keyword', keyword,
         '--platforms', platforms, '--collect-file', tmpFile];
       if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
-      const r = await execFileBuffered(py, args, {
-        cwd: engineDir,
-        env: { ...process.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_MAX: '12' },
+      const r = await execFileBuffered(eng.python, args, {
+        cwd: eng.engineDir,
+        env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_MAX: '12' },
         timeout: 240_000,
       });
       // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
@@ -9899,11 +10143,98 @@ export async function startServer({
       try { parsed = JSON.parse(s); } catch {
         return res.status(500).json({ error: '评分失败：' + (r.stderr || r.stdout).slice(-300) });
       }
-      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [] });
+      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null, feishuSynced: parsed.feishu_synced !== false });
     } catch (err) {
       return res.status(500).json({ error: '评分失败：' + String(err && err.message ? err.message : err) });
     } finally {
       try { await fs.promises.unlink(tmpFile); } catch { /* ignore */ }
+    }
+  });
+
+  // 【TikHub 直采选题】真抓爆款的新主通道(2026-07-14):不经内置浏览器采集,直接给关键词+平台+
+  // 爆款标准,让引擎走 TikHub 搜索(翻页累积→按标准筛→评分),秒级出选题候选。比浏览器采集更快、
+  // 字段更全(带粉丝/评论/真视频id→能下载仿写)、且无登录/验证码/滚动/DOM改版问题。
+  // 关键:不传 --collect-file,引擎 _search 自动走 tik.search_keyword(TikHub)。
+  app.post('/api/media-studio/collect-score', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const keyword = String(req.body?.keyword || '').trim().slice(0, 100);
+    const rawPlatforms = req.body?.platforms;
+    const platforms = (Array.isArray(rawPlatforms) ? rawPlatforms : String(rawPlatforms || '').split(','))
+      .map((p) => String(p).trim()).filter(Boolean).join(',');
+    const criteria = req.body?.criteria; // { time_window, rules:[...] } 可选
+    // 页数(1-4):每页约 12 条候选。用户想多爬几页看更多爆款时调大;默认 1 页。
+    const pages = Math.max(1, Math.min(4, Math.floor(Number(req.body?.pages) || 1)));
+    const collectN = String(pages * 12);
+    if (!keyword) return res.status(400).json({ error: '缺少 keyword' });
+    if (!platforms) return res.status(400).json({ error: '缺少 platforms' });
+    let eng;
+    try {
+      eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    } catch (err) {
+      return res.status(500).json({ error: '内置引擎准备失败：' + String(err && err.message ? err.message : err) });
+    }
+    try {
+      const args = ['-m', 'src.pipeline', '--radar', '--keyword', keyword, '--platforms', platforms];
+      if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
+      // 小红书内容类型:图文笔记台只采图文(2),短视频台采视频(1)——前后端对应图文笔记模块。
+      const xhsType = req.body?.xhsContentType;
+      if (platforms.includes('xiaohongshu') && (xhsType === 'image' || xhsType === 'video')) {
+        args.push('--xhs-note-type', xhsType === 'image' ? '2' : '1');
+      }
+      const r = await execFileBuffered(eng.python, args, {
+        cwd: eng.engineDir,
+        // RADAR_FAST=1:选题列表纯数据评分(不逐条打 LLM/取评论文本),分页多条也秒出。
+        // RADAR_COLLECT/RADAR_MAX 按页数放大:采够候选 + 让所有过筛的都进列表。
+        env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_FAST: '1', RADAR_MAX: collectN, RADAR_COLLECT: collectN },
+        timeout: 240_000,
+      });
+      // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
+      const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+      let parsed;
+      try { parsed = JSON.parse(s); } catch {
+        return res.status(500).json({ error: 'TikHub 采集/评分失败：' + (r.stderr || r.stdout || '').slice(-300) });
+      }
+      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null, feishuSynced: parsed.feishu_synced !== false });
+    } catch (err) {
+      return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
+  // 图文笔记台「提取图文仿写」:把【采集时随这条爆款带回的】原图直链下到文章图集 + 收原文案。
+  // 关键:文案/图片直接来自【用户点的那条搜索结果】(引擎采集时已把 desc + images_list 挂进选题),
+  // 不再按 id 取详情——小红书 get_video_note_detail 按 id 返回的是推荐流、不是本条,内容对不上号
+  // (2026-07-16 用户报「提取的根本不是要的那条」)。这里只负责下载图片进资产目录。
+  app.post('/api/media-studio/import-xhs-note', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const articleId = String(req.body?.articleId || '').trim();
+    const text = String(req.body?.text || '');
+    const images = Array.isArray(req.body?.images)
+      ? (req.body.images as unknown[]).filter((u): u is string => typeof u === 'string' && /^https?:\/\//.test(u)).slice(0, 18)
+      : [];
+    if (!articleId) return res.status(400).json({ error: '缺少 articleId' });
+    try {
+      const dir = path.resolve(RUNTIME_DATA_DIR, 'media-studio', articleId);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+      const imageUrls: string[] = [];
+      for (let i = 0; i < images.length; i++) {
+        try {
+          const resp = await fetch(images[i]!, { headers: { 'User-Agent': UA, Referer: 'https://www.xiaohongshu.com/' } });
+          if (!resp.ok) continue;
+          const buf = Buffer.from(await resp.arrayBuffer());
+          if (buf.length < 1000) continue;   // 跳过占位/坏图
+          const fname = `xhs-${Date.now()}-${i}.jpg`;
+          await fs.promises.writeFile(path.join(dir, fname), buf);
+          imageUrls.push(`/api/media-studio/assets/${articleId}/${fname}`);
+        } catch { /* 单张失败不影响其余 */ }
+      }
+      return res.json({ text, imageUrls });
+    } catch (err) {
+      return res.status(500).json({ error: '下载图文失败：' + String(err && err.message ? err.message : err) });
     }
   });
 
@@ -9915,25 +10246,109 @@ export async function startServer({
     }
     const url = String(req.body?.url || '').trim();
     if (!/^https?:\/\//.test(url)) return res.status(400).json({ error: '无效的视频链接' });
-    const ytdlp = path.join(PROJECT_ROOT, 'bakuan-engine', '.venv', 'bin', 'yt-dlp');
+    // 内置浏览器导出的登录态 cookie 文件(yt-dlp 兜底路径用)。
+    const cookieFile = String(req.body?.cookieFile || '').trim();
+    let eng;
+    try {
+      eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+    } catch (err) {
+      return res.status(500).json({ error: '内置引擎准备失败：' + String(err && err.message ? err.message : err) });
+    }
+    const ytdlp = eng.ytdlp;
+    const engineDir = eng.engineDir;
+    const py = eng.python;
     const outDir = path.join(RUNTIME_DATA_DIR, 'downloads');
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+
+    // ⓪【视频号:WASM 解密】视频号选题 url 采集时挂了 #odk=<decode_key>(dajiala 无按 object_id
+    // 反查,download_url+decode_key 只在采集时有,随选题带走)。视频号视频前 128KB 用 ISAAC64 加密,
+    // 下载后用微信官方 WASM(scripts/sph/decrypt.cjs,跑在 Node)解密还原可播 MP4。
+    if (url.includes('#odk=')) {
+      try {
+        const hi = url.indexOf('#odk=');
+        const dlUrl = url.slice(0, hi);
+        const decodeKey = url.slice(hi + 5).trim();
+        if (!decodeKey) throw new Error('选题缺少解密 key(重新采集一次视频号选题)');
+        await fs.promises.mkdir(outDir, { recursive: true });
+        const resp = await fetch(dlUrl, { headers: { 'User-Agent': UA, Referer: 'https://channels.weixin.qq.com/' } });
+        if (!resp.ok) throw new Error('下载失败 HTTP ' + resp.status);
+        const encBuf = Buffer.from(await resp.arrayBuffer());
+        if (encBuf.length < 10_000) throw new Error('下载内容过小(链接可能已失效,重采一次)');
+        const encFile = path.join(outDir, `sph-enc-${Date.now()}.bin`);
+        await fs.promises.writeFile(encFile, encBuf);
+        const outFile = path.join(outDir, `视频号-${Date.now()}.mp4`);
+        const decryptCjs = path.join(engineDir, 'scripts', 'sph', 'decrypt.cjs');
+        // 跑 Node 解密脚本:打包态 daemon 在 Electron 下,用 process.execPath + ELECTRON_RUN_AS_NODE
+        // 当纯 Node 跑;dev 态 execPath 本就是 node,该 env 无害。
+        const rr = await execFileBuffered(process.execPath, [decryptCjs, encFile, decodeKey, outFile], {
+          env: { ...eng.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 90_000,
+        });
+        await fs.promises.unlink(encFile).catch(() => {});
+        const js = (rr.stdout || '').slice((rr.stdout || '').indexOf('{'));
+        const parsed = js ? JSON.parse(js) as { ok?: boolean; error?: string } : {};
+        if (parsed.ok) {
+          const st = await fs.promises.stat(outFile);
+          return res.json({ file: outFile, dir: outDir, bytes: st.size, via: 'sph-wasm' });
+        }
+        throw new Error(parsed.error || (rr.stderr || '').slice(-200) || '解密失败');
+      } catch (e) {
+        return res.status(500).json({ error: '视频号下载失败：' + String(e && (e as Error).message ? (e as Error).message : e) });
+      }
+    }
+
+    // ①【首选:TikHub 解析直链】抖音/快手/小红书下载接口硬性要登录态 cookie,yt-dlp 匿名下不了;
+    // TikHub 官方接口给链接就返回 play_addr 直链(无需用户登录),由 daemon 带 Referer 下载,最稳。
+    // (这是「下载单条视频做仿写」用途;真抓爆款采集仍走内置浏览器,不经 TikHub。)
+    if (/douyin\.com|kuaishou\.com|xiaohongshu\.com|xhslink|v\.douyin/i.test(url)) {
+      try {
+        await fs.promises.mkdir(outDir, { recursive: true });
+        const rr = await execFileBuffered(py, ['scripts/resolve_video_url.py', '--url', url], {
+          cwd: engineDir, env: eng.env, timeout: 60_000,
+        });
+        const jsonStr = (rr.stdout || '').slice((rr.stdout || '').indexOf('{'));
+        const parsed = jsonStr ? JSON.parse(jsonStr) as { mediaUrl?: string; referer?: string; title?: string; error?: string } : {};
+        if (parsed.mediaUrl) {
+          const resp = await fetch(parsed.mediaUrl, {
+            headers: { 'User-Agent': UA, ...(parsed.referer ? { Referer: parsed.referer } : {}) },
+          });
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            if (buf.length > 10_000) {
+              const safeTitle = (parsed.title || 'video').replace(/[/\\:*?"<>|\n]+/g, '_').slice(0, 60) || 'video';
+              const file = path.join(outDir, `${safeTitle}-${Date.now()}.mp4`);
+              await fs.promises.writeFile(file, buf);
+              return res.json({ file, dir: outDir, bytes: buf.length, via: 'tikhub' });
+            }
+          }
+        }
+        // TikHub 没解析到/下载太小 → 落到 ② yt-dlp 兜底(下面),不直接报错。
+      } catch { /* fall through to yt-dlp */ }
+    }
+
+    // ②【兜底:yt-dlp】B站等公开平台直接下;抖音等若配了登录 cookie 也能下。
     try {
       await fs.promises.mkdir(outDir, { recursive: true });
       const outTmpl = path.join(outDir, '%(title).60s-%(id)s.%(ext)s');
-      const r = await execFileBuffered(ytdlp, [
-        '--no-playlist', '--no-warnings', '-f', 'mp4/bestvideo+bestaudio/best',
+      // 用带音轨的合并格式(bv*+ba/b):仿写要转写口播,纯视频流(无音轨)会让 ASR 抽不到音频。
+      const args = [
+        '--no-playlist', '--no-warnings', '-f', 'bv*+ba/b',
         '--merge-output-format', 'mp4', '-o', outTmpl,
-        '--print', 'after_move:filepath', url,
-      ], { timeout: 300_000 });
+        '--print', 'after_move:filepath',
+      ];
+      if (cookieFile && fs.existsSync(cookieFile)) args.push('--cookies', cookieFile);
+      args.push(url);
+      const r = await execFileBuffered(ytdlp, args, { timeout: 300_000, env: eng.env });
       const file = (r.stdout || '').trim().split('\n').filter(Boolean).pop() || '';
       if (!r.ok || !file) {
         const err = (r.stderr || r.stdout || '').slice(-300);
         // 平台反爬/需登录/不支持时给人话提示。
-        const hint = /kuaishou|快手/i.test(url)
-          ? '快手视频 yt-dlp 支持较弱,可能需要登录态;可先在浏览器标签手动保存。'
-          : /login|cookie|private|403|Unsupported URL/i.test(err)
-            ? '该视频可能需登录/受反爬保护,或该平台暂不支持直接下载。'
-            : '';
+        const hint = /Fresh cookies|cookie/i.test(err)
+          ? '需要登录态 cookie——请在内置浏览器登录该平台后重试(会自动带上你的登录 cookie)。'
+          : /kuaishou|快手/i.test(url)
+            ? '快手视频 yt-dlp 支持较弱,可能需要登录态;可先在浏览器标签手动保存。'
+            : /login|private|403|Unsupported URL/i.test(err)
+              ? '该视频可能需登录/受反爬保护,或该平台暂不支持直接下载。'
+              : '';
         return res.status(500).json({ error: '下载失败:' + err + (hint ? `（${hint}）` : '') });
       }
       return res.json({ file, dir: outDir });
@@ -9977,6 +10392,47 @@ export async function startServer({
     }
   });
 
+  // 把【已下载的爆款原视频】喂给前端 <video> 预览(提取文案时"展示原视频")。
+  // 只放行 <数据目录>/downloads/ 下、按文件名寻址,防目录穿越。
+  // 关键:必须支持 HTTP Range(206)——Chromium 的 <video> 播 MP4 常先发 Range 请求,
+  // 只回整块 200 会导致内置浏览器里视频不播/不能拖动。用 createReadStream 按区间流式发。
+  app.get('/api/media-studio/download-file/:file', async (req, res) => {
+    const dir = path.join(RUNTIME_DATA_DIR, 'downloads');
+    const file = path.normalize(String(req.params.file));
+    if (file.includes('..') || file.includes(path.sep) || file.startsWith('.')) {
+      return res.status(400).json({ error: 'bad file name' });
+    }
+    const full = path.join(dir, file);
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.stat(full);
+    } catch {
+      return res.status(404).json({ error: 'video not found' });
+    }
+    const contentType = /\.webm$/i.test(file) ? 'video/webm' : /\.mov$/i.test(file) ? 'video/quicktime' : 'video/mp4';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    const range = req.headers.range;
+    const m = typeof range === 'string' ? /bytes=(\d*)-(\d*)/.exec(range) : null;
+    if (m) {
+      let start = m[1] ? parseInt(m[1], 10) : 0;
+      let end = m[2] ? parseInt(m[2], 10) : stat.size - 1;
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
+        res.setHeader('Content-Range', `bytes */${stat.size}`);
+        return res.status(416).end();
+      }
+      end = Math.min(end, stat.size - 1);
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+      res.setHeader('Content-Length', String(end - start + 1));
+      fs.createReadStream(full, { start, end }).on('error', () => res.destroy()).pipe(res);
+    } else {
+      res.setHeader('Content-Length', String(stat.size));
+      fs.createReadStream(full).on('error', () => res.destroy()).pipe(res);
+    }
+  });
+
   // 爆款视频 → 口播文案(仿写用)。收到【已下载的本地视频文件】,抽音频 + 火山 ASR 转写。
   // 抖音仿写的"下载→提取文案→仿写"三步里的第二步;前端先下视频(两级下载)、再把本地路径丢这里。
   app.post('/api/media-studio/extract-script', async (req, res) => {
@@ -9985,12 +10441,11 @@ export async function startServer({
     }
     const videoFile = String(req.body?.videoFile || '').trim();
     if (!videoFile || !videoFile.startsWith('/')) return res.status(400).json({ error: '缺少本地视频文件路径' });
-    const engineDir = path.join(PROJECT_ROOT, 'bakuan-engine');
-    const py = path.join(engineDir, '.venv', 'bin', 'python');
     try {
-      const r = await execFileBuffered(py, ['scripts/extract_script.py', '--video', videoFile], {
-        cwd: engineDir,
-        env: { ...process.env },
+      const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+      const r = await execFileBuffered(eng.python, ['scripts/extract_script.py', '--video', videoFile], {
+        cwd: eng.engineDir,
+        env: eng.env,
         timeout: 300_000,
       });
       const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
@@ -10002,6 +10457,41 @@ export async function startServer({
       return res.json({ transcript: parsed.transcript ?? '' });
     } catch (err) {
       return res.status(500).json({ error: '提取文案失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
+  // B站视频「存草稿」全自动:B站网页上传器拒绝程序化塞文件(抖音/快手/小红书那套注入对它无效),
+  // 改为服务端用登录 cookie 直连 upos 上传 API + draft/add 建草稿(见 scripts/bilibili_upload.py)。
+  // cookieFile = web 侧 exportBrowserCookies('bilibili') 导出的 Netscape 文件。
+  app.post('/api/media-studio/bilibili-draft', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    const videoFile = String(req.body?.videoFile || '').trim();
+    const cookieFile = String(req.body?.cookieFile || '').trim();
+    const title = String(req.body?.title || '').trim();
+    const desc = String(req.body?.desc || '').trim();
+    const tags = String(req.body?.tags || '').trim();
+    const coverPath = String(req.body?.coverPath || '').trim();
+    if (!videoFile || !videoFile.startsWith('/')) return res.status(400).json({ error: '缺少本地视频文件路径' });
+    if (!cookieFile) return res.status(400).json({ error: 'B站还没登录——请先去「账号」页给B站添加账号并扫码登录' });
+    try {
+      const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+      const args = ['scripts/bilibili_upload.py', '--video', videoFile, '--cookie-file', cookieFile];
+      if (title) args.push('--title', title);
+      if (desc) args.push('--desc', desc);
+      if (tags) args.push('--tags', tags);
+      if (coverPath.startsWith('/')) args.push('--cover', coverPath);
+      const r = await execFileBuffered(eng.python, args, { cwd: eng.engineDir, env: eng.env, timeout: 300_000 });
+      const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+      let parsed: { ok?: boolean; draft_id?: unknown; error?: string };
+      try { parsed = JSON.parse(s); } catch {
+        return res.status(500).json({ error: 'B站存草稿失败：' + (r.stderr || r.stdout).slice(-300) });
+      }
+      if (parsed.error) return res.status(422).json({ error: parsed.error });
+      return res.json({ ok: true, draftId: parsed.draft_id ?? null });
+    } catch (err) {
+      return res.status(500).json({ error: 'B站存草稿失败：' + String(err && err.message ? err.message : err) });
     }
   });
 
@@ -14215,6 +14705,8 @@ export async function startServer({
           console.log(`[od] daemon listening on ${url}`);
         }
         daemonUrl = url;
+        // packaged 首启动：后台预热内置 Python 引擎，让短视频第一步操作前引擎大概率就绪。
+        warmBakuanEngine(BAKUAN_ENGINE_CTX, (msg) => console.log(msg));
         resolve(returnServer ? { url, server, shutdown: shutdownDaemonRuns } : url);
       });
     } catch (error) {

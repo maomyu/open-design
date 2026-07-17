@@ -227,6 +227,8 @@ const SUBCOMMAND_MAP = {
   project: runProject,
   automation: runAutomation,
   automations: runAutomation,
+  monitor: runMonitor,
+  baokuan: runBaokuan,
   memory: runMemory,
   run: runRun,
   files: runFiles,
@@ -2360,7 +2362,7 @@ async function runStudio(args) {
      [--no-follow 不等直接返回] [--timeout 秒=1800] [--json]
 
 【配图/封面/配音】
-  od studio image <id> --desc "<场景>" [--marker N|COVER] [--style whiteboard|illustrated|clean] [--ratio 4:3] [--as-cover]
+  od studio image <id> --desc "<场景>" [--marker N|COVER] [--style <风格id:whiteboard/candid/bigtext/photo-film/photo-magazine/minimal/flat-info/threed/guochao/journal/watercolor/cute/oil/none>] [--ratio 4:3] [--as-cover]
   od studio upload <id> --file <图片路径>                     # 传本地图进文章资产,返回 url
   od studio upload-video <id> --file <mp4路径>               # 传成片(短视频台)
   od studio assets <id>                                      # 资产的本机绝对路径
@@ -7876,6 +7878,385 @@ Output:
 
 Common options:
   --daemon-url <url>   Open Design daemon HTTP base.`);
+}
+
+// od baokuan — 采集调度·完整管道入口（原子命令,供外部AI智能体/cron 定时调度）。每个子命令
+// 打 daemon 端点 spawn 引擎 pipeline.py;工作流（串完整链路/定时批量）交给 Claude skills 编排。
+async function runBaokuan(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(
+      [
+        'od baokuan — 爆款采集调度（原子命令,供外部AI智能体/cron 定时调度）',
+        '  od baokuan collect --keyword <kw> [--platforms 抖音,小红书] [--pages N] [--json]',
+        '                                    关键词采集评分→写飞书原始库+选题池（radar,快）',
+        '  od baokuan scheduled [--json]     读监控配置库所有启用项,批量跑完整链路（定时用）',
+        '  od baokuan account --name <账号> [--window 7d] [--platforms ...] [--json]  竞品账号采集',
+        '  od baokuan link <url> [--json]    单链接完整链路（采集→拆解→脚本→复盘,全写飞书）',
+        '  od baokuan regenerate [--json]    处理飞书审核库标「重新生成」的记录',
+        '  od baokuan cover analyze --ref <图|URL>              参考封面→视觉解析(风格JSON)',
+        '  od baokuan cover gen --title <标题> [--ref <图>] [--subtitle 副]',
+        '                       [--platforms douyin,bilibili] [--versions 1-3] [--record-id rec..]',
+        '                                    参考图条件生成+中文程序叠字;背景另存 *_bg.png',
+        '  od baokuan cover rerender --bg <背景png> --title <新标题> [--out 路径]',
+        '                                    改标题不重出背景,仅重渲染文字(秒出)',
+        '  od baokuan cost [--days 7]       成本报表(LLM tokens/ASR次/图像张/TikHub次,按天)',
+        '  od baokuan failed                失败队列(失败不丢任务,原因可见)',
+        '  od baokuan retry [--limit 5]     重跑失败队列',
+        '  od baokuan backup [--out 路径]   备份引擎数据+.env+应用数据(迁移新电脑用)',
+        '  od baokuan autostart on|off|status   开机自启(LaunchAgent)',
+        '',
+        '定时任务: 用系统 cron 或 AI 智能体定时调 `od baokuan scheduled` 即实现全自动采集。',
+        '',
+      ].join('\n') + '\n',
+    );
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  let flags;
+  try {
+    flags = parseFlags(rest, {
+      string: ['keyword', 'platforms', 'pages', 'name', 'window', 'url', 'daemon-url', 'daemon-port',
+               'title', 'subtitle', 'ref', 'style-json', 'versions', 'record-id', 'bg', 'out', 'out-dir', 'platform',
+               'days', 'limit'],
+      boolean: ['json'],
+    });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJson = (d) => process.stdout.write(JSON.stringify(d, null, 2) + '\n');
+  const splitList = (v) => String(v).split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
+  const post = async (url, body) => {
+    let resp;
+    try {
+      resp = await fetch(`${base}${url}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    return resp.json();
+  };
+
+  switch (sub) {
+    case 'collect': {
+      if (!flags.keyword) {
+        console.error('需要 --keyword <关键词>');
+        process.exit(2);
+      }
+      const body = {
+        keyword: flags.keyword,
+        ...(flags.platforms ? { platforms: splitList(flags.platforms) } : {}),
+        ...(flags.pages ? { pages: Number(flags.pages) } : {}),
+      };
+      const data = await post('/api/media-studio/collect-score', body);
+      if (flags.json) return writeJson(data);
+      console.log(
+        `采集完成: 关键词「${data.keyword ?? flags.keyword}」候选 ${data.count ?? 0} 条` +
+          `${data.tier ? ' · 档位' + data.tier : ''}${data.feishuSynced === false ? ' · ⚠飞书未同步' : ''}`,
+      );
+      return;
+    }
+    case 'scheduled': {
+      const data = await post('/api/baokuan/scheduled', {});
+      if (flags.json) return writeJson(data);
+      console.log(`定时批量跑完成: ${JSON.stringify(data).slice(0, 300)}`);
+      return;
+    }
+    case 'account': {
+      if (!flags.name) {
+        console.error('需要 --name <竞品账号名或主页链接>');
+        process.exit(2);
+      }
+      const body = {
+        account: flags.name,
+        ...(flags.platforms ? { platforms: splitList(flags.platforms) } : {}),
+        ...(flags.window ? { timeWindow: flags.window } : {}),
+      };
+      const data = await post('/api/baokuan/account', body);
+      if (flags.json) return writeJson(data);
+      console.log(`竞品账号采集完成: ${JSON.stringify(data).slice(0, 300)}`);
+      return;
+    }
+    case 'link': {
+      const url = flags.url || rest.find((a) => a && !a.startsWith('--'));
+      if (!url) {
+        console.error('用法: od baokuan link <url>');
+        process.exit(2);
+      }
+      const data = await post('/api/baokuan/link', { url });
+      if (flags.json) return writeJson(data);
+      console.log(`单链接完整链路完成: ${JSON.stringify(data).slice(0, 300)}`);
+      return;
+    }
+    case 'regenerate': {
+      const data = await post('/api/baokuan/regenerate', {});
+      if (flags.json) return writeJson(data);
+      console.log(`重新生成处理完成: ${JSON.stringify(data).slice(0, 300)}`);
+      return;
+    }
+    case 'cover': {
+      const op = rest.find((a) => a && !a.startsWith('--'));
+      if (op === 'analyze') {
+        if (!flags.ref) { console.error('需要 --ref <参考封面路径或URL>'); process.exit(2); }
+        const data = await post('/api/baokuan/cover-analyze', { ref: flags.ref });
+        return writeJson(data);
+      }
+      if (op === 'gen') {
+        if (!flags.title) { console.error('需要 --title <封面主标题>'); process.exit(2); }
+        const data = await post('/api/baokuan/cover-gen', {
+          title: flags.title,
+          ...(flags.subtitle ? { subtitle: flags.subtitle } : {}),
+          ...(flags.ref ? { ref: flags.ref } : {}),
+          ...(flags['style-json'] ? { styleJson: flags['style-json'] } : {}),
+          ...(flags.platforms ? { platforms: splitList(flags.platforms) } : {}),
+          ...(flags.versions ? { versions: Number(flags.versions) } : {}),
+          ...(flags['out-dir'] ? { outDir: flags['out-dir'] } : {}),
+          ...(flags['record-id'] ? { recordId: flags['record-id'] } : {}),
+        });
+        if (flags.json) return writeJson(data);
+        const covers = data.covers || [];
+        console.log(`封面生成完成: ${covers.length} 张`);
+        for (const c of covers) console.log(`  ${c.platform} v${c.version}: ${c.path}${c.check?.ok ? '' : ' ⚠校验未过'}`);
+        return;
+      }
+      if (op === 'rerender') {
+        if (!flags.bg || !flags.title) { console.error('需要 --bg <背景png> --title <新标题>'); process.exit(2); }
+        const data = await post('/api/baokuan/cover-rerender', {
+          bg: flags.bg, title: flags.title,
+          ...(flags.subtitle ? { subtitle: flags.subtitle } : {}),
+          ...(flags.platform ? { platform: flags.platform } : {}),
+          ...(flags.out ? { out: flags.out } : {}),
+        });
+        if (flags.json) return writeJson(data);
+        console.log(`改标题重排版完成: ${data.path}${data.ok ? '' : ' ⚠校验未过'}`);
+        return;
+      }
+      console.error('用法: od baokuan cover <analyze|gen|rerender> ...');
+      process.exit(2);
+    }
+    case 'cost': {
+      const days = Number(flags.days || 7);
+      let resp;
+      try {
+        resp = await fetch(`${base}/api/baokuan/cost?days=${days}`);
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return writeJson(data);
+      console.log(`近 ${data.days} 天成本汇总:`);
+      for (const k of data.by_kind || []) {
+        const unit = k.kind === 'llm' ? 'tokens' : k.kind === 'image' ? '张' : '次';
+        console.log(`  ${k.kind}: ${k.calls} 次调用, ${k.units} ${unit}`);
+      }
+      if (!(data.by_kind || []).length) console.log('  (暂无记录)');
+      return;
+    }
+    case 'failed': {
+      let resp;
+      try {
+        resp = await fetch(`${base}/api/baokuan/failed`);
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return writeJson(data);
+      const rows = data.rows || [];
+      console.log(`失败队列: ${rows.length} 条待重试`);
+      for (const r of rows) console.log(`  #${r.id} [${r.kind}] ${r.reason?.slice(0, 80)}`);
+      return;
+    }
+    case 'retry': {
+      const data = await post('/api/baokuan/retry', { limit: Number(flags.limit || 5) });
+      if (flags.json) return writeJson(data);
+      console.log(`重试完成: ${data.retried} 条`);
+      for (const r of data.results || []) console.log(`  #${r.id} [${r.kind}] ${r.ok ? '✓' : '✗'} ${r.summary?.slice(0, 60)}`);
+      return;
+    }
+    case 'backup': {
+      const data = await post('/api/baokuan/backup', flags.out ? { out: flags.out } : {});
+      if (flags.json) return writeJson(data);
+      console.log(`备份完成: ${data.path} (${Math.round((data.bytes || 0) / 1024 / 1024)}MB)`);
+      console.log(`  包含: ${(data.included || []).join(', ')}`);
+      console.log(`  ${data.note || ''}`);
+      return;
+    }
+    case 'autostart': {
+      const op = rest.find((a) => a && !a.startsWith('--'));
+      if (op === 'status' || !op) {
+        let resp;
+        try {
+          resp = await fetch(`${base}/api/baokuan/autostart`);
+        } catch (err) {
+          surfaceFetchError(err, base);
+          process.exit(3);
+        }
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const data = await resp.json();
+        if (flags.json) return writeJson(data);
+        console.log(`开机自启: ${data.enabled ? '已开启' : '未开启'}`);
+        return;
+      }
+      const data = await post('/api/baokuan/autostart', { enable: op === 'on' });
+      if (flags.json) return writeJson(data);
+      console.log(`开机自启已${data.enabled ? '开启' : '关闭'}${data.plist ? ' → ' + data.plist : ''}`);
+      return;
+    }
+    default:
+      console.error(`未知子命令: ${sub}（collect|scheduled|account|link|regenerate|cover|cost|failed|retry|backup|autostart）`);
+      process.exit(2);
+  }
+}
+
+// od monitor — 飞书数据中心·定时监控配置库 + 系统配置表（块3 双轨 CLI）。打
+// /api/feishu/monitor + /api/feishu/system-config，与账号页 MonitorConfigSection 同源同端点。
+async function runMonitor(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(
+      [
+        'od monitor — 定时监控配置（飞书数据中心，引擎定时任务据此自动抓）',
+        '  od monitor list [--json]                    列出监控项',
+        '  od monitor add --keyword <kw> [--type 关键词|竞品账号]',
+        '                 [--platforms 抖音,小红书] [--time-window 7d]',
+        '                 [--min-threshold 500] [--category <c>] [--disable] [--note <n>]',
+        '  od monitor rm <recordId>                    删除监控项',
+        '  od monitor config [--json]                  列出系统配置（阈值/频率/模型）',
+        '  od monitor config --item <配置项> --value <值> --id <recordId> [--disable]',
+        '',
+      ].join('\n') + '\n',
+    );
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  let flags;
+  try {
+    flags = parseFlags(rest, {
+      string: ['type', 'keyword', 'platforms', 'time-window', 'category', 'note', 'id', 'item', 'value', 'min-threshold', 'daemon-url', 'daemon-port'],
+      boolean: ['json', 'disable'],
+    });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJson = (d) => process.stdout.write(JSON.stringify(d, null, 2) + '\n');
+  const send = async (url, body, method) => {
+    let resp;
+    try {
+      resp = await fetch(
+        `${base}${url}`,
+        method === 'DELETE'
+          ? { method }
+          : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      );
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+    if (!resp.ok) return structuredHttpFailure(resp);
+    return resp.json();
+  };
+
+  switch (sub) {
+    case 'list': {
+      let resp;
+      try {
+        resp = await fetch(`${base}/api/feishu/monitor`);
+      } catch (err) {
+        surfaceFetchError(err, base);
+        process.exit(3);
+      }
+      if (!resp.ok) return structuredHttpFailure(resp);
+      const data = await resp.json();
+      if (flags.json) return writeJson(data);
+      const rows = data.rows ?? [];
+      if (!rows.length) {
+        console.log('(暂无监控项)');
+        return;
+      }
+      for (const r of rows) {
+        const detail = r.type === '关键词' ? `阈值${r.minThreshold ?? 0}` : `窗口${r.timeWindow || '7d'}`;
+        console.log(`${r.enabled ? '●' : '○'} [${r.type}] ${r.keyword} · ${(r.platforms || []).join('、') || '全平台'} · ${detail} · ${r.recordId}`);
+      }
+      return;
+    }
+    case 'add': {
+      if (!flags.keyword) {
+        console.error('需要 --keyword <关键词或竞品账号>');
+        process.exit(2);
+      }
+      const body = {
+        type: flags.type || '关键词',
+        keyword: flags.keyword,
+        platforms: flags.platforms
+          ? String(flags.platforms).split(/[,，、]/).map((s) => s.trim()).filter(Boolean)
+          : [],
+        ...(flags['time-window'] ? { timeWindow: flags['time-window'] } : {}),
+        ...(flags.category ? { category: flags.category } : {}),
+        minThreshold: flags['min-threshold'] ? Number(flags['min-threshold']) : 0,
+        enabled: !flags.disable,
+        ...(flags.note ? { note: flags.note } : {}),
+      };
+      const data = await send('/api/feishu/monitor', body, 'POST');
+      if (flags.json) return writeJson(data);
+      console.log(`已添加监控项 recordId=${data.record_id ?? ''}`);
+      return;
+    }
+    case 'rm': {
+      const id = flags.id || rest.find((a) => a && !a.startsWith('--'));
+      if (!id) {
+        console.error('用法: od monitor rm <recordId>');
+        process.exit(2);
+      }
+      const data = await send(`/api/feishu/monitor/${encodeURIComponent(id)}`, null, 'DELETE');
+      if (flags.json) return writeJson(data);
+      console.log(data.ok ? '已删除' : '删除失败');
+      return;
+    }
+    case 'config': {
+      if (!flags.item) {
+        let resp;
+        try {
+          resp = await fetch(`${base}/api/feishu/system-config`);
+        } catch (err) {
+          surfaceFetchError(err, base);
+          process.exit(3);
+        }
+        if (!resp.ok) return structuredHttpFailure(resp);
+        const data = await resp.json();
+        if (flags.json) return writeJson(data);
+        for (const r of data.rows ?? []) {
+          console.log(`${r.item} = ${r.value}${r.unit || ''}${r.enabled ? '' : ' (禁用)'} · ${r.recordId}`);
+        }
+        return;
+      }
+      const body = {
+        item: flags.item,
+        value: flags.value ?? '',
+        ...(flags.id ? { recordId: flags.id } : {}),
+        enabled: !flags.disable,
+      };
+      const data = await send('/api/feishu/system-config', body, 'PUT');
+      if (flags.json) return writeJson(data);
+      console.log(`已更新「${flags.item}」`);
+      return;
+    }
+    default:
+      console.error(`未知子命令: ${sub}（list|add|rm|config）`);
+      process.exit(2);
+  }
 }
 
 async function runAutomation(args) {

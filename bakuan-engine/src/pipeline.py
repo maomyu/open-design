@@ -39,6 +39,8 @@ class Pipeline:
         self._collect_data: dict | None = None  # 内置浏览器采集数据 {平台:[条目]}；非空则替代 API 采集
         self._criteria: dict | None = None       # 灵活爆款标准(时间窗+多组条件)；非空则替代默认初筛
         self._materials: list[dict] | None = None  # 我的素材库缓存（本次运行读一次）
+        self.xhs_note_type: int | None = None    # 小红书采集内容类型:2 图文(图文笔记台)/1 视频(短视频台)/None 综合
+        self.radar_tier: str | None = None       # 自动降档命中的档位名(给前端显示"按【热门】采到N条")
         if dry_run:
             os.environ["DRY_RUN"] = "1"
             self.tik = self.dajiala = self.fs = None
@@ -76,12 +78,18 @@ class Pipeline:
             return self.dajiala.search_articles(keyword)
         if platform == "channels":                 # 视频号走极致了
             return self.dajiala.search_videos(keyword)
-        return self.tik.search_keyword(platform, keyword, count=count)
+        # 时间窗透传给 TikHub 搜索(抖音据此选 publish_time 档 + 翻页累积到 count)。
+        tw = (self._criteria or {}).get("time_window", "180d") if self._criteria else "180d"
+        # 小红书内容类型透传:图文笔记台只采图文(note_type=2),短视频台采视频(1)——前后端对应。
+        nt = self.xhs_note_type if platform == "xiaohongshu" else None
+        return self.tik.search_keyword(platform, keyword, count=count, time_window=tw, note_type=nt)
 
     def _comments(self, platform: str, content_id: str) -> list[str]:
         if self.dry_run:
             from src.adapters import mock
             return mock.mock_comments(platform, content_id)
+        if os.getenv("RADAR_FAST") == "1":
+            return []   # 选题列表速采:不逐条取评论文本(意向用内联评论数估),让分页多条也能秒出
         if self._collect_data is not None:
             return []   # 内置浏览器采集模式:不打 TikHub 取评论文本(绕开成本/风控)
         try:
@@ -139,9 +147,17 @@ class Pipeline:
                         if txt:
                             return txt
                 elif rc.platform in ("douyin", "kuaishou", "bilibili"):
-                    media = self._media_url(rc)   # 明文直链，火山直接按 URL 转写
+                    media = self._media_url(rc)   # 明文直链
                     if media:
-                        txt = self._clean(ASR.transcribe(media))
+                        # 主路径:本地下载→抽音频→base64 转写(火山 URL 直传拉不动抖音 CDN,
+                        # 防盗链一直 Processing;本地路径与提取仿写生产路径同款,快而稳)。
+                        txt = self._clean(ASR.transcribe_media_url(media))
+                        if not txt:
+                            # 兜底:URL 直传(部分平台直链火山可直接拉),预算按时长自适应
+                            dur = normalize._to_int(normalize._pick(
+                                rc.raw, "video.duration", "duration", default=0))
+                            dur_s = dur // 1000 if dur > 3600 else dur
+                            txt = self._clean(ASR.transcribe(media, duration_s=dur_s))
                         if txt:
                             return txt
             except Exception as e:
@@ -254,11 +270,39 @@ class Pipeline:
         return re.sub(r"\s+\n|\n\s+", "\n", re.sub(r"[ \t]+", " ", text)).strip()
 
     # ── 入口 1：关键词 ──
+    # 自动降档档位阶梯(严→松):视频号(channels)纯点赞走 LIKES,其余平台走 PLAYS(播放)。
+    _LADDER_PLAYS = [("大爆款", 1_000_000), ("爆款", 300_000), ("热门", 100_000), ("小热", 30_000)]
+    _LADDER_LIKES = [("大爆款", 50_000), ("爆款", 20_000), ("热门", 5_000), ("小热", 2_000)]
+
+    def _apply_tier_ladder(self, cands: list, target: int) -> tuple[list, str]:
+        """自动降档:从严到松逐档筛候选,第一个凑够 target 条的档即用;每档都不够则【取头部】兜底
+        (按指标降序,不设下线,保证永远有货)。返回 (pending=[(rc,[档名]),...], 命中档名)。
+        视频号看点赞,其余平台看播放(缺播放退点赞)。"""
+        if not cands:
+            return [], "无候选"
+        # 有播放量的(短视频)按播放档;没播放量的(小红书图文/视频号纯点赞)按点赞档——
+        # 否则拿播放档的 30万+ 门槛套点赞(赞才几千),图文永远只能到「取头部」兜底。
+        metric = lambda rc: rc.plays if rc.plays > 0 else rc.likes
+        ladder = lambda rc: self._LADDER_PLAYS if rc.plays > 0 else self._LADDER_LIKES
+        for i in range(len(self._LADDER_PLAYS)):   # 两套档数一致
+            tier_hits = [(rc, [ladder(rc)[i][0]]) for rc in cands if metric(rc) >= ladder(rc)[i][1]]
+            if len(tier_hits) >= target:
+                return tier_hits, ladder(cands[0])[i][0]   # 档名与平台无关(同档同名)
+        # 兜底:取头部(按指标降序取 max(target*2,12) 条),不设下线。
+        top = sorted(cands, key=metric, reverse=True)[:max(target * 2, 12)]
+        return [(rc, ["热门候选"]) for rc in top], "热门候选(取头部)"
+
     def run_keyword(self, keyword: str, platforms: list[str], *, count: int = 10,
                     min_threshold: int = 0) -> dict:
         logger.info(f"[关键词] {keyword} 平台={platforms} dry_run={self.dry_run}"
                     + (f" 自定门槛≥{min_threshold}" if min_threshold else ""))
         pending: list[tuple[normalize.RawContent, list[str]]] = []
+        # 【自动·智能降档】criteria.auto=true:先把全部候选收集起来,循环后按档位阶梯(严→松)统一筛,
+        # 凑够 target 条就停在那一档;每档都不够就取头部兜底。解决"标准太高冷门词一条采不到"。
+        auto_mode = bool(self._criteria and self._criteria.get("auto"))
+        auto_target = int((self._criteria or {}).get("target", 5)) if auto_mode else 5
+        all_cands: list[normalize.RawContent] = []
+        self.radar_tier = None
         for p in platforms:
             try:
                 raw = self._search(p, keyword, count)
@@ -273,15 +317,25 @@ class Pipeline:
                     rc = normalize.normalize(p, it)
                     # 空 ID 的脏数据跳过。去重仅用于完整入库管道；radar 是实时选题视图，
                     # 每次都该看到当前爆款，不做「见过就跳」，否则重跑就空了。
-                    if not rc.content_id.strip("_"):
+                    # 空 ID 后缀=脏数据("平台_");strip("_")判不出(剩平台名为真值),判后缀。
+                    if not rc.content_id.split("_", 1)[-1].strip("_ "):
                         continue
                     if not self._radar_mode and store.is_duplicate(rc.content_id, rc.fingerprint):
+                        # 重复抓取(验收3):不重复建主记录,但记最新快照(供增速/快速起量)并把
+                        # 最新互动数据刷回原始库那条既有主记录。
+                        store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
+                        self._refresh_raw_stats(rc)
                         continue
                     # 该关键词自定「最低阈值」：主指标(点赞/播放/阅读)未达标直接跳过
                     if min_threshold and max(rc.likes, rc.plays) < min_threshold:
                         continue
-                    # 补作者粉丝数（搜索不带；按作者ID单独查，用于低粉爆款判定）
-                    if rc.fans == 0 and rc.author_id and p in ("douyin", "xiaohongshu", "bilibili", "kuaishou"):
+                    # 补作者粉丝数（搜索不带；按作者ID单独查，用于低粉爆款判定）。
+                    # RADAR_FAST(选题列表速采)跳过:快手/小红书/B站粉丝不内联,逐个作者查会几十次
+                    # TikHub 调用→采集超时(2026-07-15 实测快手 180s 超时的根因)。快速模式下这些平台
+                    # 粉丝按 0 计(低粉爆款规则对它们失效,但默认热度门槛/高赞/高互动都不受影响;抖音粉丝
+                    # 内联不受影响)。想按低粉筛这些平台可关 RADAR_FAST。
+                    if (rc.fans == 0 and rc.author_id and os.getenv("RADAR_FAST") != "1"
+                            and p in ("douyin", "xiaohongshu", "bilibili", "kuaishou")):
                         rc.fans = self._get_fans(p, rc.author_id)
                     # 公众号粉丝走极致了 follower_stats（0.5元/次，按账号缓存；GZH_FANS=0 可关）
                     elif (p == "gzh" and rc.fans == 0 and rc.url
@@ -291,6 +345,10 @@ class Pipeline:
                             self._fans_cache[ck] = self.dajiala.account_followers(rc.url)
                         rc.fans = self._fans_cache[ck]
                     store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
+                    # 自动降档模式:先收集全部候选,判定移到循环后按阶梯统一做。
+                    if auto_mode:
+                        all_cands.append(rc)
+                        continue
                     # 用户传了灵活标准(时间窗+组合条件)就按它判；否则用默认初筛规则。
                     if self._criteria is not None:
                         from src.scoring import criteria as CR
@@ -310,10 +368,23 @@ class Pipeline:
                 except Exception as e:   # 单条脏数据不影响本平台其余条目
                     logger.warning(f"跳过异常条目 {p}: {e}")
                     continue
-        # 批量写原始库（一次 lark-cli 调用，避免 N 个子进程拖慢）
-        raw_fields = []
-        gzh_xhs = sum(1 for rc, _ in pending if rc.platform in ("gzh", "xiaohongshu"))
+        # 【自动·智能降档】所有平台候选采齐后,按档位阶梯统一筛,凑够 auto_target 停,不够取头部兜底。
+        if auto_mode:
+            pending, self.radar_tier = self._apply_tier_ladder(all_cands, auto_target)
+            logger.info(f"[自动降档] 命中档位「{self.radar_tier}」→ {len(pending)} 条(候选 {len(all_cands)})")
+        # 批量写原始库（一次 lark-cli 调用，避免 N 个子进程拖慢）。
+        # 已入库过的内容(radar 重复采集常见)不重建主记录(验收3)——复用既有 record_id。
+        new_pending: list[tuple] = []   # 真正要新建主记录的 (rc, hits)
+        dup_pending: list[tuple] = []   # 已有主记录的 (rc, 既有record_id)
         for rc, hits in pending:
+            prev = store.feishu_rid(rc.content_id)
+            if prev:
+                dup_pending.append((rc, prev))
+            else:
+                new_pending.append((rc, hits))
+        raw_fields = []
+        gzh_xhs = sum(1 for rc, _ in new_pending if rc.platform in ("gzh", "xiaohongshu"))
+        for rc, hits in new_pending:
             f = rc.to_feishu()
             f["命中规则"] = hits
             f["处理状态"] = "待转写"
@@ -328,10 +399,16 @@ class Pipeline:
             logger.info(f"图文全文提取：{gzh_xhs} 条(公众号/小红书)")
         ids = self._add_batch("爆款内容原始库", raw_fields)
         candidates: list[normalize.RawContent] = []
-        for (rc, hits), rid in zip(pending, ids + [""] * (len(pending) - len(ids))):
+        for (rc, hits), rid in zip(new_pending, ids + [""] * (len(new_pending) - len(ids))):
             store.mark_seen(rc.content_id, rc.fingerprint, rc.platform, rid)
             self._rid_by_cid[rc.content_id] = rid   # 原始库 record_id，供下游关联字段
             candidates.append(rc)
+        for rc, prev in dup_pending:
+            store.mark_seen(rc.content_id, rc.fingerprint, rc.platform, prev)  # 只刷 last_seen
+            self._rid_by_cid[rc.content_id] = prev
+            candidates.append(rc)
+        if dup_pending:
+            logger.info(f"重复内容 {len(dup_pending)} 条:不重建主记录,复用既有原始库记录")
         logger.info(f"入候选池 {len(candidates)} 条")
         # 脚本/封面很耗时：只精处理"优先级最高的前 N 条"，其余已入原始库，可稍后再处理。
         # 这样一次运行几分钟内完成，稳落在 Hermes/命令超时内。
@@ -372,14 +449,40 @@ class Pipeline:
             item = mock.mock_search(platform, "单链接", 1)[0]
         else:
             import re
+            from urllib.parse import urlparse, parse_qs
+            xsec_token = (parse_qs(urlparse(url).query).get("xsec_token") or [""])[0]
             path = url.split("?")[0].rstrip("/")
             m = re.search(r"/(?:video|short-video|note|explore|s)/([A-Za-z0-9_-]+)", path)
             aid = m.group(1) if m else path.split("/")[-1]
-            item = self.tik.fetch_detail(platform, aid)
+            item = self.tik.fetch_detail(platform, aid, xsec_token=xsec_token)
             if not item:
-                return {"error": f"取详情失败(可能是短链需先跳转或ID解析问题)：aid={aid}"}
+                if platform in ("xiaohongshu", "xhs"):
+                    # 已级联 精确(xsec_token)/图文/视频 三端点仍不中:多为笔记已删或 ID 不对。
+                    return {"error": f"小红书单链接取不到本条(已试 图文/视频/精确 三端点)——笔记可能已删除"
+                                     f"或链接不完整;可换带 xsec_token 的完整分享链接重试,或用关键词采集。aid={aid}"}
+                # 失败不丢任务(验收11):进失败队列,od baokuan retry 可重跑
+                self._report_failure("link", {"url": url, "platform": platform},
+                                     RuntimeError(f"取详情失败 aid={aid}"))
+                return {"error": f"取详情失败(可能是短链需先跳转或ID解析问题)：aid={aid},已进失败队列"}
         rc = normalize.normalize(platform, item)
-        raw_rid = self._write_raw(rc, ["单链接手动"])
+        # 详情返回空壳(如无效ID时 TikHub 返回空对象)→ content_id 为「平台_」空后缀,拒收并
+        # 入失败队列,绝不带垃圾数据往下走(2026-07-16 真测:假ID曾以 content_id="douyin_" 继续跑;
+        # 注意 strip("_") 判不出这种——"douyin_".strip("_")=="douyin" 为真值,必须判 ID 后缀)。
+        if not rc.content_id.split("_", 1)[-1].strip("_ "):
+            self._report_failure("link", {"url": url, "platform": platform},
+                                 RuntimeError(f"详情返回空数据(无内容ID),aid={aid}"))
+            return {"error": "取详情失败(返回空数据),已进失败队列"}
+        # 验收3:已入库过的内容不重复建主记录——复用既有 record_id 并刷新最新数据,
+        # 拆解/脚本照常重跑(用户点名要处理这条链接,产出新版成品)。
+        prev = store.feishu_rid(rc.content_id)
+        if prev:
+            store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
+            self._refresh_raw_stats(rc)
+            raw_rid = prev
+            logger.info(f"[单链接] 内容已在原始库,复用主记录 {prev}")
+        else:
+            raw_rid = self._write_raw(rc, ["单链接手动"])
+            store.mark_seen(rc.content_id, rc.fingerprint, platform, raw_rid)
         ok = self._process_candidate(rc, raw_rid=raw_rid)
         if self.dry_run:
             self._dump()
@@ -407,13 +510,23 @@ class Pipeline:
             except Exception as e:
                 logger.warning(f"账号采集失败 {p}: {e}")
                 continue
+            skipped_window = 0
             for it in raw:
                 rc = normalize.normalize(p, it)
+                # 验收2:按指定时间窗采集——窗口外发布的作品不收(此前 time_window 只打日志没生效)。
+                if not _within_window(rc.publish_time, time_window):
+                    skipped_window += 1
+                    continue
                 if store.is_duplicate(rc.content_id, rc.fingerprint):
+                    # 重复抓取(验收3):不重建主记录,但记快照+刷新最新数据。
+                    store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
+                    self._refresh_raw_stats(rc)
                     continue
                 rid = self._write_raw(rc, ["竞品账号监控"])
                 store.mark_seen(rc.content_id, rc.fingerprint, p, rid)
                 candidates.append((rc, recent, rid))
+            if skipped_window:
+                logger.info(f"[竞品账号] {p} 窗口外跳过 {skipped_window} 条(时间窗 {time_window})")
         generated = sum(1 for rc, recent, rid in candidates
                         if self._process_candidate(rc, account_recent_likes=recent, raw_rid=rid))
         if self.dry_run:
@@ -428,18 +541,21 @@ class Pipeline:
         logger.info(f"[重新生成] 待处理 {len(rows)} 条")
         done = 0
         for r in rows:
-            f = r.get("fields", {})
-            old_ver = int(f.get("生成版本", 1) or 1)
-            title = _txt(f.get("平台标题"))
-            decon = {"hook": title, "structure": "沿用"}
-            style = self._current_style()
-            materials = self._recall_materials(title)
-            for mode in _script_modes():
-                script = GEN.generate(decon, materials, style, mode)
-                fields = script.to_feishu(_txt(f.get("平台版本")), version=old_ver + 1)
-                self._add("成品内容审核库", fields)   # 新版本，旧版保留
-            self.fs.update_record("成品内容审核库", r["record_id"], {"审核状态": "已重生成"})
-            done += 1
+            try:
+                f = r.get("fields", {})
+                old_ver = int(f.get("生成版本", 1) or 1)
+                title = _txt(f.get("平台标题"))
+                decon = {"hook": title, "structure": "沿用"}
+                style = self._current_style()
+                materials = self._recall_materials(title)
+                for mode in _script_modes():
+                    script = GEN.generate(decon, materials, style, mode)
+                    fields = script.to_feishu(_txt(f.get("平台版本")), version=old_ver + 1)
+                    self._add("成品内容审核库", fields)   # 新版本，旧版保留
+                self.fs.update_record("成品内容审核库", r["record_id"], {"审核状态": "已重生成"})
+                done += 1
+            except Exception as e:  # noqa: BLE001  单条失败不拖垮整轮,进失败队列
+                self._report_failure("regenerate", {"record_id": r.get("record_id", "")}, e)
         return {"regenerated": done}
 
     # ── 入口 3：定时批量 ──
@@ -459,11 +575,18 @@ class Pipeline:
             thr = int(float(_txt(f.get("最低阈值")) or 0)) if _txt(f.get("最低阈值")) else 0
             if not kw:
                 continue
-            if _txt(f.get("类型")) == "竞品账号":
-                summary.append(self.run_account(kw, platforms,
-                                                time_window=_txt(f.get("时间窗")) or "7d"))
-            else:
-                summary.append(self.run_keyword(kw, platforms, min_threshold=thr))
+            try:
+                if _txt(f.get("类型")) == "竞品账号":
+                    summary.append(self.run_account(kw, platforms,
+                                                    time_window=_txt(f.get("时间窗")) or "7d"))
+                else:
+                    summary.append(self.run_keyword(kw, platforms, min_threshold=thr))
+            except Exception as e:  # noqa: BLE001  单项失败不拖垮整轮定时,进失败队列可重跑
+                kind = "account" if _txt(f.get("类型")) == "竞品账号" else "keyword"
+                self._report_failure(kind, {"keyword": kw, "platforms": platforms,
+                                            "min_threshold": thr,
+                                            "time_window": _txt(f.get("时间窗")) or "7d"}, e)
+                summary.append({"keyword": kw, "error": str(e)[:120]})
         self.regenerate()   # 每轮顺带处理「重新生成」
         return {"runs": summary}
 
@@ -524,7 +647,35 @@ class Pipeline:
             return True
         except Exception as e:
             logger.exception(f"处理失败 {rc.content_id}: {e}")
+            # 验收11:失败不丢任务——进本地失败队列(od baokuan retry 可重跑),
+            # 并写一条复盘库「错误摘要」让客户在飞书直接看到失败原因。
+            self._report_failure("candidate",
+                                 {"platform": rc.platform, "content_id": rc.content_id, "url": rc.url},
+                                 e)
             return False
+
+    def _report_failure(self, kind: str, payload: dict, exc: Exception) -> None:
+        """失败上报三件套:本地失败队列 + 日志 + 飞书复盘库错误摘要(可见原因)。绝不再抛。
+
+        重试期间(ops.py retry 设 BC_NO_ENQUEUE=1)不再重复入队——原条目还在 pending,
+        再入队会让队列越滚越多(2026-07-17 打包实测发现)。"""
+        reason = f"{type(exc).__name__}: {str(exc)[:200]}"
+        try:
+            if os.getenv("BC_NO_ENQUEUE") != "1":
+                fid = store.enqueue_failure(kind, payload, reason)
+                logger.warning(f"[失败队列] #{fid} {kind} 已入队:{reason[:80]}")
+            else:
+                logger.warning(f"[失败队列] 重试仍失败(保留原条目):{reason[:80]}")
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._add("发布复盘库", {
+                "平台": normalize.cn_platform(str(payload.get("platform") or "")) or "",
+                "复盘结论": f"任务失败({kind}),已进失败队列,可用 od baokuan retry 重跑",
+                "错误摘要": reason,
+            })
+        except Exception:  # noqa: BLE001
+            pass
 
     def _make_cover(self, rc: normalize.RawContent, script, record_id: str = "") -> None:
         """封面：Seedream 出背景+中文叠字，上传到成品记录的「封面成品」附件字段。"""
@@ -588,6 +739,26 @@ class Pipeline:
             return ""
         raise exc
 
+    def _refresh_raw_stats(self, rc: normalize.RawContent) -> None:
+        """重复抓取时把最新互动数据刷回「爆款内容原始库」既有主记录(不新建,best-effort)。
+
+        验收3 的后半句:同一内容重复抓取→不重复建主记录,但更新最新数据快照。本地
+        snapshot 表负责增速计算;这里把飞书主记录的可见数据也刷新,客户看到的是最新值。"""
+        if self.dry_run:
+            return
+        rid = store.feishu_rid(rc.content_id)
+        if not rid:
+            return
+        try:
+            import time as _t
+            self.fs.update_record("爆款内容原始库", rid, {
+                "播放/阅读": rc.plays, "点赞": rc.likes, "评论": rc.comments,
+                "收藏/投币": rc.collects, "转发": rc.shares,
+                "最近更新": normalize._fmt_time(int(_t.time())),
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"刷新原始库数据跳过 {rc.content_id}: {type(e).__name__}: {str(e)[:80]}")
+
     def _write_raw(self, rc: normalize.RawContent, hits: list[str]) -> str:
         fields = rc.to_feishu()
         fields["命中规则"] = hits
@@ -597,7 +768,7 @@ class Pipeline:
     def _write_topic(self, rc: normalize.RawContent, ev: EV.Evaluation,
                      link: list[dict] | None = None) -> str:
         # 收集给爆创「选题步骤」的选题候选(标题/平台/热度/来源/评分/推荐承接)
-        self.radar_items.append({
+        item = {
             "标题": rc.title, "平台": normalize.cn_platform(rc.platform),
             "流量爆款分": ev.traffic, "精准意向分": ev.intent,
             "热度": ev.traffic_grade, "所属榜单": EV.classify_boards(ev),
@@ -606,7 +777,21 @@ class Pipeline:
             "收藏": rc.collects, "粉丝": rc.fans,
             "高频用户问题": ev.top_questions, "推荐承接服务": ev.recommend_service,
             "评分理由": ev.reason,
-        })
+        }
+        # 小红书图文:把【本条】原文案(desc)+ 原图直链一并带出,给图文笔记台「提取图文仿写」用。
+        # 搜索结果自带完整 desc + images_list,直接用它保证【和用户点的这条一致】——详情接口
+        # (get_video_note_detail)按 id 返回的是推荐流不是本条,内容对不上号(2026-07-16 用户报)。
+        raw = rc.raw if isinstance(getattr(rc, "raw", None), dict) else {}
+        if rc.platform == "xiaohongshu" and raw.get("images_list"):
+            imgs = []
+            for it in raw.get("images_list") or []:
+                if isinstance(it, dict):
+                    u = it.get("url_size_large") or it.get("url") or it.get("original")
+                    if u:
+                        imgs.append(u)
+            item["原文案"] = (raw.get("desc") or raw.get("title") or "").strip()
+            item["原图"] = imgs
+        self.radar_items.append(item)
         # 选题池「来源内容」是真双向关联字段 → 指向「爆款内容原始库」那条记录,
         # 客户在飞书点一下即可跳到原始爆款。返回本条选题的 record_id,供审核库反查关联。
         return self._add("今日爆款选题池", {
@@ -678,6 +863,23 @@ _PLAT_CN = {"抖音": "douyin", "小红书": "xiaohongshu", "b站": "bilibili", 
             "快手": "kuaishou", "公众号": "gzh", "视频号": "channels"}
 
 
+def _win_seconds(window: str) -> int:
+    """时间窗字符串→秒。支持 1d/7d/30d/180d(及任意 Nd/Nh);解析失败按 7d。"""
+    m = re.match(r"^\s*(\d+)\s*([dh])\s*$", str(window or "").lower())
+    if not m:
+        return 7 * 86400
+    return int(m.group(1)) * (86400 if m.group(2) == "d" else 3600)
+
+
+def _within_window(publish_ts: int | float, window: str) -> bool:
+    """发布时间是否落在时间窗内。无发布时间(0/缺失)不淘汰——宁可多收不漏。"""
+    if not publish_ts:
+        return True
+    import time as _t
+    ts = publish_ts / 1000 if publish_ts > 1e12 else publish_ts
+    return (_t.time() - ts) <= _win_seconds(window)
+
+
 def _script_modes() -> list[str]:
     """脚本版本：默认只写一版（rewrite=按你风格改写）。要两版设 SCRIPT_MODES=imitate,rewrite。"""
     raw = os.getenv("SCRIPT_MODES", "rewrite")
@@ -685,15 +887,27 @@ def _script_modes() -> list[str]:
     return modes or ["rewrite"]
 
 
+_PLAT_CODES = {"douyin", "xiaohongshu", "bilibili", "kuaishou", "gzh", "channels"}
+
+
 def _parse_platforms(v) -> list[str]:
-    """把「平台」多选字段(中文标签，list 或顿号串)转成内部代号列表。空→[]（上层用默认全平台）。"""
+    """把「平台」多选字段转成内部代号列表。中文标签(抖音/小红书…)和内部代号
+    (douyin/xiaohongshu…)【两种都认】——od baokuan/监控库传中文名,web 传代号,都要能跑。
+    list 或顿号/逗号串均可;空→[]（上层用默认全平台）。"""
     if not v:
         return []
     if isinstance(v, list):
         names = [x.get("text", x) if isinstance(x, dict) else x for x in v]
     else:
         names = str(v).replace("、", ",").replace(" ", ",").split(",")
-    return [_PLAT_CN[n.strip()] for n in names if n and n.strip() in _PLAT_CN]
+    out: list[str] = []
+    for n in names:
+        n = str(n).strip()
+        if n in _PLAT_CN:
+            out.append(_PLAT_CN[n])
+        elif n in _PLAT_CODES:
+            out.append(n)
+    return out
 
 
 def main():
@@ -712,8 +926,26 @@ def main():
                     help="内置浏览器采集的数据文件(JSON: {平台:[条目...]}),提供后绕过 TikHub/极致了 API 采集")
     ap.add_argument("--criteria",
                     help='灵活爆款标准 JSON(或 @文件): {"time_window":"7d","rules":[{"fans_max":3000,"plays_min":100000}]}')
+    ap.add_argument("--xhs-note-type", type=int, choices=[1, 2],
+                    help="小红书内容类型:2 图文(图文笔记台)/1 视频(短视频台);不传=综合。前后端对应用。")
+    ap.add_argument("--time-window", default="7d", help="竞品账号采集时间窗(1d/7d/30d/180d)")
     args = ap.parse_args()
+    # 平台名归一化:od baokuan/监控库传中文名(小红书),web 传代号(xiaohongshu),两种都转成代号跑。
+    _plats = _parse_platforms(args.platforms) or list(S.PLATFORMS)
+    # 成本台账的任务上下文(store.add_cost 读 BC_TASK,按任务归因)
+    if args.link:
+        os.environ.setdefault("BC_TASK", f"link:{args.link[:60]}")
+    elif args.account:
+        os.environ.setdefault("BC_TASK", f"account:{args.account[:40]}")
+    elif args.scheduled:
+        os.environ.setdefault("BC_TASK", "scheduled")
+    elif args.regenerate:
+        os.environ.setdefault("BC_TASK", "regenerate")
+    elif args.keyword:
+        os.environ.setdefault("BC_TASK", f"keyword:{args.keyword[:40]}")
     pipe = Pipeline(dry_run=args.dry_run)
+    if args.xhs_note_type:
+        pipe.xhs_note_type = args.xhs_note_type
     if args.criteria:
         raw = args.criteria
         if raw.startswith("@"):
@@ -734,22 +966,31 @@ def main():
         # 雷达精评条数：默认 8(取头部选题，约 1 分钟出结果)；量大想更全可设 RADAR_MAX。
         os.environ["MAX_PROCESS"] = os.getenv("RADAR_MAX", "8")
         os.environ["ASR_OFF"] = "1"                  # 选题阶段不转写,提速
-        pipe.run_keyword(args.keyword, args.platforms.split(","), min_threshold=args.min_threshold)
+        # 采集候选量:TikHub 直采时多翻几页(默认 30)让筛选(尤其低粉爆款这类稀有条件)有足够
+        # 候选;浏览器采集(collect-file)则用其提供的量,count 不影响。
+        collect_n = int(os.getenv("RADAR_COLLECT", "30"))
+        pipe.run_keyword(args.keyword, _plats,
+                         count=collect_n, min_threshold=args.min_threshold)
         items = sorted(pipe.radar_items, key=lambda x: (x["流量爆款分"] + x["精准意向分"]), reverse=True)
-        print(json.dumps({"keyword": args.keyword, "count": len(items), "选题候选": items},
+        # feishu_synced=False 说明本轮飞书数据中心回写失败(多为 lark-cli 未装/未连接)——上报给前端
+        # 提示用户,不再静默(2026-07-16 用户报"没和飞书数据中心同步")。
+        print(json.dumps({"keyword": args.keyword, "count": len(items),
+                          "tier": pipe.radar_tier, "feishu_synced": not pipe._feishu_broken,
+                          "选题候选": items},
                          ensure_ascii=False, indent=2))
         return
     if args.scheduled:
-        print(pipe.run_scheduled())
+        print(json.dumps(pipe.run_scheduled(), ensure_ascii=False, indent=2))
     elif args.regenerate:
-        print(pipe.regenerate())
+        print(json.dumps(pipe.regenerate(), ensure_ascii=False, indent=2))
     elif args.account:
-        print(json.dumps(pipe.run_account(args.account, args.platforms.split(",")),
+        print(json.dumps(pipe.run_account(args.account, _plats,
+                                          time_window=args.time_window),
                          ensure_ascii=False, indent=2))
     elif args.link:
         print(json.dumps(pipe.run_single_link(args.link), ensure_ascii=False, indent=2))
     elif args.keyword:
-        print(json.dumps(pipe.run_keyword(args.keyword, args.platforms.split(","),
+        print(json.dumps(pipe.run_keyword(args.keyword, _plats,
                                           min_threshold=args.min_threshold),
                          ensure_ascii=False, indent=2))
     else:

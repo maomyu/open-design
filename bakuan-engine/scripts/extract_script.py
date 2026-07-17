@@ -13,6 +13,10 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 必须先导入 config.settings：它 load_dotenv(override=True) 把 .env 里的
+# ASR_API_KEY/ARK 等注入环境。否则 transcribe 读到空 Key → 静默返回空文案
+# (曾表现为"转写为空",实为没加载 .env,而非视频真的没口播)。
+from config import settings as _settings  # noqa: E402,F401
 from src.asr import transcribe as ASR  # noqa: E402
 
 
@@ -39,9 +43,14 @@ def main() -> None:
         return
 
     aud = os.path.splitext(video)[0] + ".mp3"
+    # 口播仿写只需前若干分钟就能抓住风格/开头钩子;小红书/B站视频常达 10+ 分钟,全量抽音频+ASR
+    # 很慢(11 分钟视频实测 ASR 49s)甚至逼近 daemon 的 300s 超时、UI 一直转圈。抽前 5 分钟音频
+    # 封顶(-t 300),长视频大幅提速、避免"卡住";可用 ASR_AUDIO_CAP_SEC 环境变量覆盖(0=不封顶)。
+    cap = os.getenv("ASR_AUDIO_CAP_SEC", "300").strip()
+    cap_args = ["-t", cap] if cap and cap != "0" else []
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", video, "-vn", "-acodec", "libmp3lame", "-ar", "16000", "-ac", "1", aud],
+            ["ffmpeg", "-y", "-i", video, *cap_args, "-vn", "-acodec", "libmp3lame", "-ar", "16000", "-ac", "1", aud],
             capture_output=True, timeout=120,
         )
     except Exception as e:  # noqa: BLE001

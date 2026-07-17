@@ -111,8 +111,12 @@ export function VersionsCard({
 
 // ---- 知识库 ----
 
-/** 自媒体知识库分类——喂你的人设/观点/风格/素材，AI 写脚本时按类注入，写出来就像你本人。 */
-const KNOWLEDGE_CATEGORIES: Array<{ id: string; label: string; hint: string; placeholder: string }> = [
+export type KnowledgeVariant = 'personal' | 'enterprise';
+type KnowledgeCategory = { id: string; label: string; hint: string; placeholder: string };
+
+/** 个人自媒体知识库分类——喂你的人设/观点/风格/素材，AI 写脚本时按类注入，写出来就像你本人。
+ *  (个人 IP 客户,如鱼老师·煜之禾。) */
+const PERSONAL_CATEGORIES: KnowledgeCategory[] = [
   { id: 'persona', label: '账号人设', hint: '你是谁——账号定位、人设标签、面向的赛道', placeholder: '例：男性情感成长博主，专注帮母胎单身/大龄男脱单；人设=接地气、过来人的大哥……' },
   { id: 'viewpoint', label: '核心观点', hint: '你反复输出的核心主张、观点', placeholder: '例：吸引大于追求；脱单先提升自身价值、别一味讨好；男人的底气来自事业和自律……' },
   { id: 'style', label: '口播风格', hint: '你怎么说话——开场习惯、语气、口头禅、禁用词', placeholder: '例：短句快节奏；常用"兄弟/说白了/记住一句话"；禁用"家人们/宝子"等女性向词……' },
@@ -122,17 +126,39 @@ const KNOWLEDGE_CATEGORIES: Array<{ id: string; label: string; hint: string; pla
   { id: 'other', label: '其他素材', hint: '热点、选题灵感、口径备忘等', placeholder: '粘贴任意背景资料（markdown/纯文本都行）……' },
 ];
 
+/** 企业知识库分类——喂公司主体/资质/产品/案例/品牌调性，AI 写公众号/微博/知乎文章时按类注入,
+ *  写出来贴合企业口径、可信、带背书。(企业客户,如翟总·中国维澳。)category id 加 `ent-` 前缀,
+ *  与个人库分类永不撞车——同时授权两套库时数据互不串。 */
+const ENTERPRISE_CATEGORIES: KnowledgeCategory[] = [
+  { id: 'ent-company', label: '公司主体', hint: '公司/品牌介绍、主营业务、发展历程、核心优势', placeholder: '例：中国维澳,成立于 XXXX 年,专注 XX 领域;主营 XX;核心优势=XX……' },
+  { id: 'ent-credential', label: '资质背书', hint: '荣誉资质、权威认证、行业排名、媒体报道、合作大牌', placeholder: '例：国家高新技术企业;XX 认证;央视/人民网报道;合作客户含 XX、XX……' },
+  { id: 'ent-product', label: '产品/服务', hint: '产品线、服务内容、核心卖点、适用场景、价格政策', placeholder: '例：主推 XX 产品,解决 XX 痛点,卖点=XX;套餐 A/B/C……' },
+  { id: 'ent-case', label: '客户案例', hint: '成功案例、落地成果、数据成绩、客户评价', placeholder: '例：为 XX 客户做了 XX,3 个月带来 XX 增长;客户评价……' },
+  { id: 'ent-brandvoice', label: '品牌调性', hint: '品牌语气、slogan、价值观、写作风格、禁用表达', placeholder: '例：专业稳重、可信;slogan=XX;禁用夸大绝对化用语(最/第一/国家级)……' },
+  { id: 'ent-faq', label: '常见问答', hint: '客户高频问题 + 标准口径回答(写文章/答疑共用)', placeholder: '例：Q：你们和同行有什么区别？A：……;Q：价格怎么算？A：……' },
+  { id: 'ent-other', label: '其他素材', hint: '行业资料、政策法规、选题备忘、对标账号等', placeholder: '粘贴任意背景资料（markdown/纯文本都行）……' },
+];
+
+const CATEGORIES_OF: Record<KnowledgeVariant, KnowledgeCategory[]> = {
+  personal: PERSONAL_CATEGORIES,
+  enterprise: ENTERPRISE_CATEGORIES,
+};
+
 export function KnowledgePanel({
   platform,
   accounts,
+  variant = 'personal',
 }: {
   platform: string;
   /** 账号范围下拉的候选（全局页汇总全平台账号并标平台名）。 */
   accounts: Array<{ id: string; name: string }>;
+  /** 知识库形态:个人自媒体(人设/风格)vs 企业(主体/资质/产品)。分类集不同。 */
+  variant?: KnowledgeVariant;
 }): JSX.Element {
+  const categories = CATEGORIES_OF[variant];
   const [items, setItems] = useState<MediaKnowledge[]>([]);
   // 左右布局(2026-07-08 用户拍板):左列分类目录,右列当前分类的说明/表单/条目。
-  const [activeCat, setActiveCat] = useState(KNOWLEDGE_CATEGORIES[0]!.id);
+  const [activeCat, setActiveCat] = useState(categories[0]!.id);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
@@ -145,7 +171,7 @@ export function KnowledgePanel({
   }, [platform]);
 
   const catOf = (k: MediaKnowledge) => ((k as { category?: string }).category || 'other');
-  const cat = KNOWLEDGE_CATEGORIES.find((x) => x.id === activeCat) ?? KNOWLEDGE_CATEGORIES[0]!;
+  const cat = categories.find((x) => x.id === activeCat) ?? categories[0]!;
   const group = items.filter((k) => catOf(k) === cat.id);
 
   const pickCat = (id: string) => {
@@ -179,7 +205,7 @@ export function KnowledgePanel({
   return (
     <div className={c('kbLayout')}>
       <nav className={c('kbSide')} aria-label="知识库分类">
-        {KNOWLEDGE_CATEGORIES.map((x) => {
+        {categories.map((x) => {
           const n = items.filter((k) => catOf(k) === x.id).length;
           return (
             <button

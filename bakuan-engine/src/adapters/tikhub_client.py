@@ -9,6 +9,7 @@ import re
 from typing import Any, Callable
 
 import requests
+from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config import settings as S
@@ -41,7 +42,7 @@ _PLAT: dict[str, dict[str, Any]] = {
         "params": lambda kw, n: {"keyword": kw, "page": 1, "sort_type": 0, "note_type": 0},
         "list": ["data.data.items", "data.items", "data.data", "data.notes"], "item_key": "note",
         "comments": ("GET", "/api/v1/xiaohongshu/app/get_note_comments", "note_id"),
-        "detail": ("GET", "/api/v1/xiaohongshu/web/get_note_info_v7", "note_id"),
+        "detail": ("GET", "/api/v1/xiaohongshu/app_v2/get_video_note_detail", "note_id"),
     },
     "bilibili": {
         "method": "GET",
@@ -57,7 +58,9 @@ _PLAT: dict[str, dict[str, Any]] = {
         "params": lambda kw, n: {"keyword": kw, "pcursor": ""},
         "list": ["data.mixFeeds", "data.feeds", "data.data.feeds", "data.data"], "item_key": "feed",
         "comments": ("GET", "/api/v1/kuaishou/web/fetch_one_video_comment", "photo_id"),
-        "detail": ("GET", "/api/v1/kuaishou/app/fetch_one_video", "photo_id"),
+        # 2026-07-15 实测:app/fetch_one_video 端点【超时】(下载失败根因);web/fetch_one_video_v2
+        # 快(~2.7s)且返回 photo.mainMvUrls 直链。详情/下载统一走 v2。
+        "detail": ("GET", "/api/v1/kuaishou/web/fetch_one_video_v2", "photo_id"),
     },
     "channels": {
         "method": "POST",
@@ -102,28 +105,146 @@ class TikHubClient:
         else:
             r = self.session.get(url, params=params or {}, timeout=40)
         r.raise_for_status()
+        try:  # 成本台账:每次 TikHub 接口调用记一笔(接口按次计费)
+            from src import store as _store
+            _store.add_cost("tikhub", 1, detail=path.rsplit("/", 2)[-1][:40])
+        except Exception:  # noqa: BLE001
+            pass
         return r.json()
 
     def search_keyword(self, platform: str, keyword: str, *,
-                       count: int = 20, time_window: str = "7d") -> list[dict]:
+                       count: int = 20, time_window: str = "7d",
+                       note_type: int | None = None) -> list[dict]:
+        # 抖音走【真分页】累积到 count(2026-07-14 实测:cursor+backtrace+search_id 可翻页,
+        # 单页仅 ~8 条,不翻页选不出稀有爆款如低粉爆款)。其它平台暂用单页(各自返回 8-20 条,
+        # 够选题;后续按各自游标 pcursor/page 补分页)。
+        # note_type 仅小红书用:0 综合 / 1 视频 / 2 图文——图文笔记台采图文(2),短视频台采视频(1)。
+        if platform == "douyin":
+            return self._douyin_search_paged(keyword, count=count, time_window=time_window)
         cfg = _PLAT[platform]
         if cfg["method"] == "POST":
             data = self._call("POST", cfg["search"], body=cfg["body"](keyword, count))
         else:
-            data = self._call("GET", cfg["search"], params=cfg["params"](keyword, count))
-        return _extract_items(data, cfg["list"], cfg.get("item_key"))[:count]
+            params = cfg["params"](keyword, count)
+            if platform == "xiaohongshu" and note_type is not None:
+                params["note_type"] = note_type   # 覆盖默认 0(综合)→ 只采图文/视频
+            data = self._call("GET", cfg["search"], params=params)
+        items = _extract_items(data, cfg["list"], cfg.get("item_key"))
+        # 小红书 note_type 只是软过滤(偶有漏网),这里再按 type 硬过滤,保证「只出图文/只出视频」。
+        if platform == "xiaohongshu" and note_type is not None:
+            want_video = (note_type == 1)
+            items = [it for it in items if _xhs_is_video(it) == want_video]
+        return items[:count]
 
-    def fetch_detail(self, platform: str, aweme_id: str) -> dict:
+    @staticmethod
+    def _douyin_publish_time(time_window: str | None) -> str:
+        """app 时间窗 key → 抖音搜索 publish_time 档(API 只有 0/1/7/180)。
+        30d/90d/180d/365d 统一用最长档 180 做服务端粗筛,精确时间窗由 criteria 按 create_time 再筛。"""
+        tw = (time_window or "").strip()
+        if not tw or tw == "all":
+            return "0"
+        if tw == "1d":
+            return "1"
+        if tw == "7d":
+            return "7"
+        return "180"
+
+    def _douyin_search_paged(self, keyword: str, *, count: int = 30,
+                             time_window: str = "180d", sort_type: str = "1") -> list[dict]:
+        """抖音视频搜索翻页累积。sort_type: 0综合/1最多点赞/2最新。翻页三件套
+        cursor + backtrace + search_id(=log_pb.impr_id)必须一起带,只带 cursor 会 400。"""
+        pt = self._douyin_publish_time(time_window)
+        out: list[dict] = []
+        seen: set[str] = set()
+        cursor, backtrace, search_id = 0, "", ""
+        for _ in range(8):  # 最多 8 页(~60 条候选),够筛
+            body = {"keyword": keyword, "sort_type": sort_type, "publish_time": pt,
+                    "content_type": "1", "cursor": cursor,
+                    "backtrace": backtrace, "search_id": search_id}
+            try:
+                data = self._call("POST", _PLAT["douyin"]["search"], body=body)
+            except Exception:
+                break  # 翻页途中失败:用已累积的,不整体失败
+            d = data.get("data", {}) if isinstance(data, dict) else {}
+            for it in _extract_items(data, _PLAT["douyin"]["list"], _PLAT["douyin"]["item_key"]):
+                aid = it.get("aweme_id")
+                if aid and aid not in seen:
+                    seen.add(aid)
+                    out.append(it)
+            if len(out) >= count or not d.get("has_more"):
+                break
+            cursor = d.get("cursor", cursor)
+            backtrace = d.get("backtrace", "") or backtrace
+            search_id = (d.get("log_pb") or {}).get("impr_id") or search_id
+        return out[:count]
+
+    def fetch_detail(self, platform: str, aweme_id: str, xsec_token: str = "") -> dict:
+        if platform in ("xiaohongshu", "xhs"):
+            return self._xhs_note_detail(aweme_id, xsec_token)
         cfg = _PLAT[platform]
         m, path, idp = cfg["detail"]
         if not path:
             return {}
         data = self._call(m or "GET", path, params={idp: aweme_id})
         node = data.get("data", data)
-        for k in ("aweme_detail", "aweme_info", "note", "note_card", "data"):
+        if isinstance(node, list):
+            node = node[0] if node else {}
+        for k in ("aweme_detail", "aweme_info", "data"):
             if isinstance(node, dict) and isinstance(node.get(k), dict):
                 return node[k]
         return node if isinstance(node, dict) else {}
+
+    def _xhs_note_detail(self, note_id: str, xsec_token: str = "") -> dict:
+        """小红书按 id 精确取【本条】笔记。
+
+        坑(2026-07-17 实测定位):get_video_note_detail 对【图文】笔记返回的是推荐流
+        (别人的笔记)——之前所有小红书都走它,图文单链接内容全串台。图文有专门端点
+        get_image_note_detail(实测精确命中本条)。级联策略:
+          ① 带 xsec_token(分享长链) → web_v3/fetch_note_detail,两种类型都精确;
+          ② app_v2/get_image_note_detail(图文笔记);
+          ③ app_v2/get_video_note_detail(视频笔记)。
+        每步都校验「返回笔记 id == 请求 id」,命中才采用;全不中返回 {}(绝不拿
+        推荐流内容往下写飞书)。"""
+        def _extract(data: dict) -> dict:
+            node = data.get("data", data)
+            # 服务包裹 {code,success,data:[...]}
+            if isinstance(node, dict) and isinstance(node.get("data"), list) and node["data"]:
+                node = node["data"][0]
+            elif isinstance(node, list):
+                node = node[0] if node else {}
+            # 图文/视频详情把笔记再包一层 note_list:[note]
+            if isinstance(node, dict) and isinstance(node.get("note_list"), list) and node["note_list"]:
+                node = node["note_list"][0]
+            for k in ("note", "note_card", "data"):
+                if isinstance(node, dict) and isinstance(node.get(k), dict):
+                    node = node[k]
+            return node if isinstance(node, dict) else {}
+
+        def _nid(n: dict) -> str:
+            nc = n.get("note_card") if isinstance(n.get("note_card"), dict) else {}
+            return str(n.get("note_id") or n.get("id") or nc.get("note_id") or "")
+
+        attempts: list[tuple[str, dict]] = []
+        if xsec_token:
+            attempts.append(("/api/v1/xiaohongshu/web_v3/fetch_note_detail",
+                             {"note_id": note_id, "xsec_token": xsec_token}))
+        attempts += [
+            ("/api/v1/xiaohongshu/app_v2/get_image_note_detail", {"note_id": note_id}),
+            ("/api/v1/xiaohongshu/app_v2/get_video_note_detail", {"note_id": note_id}),
+        ]
+        for path, params in attempts:
+            name = path.rsplit("/", 1)[-1]
+            try:
+                n = _extract(self._call("GET", path, params=params))
+            except Exception as e:  # noqa: BLE001  单端点失败(404/超时)→ 试下一个
+                logger.warning(f"小红书详情 {name} 调用失败: {type(e).__name__}: {str(e)[:60]}")
+                continue
+            rid = _nid(n)
+            if n and rid and (note_id in rid or rid in note_id):
+                logger.info(f"小红书详情命中本条({name})")
+                return n
+            logger.warning(f"小红书详情 {name} 返回非本条(得到 {rid or '空'}),试下一端点")
+        return {}
 
     def fetch_account_videos(self, platform: str, ref: str, *, count: int = 20) -> list[dict]:
         """抓指定账号自己的近期作品。ref 可为主页链接或作者ID(抖音sec_uid/B站mid)。
@@ -229,6 +350,20 @@ def _deep_find(o, key: str) -> int:
             if r:
                 return r
     return 0
+
+
+def _xhs_is_video(item: dict) -> bool:
+    """小红书笔记是否视频(用于图文/视频硬过滤)。优先看 type 字段('video'/'normal'),
+    兜底看是否带视频信息字段。item 可能是裸 note 或带 note_card 包裹。"""
+    if not isinstance(item, dict):
+        return False
+    nc = item.get("note_card") if isinstance(item.get("note_card"), dict) else {}
+    t = str(item.get("type") or nc.get("type") or item.get("note_type") or "").lower()
+    if t == "video":
+        return True
+    if t in ("normal", "图文", "image", "note"):
+        return False
+    return bool(item.get("video") or item.get("video_info") or nc.get("video"))
 
 
 def _extract_items(data: dict, list_paths: list[str], item_key: str | None) -> list[dict]:

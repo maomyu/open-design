@@ -1,0 +1,11 @@
+{
+  "slug": "youzha",
+  "customer": "油炸老总",
+  "aliases": ["油炸老总", "油炸", "youzha"],
+  "edition": "custom",
+  "expires": "2027-12-31",
+  "appName": "WorkBuild",
+  "status": "pending-requirements",
+  "features": [],
+  "notes": "特殊客户——功能需求待用户提供后填入 features"
+}

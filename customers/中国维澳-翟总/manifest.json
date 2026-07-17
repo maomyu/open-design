@@ -1,0 +1,21 @@
+{
+  "slug": "zhongguoweiao",
+  "customer": "中国维澳·翟总",
+  "aliases": ["翟总", "中国维澳", "zhongguoweiao", "zhaizong"],
+  "edition": "custom",
+  "expires": "2027-12-31",
+  "appName": "WorkBuild",
+  "status": "migrating",
+  "sourceBranch": "video-auto-6.1-翟总",
+  "features": [
+    "article.wechat-mp",
+    "article.weibo",
+    "article.zhihu",
+    "kb.enterprise",
+    "cap.ai",
+    "cap.image",
+    "cap.handoff",
+    "cap.publish"
+  ],
+  "notes": "企业·公众号/微博/知乎文章创作 + 企业知识库(无短视频/无飞书/无配音成片)"
+}

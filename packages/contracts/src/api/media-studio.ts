@@ -116,6 +116,10 @@ export interface MediaKnowledge {
   /** 公司知识分类：company/product/trust/case/card/other（历史数据默认 other）. */
   category: string;
   updatedAt: number;
+  /** 飞书数据中心双写后的 record_id（我的素材库/风格画像库那条），用于更新幂等 + 删除同步。 */
+  feishuRecordId?: string | null;
+  /** 该条落在哪张飞书表（我的素材库 / 风格画像库）。 */
+  feishuTable?: string | null;
 }
 export interface MediaKnowledgeListResponse {
   items: MediaKnowledge[];
@@ -280,6 +284,10 @@ export interface MediaTopicHit {
   /** 爆值 from the trending feed, opaque string. */
   hot: string | null;
   desc: string | null;
+  /** 小红书图文爆款采集时随本条带回的原文案(desc)——图文笔记台「提取图文仿写」用,保证和本条一致。 */
+  sourceContent?: string;
+  /** 小红书图文爆款采集时随本条带回的原图直链——「提取图文仿写」下载进图集。 */
+  sourceImages?: string[];
 }
 
 export interface TopicFeedSearchRequest {
@@ -555,3 +563,34 @@ export interface StudioCollectResultRequest {
   ok: boolean;
   detail?: string;
 }
+
+/** 生图风格模板(公众号/图文笔记等创作台共用下拉)。
+ *  id 与 daemon `composeStylePrompt` 的风格前缀表一一对应——加新风格两边同步。
+ *  标注「带文字」的风格允许模型在画面里写字,其余默认禁文字(防模型乱写中文)。 */
+export const IMAGE_STYLE_PRESETS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'whiteboard', label: '白板手绘（默认）' },
+  { id: 'candid', label: '真实抓拍（纪实）' },
+  { id: 'bigtext', label: '大字报封面（带文字）' },
+  { id: 'photo-film', label: '胶片实拍' },
+  { id: 'photo-magazine', label: '杂志大片' },
+  { id: 'minimal', label: '极简高级' },
+  { id: 'flat-info', label: '扁平信息图' },
+  { id: 'threed', label: '3D 立体（C4D）' },
+  { id: 'guochao', label: '国潮新中式' },
+  { id: 'journal', label: '手账拼贴' },
+  { id: 'watercolor', label: '水彩清新' },
+  { id: 'cute', label: '可爱 Q 版' },
+  { id: 'oil', label: '油画质感' },
+  { id: 'none', label: '不用模板（纯提示词）' },
+];
+// 2026-07-17 用户拍板移除:暖插画(illustrated)/纯净插画(clean)/赛博霓虹(cyber)。
+// daemon composeStylePrompt 仍保留 illustrated/clean 的兼容分支(老稿/旧偏好可能还带)。
+
+/** 生图比例选项(图文笔记台等)。默认 3:4(小红书竖图)。 */
+export const IMAGE_RATIO_OPTIONS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: '3:4', label: '3:4 竖图（默认）' },
+  { id: '4:3', label: '4:3 横图' },
+  { id: '1:1', label: '1:1 方图' },
+  { id: '9:16', label: '9:16 全屏竖' },
+  { id: '16:9', label: '16:9 宽屏' },
+];

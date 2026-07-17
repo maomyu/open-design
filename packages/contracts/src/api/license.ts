@@ -24,6 +24,10 @@ export type FeatureId =
   | 'note.xiaohongshu'
   // 其它模块
   | 'integrations'
+  // 知识库(2026-07-16 拆分:企业客户=企业知识库,个人自媒体=个人知识库,
+  //  两套分类不同,按 license 分别渲染;都授权可同时显示)。
+  | 'kb.personal'
+  | 'kb.enterprise'
   // 横切能力
   | 'cap.ai'
   | 'cap.image'
@@ -43,6 +47,8 @@ export const ALL_FEATURE_IDS: readonly FeatureId[] = [
   'sv.xiaohongshu',
   'note.xiaohongshu',
   'integrations',
+  'kb.personal',
+  'kb.enterprise',
   'cap.ai',
   'cap.image',
   'cap.tts',
@@ -95,6 +101,11 @@ export function hasAnyArticleFeature(features: readonly FeatureId[]): boolean {
 /** 短视频大模块是否可用 = 任一短视频平台在授权内。 */
 export function hasAnyShortVideoFeature(features: readonly FeatureId[]): boolean {
   return features.some((f) => f.startsWith('sv.'));
+}
+
+/** 知识库大模块是否可用 = 个人库或企业库任一在授权内。 */
+export function hasAnyKnowledgeFeature(features: readonly FeatureId[]): boolean {
+  return features.includes('kb.personal') || features.includes('kb.enterprise');
 }
 
 /** 「账号」导航是否出现 = 任一发布平台在授权内(有发布就要绑账号)。 */

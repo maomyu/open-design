@@ -8,6 +8,8 @@ import type {
   OpenDesignHostSessionFetchRequest,
   OpenDesignHostSessionFetchResult,
   OpenDesignHostOpenTabPayload,
+  OpenDesignHostExportCookiesRequest,
+  OpenDesignHostExportCookiesResult,
   OpenDesignHostFailure,
   OpenDesignHostProjectImportResult,
   OpenDesignHostProjectReplaceWorkingDirResult,
@@ -242,6 +244,23 @@ const browser = {
       return actionFailure(reason);
     } catch (error) {
       return actionFailure(reasonFromError(error));
+    }
+  },
+  // 导出该平台登录分区的 cookie(含 httpOnly)到本机文件,给 daemon 下载器
+  // (yt-dlp --cookies)带真实会话,才能下抖音/小红书的原视频做仿写。
+  exportCookies: async (request: OpenDesignHostExportCookiesRequest): Promise<OpenDesignHostExportCookiesResult> => {
+    try {
+      const result = await ipcRenderer.invoke('od:browser:export-cookies', request);
+      if (isRecord(result) && result.ok === true && typeof result.cookieFile === 'string') {
+        return { ok: true, cookieFile: result.cookieFile, count: typeof result.count === 'number' ? result.count : 0 };
+      }
+      const reason =
+        isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
+          ? result.reason
+          : 'cookie export failed';
+      return failure(reason);
+    } catch (error) {
+      return failure(reasonFromError(error));
     }
   },
   // 「一键存草稿」:主进程 CDP 把本机文件塞进后台面板 webview 的

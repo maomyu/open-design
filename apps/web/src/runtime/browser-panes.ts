@@ -62,6 +62,36 @@ export function grabVideoSrc(req: { platform: string; account: string; url: stri
   });
 }
 
+/**
+ * 导出该 平台×账号 登录分区的 cookie 到本机文件(给 daemon 的 yt-dlp 带真实
+ * 会话)。抖音/小红书的视频下载接口现在硬性要 cookie——用户已在内置浏览器登录,
+ * 这里把登录态落成 Netscape 文件,下载器加 --cookies 就能像登录用户一样下原视频。
+ * 仅桌面端可用(需主进程 session.cookies);Web-only 环境返回 null,调用方回退。
+ */
+export async function exportBrowserCookies(platform: string, account: string): Promise<string | null> {
+  try {
+    const host = (globalThis as Record<string, unknown>)['__od__'] as
+      | { browser?: { exportCookies?: (r: { platform: string; account: string }) => Promise<unknown> } }
+      | undefined;
+    const fn = host?.browser?.exportCookies;
+    if (typeof fn !== 'function') return null;
+    // 加超时兜底:cookie 导出是 IPC 调用,若浏览器分区未就绪/主进程卡住,await 会永久挂起——
+    // 而下载首选走 TikHub 直链本就不需要 cookie。6s 拿不到就当没有(返回 null),让下载照常进行,
+    // 避免"提取仿写"卡在①下载前(用户报"一直转圈"的根因之一)。
+    const res = await Promise.race([
+      fn({ platform: normalizeBrowserPlatform(platform), account }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+    ]);
+    if (res && typeof res === 'object' && (res as { ok?: boolean }).ok === true) {
+      const cf = (res as { cookieFile?: string }).cookieFile;
+      return typeof cf === 'string' && cf ? cf : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** 平台中文名（后台标签标题/工具条 chip 共用;客户定制中文直写）。 */
 export const BROWSER_PLATFORM_TITLES: Record<string, string> = {
   'wechat-mp': '公众号',

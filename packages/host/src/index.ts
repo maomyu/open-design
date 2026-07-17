@@ -240,6 +240,17 @@ export type OpenDesignHostOpenTabPayload = {
   partition: string;
 };
 
+export type OpenDesignHostExportCookiesRequest = {
+  /** 平台 id（如 "douyin"）+ 账号，定位到那条持久登录分区。 */
+  platform: string;
+  account: string;
+};
+
+/** 导出登录态 cookie 到本机 Netscape 文件（给 yt-dlp/下载器带上真实会话）。 */
+export type OpenDesignHostExportCookiesResult =
+  | { ok: true; cookieFile: string; count: number }
+  | OpenDesignHostFailure;
+
 export type OpenDesignHostBridge = {
   // Optional capability: hosts older than the embedded-browser feature do
   // not expose it, and the renderer falls back to its non-embedded path.
@@ -255,6 +266,8 @@ export type OpenDesignHostBridge = {
     unregisterContentWebview?(webContentsId: number): void;
     /** Optional (newer hosts): 订阅主进程回推的「开新内容标签」请求(网页内点开的新页)。 */
     onOpenBrowserTab?(listener: (payload: OpenDesignHostOpenTabPayload) => void): () => void;
+    /** Optional (newer hosts): 导出该平台登录分区的 cookie 给下载器带真实会话。 */
+    exportCookies?(request: OpenDesignHostExportCookiesRequest): Promise<OpenDesignHostExportCookiesResult>;
   };
   client: OpenDesignHostClient;
   pdf: {
@@ -533,6 +546,26 @@ export async function hostBrowserSessionFetch(
     return await sessionFetch(request);
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export function isOpenDesignHostCookieExportAvailable(scope: OpenDesignHostGlobalScope = globalThis): boolean {
+  return typeof getOpenDesignHost(scope)?.browser?.exportCookies === "function";
+}
+
+export async function exportHostBrowserCookies(
+  request: OpenDesignHostExportCookiesRequest,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): Promise<OpenDesignHostExportCookiesResult> {
+  const host = getOpenDesignHost(scope);
+  const exportCookies = host?.browser?.exportCookies;
+  if (typeof exportCookies !== "function") {
+    return unavailable("host cookie export is not available (older desktop build)");
+  }
+  try {
+    return await exportCookies(request);
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
   }
 }
 
