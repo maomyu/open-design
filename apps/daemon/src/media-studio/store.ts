@@ -8,6 +8,9 @@ import type {
   CreateMediaArticleRequest,
   CreateMediaSnippetRequest,
   CreateMediaTopicRequest,
+  InteractionAction,
+  InteractionRecord,
+  InteractionStatus,
   MediaArticle,
   MediaArticleSummary,
   MediaPublishRecord,
@@ -17,6 +20,13 @@ import type {
   UpdateMediaTopicRequest,
 } from '@open-design/contracts';
 import { DEFAULT_WECHAT_SKIN } from './wechat-render.js';
+import {
+  DEFAULT_INTERACTION_POLICY,
+  decideQuota,
+  type InteractionPolicy,
+  type QuotaDecision,
+  type QuotaState,
+} from './interaction-quota.js';
 
 type Row = Record<string, unknown>;
 
@@ -443,4 +453,132 @@ export function deleteKnowledge(db: Database.Database, id: string): boolean {
 export function getKnowledge(db: Database.Database, id: string) {
   const row = db.prepare(`SELECT * FROM media_knowledge WHERE id = ?`).get(id) as Row | undefined;
   return row ? knowledgeFromRow(row) : null;
+}
+
+// ---- 互动风控台账（自动评论/楼中楼/私信的审计 + 按账号限流）----
+
+function interactionFromRow(r: Row): InteractionRecord {
+  const action = str(r.action);
+  const status = str(r.status);
+  return {
+    id: str(r.id),
+    platform: str(r.platform),
+    accountId: strOrNull(r.account_id),
+    action: (action === 'sub-reply' || action === 'dm' ? action : 'reply') as InteractionAction,
+    targetRef: str(r.target_ref),
+    text: str(r.text),
+    status: (status === 'error' || status === 'blocked' ? status : 'done') as InteractionStatus,
+    detail: strOrNull(r.detail),
+    createdAt: numOrNull(r.created_at) ?? 0,
+  };
+}
+
+/** 落一条互动审计（外发成功、报错、被风控拦截都留痕）。 */
+export function recordInteraction(
+  db: Database.Database,
+  input: {
+    platform: string;
+    accountId?: string | null;
+    action: InteractionAction;
+    targetRef: string;
+    text: string;
+    status: InteractionStatus;
+    detail?: string | null;
+    at?: number;
+  },
+): InteractionRecord {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO media_interactions (id, platform, account_id, action, target_ref, text, status, detail, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.platform,
+    input.accountId ?? null,
+    input.action,
+    input.targetRef,
+    input.text,
+    input.status,
+    input.detail ?? null,
+    input.at ?? Date.now(),
+  );
+  return interactionFromRow(db.prepare(`SELECT * FROM media_interactions WHERE id = ?`).get(id) as Row);
+}
+
+export function listInteractions(
+  db: Database.Database,
+  filter: { platform?: string; accountId?: string | null; limit?: number } = {},
+): InteractionRecord[] {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (filter.platform) { where.push('platform = ?'); args.push(filter.platform); }
+  if (filter.accountId !== undefined) { where.push('account_id IS ?'); args.push(filter.accountId ?? null); }
+  const limit = Math.max(1, Math.min(500, filter.limit ?? 100));
+  const rows = db
+    .prepare(
+      `SELECT * FROM media_interactions ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(...args, limit) as Row[];
+  return rows.map(interactionFromRow);
+}
+
+/** 账号维度归一：无账号时统一用空串键,和建表默认一致(避免 NULL 主键把不同账号并成一行)。 */
+function quotaAccountKey(accountId?: string | null): string {
+  return accountId ?? '';
+}
+
+function readQuotaState(db: Database.Database, platform: string, accountId?: string | null): QuotaState | null {
+  const row = db
+    .prepare(`SELECT day, count, last_action_at FROM media_interaction_quota WHERE platform = ? AND account_id = ?`)
+    .get(platform, quotaAccountKey(accountId)) as Row | undefined;
+  if (!row) return null;
+  return {
+    day: numOrNull(row.day) ?? 0,
+    count: numOrNull(row.count) ?? 0,
+    lastActionAt: numOrNull(row.last_action_at) ?? 0,
+  };
+}
+
+/** 只读地看某账号当前配额判定（不占用名额；供前端/CLI 预检、或执行器排程参考）。 */
+export function peekInteractionQuota(
+  db: Database.Database,
+  platform: string,
+  accountId: string | null,
+  policy: InteractionPolicy = DEFAULT_INTERACTION_POLICY,
+  now: number = Date.now(),
+): QuotaDecision {
+  return decideQuota(readQuotaState(db, platform, accountId), policy, now);
+}
+
+/**
+ * 原子认领一个互动名额：在一个事务里「读配额→纯决策→放行则记账」，杜绝并发穿透
+ * （两个同刻请求，第二个会看到第一个刚写的 last_action_at 而被冷却拦下）。
+ * 放行返回 {allowed:true}，调用方随后执行真实外发并另记 recordInteraction 审计；
+ * 拦截返回 {allowed:false, reason}，不占名额。
+ */
+export function claimInteractionSlot(
+  db: Database.Database,
+  platform: string,
+  accountId: string | null,
+  policy: InteractionPolicy = DEFAULT_INTERACTION_POLICY,
+  now: number = Date.now(),
+): QuotaDecision {
+  const tz = policy.tzOffsetMinutes ?? 480;
+  const today = Math.floor((now + tz * 60_000) / 86_400_000);
+  const key = quotaAccountKey(accountId);
+  const txn = db.transaction((): QuotaDecision => {
+    const state = readQuotaState(db, platform, accountId);
+    const decision = decideQuota(state, policy, now);
+    if (!decision.allowed) return decision;
+    // 放行：占用名额。跨天则计数从 1 起，否则 +1；刷新 last_action_at 为地板起点。
+    const nextCount = state && state.day === today ? state.count + 1 : 1;
+    db.prepare(
+      `INSERT INTO media_interaction_quota (platform, account_id, day, count, last_action_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(platform, account_id) DO UPDATE SET day = excluded.day, count = excluded.count, last_action_at = excluded.last_action_at`,
+    ).run(platform, key, today, nextCount, now);
+    return { ...decision, usedToday: nextCount };
+  });
+  return txn();
 }

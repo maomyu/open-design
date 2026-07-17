@@ -120,6 +120,32 @@ export interface MediaKnowledge {
 export interface MediaKnowledgeListResponse {
   items: MediaKnowledge[];
 }
+
+/** 互动动作类型：一级评论回复 / 楼中楼(子评论)回复 / 私信。 */
+export type InteractionAction = 'reply' | 'sub-reply' | 'dm';
+
+/** 互动执行的终态。blocked = 被风控台账(限流/冷却/静默时段)拦下,未真正外发。 */
+export type InteractionStatus = 'done' | 'error' | 'blocked';
+
+/** 一条互动审计记录（media_interactions 一行）。每次外发/被拦都留痕,供风控回溯与限流计数。 */
+export interface InteractionRecord {
+  id: string;
+  platform: MediaStudioPlatform;
+  accountId: string | null;
+  action: InteractionAction;
+  /** 目标引用：一级评论=笔记/帖子 URL 或 id；楼中楼=父评论 id；私信=对方用户 id。 */
+  targetRef: string;
+  text: string;
+  status: InteractionStatus;
+  /** 被拦原因（status=blocked）或报错摘要（status=error）。 */
+  detail: string | null;
+  createdAt: number;
+}
+
+export interface InteractionRecord_ListResponse {
+  items: InteractionRecord[];
+}
+
 export interface CreateMediaKnowledgeRequest {
   name: string;
   contentMd: string;

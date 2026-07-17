@@ -303,6 +303,31 @@ function migrate(db: SqliteDb): void {
     );
     CREATE INDEX IF NOT EXISTS idx_media_publishes_article
       ON media_publishes(article_id, created_at DESC);
+
+    -- 互动审计：每次自动评论/楼中楼/私信的外发或被拦都留一行,供风控回溯 + 限流计数。
+    CREATE TABLE IF NOT EXISTS media_interactions (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      account_id TEXT,
+      action TEXT NOT NULL,
+      target_ref TEXT NOT NULL DEFAULT '',
+      text TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      detail TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_interactions_acct
+      ON media_interactions(platform, account_id, created_at DESC);
+
+    -- 限流台账：按 平台×账号 记当日已发次数 + 上次动作时间(跨重启不丢)。养号节奏的地板由此把守。
+    CREATE TABLE IF NOT EXISTS media_interaction_quota (
+      platform TEXT NOT NULL,
+      account_id TEXT NOT NULL DEFAULT '',
+      day INTEGER NOT NULL DEFAULT 0,
+      count INTEGER NOT NULL DEFAULT 0,
+      last_action_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (platform, account_id)
+    );
   `);
   // Forward-compatible column add for databases created before metadata_json.
   // SQLite has no IF NOT EXISTS for ALTER, so we check pragma_table_info.
