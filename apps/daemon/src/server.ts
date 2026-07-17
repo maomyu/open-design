@@ -9961,10 +9961,24 @@ export async function startServer({
     if (start < 0) throw new Error(`baokuan ${pipeArgs.join(' ')}: ${(r.stderr || out || 'no output').slice(0, 300)}`);
     return JSON.parse(out.slice(start));
   }
+  // 长任务响应必须先发头+心跳:Node fetch(undici)默认 headersTimeout/bodyTimeout 都是 300s,
+  // 完整管道常超 5 分钟——不先发响应头,od CLI/外部智能体侧必 UND_ERR_HEADERS_TIMEOUT 断线
+  // (daemon 这边其实还在跑,白干)。心跳写空格是 JSON 合法前导空白,消费端 resp.json() 无感。
+  // 代价:错误只能编码在 200 体里({error}),od CLI 的 post 守卫据此设退出码。
+  async function respondBaokuanLong(res: any, pipeArgs: string[], errPrefix: string): Promise<void> {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.flushHeaders?.();
+    const beat = setInterval(() => { try { res.write(' '); } catch { /* 客户端已断,end 时收尾 */ } }, 15_000);
+    try {
+      const data = await runBaokuanPipeline(pipeArgs);
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.end(JSON.stringify({ error: errPrefix + dcErr(err) }));
+    } finally { clearInterval(beat); }
+  }
   app.post('/api/baokuan/scheduled', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
-    try { res.json(await runBaokuanPipeline(['--scheduled'])); }
-    catch (err) { res.status(500).json({ error: '定时批量跑失败：' + dcErr(err) }); }
+    await respondBaokuanLong(res, ['--scheduled'], '定时批量跑失败：');
   });
   app.post('/api/baokuan/account', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
@@ -9973,20 +9987,17 @@ export async function startServer({
     const platforms = (Array.isArray(req.body?.platforms) ? req.body.platforms : String(req.body?.platforms ?? '').split(','))
       .map((p: unknown) => String(p).trim()).filter(Boolean).join(',') || 'douyin';
     const timeWindow = String(req.body?.timeWindow ?? '7d');
-    try { res.json(await runBaokuanPipeline(['--account', account, '--platforms', platforms, '--time-window', timeWindow])); }
-    catch (err) { res.status(500).json({ error: '竞品账号采集失败：' + dcErr(err) }); }
+    await respondBaokuanLong(res, ['--account', account, '--platforms', platforms, '--time-window', timeWindow], '竞品账号采集失败：');
   });
   app.post('/api/baokuan/link', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
     const url = String((req.body?.url ?? '')).trim();
     if (!url) return res.status(400).json({ error: '缺少 url' });
-    try { res.json(await runBaokuanPipeline(['--link', url])); }
-    catch (err) { res.status(500).json({ error: '单链接完整链路失败：' + dcErr(err) }); }
+    await respondBaokuanLong(res, ['--link', url], '单链接完整链路失败：');
   });
   app.post('/api/baokuan/regenerate', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
-    try { res.json(await runBaokuanPipeline(['--regenerate'])); }
-    catch (err) { res.status(500).json({ error: '飞书重新生成处理失败：' + dcErr(err) }); }
+    await respondBaokuanLong(res, ['--regenerate'], '飞书重新生成处理失败：');
   });
 
   // ── 类似封面生成(模块7,验收8-9):参考封面解析 / 生成(背景另存) / 改标题重排版。

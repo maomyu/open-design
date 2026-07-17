@@ -183,6 +183,36 @@ async function writeEngineSourceStamp(resourceRoot: string, engineDir: string): 
  * 比对源码版本戳,落后就把 src/scripts/config/.env/requirements 从捆绑源码重新同步过来(保留
  * .venv 和 data)。纯 .py 改动无需重建 venv;若 requirements 变了则删 venv 触发下次重装依赖。
  */
+/** resync 时的 .env 合并:runtime 版本整体保留,只把捆绑版里 runtime 缺失的键追加到末尾。
+ *  runtime .env 不存在时退化为整拷(等价首次 provision)。 */
+async function mergeBundledEnvPreservingRuntime(bundledEnv: string, runtimeEnv: string): Promise<void> {
+  if (!fs.existsSync(bundledEnv)) return;
+  if (!fs.existsSync(runtimeEnv)) {
+    await fs.promises.cp(bundledEnv, runtimeEnv).catch(() => {});
+    return;
+  }
+  try {
+    const runtimeRaw = await fs.promises.readFile(runtimeEnv, 'utf8');
+    const bundledRaw = await fs.promises.readFile(bundledEnv, 'utf8');
+    const keyOf = (line: string): string | null => {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
+      return m?.[1] ?? null;
+    };
+    const runtimeKeys = new Set(runtimeRaw.split('\n').map(keyOf).filter(Boolean) as string[]);
+    const newLines = bundledRaw.split('\n').filter((l) => {
+      const k = keyOf(l);
+      return k !== null && !runtimeKeys.has(k);
+    });
+    if (newLines.length === 0) return;
+    const sep = runtimeRaw.endsWith('\n') ? '' : '\n';
+    await fs.promises.writeFile(
+      runtimeEnv,
+      runtimeRaw + sep + '\n# ── 引擎升级新增配置项(resync 自动追加,已有键不受影响) ──\n' + newLines.join('\n') + '\n',
+      'utf8',
+    );
+  } catch { /* 合并失败宁可不动 runtime .env,也不能拿出厂文件覆盖用户配置 */ }
+}
+
 async function resyncEngineSourceIfStale(ctx: EngineContext, engineDir: string): Promise<void> {
   const resourceRoot = ctx.resourceRoot;
   if (!resourceRoot) return;
@@ -210,10 +240,14 @@ async function resyncEngineSourceIfStale(ctx: EngineContext, engineDir: string):
       await fs.promises.cp(from, path.join(engineDir, sub), { recursive: true });
     }
   }
-  for (const f of ['.env', 'requirements.txt', 'requirements-runtime.txt', 'Makefile']) {
+  for (const f of ['requirements.txt', 'requirements-runtime.txt', 'Makefile']) {
     const from = path.join(bundledEngine, f);
     if (fs.existsSync(from)) await fs.promises.cp(from, path.join(engineDir, f)).catch(() => {});
   }
+  // .env 是用户配置(「连接飞书」写入的 token、客户改过的密钥),不能拿出厂文件覆盖——
+  // 否则每次 app 升级都把客户连好的飞书抹回空白。规则:runtime 已有的键一律保留,
+  // 只追加捆绑 .env 里 runtime 还没有的新键(未来引擎新增配置项仍能带默认值下发)。
+  await mergeBundledEnvPreservingRuntime(path.join(bundledEngine, '.env'), path.join(engineDir, '.env'));
   if (reqChanged) {
     // 依赖清单变化:删 venv,让下次 ensure 走完整 provision 重装依赖。
     await fs.promises.rm(path.join(engineDir, '.venv'), { recursive: true, force: true }).catch(() => {});

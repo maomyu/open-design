@@ -7941,7 +7941,14 @@ async function runBaokuan(args) {
       process.exit(3);
     }
     if (!resp.ok) return structuredHttpFailure(resp);
-    return resp.json();
+    const data = await resp.json();
+    // 长任务端点(scheduled/account/link/regenerate)为绕过 undici 300s headersTimeout 先发
+    // 200 头+心跳,失败编码在体里({error})——这里兜住,保证 cron/智能体拿到非零退出码。
+    if (data && typeof data === 'object' && typeof data.error === 'string') {
+      console.error(data.error);
+      process.exit(5);
+    }
+    return data;
   };
 
   switch (sub) {
