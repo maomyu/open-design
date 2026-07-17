@@ -569,8 +569,6 @@ export interface StudioCollectResultRequest {
  *  标注「带文字」的风格允许模型在画面里写字,其余默认禁文字(防模型乱写中文)。 */
 export const IMAGE_STYLE_PRESETS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'whiteboard', label: '白板手绘（默认）' },
-  { id: 'illustrated', label: '暖插画（带文字）' },
-  { id: 'clean', label: '纯净插画（无文字）' },
   { id: 'candid', label: '真实抓拍（纪实）' },
   { id: 'bigtext', label: '大字报封面（带文字）' },
   { id: 'photo-film', label: '胶片实拍' },
@@ -582,7 +580,17 @@ export const IMAGE_STYLE_PRESETS: ReadonlyArray<{ id: string; label: string }> =
   { id: 'journal', label: '手账拼贴' },
   { id: 'watercolor', label: '水彩清新' },
   { id: 'cute', label: '可爱 Q 版' },
-  { id: 'cyber', label: '赛博霓虹' },
   { id: 'oil', label: '油画质感' },
   { id: 'none', label: '不用模板（纯提示词）' },
+];
+// 2026-07-17 用户拍板移除:暖插画(illustrated)/纯净插画(clean)/赛博霓虹(cyber)。
+// daemon composeStylePrompt 仍保留 illustrated/clean 的兼容分支(老稿/旧偏好可能还带)。
+
+/** 生图比例选项(图文笔记台等)。默认 3:4(小红书竖图)。 */
+export const IMAGE_RATIO_OPTIONS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: '3:4', label: '3:4 竖图（默认）' },
+  { id: '4:3', label: '4:3 横图' },
+  { id: '1:1', label: '1:1 方图' },
+  { id: '9:16', label: '9:16 全屏竖' },
+  { id: '16:9', label: '16:9 宽屏' },
 ];

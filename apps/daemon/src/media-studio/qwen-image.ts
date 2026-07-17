@@ -116,12 +116,6 @@ const STYLE_PRESET_PREFIXES: Record<string, { prefix: string; noText?: boolean; 
       'expressive kawaii faces, sticker-like. ',
     noText: true,
   },
-  cyber: {
-    prefix:
-      'Cyberpunk neon aesthetic, dark background with vivid blue purple pink neon glow, ' +
-      'futuristic tech elements, high contrast, cinematic. ',
-    noText: true,
-  },
   oil: {
     prefix:
       'Classical oil painting, visible impasto brushstrokes, Rembrandt lighting, rich deep tones, ' +

@@ -13,7 +13,7 @@ import type {
   MediaTopic,
   UpdateMediaArticleRequest,
 } from '@open-design/contracts';
-import { IMAGE_STYLE_PRESETS } from '@open-design/contracts';
+import { IMAGE_RATIO_OPTIONS, IMAGE_STYLE_PRESETS } from '@open-design/contracts';
 import { ImageStyleSamples } from './ImageStyleSamples';
 import { Icon } from '../Icon';
 import {
@@ -116,11 +116,20 @@ export function NoteStudioView(): JSX.Element {
   const [lintHits, setLintHits] = useState<StudioLintHit[]>([]);
   const [galleryBusy, setGalleryBusy] = useState<string | null>(null);
   const [galleryPrompt, setGalleryPrompt] = useState('');
-  const [galleryStyle, setGalleryStyleRaw] = useState(() => loadStudioPref('gallery-style', 'illustrated'));
+  const [galleryStyle, setGalleryStyleRaw] = useState(() => {
+    // 旧偏好可能存着已移除的风格(illustrated/clean/cyber)→ 兜底回默认白板
+    const v = loadStudioPref('gallery-style', 'whiteboard');
+    return IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : 'whiteboard';
+  });
+  const [galleryRatio, setGalleryRatioRaw] = useState(() => loadStudioPref('gallery-ratio', '3:4'));
+  const setGalleryRatio = (v: string) => {
+    setGalleryRatioRaw(v);
+    saveStudioPref('gallery-ratio', v, '3:4');
+  };
   // 记住上次选的图片风格模板当默认（用户报：选完不该每次重置）。
   const setGalleryStyle = (v: string) => {
     setGalleryStyleRaw(v);
-    saveStudioPref('gallery-style', v, 'illustrated');
+    saveStudioPref('gallery-style', v, 'whiteboard');
   };
   const [galleryModel, setGalleryModel] = useState(loadPreferredImageModel);
   // 账号中心是唯一账号来源:各平台的账号名列表(没配的平台=空数组)。
@@ -387,7 +396,7 @@ export function NoteStudioView(): JSX.Element {
       description: description.trim(),
       style: galleryStyle,
       model: galleryModel,
-      ratio: '3:4',
+      ratio: galleryRatio,
     });
     setGalleryBusy(null);
     if ('error' in result) {
@@ -422,7 +431,7 @@ export function NoteStudioView(): JSX.Element {
         description: idea,
         style: galleryStyle,
         model: galleryModel,
-        ratio: '3:4',
+        ratio: galleryRatio,
       });
       if ('error' in result) {
         studioToast.err(`第 ${i + 1} 张失败：${result.error}`);
@@ -785,6 +794,13 @@ export function NoteStudioView(): JSX.Element {
                           </option>
                         ))}
                       </select>
+                      <select className={c('select')} value={galleryRatio} title="生图比例" onChange={(e) => setGalleryRatio(e.target.value)}>
+                        {IMAGE_RATIO_OPTIONS.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.label}
+                          </option>
+                        ))}
+                      </select>
                       <button
                         type="button"
                         className={`${c('btn')} ${c('btnPrimary')}`}
@@ -832,6 +848,13 @@ export function NoteStudioView(): JSX.Element {
                       {IMAGE_MODELS.map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select className={c('select')} value={galleryRatio} title="生图比例" onChange={(e) => setGalleryRatio(e.target.value)}>
+                      {IMAGE_RATIO_OPTIONS.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.label}
                         </option>
                       ))}
                     </select>
