@@ -1,11 +1,9 @@
 // 知识库 — 左侧导航一级入口（2026-07-08 用户拍板;2026-07-16 拆个人/企业两套）。
-// 按 license 渲染:个人自媒体客户(鱼老师)看【个人自媒体知识库】,企业客户(翟总)看
-// 【企业知识库】,两套都授权(或无 license 全解锁)则出 tab 切换、可同时用。分类集不同,
-// 但都存在 daemon 的 platform='global' 下(企业分类 id 带 ent- 前缀,数据互不串)。
-// AI 任务(选题/写作/仿写)按 category 注入对应素材。
+// 本分支 = 翟总(企业客户):只出【企业知识库】(分类=主体/资质/产品),不出「个人自媒体库」
+// (那是鱼老师个人自媒体客户那套:人设/风格/素材)。数据存 daemon 的 platform='global'
+// 下(企业分类 id 带 ent- 前缀)。AI 任务(选题/写作/仿写)按 category 注入对应素材。
 import { useEffect, useState } from 'react';
 import { fetchPlatformAccounts } from '../../providers/daemon';
-import { hasFeature, useLicense } from '../../state/license';
 import { KnowledgePanel, type KnowledgeVariant } from './StudioSharedCards';
 import styles from './MediaStudio.module.css';
 
@@ -32,15 +30,10 @@ const VARIANT_META: Record<KnowledgeVariant, { tab: string; title: string; hint:
 };
 
 export function KnowledgeView(): JSX.Element {
-  const license = useLicense();
   const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([]);
 
-  // 授权了哪几套库(无 license=全解锁,hasFeature 对两者都真→两套都出)。
-  const licensed = (['personal', 'enterprise'] as KnowledgeVariant[]).filter((v) =>
-    hasFeature(license, v === 'personal' ? 'kb.personal' : 'kb.enterprise'),
-  );
-  // 兜底:license 异常一个都不满足时,至少给个人库(绝不把知识库裁没)。
-  const shown = licensed.length ? licensed : (['personal'] as KnowledgeVariant[]);
+  // 翟总 = 企业客户,知识库只出【企业知识库】,不要「个人自媒体库」那套(2026-07-17 客户拍板)。
+  const shown = ['enterprise'] as KnowledgeVariant[];
   const [active, setActive] = useState<KnowledgeVariant>(shown[0]!);
   const activeVariant = shown.includes(active) ? active : shown[0]!;
   const meta = VARIANT_META[activeVariant];
