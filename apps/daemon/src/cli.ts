@@ -2362,7 +2362,7 @@ async function runStudio(args) {
      [--no-follow 不等直接返回] [--timeout 秒=1800] [--json]
 
 【配图/封面/配音】
-  od studio image <id> --desc "<场景>" [--marker N|COVER] [--style <风格id:whiteboard/illustrated/clean/bigtext/photo-film/photo-magazine/minimal/flat-info/threed/guochao/journal/watercolor/cute/cyber/oil/none>] [--ratio 4:3] [--as-cover]
+  od studio image <id> --desc "<场景>" [--marker N|COVER] [--style <风格id:whiteboard/illustrated/clean/candid/bigtext/photo-film/photo-magazine/minimal/flat-info/threed/guochao/journal/watercolor/cute/cyber/oil/none>] [--ratio 4:3] [--as-cover]
   od studio upload <id> --file <图片路径>                     # 传本地图进文章资产,返回 url
   od studio upload-video <id> --file <mp4路径>               # 传成片(短视频台)
   od studio assets <id>                                      # 资产的本机绝对路径

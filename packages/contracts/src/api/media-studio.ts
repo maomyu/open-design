@@ -571,6 +571,7 @@ export const IMAGE_STYLE_PRESETS: ReadonlyArray<{ id: string; label: string }> =
   { id: 'whiteboard', label: '白板手绘（默认）' },
   { id: 'illustrated', label: '暖插画（带文字）' },
   { id: 'clean', label: '纯净插画（无文字）' },
+  { id: 'candid', label: '真实抓拍（纪实）' },
   { id: 'bigtext', label: '大字报封面（带文字）' },
   { id: 'photo-film', label: '胶片实拍' },
   { id: 'photo-magazine', label: '杂志大片' },

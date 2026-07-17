@@ -43,8 +43,21 @@ const NO_TEXT_NEGATIVE = '，任何文字，字幕，标题，水印，字母，
 /** 扩展风格前缀表(2026-07-17 应用户要求扩到 15+ 常见风格)。
  *  id 与 packages/contracts IMAGE_STYLE_PRESETS 一一对应;whiteboard/illustrated/clean/none
  *  在 composeStylePrompt 里特判(默认/角色模板/禁字/纯提示词),其余查这张表。
- *  noText=true 的风格追加 NO_TEXT_NEGATIVE。 */
-const STYLE_PRESET_PREFIXES: Record<string, { prefix: string; noText?: boolean }> = {
+ *  noText=true 追加 NO_TEXT_NEGATIVE;extraNegative=该风格专属负面词(如纪实风的反精致清单)。 */
+const STYLE_PRESET_PREFIXES: Record<string, { prefix: string; noText?: boolean; extraNegative?: string }> = {
+  // 真实抓拍纪实(2026-07-17 用户定制):核心诉求=去掉一切"AI 完美感/商业摆拍感"。
+  // 正向词提炼自用户参考提示词;那一长串"不要"进 extraNegative。
+  candid: {
+    prefix:
+      '真实抓拍照片,纪录片摄影,活动纪实摄影质感。人物状态自然,不看镜头,不摆拍,神情放松专注于手上的事。' +
+      '自然光线,普通人真实皮肤纹理,物品有真实使用痕迹、摆放随意不刻意。' +
+      '轻微噪点,轻微虚焦,构图略微不完美,生活现场感。不是商业广告,不是摆拍写真。画面内容:',
+    noText: true,
+    extraNegative:
+      '，广告大片感，商业海报，杂志封面感，过度精致，完美布光，棚拍感，网红摆拍，人物看镜头，' +
+      '夸张笑容，模特脸，精修皮肤，磨皮，物品摆放整整齐齐，豪华酒店感，廉价培训班感，' +
+      '过度虚化，梦幻滤镜，塑料质感，卡通风，插画风，3D渲染，二维码，错误手部，多余手指，脸部变形',
+  },
   bigtext: {
     prefix:
       'Bold typographic cover design, one short punchy Chinese headline as the dominant visual element, ' +
@@ -235,6 +248,7 @@ export function composeStylePrompt(style: string | undefined, prompt: string, ch
     const preset = STYLE_PRESET_PREFIXES[style];
     stylePrefix = preset.prefix;
     if (preset.noText) negative = DEFAULT_NEGATIVE + NO_TEXT_NEGATIVE;
+    if (preset.extraNegative) negative += preset.extraNegative;
   }
   return { fullPrompt: (stylePrefix + prompt).slice(0, 800), negative };
 }
