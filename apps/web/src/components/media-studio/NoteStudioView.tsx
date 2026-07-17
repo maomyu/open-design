@@ -142,6 +142,8 @@ export function NoteStudioView(): JSX.Element {
   const extra = (article?.extra ?? {}) as Record<string, unknown>;
   const tags = str(extra.tags);
   const imageIdeas = str(extra.imageIdeas);
+  // 图集建议逐条化:每行一条画面建议,单独渲染+各自带「生图」按钮(不再挤成一坨文本)。
+  const ideaLines = imageIdeas.split('\n').map((l) => l.trim()).filter(Boolean);
   const noteImages: string[] = Array.isArray(extra.noteImages)
     ? (extra.noteImages as unknown[]).filter((v): v is string => typeof v === 'string')
     : [];
@@ -717,13 +719,39 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('图集属于某篇笔记——先去「文案」新建。')
             ) : (
               <>
-                {imageIdeas.trim() ? (
+                {ideaLines.length > 0 ? (
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>
-                      AI 给的图集建议（{imageIdeas.split('\n').filter((l) => l.trim()).length} 张）
-                      <span className={c('cardHint')}>一键按建议逐张生成（第 1 张当封面）</span>
+                      AI 给的图集建议（{ideaLines.length} 张）
+                      <span className={c('cardHint')}>每条可单独生图,也可一键全部（第 1 张当封面）</span>
                     </div>
-                    <div className={c('videoCardScript')} style={{ maxHeight: 140 }}>{imageIdeas}</div>
+                    {/* 逐条一行:建议文本 + 各自的「生图」按钮(2026-07-17 用户反馈:别挤成一坨) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '6px 0 10px' }}>
+                      {ideaLines.map((idea, i) => (
+                        <div
+                          key={`${i}-${idea.slice(0, 16)}`}
+                          className={c('row')}
+                          style={{ alignItems: 'center', gap: 8, flexWrap: 'nowrap' }}
+                        >
+                          <div
+                            className={c('grow')}
+                            style={{ fontSize: 12.5, lineHeight: 1.5, minWidth: 0, wordBreak: 'break-all' }}
+                          >
+                            {idea}
+                          </div>
+                          <button
+                            type="button"
+                            className={c('btn')}
+                            style={{ flexShrink: 0 }}
+                            disabled={galleryBusy !== null}
+                            title="只生成这一张,按当前选中的风格/模型"
+                            onClick={() => void generateGalleryImage(idea)}
+                          >
+                            {galleryBusy === idea ? '生成中…' : '生图'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                     <div className={c('row')}>
                       <select className={c('select')} value={galleryStyle} onChange={(e) => setGalleryStyle(e.target.value)}>
                         {IMAGE_STYLES.map((s) => (
