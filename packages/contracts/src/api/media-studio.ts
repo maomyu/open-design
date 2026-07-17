@@ -586,6 +586,65 @@ export interface StudioCollectResultRequest {
   detail?: string;
 }
 
+// ── 互动执行派发总线（自动评论/楼中楼/私信；与 collect 同构，在应用内标签 webview 里执行）──
+//
+// CLI/routine POST /api/media-studio/interaction 建 job（先过风控台账 claimInteractionSlot,
+// 被拦则不建 job、直接回 blocked）→ daemon 总线 SSE 广播给桌面端 web → web claim 认领 →
+// 在应用内标签打开目标页（笔记/帖子/私信）→ 拟人定位输入框并回复/私信 → progress 回写 →
+// complete 终态。登录态在桌面端 webview 分区里,故必须跑在桌面端标签。
+// 与 handoff/collect 差异：job 携带单平台+账号+动作+目标引用+文本；无 results 数组。
+export type StudioInteractionStatus = 'pending' | 'claimed' | 'running' | 'done' | 'error';
+
+export interface StudioInteractionJob {
+  id: string;
+  platform: MediaStudioPlatform;
+  /** 执行账号（决定 webview 登录分区；null=默认分区）。 */
+  account: string | null;
+  action: InteractionAction;
+  /** 目标引用：一级评论=笔记/帖子 URL 或 id；楼中楼=父评论 id；私信=对方用户 id。 */
+  targetRef: string;
+  text: string;
+  status: StudioInteractionStatus;
+  progress: string[];
+  detail?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateStudioInteractionRequest {
+  platform: MediaStudioPlatform;
+  account?: string | null;
+  action: InteractionAction;
+  targetRef: string;
+  text: string;
+}
+
+/** 建 job 的应答：被风控拦下时 job 为 null,附拦截原因;放行时回 job。 */
+export interface CreateStudioInteractionResponse {
+  job: StudioInteractionJob | null;
+  blocked?: {
+    reason: 'daily-cap' | 'cooldown' | 'quiet-hours';
+    retryAfterMs?: number;
+    usedToday: number;
+    dailyCap: number;
+  };
+}
+
+export interface StudioInteractionJobResponse {
+  job: StudioInteractionJob;
+}
+
+export interface StudioInteractionWaitResponse {
+  job: StudioInteractionJob;
+  cursor: number;
+}
+
+/** web 执行完回写终态（ok=false 时 detail 带失败原因，如「未登录」「找不到评论框」）。 */
+export interface StudioInteractionResultRequest {
+  ok: boolean;
+  detail?: string;
+}
+
 /** 生图风格模板(公众号/图文笔记等创作台共用下拉)。
  *  id 与 daemon `composeStylePrompt` 的风格前缀表一一对应——加新风格两边同步。
  *  标注「带文字」的风格允许模型在画面里写字,其余默认禁文字(防模型乱写中文)。 */

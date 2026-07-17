@@ -58,8 +58,12 @@ import { lintContent } from './media-studio/lint.js';
 import { BrowserError, openProfileBrowser, PLATFORM_PUBLISH_URLS, revealInFinder } from './media-studio/browser.js';
 import { createHandoffBus, HANDOFF_PLATFORMS, HandoffError, isHandoffPlatform } from './media-studio/handoff-jobs.js';
 import { createCollectBus, COLLECT_PLATFORMS, CollectError, isCollectPlatform } from './media-studio/collect-jobs.js';
+import { createInteractionBus, InteractionError } from './media-studio/interaction-jobs.js';
+import { DEFAULT_INTERACTION_POLICY } from './media-studio/interaction-quota.js';
 import type {
   CreateStudioCollectRequest,
+  CreateStudioInteractionRequest,
+  InteractionAction,
   StudioCollectPlatform,
   StudioCollectResultRequest,
 } from '@open-design/contracts';
@@ -89,6 +93,10 @@ import {
   saveArticleRender,
   updateArticle,
   updateTopic,
+  claimInteractionSlot,
+  recordInteraction,
+  listInteractions,
+  peekInteractionQuota,
 } from './media-studio/store.js';
 import { fontSizesFromExtra, renderWechatHtml, WECHAT_SKINS } from './media-studio/wechat-render.js';
 import { publishWechatDraft, WechatPublishError } from './media-studio/wechat-publish.js';
@@ -876,6 +884,139 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const snap = await collectBus.wait(req.params.id, since, timeoutMs);
     if (!snap) return bad(res, 404, 'job not found');
     res.json(snap);
+  });
+
+  // ---- 互动执行派发桥（自动评论/楼中楼/私信 → 桌面端应用内标签执行）----
+  // 与 collect 同构:create 建 job + SSE 广播,web 认领后在应用内标签打开目标页拟人回复,
+  // 回写进度、complete 终态。差别:建 job 前先过风控台账(claimInteractionSlot),被拦不进总线;
+  // 终态时按实际结果落审计。详见 media-studio/interaction-jobs.ts + interaction-quota.ts。
+  const interactionBus = createInteractionBus();
+  // 风控策略单一来源:先用默认策略,后续 W7/配置化再按账号从 app-config 覆盖。
+  const interactionPolicy = () => DEFAULT_INTERACTION_POLICY;
+
+  app.post('/api/media-studio/interaction', (req, res) => {
+    const body = (req.body ?? {}) as CreateStudioInteractionRequest;
+    const platform = String(body.platform ?? '').trim();
+    const action = String(body.action ?? '') as InteractionAction;
+    const targetRef = String(body.targetRef ?? '').trim();
+    const text = String(body.text ?? '');
+    const account = typeof body.account === 'string' && body.account ? body.account : null;
+    if (!platform) return bad(res, 400, '缺少 platform');
+    if (!['reply', 'sub-reply', 'dm'].includes(action)) return bad(res, 400, 'action 须为 reply|sub-reply|dm');
+    if (!targetRef) return bad(res, 400, '缺少 targetRef');
+    if (!text.trim()) return bad(res, 400, '缺少 text');
+    // 桌面未连接 → 先挡在门外,不消耗配额名额。
+    if (interactionBus.subscriberCount() === 0) {
+      return bad(res, 409, '桌面端未连接——自动互动需要 social-auto 桌面应用在运行。打开桌面应用后重试。');
+    }
+    // 风控台账原子认领:被拦则落一条 blocked 审计并回拦截原因,不建 job。
+    const decision = claimInteractionSlot(db, platform, account, interactionPolicy());
+    if (!decision.allowed) {
+      recordInteraction(db, { platform, accountId: account, action, targetRef, text, status: 'blocked', detail: decision.reason ?? null });
+      return res.json({
+        job: null,
+        blocked: {
+          reason: decision.reason,
+          retryAfterMs: decision.retryAfterMs,
+          usedToday: decision.usedToday,
+          dailyCap: decision.dailyCap,
+        },
+      });
+    }
+    try {
+      const job = interactionBus.create({ platform, account, action, targetRef, text });
+      res.json({ job });
+    } catch (err) {
+      if (err instanceof InteractionError) return bad(res, 409, err.message);
+      bad(res, 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.get('/api/media-studio/interaction/events', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    });
+    res.write(': connected\n\n');
+    const unsubscribe = interactionBus.subscribe((job) => {
+      res.write(`event: job\ndata: ${JSON.stringify(job)}\n\n`);
+    });
+    const keepalive = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 30_000);
+    req.on('close', () => {
+      clearInterval(keepalive);
+      unsubscribe();
+    });
+  });
+
+  app.post('/api/media-studio/interaction/:id/claim', (req, res) => {
+    const job = interactionBus.claim(req.params.id);
+    if (!job) {
+      const existing = interactionBus.get(req.params.id);
+      if (!existing) return bad(res, 404, 'job not found');
+      return bad(res, 409, `job 已被认领(${existing.status})`);
+    }
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/interaction/:id/progress', (req, res) => {
+    const message = String((req.body ?? {}).message ?? '').trim();
+    if (!message) return bad(res, 400, '缺少 message');
+    const job = interactionBus.progress(req.params.id, message);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  // web 执行完回写终态：按实际结果落一条互动审计（配额名额在建 job 时已占,此处不再动配额）。
+  app.post('/api/media-studio/interaction/:id/complete', (req, res) => {
+    const body = (req.body ?? {}) as { ok?: boolean; detail?: string };
+    const ok = body.ok === true;
+    const detail = String(body.detail ?? '');
+    const job = interactionBus.complete(req.params.id, ok, detail);
+    if (!job) return bad(res, 404, 'job not found');
+    recordInteraction(db, {
+      platform: job.platform,
+      accountId: job.account,
+      action: job.action,
+      targetRef: job.targetRef,
+      text: job.text,
+      status: ok ? 'done' : 'error',
+      detail: ok ? null : (detail || null),
+    });
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/interaction/:id', (req, res) => {
+    const job = interactionBus.get(req.params.id);
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/interaction/:id/wait', async (req, res) => {
+    const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
+    const timeoutMs = Number.isFinite(Number(req.query.timeoutMs)) ? Number(req.query.timeoutMs) : 25_000;
+    const snap = await interactionBus.wait(req.params.id, since, timeoutMs);
+    if (!snap) return bad(res, 404, 'job not found');
+    res.json(snap);
+  });
+
+  // 只读预检某账号当前配额（不占名额；供前端置灰按钮/CLI 预判）。
+  app.get('/api/media-studio/interaction-quota', (req, res) => {
+    const platform = String(req.query.platform ?? '').trim();
+    const account = typeof req.query.account === 'string' && req.query.account ? String(req.query.account) : null;
+    if (!platform) return bad(res, 400, '缺少 platform');
+    res.json(peekInteractionQuota(db, platform, account, interactionPolicy()));
+  });
+
+  // 互动审计流水（风控回溯 / 状态面板）。
+  app.get('/api/media-studio/interactions', (req, res) => {
+    const limit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : 100;
+    const filter: { platform?: string; accountId?: string | null; limit: number } = { limit };
+    if (typeof req.query.platform === 'string' && req.query.platform) filter.platform = String(req.query.platform);
+    if (req.query.account !== undefined) filter.accountId = req.query.account ? String(req.query.account) : null;
+    res.json({ items: listInteractions(db, filter) });
   });
 
   // 打开文章的资产目录（图集/封面拖拽进浏览器发布页用）。
