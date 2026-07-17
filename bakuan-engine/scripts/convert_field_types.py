@@ -50,7 +50,7 @@ MULTI = [
 def run(args):
     r = subprocess.run(["lark-cli", "base", *args, "--profile", PROFILE, "--as", "user",
                         "--base-token", BASE, "--format", "json"],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     try:
         return json.loads(r.stdout)
     except json.JSONDecodeError:

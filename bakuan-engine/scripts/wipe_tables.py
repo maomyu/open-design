@@ -13,7 +13,7 @@ TABLES = ["爆款内容原始库", "今日爆款选题池", "爆点拆解库", "
 def run(args):
     r = subprocess.run(["lark-cli", "base", *args, "--profile", PROFILE,
                         "--as", "user", "--base-token", BASE, "--format", "json"],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     s = r.stdout.strip()
     try:
         return json.loads(s)

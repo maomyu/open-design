@@ -203,7 +203,7 @@ class Pipeline:
             with open(enc, "wb") as f:
                 f.write(r.content)
             subprocess.run(["node", "scripts/wx_decrypt.js", enc, dk, dec],
-                           capture_output=True, text=True, timeout=45)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45)
             if not os.path.exists(dec):
                 logger.warning(f"视频号解密失败 {rc.content_id}")
                 return ""

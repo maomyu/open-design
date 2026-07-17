@@ -133,7 +133,7 @@ EXTRACTORS = {
 def ab(session: str, *args: str, timeout: int = 90) -> subprocess.CompletedProcess:
     """跑一条 agent-browser 命令。"""
     return subprocess.run(["agent-browser", "--session", session, *args],
-                          capture_output=True, text=True, timeout=timeout)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def ab_eval(session: str, expr: str, timeout: int = 60):

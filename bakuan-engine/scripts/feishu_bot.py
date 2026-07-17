@@ -36,7 +36,7 @@ def reply(chat_id: str, text: str) -> None:
     subprocess.run(["lark-cli", "im", "+messages-send", "--profile", PROFILE, "--as", "bot",
                     "--chat-id", chat_id, "--msg-type", "text",
                     "--content", json.dumps({"text": text}, ensure_ascii=False)],
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def extract_keyword(content: str) -> str:
@@ -69,7 +69,7 @@ def main() -> None:
     proc = subprocess.Popen(
         ["lark-cli", "event", "consume", "im.message.receive_v1",
          "--profile", PROFILE, "--as", "bot", "--quiet"],
-        stdout=subprocess.PIPE, text=True, bufsize=1)
+        stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1)
     print("🤖 飞书机器人已启动，正在监听消息…（在飞书里 @机器人 说『帮我爬取 长期单身』试试）")
     assert proc.stdout
     for line in proc.stdout:

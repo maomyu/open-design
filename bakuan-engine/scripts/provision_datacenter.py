@@ -66,11 +66,13 @@ def field_json(fname: str, ftype: str) -> dict:
 
 def run(args: list[str]) -> dict:
     r = subprocess.run(["lark-cli", "base", *args, "--profile", PROFILE, "--as", "user", "--format", "json"],
-                       capture_output=True, text=True, timeout=90)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
     try:
-        return json.loads(r.stdout)
+        # stdout 兜底空串:读线程异常(如历史 GBK 解码炸)时 stdout 可能是 None,别让
+        # json.loads(None) 的 TypeError 淹没 lark-cli 的真实报错。
+        return json.loads(r.stdout or "")
     except json.JSONDecodeError:
-        return {"ok": False, "raw": r.stdout[:200] + r.stderr[:200]}
+        return {"ok": False, "raw": (r.stdout or "")[:200] + (r.stderr or "")[:200]}
 
 
 def create_link_fields(base: str) -> None:

@@ -90,15 +90,15 @@ class LarkCliBitable:
         base = ["lark-cli", "base", *args, "--profile", self.profile,
                 "--as", "user", "--base-token", self.base]
         # 版本兼容：先按现状跑；若输出不是 JSON(某些版本 record-list 默认输出表格) → 补 --format json 重试
-        r = subprocess.run(base, capture_output=True, text=True, timeout=60)
+        r = subprocess.run(base, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         out = self._parse(r.stdout)
         if out is None:
-            r = subprocess.run(base + ["--format", "json"], capture_output=True, text=True, timeout=60)
+            r = subprocess.run(base + ["--format", "json"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
             out = self._parse(r.stdout)
         if out is None:
-            raise RuntimeError(f"lark-cli 输出解析失败：{r.stdout[:120]}{r.stderr[:120]}")
+            raise RuntimeError(f"lark-cli 输出解析失败：{(r.stdout or '')[:120]}{(r.stderr or '')[:120]}")
         if not out.get("ok", False):
-            raise RuntimeError(f"lark-cli 错误：{out.get('error') or r.stderr[:120]}")
+            raise RuntimeError(f"lark-cli 错误：{out.get('error') or (r.stderr or '')[:120]}")
         return out.get("data", {})
 
     @staticmethod
