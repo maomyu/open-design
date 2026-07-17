@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 
 import { ToolPackCache } from "../cache.js";
 import type { ToolPackConfig } from "../config.js";
+import { seedPackagedLicense } from "../license-seed.js";
 import {
   collectWorkspaceTarballs,
   createWinPackagedAppCacheKey,
@@ -61,6 +62,11 @@ export async function packWin(config: ToolPackConfig): Promise<WinPackResult> {
 
   await runPhase("workspace-build", async () => {
     await ensureWinWorkspaceBuild(config, cache);
+  });
+  // 本机测试 runtime 也种一份 license(与 mac seed-license 阶段对齐);安装包内嵌走
+  // resource-tree 里的 bundleCustomerLicense。
+  await runPhase("seed-license", async () => {
+    await seedPackagedLicense(config);
   });
   const resourceTree = await runPhase("resource-tree", async () =>
     prepareResourceTree(config, paths, cache, { materialize: config.to !== "dir" })
