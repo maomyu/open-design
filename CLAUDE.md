@@ -10,9 +10,7 @@
 - 打包身份的单一来源：
   - `tools/pack/src/mac/constants.ts` 与 `tools/pack/src/win/constants.ts` 的 `PRODUCT_NAME = "social-auto"`；Linux 在 `tools/pack/src/linux.ts`（`PRODUCT_NAME` / `APP_IMAGE_PRODUCT_NAME`）。
   - appId：`com.social-auto.desktop`（beta/nightly/preview 通道自动带后缀，见 `tools/pack/src/mac/identity.ts`）。
-  - 开机自启 LaunchAgent：`com.social-auto.autostart`（apps/daemon/src/server.ts）。
 - 产物形态：mac 装出来是 `social-auto.app`（可执行文件 `social-auto`），安装器标题 `social-auto-<namespace>`；CLI 交付包 `social-auto-cli`（bin 命令 `social-auto`，`od` 别名保留，见 `apps/daemon/scripts/build-cli-package.ts`）。
-- 引擎备份产物名：`social-auto备份-<时间戳>.tar.gz`（bakuan-engine/scripts/ops.py）。
 
 ## 打包命令（沿用 AGENTS.md 的 tools-pack 控制面）
 
@@ -49,6 +47,7 @@ pnpm tools-pack linux build --to appimage
 ## 本分支其它红线
 
 - **飞书功能已全链路移除**（daemon 数据中心 API、web 飞书 UI、引擎 src/feishu、lark-cli 打包）。不要再引入飞书/lark 依赖；引擎持久化为纯本地，选题走 radar/TikHub。
+- **运维面功能已移除**（本客户不需要）：成本报表 / 失败重试 / 备份 / 开机自启——即 `/api/baokuan/{cost,failed,retry,backup,autostart}` 路由、`od baokuan {cost,failed,retry,backup,autostart}` 子命令、web `OpsSection`、contracts `baokuan-ops`、引擎 `scripts/ops.py` 全部删除。不要再加回。
 - `~/.workbuild` 是许可签名**私钥目录**，跨客户分支共用，**不许改名/迁移**（apps/daemon/scripts/license-tool.ts）。
 - `customers/` 是各客户历史交付文档，其中的旧品牌字样属于历史记录，不参与品牌替换。
 - 波兰语翻译里的 `'Multimedia'`/`'Nowe multimedia'`（apps/web/src/i18n/locales/pl.ts）和意大利语 `multimediali` 是自然语言词汇，不是品牌残留，不要"清理"。

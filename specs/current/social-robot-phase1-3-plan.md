@@ -14,7 +14,7 @@
 | 能力 | 现状 | 关键文件 |
 | --- | --- | --- |
 | 任务调度器（真实 in-process 循环，带时区/DST） | ✅ 已有，但只驱动 agent prompt，非确定性发布 | `apps/daemon/src/routines.ts`、`routine-routes.ts`、`server.ts:13870` |
-| 任务记忆/配置持久化 | ✅ daemon SQLite（`routines`/`routine_runs`/`media_*`），失败队列可重试 | `apps/daemon/src/db.ts`、引擎 `store.py` |
+| 任务记忆/配置持久化 | ✅ daemon SQLite（`routines`/`routine_runs`/`media_*`） | `apps/daemon/src/db.ts`、引擎 `store.py` |
 | 登录态/cookie 持久化（cookie vault） | ✅ 已有（signed 包 Chromium 存不了 cookie 的兜底），按 平台×账号 分区 | `apps/desktop/src/main/embedded-browser.ts:44-196` |
 | 人类行为模拟（拟人打字/真实坐标点击/换气停顿/验证码等待） | ✅ 很完整，可直接复用 | `apps/web/src/runtime/browser-draft.ts`、`BrowserPanesHost.tsx` |
 | 敏感词检测（发布预检 lint） | ✅ 已有 | `apps/daemon/src/media-studio-routes.ts`（lint）、`cli.ts` |

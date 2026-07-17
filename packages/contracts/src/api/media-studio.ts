@@ -645,6 +645,22 @@ export interface StudioInteractionResultRequest {
   detail?: string;
 }
 
+/** 一条评论（可含楼中楼子回复）。互动执行器读评论树 → 关键词匹配 → 自动回复的输入。 */
+export interface CommentNode {
+  /** 评论 id（页面能拿到则用真 id，否则用 作者+文本 前缀合成，仅供去重/回复定位）。 */
+  id: string;
+  author: string;
+  /** 作者主页 id（能拿到则填，私信/@定位用）。 */
+  authorId?: string;
+  text: string;
+  likes: number;
+  /** 页面展示的时间文案（如「3天前」「04-11」），不强解析。 */
+  time?: string;
+  /** 楼中楼子回复（一层；小红书评论最多两层）。 */
+  subReplies: CommentNode[];
+}
+
+
 /** 生图风格模板(公众号/图文笔记等创作台共用下拉)。
  *  id 与 daemon `composeStylePrompt` 的风格前缀表一一对应——加新风格两边同步。
  *  标注「带文字」的风格允许模型在画面里写字,其余默认禁文字(防模型乱写中文)。 */

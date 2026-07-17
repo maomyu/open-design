@@ -24,7 +24,6 @@ import {
   deletePlatformAccountApi,
 } from '../providers/daemon';
 import { openStudioBrowser } from '../providers/media-studio';
-import { OpsSection } from './OpsSection';
 import './AccountsView.css';
 import './PluginEditView.css';
 
@@ -95,8 +94,6 @@ export function AccountsView() {
           选题采集已用 <b>TikHub</b> 内置数据源(带粉丝/点赞/评论,无需登录)。
         </div>
       </div>
-
-      <OpsSection />
 
       {/* ── 发布账号 ──
           各平台登录只为【发布】(一键存草稿/发送)和下载原视频用,不用于选题采集。 */}
