@@ -120,3 +120,11 @@ pnpm tools-pack mac stop    --namespace <ns>                 # 只停对应包�
 - 文章包:`../seed-article.json`(翟总企业知识 6 条 + 2 个公众号账号带凭证/人设)
 - 视频包:`../seed-video.json`(企业 6 条 + 水果娜旅行洗护产品 3 条)
 视频包导航小红书排第一(演示优先)。build 命令在原有 env 基础上追加 OD_PACK_SEED_FILE。
+
+## API key 纪律(2026-07-18 用户拍板)
+
+- **客户包永不带卖方 key**:数据接口(极致了/TikHub)/火山等 key 不进 seed、不进包——
+  客户用自己的 key 自己配。种子只预填 知识库+公众号账号凭证(客户自己的资产)。
+- **本机开发 key 不会因打包/重装丢失**(数据目录与 app 分离);历史上"看不见"是
+  key 分散配在两个 namespace。在任一包配了新 key 后跑一次
+  `python3 ../sync-keys.py`(双包 media-config 互补同步,只补缺不覆盖),两包即都可见。
