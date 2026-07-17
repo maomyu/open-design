@@ -152,6 +152,12 @@ export async function copyResourceTree(config: ToolPackConfig, paths: MacPaths):
     await copyFile(bakedLicense, join(paths.resourceRoot, "license.json"));
     process.stderr.write(`[tools-pack mac] baked license → resources/open-design/license.json (from ${bakedLicense})\n`);
   }
+  // 定制包种子(知识库/发布账号预填,2026-07-18):daemon 启动幂等导入,见 apps/daemon/src/seed.ts。
+  const bakedSeed = (process.env.OD_PACK_SEED_FILE ?? "").trim();
+  if (bakedSeed) {
+    await copyFile(bakedSeed, join(paths.resourceRoot, "seed.json"));
+    process.stderr.write(`[tools-pack mac] baked seed → resources/open-design/seed.json (from ${bakedSeed})\n`);
+  }
 }
 
 export function renderMacPackagedConfig(options: {

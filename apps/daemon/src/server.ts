@@ -318,6 +318,7 @@ import {
 } from './mcp-tokens.js';
 import { accountCredentialKeysFromManifest, accountPlatformFromManifest, agentCliEnvForAgent, applyExclusiveCredentialRule, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, platformAccountsForPlatform, readAppConfig, readPluginEnvKnobs, resolvePlatformAccountCredentials, writeAppConfig } from './app-config.js';
 import { licenseFilePath, licenseGuard, licenseStatusResponse, loadLicenseState, verifyLicenseFile, type LicenseStateRef } from './license.js';
+import { applyBundledSeed } from './seed.js';
 import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
@@ -5560,6 +5561,8 @@ export async function startServer({
   // 运行时 license 时回落读它——客户装上即是该包的功能集;import 后数据目录优先。
   const bundledLicensePath = DAEMON_RESOURCE_ROOT ? path.join(DAEMON_RESOURCE_ROOT, 'license.json') : null;
   const licenseRef: LicenseStateRef = { current: await loadLicenseState(RUNTIME_DATA_DIR, Date.now, undefined, bundledLicensePath) };
+  // 定制包种子预填(知识库/发布账号,幂等,详见 seed.ts)。
+  void applyBundledSeed(db, RUNTIME_DATA_DIR, DAEMON_RESOURCE_ROOT).catch(() => undefined);
   if (licenseRef.current.status !== 'none') {
     const lp = licenseRef.current.payload;
     console.log(

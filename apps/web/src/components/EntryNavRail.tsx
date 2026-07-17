@@ -45,13 +45,14 @@ const PLATFORM_NAV: Array<{
   icon: 'play' | 'image';
   licensed: (license: LicenseInfo) => boolean;
 }> = [
-  { view: 'studio-douyin', label: '抖音', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'douyin') },
+  // 小红书排第一(2026-07-18 用户拍板:优先给客户演示小红书)。
   {
     view: 'studio-xiaohongshu',
     label: '小红书',
     icon: 'image',
     licensed: (l) => hasShortVideoPlatform(l, 'xiaohongshu') || hasFeature(l, 'note.xiaohongshu'),
   },
+  { view: 'studio-douyin', label: '抖音', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'douyin') },
   { view: 'studio-kuaishou', label: '快手', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'kuaishou') },
   { view: 'studio-bilibili', label: 'B站', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'bilibili') },
   { view: 'studio-shipinhao', label: '视频号', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'tencent') },
