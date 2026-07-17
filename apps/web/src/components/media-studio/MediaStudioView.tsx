@@ -1984,7 +1984,7 @@ export function CoverGenerator({
       <textarea
         className={c('textarea')}
         value={desc}
-        placeholder="封面提示词：画面里有什么、什么氛围、要不要文字…"
+        placeholder="封面画面内容：有什么、什么氛围…（画风不用写——由统一风格动态注入）"
         onChange={(e) => setDesc(e.target.value)}
       />
       <div className={c('row')}>
@@ -2069,7 +2069,7 @@ function MarkerRow({
         rows={2}
         style={{ minHeight: 0 }}
         value={desc}
-        placeholder="画面描述：有什么、什么氛围…"
+        placeholder="画面内容：有什么、构图、氛围…（画风不用写——由统一风格动态注入）"
         onChange={(e) => setDesc(e.target.value)}
       />
       <div className={c('row')}>
@@ -2139,7 +2139,7 @@ function GeneratedImageRow({
         rows={2}
         style={{ minHeight: 0 }}
         value={desc}
-        placeholder="改一下画面描述再重生成…"
+        placeholder="改画面内容再重生成…（画风由统一风格动态注入）"
         onChange={(e) => setDesc(e.target.value)}
       />
       <div className={c('row')}>

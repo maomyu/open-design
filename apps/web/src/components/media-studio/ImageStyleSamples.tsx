@@ -27,6 +27,9 @@ export function ImageStyleSamples({
       >
         {open ? '收起风格示例 ▲' : '看风格示例(点图即选) ▼'}
       </button>
+      <span style={{ fontSize: 11.5, opacity: 0.6, marginLeft: 10 }}>
+        生成时画风按所选风格动态注入——描述里只写画面内容,不用写画风
+      </span>
       {open ? (
         <div
           style={{

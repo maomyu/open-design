@@ -51,7 +51,7 @@ const STYLE_PRESET_PREFIXES: Record<string, { prefix: string; noText?: boolean; 
     prefix:
       '真实抓拍照片,纪录片摄影,活动纪实摄影质感。人物状态自然,不看镜头,不摆拍,神情放松专注于手上的事。' +
       '自然光线,普通人真实皮肤纹理,物品有真实使用痕迹、摆放随意不刻意。' +
-      '轻微噪点,轻微虚焦,构图略微不完美,生活现场感。不是商业广告,不是摆拍写真。画面内容:',
+      '轻微噪点,轻微虚焦,构图略微不完美,生活现场感。不是商业广告,不是摆拍写真。',
     noText: true,
     extraNegative:
       '，广告大片感，商业海报，杂志封面感，过度精致，完美布光，棚拍感，网红摆拍，人物看镜头，' +
@@ -244,7 +244,13 @@ export function composeStylePrompt(style: string | undefined, prompt: string, ch
     if (preset.noText) negative = DEFAULT_NEGATIVE + NO_TEXT_NEGATIVE;
     if (preset.extraNegative) negative += preset.extraNegative;
   }
-  return { fullPrompt: (stylePrefix + prompt).slice(0, 800), negative };
+  // 结构化动态注入(2026-07-17 用户洞察:AI 写稿的描述里常自带画风词,直接前缀拼接会和
+  // 所选风格打架,模型跟描述里的走→"切风格不生效")。分【画风要求】/【画面内容】两段,
+  // 画风段明确声明优先级,压过描述里混入的画风词;none 风格保持提示词原样直达。
+  const fullPrompt = stylePrefix
+    ? `【画风要求,以此为准,忽略下文一切画风描述】${stylePrefix}\n【画面内容】${prompt}`.slice(0, 800)
+    : prompt.slice(0, 800);
+  return { fullPrompt, negative };
 }
 
 export async function generateQwenImage(opts: QwenImageOptions): Promise<QwenImageResult> {
