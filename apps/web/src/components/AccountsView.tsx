@@ -24,8 +24,20 @@ import {
   deletePlatformAccountApi,
 } from '../providers/daemon';
 import { openStudioBrowser } from '../providers/media-studio';
-import { anyShortVideoPlatform, useLicense } from '../state/license';
-import { OpsSection } from './OpsSection';
+import { hasFeature, hasShortVideoPlatform, useLicense, type LicenseInfo } from '../state/license';
+
+/** 发布账号平台卡按包授权裁剪(2026-07-17 用户拍板:账号页与包功能一一对应——
+ *  文章包只见 公众号/知乎,视频包只见 抖音/小红书/快手/B站/视频号)。 */
+function platformLicensed(id: string, license: LicenseInfo): boolean {
+  switch (id) {
+    case 'wechat-mp': return hasFeature(license, 'article.wechat-mp');
+    case 'zhihu': return hasFeature(license, 'article.zhihu');
+    case 'weibo': return hasFeature(license, 'article.weibo');
+    case 'xiaohongshu': return hasShortVideoPlatform(license, 'xiaohongshu') || hasFeature(license, 'note.xiaohongshu');
+    case 'shipinhao': return hasShortVideoPlatform(license, 'tencent');
+    default: return hasShortVideoPlatform(license, id); // douyin/kuaishou/bilibili
+  }
+}
 import './AccountsView.css';
 import './PluginEditView.css';
 
@@ -89,9 +101,8 @@ export function AccountsView() {
         </div>
       </header>
 
-      {/* 运维(成本/失败队列/备份/自启)是短视频引擎的运维面——只在授权了任一短视频
-          平台时显示。文章包(翟总文章交付)账号页只留「发布账号」。 */}
-      {anyShortVideoPlatform(license) ? <OpsSection /> : null}
+      {/* 运维块(成本/失败重试/备份/自启)整体下线(2026-07-17 用户拍板:两个包都
+          不要)。要恢复把 <OpsSection /> 加回此处。 */}
 
       {/* ── 发布账号 ──
           各平台登录只为【发布】(一键存草稿/发送)和下载原视频用,不用于选题采集。 */}
@@ -106,7 +117,7 @@ export function AccountsView() {
         <div className="plugins-view__empty">{t('pluginsView.loading')}</div>
       ) : (
         <div className="accounts-view__platforms">
-          {MEDIA_PLATFORMS.map((platform) => (
+          {MEDIA_PLATFORMS.filter((platform) => platformLicensed(platform.id, license)).map((platform) => (
             <PlatformCard
               key={platform.id}
               platform={platform}

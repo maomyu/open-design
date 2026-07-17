@@ -953,7 +953,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         ? [hit.readNum ? `播放${hit.readNum >= 10000 ? (hit.readNum / 10000).toFixed(1) + '万' : hit.readNum}` : '',
                            hit.zanNum ? `赞${hit.zanNum >= 10000 ? (hit.zanNum / 10000).toFixed(1) + '万' : hit.zanNum}` : '']
                             .filter(Boolean).join('·') || (hit.hot ?? '—')
-                        : (hit.hot ? hit.hot : hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—')}
+                        : nativeFeed
+                          // 知乎原生源:热度(detail_text)是主信号,优先展示。
+                          ? (hit.hot ? hit.hot : hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—')
+                          // 公众号(爆文榜/极致了)等:列意=阅读数,恢复阅读优先——hot 是爆值
+                          // 另一种口径,曾误顶掉阅读导致「字段和数据对不上」(2026-07-17 用户报)。
+                          : (hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : hit.hot ? hit.hot : '—')}
                     </td>
                     <td className={c('tdActions')}>
                       {/* 短视频台(onRewriteToScript):下原视频→ASR→口播稿仿写。
