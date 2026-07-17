@@ -83,17 +83,26 @@ export function verifyLicenseFile(
 }
 
 /** 读盘+验签+过期/时钟判定。无文件 → status none(全解锁)。
- *  publicKeySpkiB64 仅测试注入用,产品路径永远走内嵌公钥。 */
+ *  publicKeySpkiB64 仅测试注入用,产品路径永远走内嵌公钥。
+ *  bundledFallbackPath(双包交付,2026-07-17):数据目录没有 license 时回落读打包
+ *  资源里烤入的 license.json——客户装上即是该包的功能集;运行时 import 到数据目录
+ *  后优先级更高(先读数据目录)。 */
 export async function loadLicenseState(
   dataDir: string,
   now: () => number = Date.now,
   publicKeySpkiB64?: string,
+  bundledFallbackPath?: string | null,
 ): Promise<LicenseState> {
   let rawText: string;
   try {
     rawText = await readFile(licenseFilePath(dataDir), 'utf8');
   } catch {
-    return UNLOCKED;
+    if (!bundledFallbackPath) return UNLOCKED;
+    try {
+      rawText = await readFile(bundledFallbackPath, 'utf8');
+    } catch {
+      return UNLOCKED;
+    }
   }
   let parsed: unknown;
   try {

@@ -1,4 +1,7 @@
-export const PRODUCT_NAME = "WorkBuild";
+// 产品名支持 env 覆盖(双包交付,2026-07-17 翟总):同一分支打两个身份不同的包——
+// 文章包=默认 WorkBuild;视频包=OD_PACK_PRODUCT_NAME=video(bundle/产物名/userData 全跟着走)。
+// paths/artifacts/builder/identity 都 import 这个常量,单点覆盖全线生效。
+export const PRODUCT_NAME = (process.env.OD_PACK_PRODUCT_NAME ?? "").trim() || "WorkBuild";
 
 export const INTERNAL_PACKAGES = [
   { directory: "packages/contracts", name: "@open-design/contracts" },

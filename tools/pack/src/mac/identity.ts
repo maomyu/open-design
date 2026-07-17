@@ -45,18 +45,22 @@ function productNameForChannel(channel: ReleaseChannelIdentity): string {
   return PRODUCT_NAME;
 }
 
+// 默认 appId 支持 env 覆盖(双包交付):视频包 OD_PACK_APP_ID=com.workbuild.video,
+// 与文章包(com.workbuild.desktop)在客户机上并存互不干扰(userData/更新身份都分开)。
+const DEFAULT_APP_ID = (process.env.OD_PACK_APP_ID ?? "").trim() || "com.workbuild.desktop";
+
 function appIdForChannel(channel: ReleaseChannelIdentity): string {
-  if (channel === "beta") return "com.workbuild.desktop.beta";
-  if (channel === "nightly") return "com.workbuild.desktop.nightly";
-  if (channel === "preview") return "com.workbuild.desktop.preview";
-  return "com.workbuild.desktop";
+  if (channel === "beta") return `${DEFAULT_APP_ID}.beta`;
+  if (channel === "nightly") return `${DEFAULT_APP_ID}.nightly`;
+  if (channel === "preview") return `${DEFAULT_APP_ID}.preview`;
+  return DEFAULT_APP_ID;
 }
 
 export function resolveMacInstallIdentity(config: Pick<ToolPackConfig, "namespace" | "appVersion">): MacInstallIdentity {
   const namespaceToken = sanitizeNamespace(config.namespace);
   const channel = channelFromVersion(config.appVersion) ?? channelFromNamespace(config.namespace);
   const channelIdentity = channel == null
-    ? { appId: "com.workbuild.desktop", productName: PRODUCT_NAME }
+    ? { appId: DEFAULT_APP_ID, productName: PRODUCT_NAME }
     : { appId: appIdForChannel(channel), productName: productNameForChannel(channel) };
   const publicAppBundleName = `${channelIdentity.productName}.app`;
   const systemAppBundleName = channel != null

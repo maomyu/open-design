@@ -133,10 +133,10 @@ describe('requiredFeaturesFor(URL→功能映射)', () => {
     });
   });
 
-  it('知识库任何平台段一律跟 cap.ai(2026-07-12 kb 并入 AI)', () => {
-    expect(f('GET', '/wechat-mp/knowledge')).toEqual({ all: ['cap.ai'] });
-    expect(f('POST', '/note/knowledge')).toEqual({ all: ['cap.ai'] });
-    expect(f('DELETE', '/zhihu/knowledge/k1')).toEqual({ all: ['cap.ai'] });
+  it('知识库任何平台段 = 任一 kb.*(2026-07-16 拆 kb.personal/kb.enterprise 后跟 kb 走)', () => {
+    expect(f('GET', '/wechat-mp/knowledge')).toEqual({ all: [], anyOf: ['kb.personal', 'kb.enterprise'] });
+    expect(f('POST', '/note/knowledge')).toEqual({ all: [], anyOf: ['kb.personal', 'kb.enterprise'] });
+    expect(f('DELETE', '/zhihu/knowledge/k1')).toEqual({ all: [], anyOf: ['kb.personal', 'kb.enterprise'] });
   });
 
   it('能力后缀叠加:ai-task/images/tts/publish*', () => {

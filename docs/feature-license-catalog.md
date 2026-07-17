@@ -40,15 +40,27 @@
 - 「文章」导航 = 有任一 `article.*`（`hasAnyArticleFeature`）
 - 「短视频」导航 = 有任一 `sv.*`（`hasAnyShortVideoFeature`）
 - 「笔记」导航 = 有 `note.xiaohongshu`
-- 「知识库」导航 = 有 `cap.ai`（知识库跟 AI 走）
+- 「知识库」导航 = 有任一 `kb.*`（2026-07-16 拆 kb.personal/kb.enterprise 后跟 kb 走，
+  不再挂 `cap.ai`；两套都授权则知识库页出 tab 切换）
 - 「账号」导航 = 有任一发布平台（`hasAnyPublishingModule`）
+- 账号页「运维块」(OpsSection：近7天成本/失败队列重试/备份迁移/开机自启) = 有任一
+  `sv.*`（2026-07-17 双包交付：运维是短视频引擎的面板，文章包不显示，账号页只留发布账号）
 - 短视频台内 pill = 每平台按 `svFeatureOf(sauId)` 裁剪
+- 选题「爆款筛选」(时间窗/播放/点赞规则) = 仅短视频采集模式(browserCollect)渲染
+
+**打包内置 license（双包交付机制，2026-07-17）**
+- `OD_PACK_LICENSE_FILE=<已签发license>` → tools-pack 烤进包资源
+  `Resources/open-design/license.json`；daemon 数据目录无运行时 license 时回落读它
+  （`loadLicenseState` 第 4 参）。运行时 `license import` 落数据目录后优先。
+- 身份 env：`OD_PACK_PRODUCT_NAME` / `OD_PACK_APP_ID`（mac constants/identity 单点覆盖，
+  bundle/产物名/userData 全跟随）。翟总双包见 `customers/中国维澳-翟总/manifest.json`。
 
 ---
 
 ## 二、当前漂移
 
-> 无。上表与代码一致（2026-07-12 授权颗粒度全面平台化已落地）。
+> 无。上表与代码一致（2026-07-17 复核：补记 kb.* 知识库导航、运维块 sv.* 门禁、
+> 爆款筛选 browserCollect 门禁、打包内置 license 机制）。
 > 短视频台的独立 DB 池拆分仍是"将来真要每平台分化功能时再做"（见短视频重构
 > 计划），但那是数据模型演进，不影响授权颗粒度——授权已按平台设计好。
 

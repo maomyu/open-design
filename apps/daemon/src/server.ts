@@ -5556,7 +5556,10 @@ export async function startServer({
   registerAccountRoutes(app, { http: httpDeps, paths: pathDeps });
   // 功能授权强制(定制版):挂在 media-studio 之前——daemon 是唯一强制点,
   // UI 隐藏只是体验层。无授权文件时 licenseGuard 直接放行。
-  const licenseRef: LicenseStateRef = { current: await loadLicenseState(RUNTIME_DATA_DIR) };
+  // 双包交付:打包资源可烤入 license.json(OD_PACK_LICENSE_FILE),数据目录没有
+  // 运行时 license 时回落读它——客户装上即是该包的功能集;import 后数据目录优先。
+  const bundledLicensePath = DAEMON_RESOURCE_ROOT ? path.join(DAEMON_RESOURCE_ROOT, 'license.json') : null;
+  const licenseRef: LicenseStateRef = { current: await loadLicenseState(RUNTIME_DATA_DIR, Date.now, undefined, bundledLicensePath) };
   if (licenseRef.current.status !== 'none') {
     const lp = licenseRef.current.payload;
     console.log(
@@ -5571,7 +5574,7 @@ export async function startServer({
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
-    licenseRef.current = await loadLicenseState(RUNTIME_DATA_DIR);
+    licenseRef.current = await loadLicenseState(RUNTIME_DATA_DIR, Date.now, undefined, bundledLicensePath);
     res.json(licenseStatusResponse(licenseRef.current));
   });
   app.post('/api/license/import', async (req, res) => {
@@ -5584,7 +5587,7 @@ export async function startServer({
       return res.status(400).json({ error: { code: 'LICENSE_INVALID', message: verified.reason } });
     }
     await fs.promises.writeFile(licenseFilePath(RUNTIME_DATA_DIR), JSON.stringify(req.body, null, 2), 'utf8');
-    licenseRef.current = await loadLicenseState(RUNTIME_DATA_DIR);
+    licenseRef.current = await loadLicenseState(RUNTIME_DATA_DIR, Date.now, undefined, bundledLicensePath);
     res.json(licenseStatusResponse(licenseRef.current));
   });
   registerMediaStudioRoutes(app, { db, paths: pathDeps });

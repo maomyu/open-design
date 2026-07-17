@@ -4,18 +4,48 @@
   "aliases": ["翟总", "中国维澳", "zhongguoweiao", "zhaizong"],
   "edition": "custom",
   "expires": "2027-12-31",
-  "appName": "WorkBuild",
-  "status": "migrating",
+  "status": "active",
   "sourceBranch": "video-auto-6.1-翟总",
-  "features": [
-    "article.wechat-mp",
-    "article.weibo",
-    "article.zhihu",
-    "kb.enterprise",
-    "cap.ai",
-    "cap.image",
-    "cap.handoff",
-    "cap.publish"
-  ],
-  "notes": "企业·公众号/微博/知乎文章创作 + 企业知识库(无短视频/无飞书/无配音成片)"
+  "delivery": "双包交付(2026-07-17 拍板):同一分支打两个身份不同的包,客户机并存安装。",
+  "packages": {
+    "article": {
+      "appName": "WorkBuild",
+      "appId": "com.workbuild.desktop",
+      "namespace": "workbuild",
+      "license": "license-article.json",
+      "features": [
+        "article.wechat-mp",
+        "article.zhihu",
+        "kb.enterprise",
+        "cap.ai",
+        "cap.image",
+        "cap.handoff",
+        "cap.publish"
+      ],
+      "notes": "文章包:公众号+知乎+企业知识库+账号(仅发布账号,无运维块)。无微博(2026-07-17 移除)。"
+    },
+    "video": {
+      "appName": "video",
+      "appId": "com.workbuild.video",
+      "namespace": "workbuild-video",
+      "license": "license-video.json",
+      "features": [
+        "sv.douyin",
+        "sv.kuaishou",
+        "sv.shipinhao",
+        "sv.bilibili",
+        "sv.xiaohongshu",
+        "note.xiaohongshu",
+        "kb.enterprise",
+        "cap.ai",
+        "cap.image",
+        "cap.tts",
+        "cap.video",
+        "cap.handoff",
+        "cap.publish"
+      ],
+      "notes": "视频包:短视频5平台+小红书图文笔记+企业知识库+账号(含运维块)。"
+    }
+  },
+  "notes": "企业客户。无飞书、无个人自媒体库、无 integrations。license 由 tools-pack 打包时烤进包资源(OD_PACK_LICENSE_FILE),装上即生效;运行时 license import 可覆盖。"
 }

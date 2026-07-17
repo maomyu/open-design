@@ -35,33 +35,66 @@
 - **命令只作用于本命名空间**：`stop --namespace workbuild` 只杀 workbuild 进程，不动 baochuang/social-auto
   （已实测：停 default 时 baochuang 4 进程原封不动）。**永远别跑不带 `--namespace` 的裸命令。**
 
-## 打包方式（mac，直接更新客户已装包）
+## 双包交付（2026-07-17 翟总拍板：给客户装两个软件，两次交付）
+
+**同一分支打两个身份不同的包，客户机并存安装、互不冲突。功能差异不靠改代码，
+靠打包时烤进包资源的已签发 license（`OD_PACK_LICENSE_FILE`）——daemon 数据目录无
+运行时 license 时回落读包内 `Resources/open-design/license.json`，装上即生效；
+后续 `workbuild license import` 可覆盖。** license/清单在 `customers/中国维澳-翟总/`
+（manifest.json 记录双包 features；license-article.json / license-video.json 已签发）。
+
+| | 文章包 | 视频包 |
+|---|---|---|
+| 产品名/bundle | `WorkBuild` / `WorkBuild.app` | `video` / `video.app` |
+| appId | `com.workbuild.desktop` | `com.workbuild.video` |
+| 命名空间 | `workbuild` | `workbuild-video` |
+| 身份 env | (默认，不用设) | `OD_PACK_PRODUCT_NAME=video OD_PACK_APP_ID=com.workbuild.video` |
+| license | `license-article.json` | `license-video.json` |
+| 功能 | 公众号+知乎文章、企业知识库、账号(**仅发布账号,无运维块**) | 短视频5平台、小红书图文笔记、企业知识库、账号(含运维) |
+
+打包命令（在仓库根；改过 tools/pack 先 `pnpm --filter @open-design/tools-pack build`）：
 
 ```bash
 export PATH=~/.nvm/versions/node/v24.16.0/bin:$PATH   # 本机默认 Node 18，先切 v24.16.0
-pnpm --filter @open-design/tools-pack build           # 若改过 tools/pack 源码
-pnpm tools-pack mac build --namespace workbuild --to all   # 保持 WorkBuild 身份，unsigned
+ROOT=$PWD
+
+# ① 文章包（WorkBuild）
+OD_PACK_LICENSE_FILE="$ROOT/customers/中国维澳-翟总/license-article.json" \
+  pnpm tools-pack mac build --namespace workbuild --to all
+
+# ② 视频包（video）——身份 env 一个都不能漏
+OD_PACK_PRODUCT_NAME=video OD_PACK_APP_ID=com.workbuild.video \
+OD_PACK_LICENSE_FILE="$ROOT/customers/中国维澳-翟总/license-video.json" \
+  pnpm tools-pack mac build --namespace workbuild-video --to all
 ```
 
-产物（`.tmp/tools-pack/out/mac/namespaces/workbuild/`）：
-- `dmg/WorkBuild-workbuild.dmg` — 发客户拖装覆盖旧版（不看版本，最稳）
-- `zip/WorkBuild-workbuild.zip` + `zip/latest-mac.yml` — 自动更新用（版本要 > 客户已装才触发，
-  同版号不会更新；要走自动更新就先 bump `apps/desktop`+`apps/packaged`+根 `package.json` 版本）
+产物：
+- 文章包 `.tmp/tools-pack/out/mac/namespaces/workbuild/`：`dmg/WorkBuild-workbuild.dmg`、
+  `zip/WorkBuild-workbuild.zip` + `latest-mac.yml`
+- 视频包 `.tmp/tools-pack/out/mac/namespaces/workbuild-video/`：`dmg/video-workbuild-video.dmg`、
+  `zip/video-workbuild-video.zip` + `latest-mac.yml`
+- DMG 发客户拖装覆盖旧版（不看版本，最稳）；自动更新要版本 > 客户已装（先 bump
+  `apps/desktop`+`apps/packaged`+根 `package.json`）。
 
-装上并打开验证（**每条都带 `--namespace workbuild`**）：
+装上验证（**各包只用自己的 namespace，绝不混**）：
 ```bash
-pnpm tools-pack mac install --namespace workbuild
+pnpm tools-pack mac install --namespace workbuild            # 文章包
 pnpm tools-pack mac start   --namespace workbuild
-pnpm tools-pack mac inspect screenshot --namespace workbuild --path /tmp/x.png
-pnpm tools-pack mac stop    --namespace workbuild      # 只停本客户，不碰别人
-pnpm tools-pack mac logs    --namespace workbuild --json
+pnpm tools-pack mac install --namespace workbuild-video      # 视频包
+pnpm tools-pack mac start   --namespace workbuild-video
+pnpm tools-pack mac inspect screenshot --namespace <ns> --path /tmp/x.png
+pnpm tools-pack mac stop    --namespace <ns>                 # 只停对应包，不碰别人
 ```
 
+- **后续按包做功能开发时**：改动先想清楚归哪个包——纯文章功能不影响视频包(反之亦然)，
+  横切改动两个包都要重打+重验。授权粒度动了要重签对应 license 并同步 manifest。
 - 短视频 Python 引擎（bakuan-engine）默认**不打进包**（缺 `tools/pack/vendor/{python-runtime,ffmpeg,wheels}`
-  时打包器自动跳过）。本客户只用 文章/小红书/知识库，不依赖引擎，够用。
+  时打包器自动跳过）。视频包要真跑采集/ASR/仿写需先备好 vendor 再打。
 - 未签名（`identity=null`）：客户首开可能要右键→打开过 Gatekeeper。要签名/公证配证书跑 `--signed`。
 
 ## 本客户功能范围
 
-文章（公众号/知乎/微博）+ 小红书（图文笔记）+ 企业知识库。**飞书数据中心已彻底移除**
-（那是配合爆款引擎/短视频的，本客户不用）。短视频台代码在、靠授权开关控制显隐。
+**文章包**：公众号+知乎文章 + 企业知识库（无微博——2026-07-17 移除；无个人自媒体库）。
+**视频包**：短视频（抖音/快手/视频号/B站/小红书）+ 小红书图文笔记 + 企业知识库。
+**飞书数据中心已彻底移除**（两包都无）。爆款筛选(时间窗/播放/点赞)是短视频专属，
+文章台不显示。

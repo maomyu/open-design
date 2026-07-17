@@ -1,0 +1,19 @@
+{
+  "payload": {
+    "v": 1,
+    "edition": "custom",
+    "customer": "中国维澳·翟总(文章包)",
+    "features": [
+      "article.wechat-mp",
+      "article.zhihu",
+      "kb.enterprise",
+      "cap.ai",
+      "cap.image",
+      "cap.handoff",
+      "cap.publish"
+    ],
+    "issuedAt": "2026-07-17",
+    "expiresAt": "2027-12-31"
+  },
+  "signature": "DZRBJLOy7gyuCCwYoVQdm2pxuvrENjKjmF+C64fy19L66KZcmXyTO6rMzloS66i/hElSSJTCnLS+uSjBb8oFBQ=="
+}

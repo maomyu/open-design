@@ -1,4 +1,4 @@
-import { cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 
 import { rebuild, type RebuildOptions } from "@electron/rebuild";
@@ -143,6 +143,15 @@ export async function copyResourceTree(config: ToolPackConfig, paths: MacPaths):
     requireBundled: config.requireVelaCli,
     resourceRoot: paths.resourceRoot,
   });
+
+  // 双包交付(2026-07-17 翟总):OD_PACK_LICENSE_FILE=<已签发 license 路径> 时把它
+  // 烤进包资源(Resources/open-design/license.json)。daemon 无运行时 license 时回落
+  // 读它 → 客户装上即是该包的功能集,无需再手动 import(运行时导入仍优先,可覆盖)。
+  const bakedLicense = (process.env.OD_PACK_LICENSE_FILE ?? "").trim();
+  if (bakedLicense) {
+    await copyFile(bakedLicense, join(paths.resourceRoot, "license.json"));
+    process.stderr.write(`[tools-pack mac] baked license → resources/open-design/license.json (from ${bakedLicense})\n`);
+  }
 }
 
 export function renderMacPackagedConfig(options: {

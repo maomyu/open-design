@@ -24,6 +24,7 @@ import {
   deletePlatformAccountApi,
 } from '../providers/daemon';
 import { openStudioBrowser } from '../providers/media-studio';
+import { anyShortVideoPlatform, useLicense } from '../state/license';
 import { OpsSection } from './OpsSection';
 import './AccountsView.css';
 import './PluginEditView.css';
@@ -57,6 +58,7 @@ const PLATFORM_LOGIN_URLS: Record<string, string> = {
 
 export function AccountsView() {
   const { t } = useI18n();
+  const license = useLicense();
   const [byPlatform, setByPlatform] = useState<Record<string, AccountProfileView[]>>({});
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
@@ -87,7 +89,9 @@ export function AccountsView() {
         </div>
       </header>
 
-      <OpsSection />
+      {/* 运维(成本/失败队列/备份/自启)是短视频引擎的运维面——只在授权了任一短视频
+          平台时显示。文章包(翟总文章交付)账号页只留「发布账号」。 */}
+      {anyShortVideoPlatform(license) ? <OpsSection /> : null}
 
       {/* ── 发布账号 ──
           各平台登录只为【发布】(一键存草稿/发送)和下载原视频用,不用于选题采集。 */}

@@ -1,0 +1,25 @@
+{
+  "payload": {
+    "v": 1,
+    "edition": "custom",
+    "customer": "中国维澳·翟总(视频包)",
+    "features": [
+      "sv.douyin",
+      "sv.kuaishou",
+      "sv.shipinhao",
+      "sv.bilibili",
+      "sv.xiaohongshu",
+      "note.xiaohongshu",
+      "kb.enterprise",
+      "cap.ai",
+      "cap.image",
+      "cap.tts",
+      "cap.video",
+      "cap.handoff",
+      "cap.publish"
+    ],
+    "issuedAt": "2026-07-17",
+    "expiresAt": "2027-12-31"
+  },
+  "signature": "uNjK0GB8ODMI1UiiGrNdthJ9GAhCuLjImr1hAwEaoBbeDo7N401LVlm8Q3p5wZ5++s53FhpV7w34b4toxr8IAQ=="
+}
