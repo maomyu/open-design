@@ -1,6 +1,5 @@
 """全局配置：从 .env 读取 + 爆款判定默认阈值/权重。
 
-飞书「系统配置表」可在运行期覆盖这里的默认值（见 src/feishu/config_sync.py，后续实现）。
 所有阈值集中在此，便于《系统全参数配置对照表》一一对应。
 """
 from __future__ import annotations
@@ -28,9 +27,6 @@ PLATFORM_CN = {
 
 @dataclass
 class Keys:
-    feishu_app_id: str = field(default_factory=lambda: _env("FEISHU_APP_ID"))
-    feishu_app_secret: str = field(default_factory=lambda: _env("FEISHU_APP_SECRET"))
-    feishu_bitable_token: str = field(default_factory=lambda: _env("FEISHU_BITABLE_APP_TOKEN"))
     tikhub_base: str = field(default_factory=lambda: _env("TIKHUB_API_BASE", "https://api.tikhub.io"))
     tikhub_key: str = field(default_factory=lambda: _env("TIKHUB_API_KEY"))
     dajiala_base: str = field(default_factory=lambda: _env("DAJIALA_API_BASE", "https://www.dajiala.com"))
@@ -47,7 +43,7 @@ LLM_TIERS = {
     "high": _env("LLM_TIER_HIGH", "deepseek-reasoner"),
 }
 
-# ── 爆款判定：第一阶段规则初筛默认阈值（客户标准，可在飞书改）──
+# ── 爆款判定：第一阶段规则初筛默认阈值（客户标准）──
 # 绝对热度：按粉丝分层的最低点赞门槛 [(粉丝上限, 最低点赞)]，升序
 FANS_LIKE_THRESHOLDS = [
     (5_000, 500),

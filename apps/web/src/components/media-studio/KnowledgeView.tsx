@@ -7,7 +7,6 @@ import { useEffect, useState } from 'react';
 import { fetchPlatformAccounts } from '../../providers/daemon';
 import { hasFeature, useLicense } from '../../state/license';
 import { KnowledgePanel, type KnowledgeVariant } from './StudioSharedCards';
-import { syncStudioKnowledgeToFeishu } from '../../providers/media-studio';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -35,8 +34,6 @@ const VARIANT_META: Record<KnowledgeVariant, { tab: string; title: string; hint:
 export function KnowledgeView(): JSX.Element {
   const license = useLicense();
   const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([]);
-  const [syncing, setSyncing] = useState(false);
-  const [syncNote, setSyncNote] = useState<string | null>(null);
 
   // 授权了哪几套库(无 license=全解锁,hasFeature 对两者都真→两套都出)。
   const licensed = (['personal', 'enterprise'] as KnowledgeVariant[]).filter((v) =>
@@ -62,34 +59,11 @@ export function KnowledgeView(): JSX.Element {
     });
   }, []);
 
-  async function syncFeishu(): Promise<void> {
-    if (syncing) return;
-    setSyncing(true);
-    setSyncNote(null);
-    const r = await syncStudioKnowledgeToFeishu();
-    setSyncing(false);
-    setSyncNote(
-      'error' in r ? `同步失败：${r.error}` : `已同步 ${r.synced} 条到飞书「我的素材库 / 风格画像库」`,
-    );
-  }
-
   return (
     <div className={c('root')}>
       <div className={c('head')}>
         <h1 className={c('title')}>{shown.length > 1 ? '知识库' : meta.title}</h1>
         <span className={c('cardHint')}>{meta.hint}</span>
-        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className={c('btn')}
-            disabled={syncing}
-            onClick={() => void syncFeishu()}
-            title="把知识库全部推到飞书数据中心「我的素材库/风格画像库」,供爆款引擎写脚本调用（新增会自动同步,这里用于把历史知识一次性推上去）"
-          >
-            {syncing ? '同步中…' : '⬆ 同步到飞书'}
-          </button>
-          {syncNote ? <span className={c('cardHint')}>{syncNote}</span> : null}
-        </div>
       </div>
       {shown.length > 1 ? (
         <div className={c('tabs')} role="tablist" aria-label="知识库类型">

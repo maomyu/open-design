@@ -25,7 +25,7 @@ class ScriptResult:
     similarity_warn: list[str] = field(default_factory=list)   # 高相似句提醒
     mode: str = ""
 
-    def to_feishu(self, platform: str, version: int) -> dict:
+    def to_fields(self, platform: str, version: int) -> dict:
         return {
             "平台版本": platform, "平台标题": self.platform_title,
             "封面标题候选": " / ".join(self.cover_titles),

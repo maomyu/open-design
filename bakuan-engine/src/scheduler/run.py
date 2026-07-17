@@ -1,6 +1,7 @@
 """定时调度（APScheduler，替代 n8n）。
 
-按飞书「监控配置库 / 系统配置表」的检测频率定时跑主链路；支持后台常驻、优雅停止。
+按本地监控配置(data/monitor.json)的检测频率定时跑主链路；支持后台常驻、优雅停止。
+频率由 DEFAULT_DETECT_INTERVAL_MIN(分钟)控制。
 启动：python -m src.scheduler.run   停止：scripts/stop.sh
 """
 from __future__ import annotations

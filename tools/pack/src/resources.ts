@@ -118,7 +118,6 @@ export async function copyBakuanEngine({
   // 首启动 provision 再解到可写数据目录（不受 app 签名封印约束）。
   const pythonRuntimeTar = join(vendorDir, "python-runtime.tar.gz");
   const ffmpegTar = join(vendorDir, "ffmpeg.tar.gz");
-  const larkCliTar = join(vendorDir, "lark-cli.tar.gz");
   const wheelsSrc = join(vendorDir, "wheels");
   const runtimeReqSrc = join(vendorDir, "requirements-runtime.txt");
 
@@ -149,12 +148,5 @@ export async function copyBakuanEngine({
     await cp(ffmpegTar, join(resourceRoot, "ffmpeg.tar.gz"));
   } else {
     console.warn("[tools-pack] 缺少 tools/pack/vendor/ffmpeg.tar.gz——安装包内 ASR 抽音频会失败");
-  }
-  // 自带 lark-cli 原生二进制：飞书数据中心连接/建表/回写都靠它,客户机器基本没装
-  // (2026-07-16 用户报飞书不同步的根因之一)。同 ffmpeg 走 opaque tar,首启动解到可写目录。
-  if (existsSync(larkCliTar)) {
-    await cp(larkCliTar, join(resourceRoot, "lark-cli.tar.gz"));
-  } else {
-    console.warn("[tools-pack] 缺少 tools/pack/vendor/lark-cli.tar.gz——安装包内飞书数据中心不可用");
   }
 }

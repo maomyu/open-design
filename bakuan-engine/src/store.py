@@ -1,6 +1,6 @@
 """本地 SQLite 缓存：去重指纹 + 多期数据快照（算增速/快速起量）。
 
-飞书是对客数据中心；本地库承担高频去重、快照增速计算与运行状态，减少飞书 API 压力。
+本地库承担高频去重、快照增速计算、成本台账与失败队列等运行状态。
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS seen (
     content_id TEXT PRIMARY KEY,
     fingerprint TEXT,
     platform TEXT,
-    feishu_record_id TEXT,
+    record_id TEXT,
     first_seen INTEGER,
     last_seen INTEGER
 );
@@ -60,20 +60,20 @@ def is_duplicate(content_id: str, fingerprint: str) -> bool:
         return row is not None
 
 
-def mark_seen(content_id: str, fingerprint: str, platform: str, feishu_record_id: str = "") -> None:
+def mark_seen(content_id: str, fingerprint: str, platform: str, record_id: str = "") -> None:
     now = int(time.time())
     with _conn() as con:
         con.execute(
-            "INSERT INTO seen(content_id,fingerprint,platform,feishu_record_id,first_seen,last_seen) "
+            "INSERT INTO seen(content_id,fingerprint,platform,record_id,first_seen,last_seen) "
             "VALUES(?,?,?,?,?,?) ON CONFLICT(content_id) DO UPDATE SET last_seen=?",
-            (content_id, fingerprint, platform, feishu_record_id, now, now, now))
+            (content_id, fingerprint, platform, record_id, now, now, now))
 
 
-def feishu_rid(content_id: str) -> str | None:
-    """已入库内容对应的飞书「爆款内容原始库」record_id。
-    没见过→None;见过但当时没写成飞书(dry-run/飞书断)→""(上层视为可重建)。"""
+def stored_rid(content_id: str) -> str | None:
+    """已入库内容对应的原始库记录 id。
+    没见过→None;见过但当时没记 id(dry-run)→""(上层视为可重建)。"""
     with _conn() as con:
-        row = con.execute("SELECT feishu_record_id FROM seen WHERE content_id=?",
+        row = con.execute("SELECT record_id FROM seen WHERE content_id=?",
                           (content_id,)).fetchone()
         return row[0] if row else None
 

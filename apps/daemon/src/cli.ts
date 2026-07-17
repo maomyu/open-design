@@ -227,7 +227,6 @@ const SUBCOMMAND_MAP = {
   project: runProject,
   automation: runAutomation,
   automations: runAutomation,
-  monitor: runMonitor,
   baokuan: runBaokuan,
   memory: runMemory,
   run: runRun,
@@ -7888,11 +7887,11 @@ async function runBaokuan(args) {
       [
         'od baokuan — 爆款采集调度（原子命令,供外部AI智能体/cron 定时调度）',
         '  od baokuan collect --keyword <kw> [--platforms 抖音,小红书] [--pages N] [--json]',
-        '                                    关键词采集评分→写飞书原始库+选题池（radar,快）',
+        '                                    关键词采集评分→选题池（radar,快）',
         '  od baokuan scheduled [--json]     读监控配置库所有启用项,批量跑完整链路（定时用）',
         '  od baokuan account --name <账号> [--window 7d] [--platforms ...] [--json]  竞品账号采集',
-        '  od baokuan link <url> [--json]    单链接完整链路（采集→拆解→脚本→复盘,全写飞书）',
-        '  od baokuan regenerate [--json]    处理飞书审核库标「重新生成」的记录',
+        '  od baokuan link <url> [--json]    单链接完整链路（采集→拆解→脚本→复盘）',
+        '  od baokuan regenerate [--json]    处理标「重新生成」的记录',
         '  od baokuan cover analyze --ref <图|URL>              参考封面→视觉解析(风格JSON)',
         '  od baokuan cover gen --title <标题> [--ref <图>] [--subtitle 副]',
         '                       [--platforms douyin,bilibili] [--versions 1-3] [--record-id rec..]',
@@ -7959,7 +7958,7 @@ async function runBaokuan(args) {
       if (flags.json) return writeJson(data);
       console.log(
         `采集完成: 关键词「${data.keyword ?? flags.keyword}」候选 ${data.count ?? 0} 条` +
-          `${data.tier ? ' · 档位' + data.tier : ''}${data.feishuSynced === false ? ' · ⚠飞书未同步' : ''}`,
+          `${data.tier ? ' · 档位' + data.tier : ''}`,
       );
       return;
     }
@@ -8119,145 +8118,6 @@ async function runBaokuan(args) {
   }
 }
 
-// od monitor — 飞书数据中心·定时监控配置库 + 系统配置表（块3 双轨 CLI）。打
-// /api/feishu/monitor + /api/feishu/system-config，与账号页 MonitorConfigSection 同源同端点。
-async function runMonitor(args) {
-  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
-    process.stdout.write(
-      [
-        'od monitor — 定时监控配置（飞书数据中心，引擎定时任务据此自动抓）',
-        '  od monitor list [--json]                    列出监控项',
-        '  od monitor add --keyword <kw> [--type 关键词|竞品账号]',
-        '                 [--platforms 抖音,小红书] [--time-window 7d]',
-        '                 [--min-threshold 500] [--category <c>] [--disable] [--note <n>]',
-        '  od monitor rm <recordId>                    删除监控项',
-        '  od monitor config [--json]                  列出系统配置（阈值/频率/模型）',
-        '  od monitor config --item <配置项> --value <值> --id <recordId> [--disable]',
-        '',
-      ].join('\n') + '\n',
-    );
-    process.exit(args.length === 0 ? 2 : 0);
-  }
-  const sub = args[0];
-  const rest = args.slice(1);
-  let flags;
-  try {
-    flags = parseFlags(rest, {
-      string: ['type', 'keyword', 'platforms', 'time-window', 'category', 'note', 'id', 'item', 'value', 'min-threshold', 'daemon-url', 'daemon-port'],
-      boolean: ['json', 'disable'],
-    });
-  } catch (err) {
-    console.error(err.message);
-    process.exit(2);
-  }
-  const base = await cliDaemonBaseUrl(flags);
-  const writeJson = (d) => process.stdout.write(JSON.stringify(d, null, 2) + '\n');
-  const send = async (url, body, method) => {
-    let resp;
-    try {
-      resp = await fetch(
-        `${base}${url}`,
-        method === 'DELETE'
-          ? { method }
-          : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-      );
-    } catch (err) {
-      surfaceFetchError(err, base);
-      process.exit(3);
-    }
-    if (!resp.ok) return structuredHttpFailure(resp);
-    return resp.json();
-  };
-
-  switch (sub) {
-    case 'list': {
-      let resp;
-      try {
-        resp = await fetch(`${base}/api/feishu/monitor`);
-      } catch (err) {
-        surfaceFetchError(err, base);
-        process.exit(3);
-      }
-      if (!resp.ok) return structuredHttpFailure(resp);
-      const data = await resp.json();
-      if (flags.json) return writeJson(data);
-      const rows = data.rows ?? [];
-      if (!rows.length) {
-        console.log('(暂无监控项)');
-        return;
-      }
-      for (const r of rows) {
-        const detail = r.type === '关键词' ? `阈值${r.minThreshold ?? 0}` : `窗口${r.timeWindow || '7d'}`;
-        console.log(`${r.enabled ? '●' : '○'} [${r.type}] ${r.keyword} · ${(r.platforms || []).join('、') || '全平台'} · ${detail} · ${r.recordId}`);
-      }
-      return;
-    }
-    case 'add': {
-      if (!flags.keyword) {
-        console.error('需要 --keyword <关键词或竞品账号>');
-        process.exit(2);
-      }
-      const body = {
-        type: flags.type || '关键词',
-        keyword: flags.keyword,
-        platforms: flags.platforms
-          ? String(flags.platforms).split(/[,，、]/).map((s) => s.trim()).filter(Boolean)
-          : [],
-        ...(flags['time-window'] ? { timeWindow: flags['time-window'] } : {}),
-        ...(flags.category ? { category: flags.category } : {}),
-        minThreshold: flags['min-threshold'] ? Number(flags['min-threshold']) : 0,
-        enabled: !flags.disable,
-        ...(flags.note ? { note: flags.note } : {}),
-      };
-      const data = await send('/api/feishu/monitor', body, 'POST');
-      if (flags.json) return writeJson(data);
-      console.log(`已添加监控项 recordId=${data.record_id ?? ''}`);
-      return;
-    }
-    case 'rm': {
-      const id = flags.id || rest.find((a) => a && !a.startsWith('--'));
-      if (!id) {
-        console.error('用法: od monitor rm <recordId>');
-        process.exit(2);
-      }
-      const data = await send(`/api/feishu/monitor/${encodeURIComponent(id)}`, null, 'DELETE');
-      if (flags.json) return writeJson(data);
-      console.log(data.ok ? '已删除' : '删除失败');
-      return;
-    }
-    case 'config': {
-      if (!flags.item) {
-        let resp;
-        try {
-          resp = await fetch(`${base}/api/feishu/system-config`);
-        } catch (err) {
-          surfaceFetchError(err, base);
-          process.exit(3);
-        }
-        if (!resp.ok) return structuredHttpFailure(resp);
-        const data = await resp.json();
-        if (flags.json) return writeJson(data);
-        for (const r of data.rows ?? []) {
-          console.log(`${r.item} = ${r.value}${r.unit || ''}${r.enabled ? '' : ' (禁用)'} · ${r.recordId}`);
-        }
-        return;
-      }
-      const body = {
-        item: flags.item,
-        value: flags.value ?? '',
-        ...(flags.id ? { recordId: flags.id } : {}),
-        enabled: !flags.disable,
-      };
-      const data = await send('/api/feishu/system-config', body, 'PUT');
-      if (flags.json) return writeJson(data);
-      console.log(`已更新「${flags.item}」`);
-      return;
-    }
-    default:
-      console.error(`未知子命令: ${sub}（list|add|rm|config）`);
-      process.exit(2);
-  }
-}
 
 async function runAutomation(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {

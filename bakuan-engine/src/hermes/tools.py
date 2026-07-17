@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from src.feishu.bitable import Bitable
 from src.llm import router
 from src.pipeline import Pipeline
 
@@ -23,14 +22,8 @@ class Tool:
 
 
 def _status() -> dict:
-    """检查系统状态：飞书连通 + 成本累计。"""
-    fs = Bitable()
-    try:
-        fs.resolve_table_id("监控配置库")
-        feishu = "ok"
-    except Exception as e:
-        feishu = f"error: {e}"
-    return {"feishu": feishu, "llm_cost": router.cost_summary()}
+    """检查系统状态：LLM 成本累计。"""
+    return {"llm_cost": router.cost_summary()}
 
 
 def _run_keyword(keyword: str, platforms: str = "douyin,xiaohongshu,bilibili,kuaishou,channels,gzh") -> dict:
@@ -57,7 +50,7 @@ def _switch_model(tier: str, model: str) -> str:
 
 
 TOOLS: list[Tool] = [
-    Tool("check_status", "检查系统状态（飞书连通/成本）", _status),
+    Tool("check_status", "检查系统状态（成本累计）", _status),
     Tool("run_keyword", "按关键词跑一次爆款采集与生成", _run_keyword, need_confirm=True),
     Tool("run_link", "处理单条视频链接跑完整链路", _run_link),
     Tool("last_errors", "查看最近一次/若干错误日志", _last_errors),

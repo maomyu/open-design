@@ -2299,7 +2299,6 @@ export function SettingsDialog({
                 <small>{t('settings.memoryHint')}</small>
               </span>
             </button>
-            {/* 飞书数据中心入口已移至左侧「账号」视图(AccountsView),此处不再重复。 */}
             <button
               type="button"
               className={`settings-nav-item${activeSection === 'media' ? ' active' : ''}`}

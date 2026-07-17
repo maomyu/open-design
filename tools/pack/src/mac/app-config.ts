@@ -36,7 +36,7 @@ export async function seedPackagedAppConfig(config: ToolPackConfig): Promise<voi
   }
 
   // 关键:目标已存在=用户已经在用这个安装,里面有他自己的**账号/凭据/登录设置等
-  // 用户数据**(platformAccounts、pluginAccounts、feishu、onboarding…)。种子只是"出厂
+  // 用户数据**(platformAccounts、pluginAccounts、onboarding…)。种子只是"出厂
   // 默认",**绝不能覆盖用户数据**,否则每次重打包都会把用户账号冲没(2026-07-14 实锤:
   // seed 直接 writeFile 覆盖了 runtime/data/app-config.json,把公众号/抖音账号编译没了)。
   // 合并策略:现有配置优先,种子只补目标里【缺的键】(首次引入的新默认值)。
