@@ -1,0 +1,364 @@
+================================================================================
+爆创(WorkBuild)Windows 二进制首次打包部署 —— 详细总结
+================================================================================
+日期        : 2026-07-17 ~ 2026-07-18
+机器        : Windows 10 Pro 10.0.19045(打包机,E:\code\baochuang\open-design)
+分支        : video-auto-煜之禾-爆款引擎(基线 commit 451570e7)
+namespace   : baochuang(本分支独占,与 mac 打包机纪律一致)
+最终产物    : E:\code\baochuang\open-design\.tmp\tools-pack\out\win\namespaces\
+              baochuang\builder\WorkBuild-baochuang-setup.exe(约 512 MB,NSIS)
+验证状态    : 本机静默装机 → 首启 provision → 飞书建表,全链路实测通过
+代码改动    : 13 个文件(+121/−45),已过 pnpm guard / pnpm typecheck,均未提交
+
+--------------------------------------------------------------------------------
+〇、一句话结论
+--------------------------------------------------------------------------------
+本分支此前只有 mac 打包链路。本次在 Windows 机器上从零补齐了 win 链路的全部缺口:
+依赖/工具链安装、win x64 vendor 五件套制作(内置 Python/离线 wheels/ffmpeg/飞书
+lark-cli)、daemon 引擎 provision 代码的 win32 平台化、win 打包管线接入客户 license、
+出厂 .env 重建;构建-装机-首启动全链路验证过程中又抓出并修复了 3 个 Windows 特有
+运行时 bug(GNU tar 盘符、GBK 解码崩溃、连接飞书 PATH 缺失),其中 GBK 一项就是
+你在使用中报的「飞书建表失败 json.loads(None)」。建表已用修复后代码实际跑通,
+数据中心 base 已建成并把 token 回填进运行时配置。
+
+--------------------------------------------------------------------------------
+一、环境基线(本次安装/确认了什么)
+--------------------------------------------------------------------------------
+1. Node v24.18.0、pnpm 10.33.2(仓库要求 node ~24 + pnpm@10.33.2,已在位)
+2. pnpm install:首次执行,约 75 秒完成
+   - better-sqlite3@11.10.0 无 win32/Node24 预编译二进制,经 node-gyp +
+     VS Build Tools 2022 源码编译,符合仓库 AGENTS.md 预期
+3. Visual Studio Build Tools 2022:已在位(vswhere 确认),电子 ABI 重编译也靠它
+4. Python 3.12.10(系统装):用于 pip download 离线 wheels——**刻意选 3.12**,
+   与 vendor 内置 python-runtime(3.12.13)ABI 对齐(cp312)
+5. NSIS 3.x:**本次经 winget 安装**(makensis 落在 C:\Program Files (x86)\NSIS)。
+   win 安装包由自定义 NSI 脚本 + makensis 产出,electron-builder NSIS 缓存不存在
+   时这是硬依赖;第一次构建就是死在 "makensis is required"
+6. tar:系统自带两个——System32 bsdtar 和 Git 的 GNU tar;此差异后来引出一个
+   关键 bug(见 §六.1)
+7. 网络:GitHub / npm / PyPI 直连可用,vendor 均在线下载
+
+--------------------------------------------------------------------------------
+二、打包前的缺口盘点(勘探结论)
+--------------------------------------------------------------------------------
+经全仓勘探(tools/pack 全部 win/mac 源码、daemon 引擎 provision、customers/、
+交付文档、git 历史),开工前确认的缺口清单:
+
+A. tools/pack/vendor/ 整个目录缺失(gitignore,mac 机的产物不进 git):
+   python-runtime.tar.gz / wheels/ / requirements-runtime.txt / ffmpeg.tar.gz /
+   lark-cli.tar.gz 五件套全部要按 win x64 重做,且无制作脚本可循
+   (commit a4119826 注明「本地可重生成」,说明文档 lark-cli.README.md 也在
+   gitignore 的 vendor 里,本检出没有)
+B. daemon 引擎 provision(apps/daemon/src/media-studio/bakuan-engine.ts)
+   全 POSIX 写死:.venv/bin、python-runtime/bin/python3、ffmpeg/ffmpeg、
+   lark-cli/lark-cli、venv 里的 pip 路径——win 上首启 provision 必死
+C. win 打包管线完全没有客户 license 环节(mac 有 seedPackagedLicense +
+   bundleCustomerLicense;win 两者皆无)→ 打出的包 = 全功能解锁
+D. bakuan-engine/.env 出厂文件缺失(gitignore;mac 机上是手维护的本地文件)
+E. 「连接飞书」流程 daemon 侧 6 处 spawn 裸 'lark-cli',自带二进制只进了引擎
+   子进程 PATH,daemon 自己的 PATH 没有 → 客户机(没装 lark-cli)连接必失败
+F. win 非 --portable 构建会把本机路径 .tmp/tools-pack/runtime/win/namespaces
+   烙进安装包 open-design-config.json(win/manifest.ts:33)→ 装到别的机器,
+   数据目录指向不存在的路径;但 mac 的 license 逻辑遇 --portable 会静默跳过
+   license → 与 C 修复方案存在冲突,需一并解决
+G. 客户 license 本身:customers/煜之禾-鱼老师/ 没有签好的 license.json
+   (customers/.gitignore 忽略 */license.json),签名私钥
+   ~/.workbuild/license-signing.key 也不在本机 → 本机无法签发(见 §九.1)
+
+--------------------------------------------------------------------------------
+三、代码改动逐文件明细(13 文件,git 状态全部未提交)
+--------------------------------------------------------------------------------
+■ 3.1 apps/daemon/src/media-studio/bakuan-engine.ts(核心,+62 行区改动)
+
+  【平台化】新增三个集中常量/助手,杜绝调用点散写 platform 判断:
+    - IS_WIN = process.platform === 'win32'
+    - VENV_BIN_DIR = IS_WIN ? 'Scripts' : 'bin'
+    - exeName(name) = IS_WIN ? `${name}.exe` : name
+  逐点替换:
+    a) handleFor():venv 目录 .venv/bin → .venv\Scripts;
+       python → python.exe;yt-dlp → yt-dlp.exe;
+       POSIX 兜底 PATH(/opt/homebrew/bin 等)win 下不再拼入
+    b) provision():内置 Python 入口
+       POSIX: <runtime>/python-runtime/bin/python3
+       WIN  : <runtime>\python-runtime\python.exe
+       (python-build-standalone 两平台目录布局本就不同)
+    c) ffmpeg 解压标记 ffmpeg/ffmpeg → ffmpeg\ffmpeg.exe
+    d) pip 路径 .venv/bin/pip → .venv\Scripts\pip.exe
+    e) ensureLarkCli() 解压标记 lark-cli/lark-cli → lark-cli\lark-cli.exe
+
+  【bug 修复 1:tar 盘符】新增 tarBinary():win 钉死
+    C:\Windows\System32\tar.exe(bsdtar,Win10 1803+ 自带;不存在再退回裸 'tar')。
+    原因:裸 'tar' 在本机解析到 PATH 里 Git 的 GNU tar,GNU tar 把
+    "C:\..." 的冒号当 host:path 远程传输语法,解压 python-runtime.tar.gz 直接
+    "tar: Error is not recoverable: exiting now"——第一次装机首启 provision
+    实测就是这么失败的(daemon 日志抓到)。bsdtar 原生支持盘符路径。
+    客户机若装了 Git/MSYS 同样会踩,故必须钉死而不是依赖 PATH 顺序。
+
+  【bug 修复 2:GBK,配合 §3.3】handleFor() 返回的引擎子进程 env 增加
+    PYTHONUTF8='1' + PYTHONIOENCODING='utf-8':
+    - 让引擎内所有 subprocess text 解码、print 中文输出默认走 UTF-8
+    - POSIX 上本就是 UTF-8,零副作用
+
+  【新导出】ensureLarkCli(改 export)、larkCliRuntimeDir(新增):
+    供 server.ts 连接飞书流程复用(见 §3.2)
+
+■ 3.2 apps/daemon/src/server.ts(+26 行区改动)
+
+  「连接飞书」流程 6 处 lark-cli spawn 全部接入新助手 larkCliSpawnEnv():
+    1) larkCliInstalled()            : lark-cli --version(装机自检)
+    2) feishuProfileConnected()      : auth status --profile baochuang-client
+    3) feishuAppConfigured()         : auth status(查 appId)
+    4) feishuStartUserLogin() exec   : auth login --no-wait(拿链接+设备码)
+    5) feishuStartUserLogin() spawn  : auth login --device-code(后台轮询)
+    6) config init spawn             : config init --new(建应用引导)
+  larkCliSpawnEnv() 行为:
+    - 先 ensureLarkCli(幂等解压自带二进制;失败静默退回系统 PATH)
+    - packaged 下把 <dataDir>\engine-runtime\lark-cli 放 PATH 最前
+    - dev 下(resourceRoot=null)原样返回 process.env,行为不变
+  意义:此前自带 lark-cli 只注入引擎 Python 子进程的 env,daemon 自己 spawn 的
+  连接流程用裸 PATH——客户机基本没装 lark-cli,UI 会误报「未检测到 lark-cli」,
+  连接飞书这一步整条死路。win 上 spawn('lark-cli') 由 CreateProcess 自动补 .exe,
+  目录进 PATH 后即可命中。mac 包同样受益(同样的缺口)。
+
+■ 3.3 bakuan-engine/ 7 个 Python 文件(GBK 解码崩溃修复,即你报的建表失败)
+
+  根因链(实测复现确认):
+    中文 Windows ANSI 码页 = GBK(cp936)
+    → subprocess.run(..., text=True) 默认用 locale 编码(GBK)解码子进程输出
+    → lark-cli 输出 UTF-8 JSON(含中文表名/提示)
+    → 读线程 UnicodeDecodeError: 'gbk' codec can't decode byte 0xaa
+    → 线程死掉,CompletedProcess.stdout = None
+    → provision_datacenter.run() 里 json.loads(r.stdout)
+    → TypeError: the JSON object must be str, bytes or bytearray, not NoneType
+    (= 你界面上看到的那个报错;真实的 lark-cli 输出被这层崩溃完全掩盖)
+
+  修复(9 处 text=True 全部补 encoding="utf-8", errors="replace"):
+    - src/feishu/larkcli_bitable.py  : _run() 两处(主跑 + --format json 重试)
+    - src/pipeline.py                : 1 处(206 行子进程调用)
+    - scripts/provision_datacenter.py: run()(建表主通道)
+    - scripts/wipe_tables.py         : 1 处
+    - scripts/convert_field_types.py : 1 处
+    - scripts/feishu_bot.py          : 2 处(messages-send + event consume 长驻流)
+    - scripts/browser_collect.py     : 1 处
+  防御加固(以后同类故障能看到真实报错,不再被 TypeError 淹没):
+    - provision_datacenter.run(): json.loads(r.stdout or "");
+      异常兜底拼接改 (r.stdout or "")[:200] + (r.stderr or "")[:200]
+    - larkcli_bitable._run(): 报错文案拼接同样 (r.stdout or '')[:120] 化
+  发布方式:引擎源码随包发布,老装机由 daemon 的 resync 机制
+  (源码版本戳比对)自动同步进 <dataDir>\bakuan-engine,无需重装。
+
+■ 3.4 tools/pack 打包管线(4 文件)
+
+  a) tools/pack/src/mac/license-seed.ts → tools/pack/src/license-seed.ts(git mv)
+     - 逻辑本就平台无关(读 customers/<客户>/manifest.json + license.json,
+       写 runtime data 或资源根),挪到共享层供 win 复用
+     - 日志前缀 [tools-pack mac] → [tools-pack];"dmg 资源" → "安装包资源"
+     - resolveCustomerLicense 改为 export(win 资源树缓存键要用 license 原文)
+     - 【行为变更】去掉 `config.portable 就返回 null` 的门:
+       win 交付必须 --portable(见 §二.F),原门会让 win 交付包永远内嵌不了
+       license;显式设 OD_PACK_CUSTOMER 即明确要内嵌,portable 与否正交。
+       (mac 现行交付命令不带 --portable,行为不变;mac portable+OD_PACK_CUSTOMER
+       原为静默跳过,现改为内嵌——与使用者意图一致)
+
+  b) tools/pack/src/mac/build.ts:import 路径 ./license-seed.js → ../license-seed.js
+
+  c) tools/pack/src/win/resources.ts(资源树缓存节点 win.resource-tree)
+     - build 步骤末尾调 bundleCustomerLicense(config, resourceRoot):
+       customer-license.json 直接落进缓存树(daemon 首启发现 dataDir 无 license
+       时自动安装,交付零操作——对齐 mac 4312a826 的机制)
+     - 缓存键新增三项(schemaVersion 4 → 5):
+       * customerLicense: license 原文(不进键会「先打无客户包再打客户包」命中
+         同一棵缓存树 → 安装包里 license 静默丢失/串客户;electron-builder 的
+         输出缓存键只含 resourceTreeKey,必须从源头保证)
+       * bakuanEngine: 引擎源码树 hash(忽略 .venv/data/output/__pycache__/
+         .pytest_cache/node_modules,与 copyBakuanEngine 排除项对齐)
+       * bakuanVendor: tools/pack/vendor 整目录 hash
+         —— 此前资源树缓存键根本不含引擎和 vendor,换 vendor 重打会静默复用
+         旧缓存树;本次要反复迭代 vendor,不修必踩(实际第 3、4 次构建能正确
+         重建资源树,靠的就是这一条)
+       * 新增 hashPathIfExists 助手:vendor / bakuan-engine 在上游开源检出里
+         可整体缺席,缺席取 null 进键,不炸 hashPath
+
+  d) tools/pack/src/win/build.ts
+     - 新增 seed-license 阶段(workspace-build 之后、resource-tree 之前),
+       调共享 seedPackagedLicense:本机测试 runtime 也种 license,对齐 mac 时序
+
+--------------------------------------------------------------------------------
+四、vendor 五件套制作明细(tools/pack/vendor/,gitignore,本机重建)
+--------------------------------------------------------------------------------
+布局约定:三个 tar 的顶层目录名(python-runtime/、ffmpeg/、lark-cli/)就是
+provision 的解压幂等标记路径,不能改。全部过程写进 vendor/README.win.md 备查。
+
+1) python-runtime.tar.gz(约 43 MB)
+   来源: github astral-sh/python-build-standalone,release 20260623,
+         cpython-3.12.13+20260623-x86_64-pc-windows-msvc-install_only.tar.gz
+   加工: 解包后顶层 python/ 改名 python-runtime/ 重新 tar.gz
+         (win 布局 python.exe 在根,无 bin/;provision 代码已按此适配)
+   选 3.12 的原因:与本机 pip download 的解释器一致 → wheels ABI(cp312)自洽
+
+2) wheels/(90 个,约 129 MB)
+   命令: python -m pip download -r requirements-runtime.txt -d wheels
+         --only-binary=:all:
+   全部为 win_amd64 / abi3 / py3-none-any,零 sdist(客户机无编译器,必须全轮子)
+   关键依赖实测版本:chromadb 1.5.9、onnxruntime 1.27.0、numpy 2.5.1、
+   Pillow 12.3.0、opencv-python-headless 5.0.0.93、yt-dlp 2026.7.4 等
+
+3) requirements-runtime.txt
+   内容: bakuan-engine/requirements.txt 全量 + yt-dlp>=2025.1.1
+   yt-dlp 必须在:EngineHandle.ytdlp 指向 .venv\Scripts\yt-dlp.exe,
+   provision 离线装依赖时由 wheel 生成该 console script
+
+4) ffmpeg.tar.gz(约 106 MB)
+   来源: github BtbN/FFmpeg-Builds latest,ffmpeg-master-latest-win64-gpl.zip
+   加工: 只取 ffmpeg.exe + ffprobe.exe(引擎 ASR 抽音频 + yt-dlp 合流够用,
+         ffplay 不要,省 ~100 MB 解压体积),打成 ffmpeg/ 顶层 tar.gz
+   实测: ffmpeg -version 输出 N-125648-g7f6b35d6c8-20260717 正常
+
+5) lark-cli.tar.gz(约 12 MB,内含 44 MB 原生 exe)—— 即「飞书 CLI」
+   来源: npm @larksuite/cli v1.0.72(飞书官方 CLI 的 npm 壳),postinstall/首跑
+         自动下载对应平台原生二进制到包内 bin/lark-cli.exe
+   加工: 取出 lark-cli.exe 打成 lark-cli/ 顶层 tar.gz
+   实测: lark-cli.exe --version → "lark-cli version 1.0.72" 正常
+   (mac 机 vendor 是 v1.0.59,同一来源,win 直接取当前最新)
+
+★ 发布前离线预验证(等价客户机首启 provision,全程断网逻辑):
+   解 python-runtime → python.exe -m venv → Scripts\pip.exe install --no-index
+   --no-cache-dir --find-links wheels -r requirements-runtime.txt
+   → 90 包全部装成,零联网零编译。这一步保证客户机首启不会因缺轮子失败。
+
+--------------------------------------------------------------------------------
+五、出厂 .env 重建(bakuan-engine/.env,gitignore)
+--------------------------------------------------------------------------------
+本检出没有 .env(mac 机上是手维护的本地文件,打包时随源码进包)。依据
+customers/煜之禾-鱼老师/交付文档/02-系统全参数配置对照表.md(2026-07-17 逐行
+核对过源码的权威表)重建出厂文件,原则:
+  - 所有密钥出厂空白(FEISHU_*/TIKHUB_API_KEY/DEEPSEEK_API_KEY/ARK_API_KEY/
+    ASR_API_KEY/DAJIALA_KEY)——等价 mac 交付流程「洗 token」后的状态
+  - 接口地址/模型别名按文档实发值:FEISHU_BACKEND=larkcli、
+    LARK_PROFILE=baochuang-client、TIKHUB_API_BASE、DEEPSEEK_API_BASE、
+    ARK_API_BASE=https://ark.cn-beijing.volces.com/api/v3、
+    IMAGE_MODEL=doubao-seedream-4-0-250828、LLM_TIER_LOW/MID/HIGH、
+    ASR_PROVIDER=volc、RAG_TOPK=8、DEFAULT_DETECT_INTERVAL_MIN=120 等
+  - FEISHU_BITABLE_APP_TOKEN 出厂空白,由「连接飞书→建表」流程自动回填
+升级安全:daemon resync 对 .env 是合并语义(runtime 已有键一律保留,只追加新键),
+客户填过的密钥/连好的 base 不会被升级覆盖(mac 已定死的机制,win 同一份代码)。
+
+--------------------------------------------------------------------------------
+六、构建过程记录(共 4 次构建,2 次失败均为环境问题)
+--------------------------------------------------------------------------------
+命令(最终定式):
+  pnpm tools-pack win build --to nsis --namespace baochuang --portable
+  (--portable 的必要性见 §二.F;不带客户 env,原因见 §九.1)
+
+第 1 次:失败 @ custom NSIS 阶段
+  "makensis is required to build the Windows installer"
+  → winget install NSIS.NSIS 解决(§一.5)
+第 2 次:成功(约 10 分钟),产出 512 MB setup.exe
+  构建器自动处理:electron ABI 重编译 better-sqlite3、NSIS Persian.nlf 别名
+  自动修复、web sourcemap 剥离(19 个)
+第 3 次:成功 —— 装机后发现 tar bug(§3.1),修完重打
+第 4 次(最终):成功 —— 含 GBK 修复 + PYTHONUTF8 + tar 钉死 + lark-cli PATH
+  的完整版;并从最终 win-unpacked 里逐一 grep 验证:
+    - resources/open-design/bakuan-engine/**:.py 已带 encoding="utf-8"
+    - resources/app/prebundled/daemon/chunks/server-*.mjs:
+      PYTHONUTF8 / larkCliSpawnEnv / System32 tar 三个修复全部在
+    - resources/open-design/ 树:bakuan-engine/(含 .env、requirements-runtime)
+      + python-runtime.tar.gz + ffmpeg.tar.gz + lark-cli.tar.gz + wheels/ 齐全
+    - open-design-config.json:namespace=baochuang、无 namespaceBaseRoot
+      (portable 生效,客户机数据落 %APPDATA%)
+
+产物三件套(out/win/namespaces/baochuang/builder/):
+  WorkBuild-baochuang-setup.exe   安装包(512 MB)
+  WorkBuild-baochuang-setup.exe.blockmap + latest.yml   更新元数据
+  win-unpacked/                    未打包目录(排查用)
+
+--------------------------------------------------------------------------------
+七、装机验证记录(本机,tools-pack 生命周期命令)
+--------------------------------------------------------------------------------
+1. pnpm tools-pack win install --namespace baochuang --silent
+   - NSIS 静默装到 .tmp\tools-pack\runtime\win\namespaces\baochuang\install\
+     WorkBuild\(本机测试安装位;客户机是双击安装到自选目录)
+   - 桌面/开始菜单快捷方式 "WorkBuild baochuang"、卸载注册表键
+     Software\...\Uninstall\WorkBuild-baochuang 全部写入正常
+2. pnpm tools-pack win start --namespace baochuang
+   - 进程带标准戳:--od-stamp-app=desktop --od-stamp-namespace=baochuang
+     --od-stamp-ipc=\\.\pipe\open-design-baochuang-desktop(win 用命名管道)
+3. 数据目录(portable 语义):%APPDATA%\WorkBuild\namespaces\baochuang\data\
+   - 首启 provision 实测完成:engine-runtime\{python-runtime,ffmpeg,lark-cli}
+     三者解压到位;bakuan-engine\.venv\Scripts\{python.exe,yt-dlp.exe} 生成;
+     .od-engine-src-stamp 写入且重装后随新包源码戳更新(resync 生效)
+   - .env 合并语义实测:重装/resync 后 FEISHU_BITABLE_APP_TOKEN 保留不丢
+4. 运行时二进制 smoke:ffmpeg -version、yt-dlp --version、lark-cli --version 均正常
+5. daemon 启动日志无引擎报错,409 个内置插件注册正常,app 进程 8 个(Electron
+   多进程)在跑
+
+--------------------------------------------------------------------------------
+八、「飞书建表失败」完整故障处理记录(你使用中报的问题)
+--------------------------------------------------------------------------------
+现象   : UI 建表报 TypeError: the JSON object must be str, bytes or bytearray,
+         not NoneType(栈落在内置 python-runtime 的 json/__init__.py:339)
+复现   : 直接以 provision 出的 venv 手跑 scripts/provision_datacenter.py,
+         完整栈显示先有读线程 UnicodeDecodeError('gbk' ... byte 0xaa),
+         后有 run() 里 json.loads(r.stdout=None) 的 TypeError —— 根因链确认
+         (详见 §3.3;你那次点击其实已通过 auth,死在解码不在权限)
+修复   : §3.3 全部 9 处 + None 兜底 + §3.1 PYTHONUTF8
+验证   : 修复后重跑建表 → 一次成功:
+         - 10 张表 + 关联字段(link)建成
+         - 系统配置表种子 11 条、监控配置库示例 1 条写入
+         - BASE_TOKEN=E0LHbntv1akiv4sIebccbsxPntf
+         - BASE_URL=https://mcnkjk5ixiyt.feishu.cn/base/E0LHbntv1akiv4sIebccbsxPntf
+收尾   : 按 daemon 建表路由的同款逻辑手工回填(镜像 syncEngineFeishuEnv +
+         writeAppConfig):
+         - <data>\bakuan-engine\.env: FEISHU_BITABLE_APP_TOKEN=E0LHbn...
+         - <data>\app-config.json:   feishuBitableUrl=上述 BASE_URL
+         → 界面即显示已连接,引擎回写直接落这个 base
+注意   : 你失败那次点击的 +base-create 请求可能已发出(崩在解码响应之后),
+         飞书里若存在重复的「自媒体爆款数据中心」半成品 base,删旧的即可。
+
+--------------------------------------------------------------------------------
+九、遗留事项与后续操作
+--------------------------------------------------------------------------------
+1.【license/全功能解锁 —— 交付前必办】
+   当前包未内嵌 customer-license.json = 全功能解锁,只能当内部测试包。
+   原因:签名私钥 ~/.workbuild/license-signing.key 只在 mac 运营机,本机无法
+   签发;customers/煜之禾-鱼老师/ 下也无已签 license.json(被 gitignore)。
+   出交付包步骤(代码已全部接好,含缓存正确性):
+     a) 在 mac 运营机签发(或直接拷已签文件):
+        pnpm --filter @open-design/daemon license-tool make --customer ...
+        → customers/煜之禾-鱼老师/license.json
+     b) 本机重打:OD_PACK_CUSTOMER=煜之禾 pnpm tools-pack win build
+        --to nsis --namespace baochuang --portable
+        (license 进资源树缓存键,切客户必然重建,不会串包)
+2.【代码未提交】13 个文件在工作区,guard/typecheck 全绿。建议按仓库规范拆提交:
+     - fix(爆创): daemon 引擎 provision 支持 win32(平台化 + System32 tar 钉死)
+     - fix(爆创): 引擎 subprocess 钉 UTF-8——修中文 win GBK 解码崩溃(建表失败)
+     - fix(爆创): 连接飞书 daemon spawn 接自带 lark-cli PATH
+     - feat(爆创): win 打包接入客户 license(license-seed 共享化 + 缓存键修正)
+   (git mv 的 license-seed.ts 与 mac/build.ts import 改动随第 4 个提交)
+3.【win 未做、mac 有的次要项】win 无 seed-app-config 阶段(mac 本机测试 runtime
+   种出厂 app-config.json 的便利项,不影响安装包本体);多媒体工作台三个独立
+   venv 路径(volc-tts.ts / qwen-image.ts / sau.ts)仍是 POSIX 写死——它们依赖
+   独立 workbench 目录,不在本次爆款引擎链路内,win 上用到时需另行适配。
+4.【更新通道】latest.yml + blockmap 已随包生成;如需 win 自动更新,按
+   tools/pack/AGENTS.md 的 updater 流程配 feed 即可,本次未动。
+
+--------------------------------------------------------------------------------
+十、速查(路径/命令)
+--------------------------------------------------------------------------------
+安装包    : .tmp\tools-pack\out\win\namespaces\baochuang\builder\
+            WorkBuild-baochuang-setup.exe
+本机测试装: pnpm tools-pack win install --namespace baochuang --silent
+启/停     : pnpm tools-pack win start|stop --namespace baochuang
+日志      : pnpm tools-pack win logs --namespace baochuang
+            (app 自身日志在 %APPDATA%\WorkBuild\namespaces\baochuang\logs\)
+数据目录  : %APPDATA%\WorkBuild\namespaces\baochuang\data\
+            ├─ bakuan-engine\(源码副本 + .venv + .env + data)
+            ├─ engine-runtime\{python-runtime,ffmpeg,lark-cli}
+            ├─ app-config.json / app.sqlite / projects\ / artifacts\ ...
+vendor    : tools\pack\vendor\(重生成方法见其中 README.win.md)
+飞书 base : https://mcnkjk5ixiyt.feishu.cn/base/E0LHbntv1akiv4sIebccbsxPntf
+交付重打  : OD_PACK_CUSTOMER=煜之禾 pnpm tools-pack win build --to nsis
+            --namespace baochuang --portable(先补签好的 license.json)
+================================================================================
+(完)
+================================================================================
