@@ -359,9 +359,10 @@ class Pipeline:
                             self._fans_cache[ck] = self.dajiala.account_followers(rc.url)
                         rc.fans = self._fans_cache[ck]
                     store.add_snapshot(rc.content_id, rc.likes, rc.comments, rc.collects, rc.plays)
-                    # 自动降档模式:先收集全部候选,判定移到循环后按阶梯统一做。
+                    # 全部候选都收集(auto 降档用;规则模式命中不足时也靠它兜底降档,
+                    # 2026-07-18 用户拍板:冷门词按规则筛出 0 条时逐档下降保底 3-4 条)。
+                    all_cands.append(rc)
                     if auto_mode:
-                        all_cands.append(rc)
                         continue
                     # 用户传了灵活标准(时间窗+组合条件)就按它判；否则用默认初筛规则。
                     if self._criteria is not None:
@@ -386,6 +387,12 @@ class Pipeline:
         if auto_mode:
             pending, self.radar_tier = self._apply_tier_ladder(all_cands, auto_target)
             logger.info(f"[自动降档] 命中档位「{self.radar_tier}」→ {len(pending)} 条(候选 {len(all_cands)})")
+        # 【规则模式兜底降档】用户勾了爆款规则但命中不足 3 条(冷门词常见,如"洗衣液"):
+        # 不让用户空手而归——按同一档位阶梯(严→松)自动下降,保底 4 条;tier 标注让前端明示。
+        elif len(pending) < 3 and all_cands:
+            pending, tier = self._apply_tier_ladder(all_cands, 4)
+            self.radar_tier = f"规则未凑够·已降档:{tier}"
+            logger.info(f"[规则兜底降档] 规则命中不足3条 → 按「{tier}」出 {len(pending)} 条(候选 {len(all_cands)})")
         # 批量写原始库（一次 lark-cli 调用，避免 N 个子进程拖慢）。
         # 已入库过的内容(radar 重复采集常见)不重建主记录(验收3)——复用既有 record_id。
         new_pending: list[tuple] = []   # 真正要新建主记录的 (rc, hits)
