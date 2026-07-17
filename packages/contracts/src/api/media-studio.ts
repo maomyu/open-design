@@ -563,3 +563,25 @@ export interface StudioCollectResultRequest {
   ok: boolean;
   detail?: string;
 }
+
+/** 生图风格模板(公众号/图文笔记等创作台共用下拉)。
+ *  id 与 daemon `composeStylePrompt` 的风格前缀表一一对应——加新风格两边同步。
+ *  标注「带文字」的风格允许模型在画面里写字,其余默认禁文字(防模型乱写中文)。 */
+export const IMAGE_STYLE_PRESETS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'whiteboard', label: '白板手绘（默认）' },
+  { id: 'illustrated', label: '暖插画（带文字）' },
+  { id: 'clean', label: '纯净插画（无文字）' },
+  { id: 'bigtext', label: '大字报封面（带文字）' },
+  { id: 'photo-film', label: '胶片实拍' },
+  { id: 'photo-magazine', label: '杂志大片' },
+  { id: 'minimal', label: '极简高级' },
+  { id: 'flat-info', label: '扁平信息图' },
+  { id: 'threed', label: '3D 立体（C4D）' },
+  { id: 'guochao', label: '国潮新中式' },
+  { id: 'journal', label: '手账拼贴' },
+  { id: 'watercolor', label: '水彩清新' },
+  { id: 'cute', label: '可爱 Q 版' },
+  { id: 'cyber', label: '赛博霓虹' },
+  { id: 'oil', label: '油画质感' },
+  { id: 'none', label: '不用模板（纯提示词）' },
+];

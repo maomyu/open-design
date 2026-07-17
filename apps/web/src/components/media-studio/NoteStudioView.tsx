@@ -13,6 +13,7 @@ import type {
   MediaTopic,
   UpdateMediaArticleRequest,
 } from '@open-design/contracts';
+import { IMAGE_STYLE_PRESETS } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
@@ -60,12 +61,8 @@ const NOTE_PLATFORMS: Array<{ id: string; label: string }> = [
   { id: 'kuaishou', label: '快手' },
 ];
 
-const IMAGE_STYLES: Array<{ id: string; label: string }> = [
-  { id: 'whiteboard', label: '白板手绘（默认）' },
-  { id: 'illustrated', label: '暖插画（带文字）' },
-  { id: 'clean', label: '纯净插画（无文字）' },
-  { id: 'none', label: '不用模板（纯提示词）' },
-];
+// 生图风格清单收进 contracts 共享(公众号台同源;15+ 常见风格,daemon 前缀表一一对应)。
+const IMAGE_STYLES = IMAGE_STYLE_PRESETS;
 const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
   // 火山按版本选：id 里 volc: 后面就是方舟的 Model ID（不带即用最新默认）。

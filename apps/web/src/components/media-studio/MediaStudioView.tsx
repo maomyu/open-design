@@ -16,6 +16,7 @@ import type {
   StudioAiTaskKind,
   UpdateMediaArticleRequest,
 } from '@open-design/contracts';
+import { IMAGE_STYLE_PRESETS } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import { fetchPlatformAccounts } from '../../providers/daemon';
 import {
@@ -119,12 +120,8 @@ function parseBodyImages(bodyMd: string): BodyImage[] {
   return out;
 }
 
-const IMAGE_STYLES: Array<{ id: string; label: string }> = [
-  { id: 'whiteboard', label: '白板手绘（默认）' },
-  { id: 'illustrated', label: '暖插画（带文字）' },
-  { id: 'clean', label: '纯净插画（无文字）' },
-  { id: 'none', label: '不用模板（纯提示词）' },
-];
+// 生图风格清单收进 contracts 共享(图文笔记台同源;15+ 常见风格,daemon 前缀表一一对应)。
+const IMAGE_STYLES = IMAGE_STYLE_PRESETS;
 
 /** 正文里的配图标注：<!-- IMAGE_1: 描述, 4:3 --> / <!-- IMAGE_COVER: 描述, 16:9 --> */
 const IMAGE_MARKER_RE = /<!--\s*IMAGE_([A-Za-z0-9]+)\s*:\s*([\s\S]*?)-->/g;
