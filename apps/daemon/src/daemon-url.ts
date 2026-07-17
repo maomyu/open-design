@@ -37,8 +37,17 @@ export async function resolveDaemonUrl(
   if (flagUrl != null && flagUrl.length > 0) return flagUrl;
   const envUrl = env.OD_DAEMON_URL;
   if (envUrl != null && envUrl.length > 0) return envUrl;
-  const discovered = await discoverDaemonUrlFromIpc(env, options.timeoutMs ?? 800);
-  if (discovered != null) return discovered;
+  const pinnedIpcPath = env[SIDECAR_ENV.IPC_PATH];
+  if (pinnedIpcPath != null && pinnedIpcPath.length > 0) {
+    // 显式钉死的 IPC 端点是权威目标:探测失败时绝不回退到跨 namespace 扫描——
+    // 多客户机器上回退会连到另一个客户包的 daemon(串库),比连不上危险得多。
+    const pinned = await discoverDaemonUrlFromIpc(env, options.timeoutMs ?? 800);
+    if (pinned != null) return pinned;
+    throw new Error(
+      `daemon not reachable at pinned IPC endpoint ${pinnedIpcPath} (OD_SIDECAR_IPC_PATH); ` +
+        'refusing cross-namespace fallback',
+    );
+  }
   const scanned = await discoverDaemonUrlByScan(env, options.timeoutMs ?? 800);
   if (scanned != null) return scanned;
   return DEFAULT_DAEMON_URL;
