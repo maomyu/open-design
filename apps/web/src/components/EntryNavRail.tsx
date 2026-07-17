@@ -92,7 +92,9 @@ function NavButton({ active, ariaLabel, label, onClick, testId, children }: NavB
 export function EntryNavRail({ view, onViewChange }: Props) {
   const t = useT();
   const license = useLicense();
-  const brandLabel = t('app.brand');
+  // 双包交付(2026-07-17):打包时 NEXT_PUBLIC_OD_BRAND 注入各包品牌
+  // (文章包 weiao-article / 视频包 weiao-video),未注入回落 i18n。
+  const brandLabel = process.env.NEXT_PUBLIC_OD_BRAND || t('app.brand');
 
   return (
     <nav className="entry-nav-rail" aria-label="Primary">

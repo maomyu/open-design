@@ -9,8 +9,8 @@
   "delivery": "双包交付(2026-07-17 拍板):同一分支打两个身份不同的包,客户机并存安装。",
   "packages": {
     "article": {
-      "appName": "WorkBuild",
-      "appId": "com.workbuild.desktop",
+      "appName": "weiao-article",
+      "appId": "com.weiao.article",
       "namespace": "workbuild",
       "license": "license-article.json",
       "features": [
@@ -25,8 +25,8 @@
       "notes": "文章包:公众号+知乎+企业知识库+账号(仅发布账号,无运维块)。无微博(2026-07-17 移除)。"
     },
     "video": {
-      "appName": "video",
-      "appId": "com.workbuild.video",
+      "appName": "weiao-video",
+      "appId": "com.weiao.video",
       "namespace": "workbuild-video",
       "license": "license-video.json",
       "features": [

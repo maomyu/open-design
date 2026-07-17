@@ -43,14 +43,21 @@
 后续 `workbuild license import` 可覆盖。** license/清单在 `customers/中国维澳-翟总/`
 （manifest.json 记录双包 features；license-article.json / license-video.json 已签发）。
 
+**品牌更名(2026-07-17 用户拍板)**:文章包=`weiao-article`、视频包=`weiao-video`
+(维澳双产品;旧 WorkBuild 身份弃用——客户机旧 WorkBuild.app 让客户删除,装新双包)。
+应用内侧栏品牌由打包时 `NEXT_PUBLIC_OD_BRAND` 注入(EntryNavRail 读它,回落 i18n)。
+**⚠️ 坑(2026-07-17 实测)**:品牌是 next build 构建期内联,而 `apps/web/out` 是共享
+产物——连打两个包时第二包会增量复用第一包的 web 产物导致**品牌串包**。两包 build
+之间必须 `rm -rf apps/web/out apps/web/.next` 强制重编 web。
+
 | | 文章包 | 视频包 |
 |---|---|---|
-| 产品名/bundle | `WorkBuild` / `WorkBuild.app` | `video` / `video.app` |
-| appId | `com.workbuild.desktop` | `com.workbuild.video` |
+| 产品名/bundle | `weiao-article` / `weiao-article.app` | `weiao-video` / `weiao-video.app` |
+| appId | `com.weiao.article` | `com.weiao.video` |
 | 命名空间 | `workbuild` | `workbuild-video` |
-| 身份 env | (默认，不用设) | `OD_PACK_PRODUCT_NAME=video OD_PACK_APP_ID=com.workbuild.video` |
+| 身份 env(build 与 install/start/inspect 全要带) | `OD_PACK_PRODUCT_NAME=weiao-article OD_PACK_APP_ID=com.weiao.article NEXT_PUBLIC_OD_BRAND=weiao-article` | `OD_PACK_PRODUCT_NAME=weiao-video OD_PACK_APP_ID=com.weiao.video NEXT_PUBLIC_OD_BRAND=weiao-video` |
 | license | `license-article.json` | `license-video.json` |
-| 功能 | 公众号+知乎文章、企业知识库、账号(**仅发布账号,无运维块**) | 短视频5平台、小红书图文笔记、企业知识库、账号(含运维) |
+| 功能 | 公众号+知乎文章、企业知识库、账号(**仅发布账号,无运维块**) | 抖音/小红书(图文+视频)/快手/B站/视频号 平台入口、制作视频(口型替换)、企业知识库、账号(含运维) |
 
 打包命令（在仓库根；改过 tools/pack 先 `pnpm --filter @open-design/tools-pack build`）：
 
@@ -58,21 +65,24 @@
 export PATH=~/.nvm/versions/node/v24.16.0/bin:$PATH   # 本机默认 Node 18，先切 v24.16.0
 ROOT=$PWD
 
-# ① 文章包（WorkBuild）
+# ① 文章包（weiao-article）——身份 env 一个都不能漏
+OD_PACK_PRODUCT_NAME=weiao-article OD_PACK_APP_ID=com.weiao.article \
+NEXT_PUBLIC_OD_BRAND=weiao-article \
 OD_PACK_LICENSE_FILE="$ROOT/customers/中国维澳-翟总/license-article.json" \
   pnpm tools-pack mac build --namespace workbuild --to all
 
-# ② 视频包（video）——身份 env 一个都不能漏
-OD_PACK_PRODUCT_NAME=video OD_PACK_APP_ID=com.workbuild.video \
+# ② 视频包（weiao-video）——身份 env 一个都不能漏
+OD_PACK_PRODUCT_NAME=weiao-video OD_PACK_APP_ID=com.weiao.video \
+NEXT_PUBLIC_OD_BRAND=weiao-video \
 OD_PACK_LICENSE_FILE="$ROOT/customers/中国维澳-翟总/license-video.json" \
   pnpm tools-pack mac build --namespace workbuild-video --to all
 ```
 
 产物：
-- 文章包 `.tmp/tools-pack/out/mac/namespaces/workbuild/`：`dmg/WorkBuild-workbuild.dmg`、
-  `zip/WorkBuild-workbuild.zip` + `latest-mac.yml`
-- 视频包 `.tmp/tools-pack/out/mac/namespaces/workbuild-video/`：`dmg/video-workbuild-video.dmg`、
-  `zip/video-workbuild-video.zip` + `latest-mac.yml`
+- 文章包 `.tmp/tools-pack/out/mac/namespaces/workbuild/`：`dmg/weiao-article-workbuild.dmg`、
+  `zip/weiao-article-workbuild.zip` + `latest-mac.yml`
+- 视频包 `.tmp/tools-pack/out/mac/namespaces/workbuild-video/`：`dmg/weiao-video-workbuild-video.dmg`、
+  `zip/weiao-video-workbuild-video.zip` + `latest-mac.yml`
 - DMG 发客户拖装覆盖旧版（不看版本，最稳）；自动更新要版本 > 客户已装（先 bump
   `apps/desktop`+`apps/packaged`+根 `package.json`）。
 
