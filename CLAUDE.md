@@ -46,9 +46,12 @@
 **品牌更名(2026-07-17 用户拍板)**:文章包=`weiao-article`、视频包=`weiao-video`
 (维澳双产品;旧 WorkBuild 身份弃用——客户机旧 WorkBuild.app 让客户删除,装新双包)。
 应用内侧栏品牌由打包时 `NEXT_PUBLIC_OD_BRAND` 注入(EntryNavRail 读它,回落 i18n)。
-**⚠️ 坑(2026-07-17 实测)**:品牌是 next build 构建期内联,而 `apps/web/out` 是共享
-产物——连打两个包时第二包会增量复用第一包的 web 产物导致**品牌串包**。两包 build
-之间必须 `rm -rf apps/web/out apps/web/.next` 强制重编 web。
+**⚠️ 坑(2026-07-17 实测,两层缓存都会串品牌)**:品牌是 next build 构建期内联,
+而 web 产物在两层被复用——① `apps/web/out`+`.next` 增量;② tools-pack 的
+standalone 内容缓存 `.tmp/tools-pack/cache/entries`(env 不进缓存 key)。换品牌
+打另一个包之前必须三个都清:
+`rm -rf apps/web/out apps/web/.next .tmp/tools-pack/cache/entries`
+打完 grep 产物核对:`grep -rl weiao-video <namespace>/builder/mac-arm64/*.app/Contents/Resources/app/web* | head -1` 有命中才对。
 
 | | 文章包 | 视频包 |
 |---|---|---|
