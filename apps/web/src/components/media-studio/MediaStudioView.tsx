@@ -206,6 +206,16 @@ export function MediaStudioView(): JSX.Element {
   const [snippets, setSnippets] = useState<MediaSnippet[]>([]);
   const [accounts, setAccounts] = useState<AccountProfileView[]>([]);
   const [previewHtml, setPreviewHtml] = useState('');
+  // 公众号配图统一风格(2026-07-17 用户报"内置风格没生效"根因:标记图/封面/重生成各持独立
+  // style,在A卡选了B卡不吃 + 一篇文章配图本该统一)。全部生成路径共用这一个,记住上次选择。
+  const [imgStyle, setImgStyleRaw] = useState(() => {
+    const v = loadStudioPref('mp-image-style', 'whiteboard');
+    return IMAGE_STYLE_PRESETS.some((st) => st.id === v) ? v : 'whiteboard';
+  });
+  const setImgStyle = (v: string) => {
+    setImgStyleRaw(v);
+    saveStudioPref('mp-image-style', v, 'whiteboard');
+  };
   const [previewNotes, setPreviewNotes] = useState<string[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
@@ -1178,8 +1188,11 @@ export function MediaStudioView(): JSX.Element {
             生成封面
             <span className={c('cardHint')}>提示词可自由改；给参考图（URL 或本机绝对路径）可让画面跟着参考走</span>
           </div>
+          <ImageStyleSamples value={imgStyle} onSelect={setImgStyle} />
           <CoverGenerator
             initialDescription={coverMarker?.description ?? article.title}
+            style={imgStyle}
+            onStyleChange={setImgStyle}
             busy={coverGenBusy}
             onGenerate={(desc, style, ref, model) => void generateCover(desc, style, ref, model)}
             onUploadReference={async (file) => {
@@ -1397,6 +1410,7 @@ export function MediaStudioView(): JSX.Element {
             正文配图位（{bodyMarkers.length}）· 可选
             <span className={c('cardHint')}>来自正文的 &lt;!-- IMAGE_N --&gt; 标注；生成后自动替换成图片、预览立即可见。不配图也能发。</span>
           </div>
+          <ImageStyleSamples value={imgStyle} onSelect={setImgStyle} />
           {bodyMarkers.length === 0 ? (
             <div className={c('cardHint')}>
               正文里没有配图标注。AI 写稿会自动标注；手写的话在正文插入一行：&lt;!-- IMAGE_1: 场景描述, 4:3 --&gt;
@@ -1407,6 +1421,8 @@ export function MediaStudioView(): JSX.Element {
                 <MarkerRow
                   key={m.marker}
                   marker={m}
+                  style={imgStyle}
+                  onStyleChange={setImgStyle}
                   busy={imageBusy === m.marker}
                   onGenerate={(desc, style, model) =>
                     void generate({ marker: m.marker, description: desc, ratio: m.ratio, style, model })
@@ -1427,6 +1443,8 @@ export function MediaStudioView(): JSX.Element {
                 <GeneratedImageRow
                   key={img.src}
                   image={img}
+                  style={imgStyle}
+                  onStyleChange={setImgStyle}
                   context={contextBefore(img)}
                   busy={imageBusy === img.src}
                   onPreview={() => setImageLightbox(img.src)}
@@ -1940,17 +1958,21 @@ export function MediaStudioView(): JSX.Element {
 export function CoverGenerator({
   initialDescription,
   busy,
+  style,
+  onStyleChange,
   onGenerate,
   onUploadReference,
 }: {
   initialDescription: string;
   busy: boolean;
+  /** 统一配图风格(父级持有,与正文配图共用)。 */
+  style: string;
+  onStyleChange: (v: string) => void;
   onGenerate: (description: string, style: string, referenceImage: string, model: string) => void;
   /** 选本机图作参考：上传后返回可用 URL（失败返回 null）。 */
   onUploadReference?: (file: File) => Promise<string | null>;
 }): JSX.Element {
   const [desc, setDesc] = useState(initialDescription);
-  const [style, setStyle] = useState('whiteboard');
   const [model, setModel] = useState(loadPreferredImageModel);
   const [reference, setReference] = useState('');
   useEffect(() => {
@@ -1990,7 +2012,7 @@ export function CoverGenerator({
             />
           </label>
         ) : null}
-        <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
+        <select className={c('select')} value={style} onChange={(e) => onStyleChange(e.target.value)}>
           {IMAGE_STYLES.map((s) => (
             <option key={s.id} value={s.id}>
               {s.label}
@@ -2023,14 +2045,18 @@ export function CoverGenerator({
 function MarkerRow({
   marker,
   busy,
+  style,
+  onStyleChange,
   onGenerate,
 }: {
   marker: ImageMarker;
   busy: boolean;
+  /** 统一配图风格(父级持有):所有标记图/封面/重生成共用,别再各卡各选。 */
+  style: string;
+  onStyleChange: (v: string) => void;
   onGenerate: (description: string, style: string, model: string) => void;
 }): JSX.Element {
   const [desc, setDesc] = useState(marker.description);
-  const [style, setStyle] = useState('whiteboard');
   const [model, setModel] = useState(loadPreferredImageModel);
   return (
     <div className={c('genCard')}>
@@ -2046,9 +2072,8 @@ function MarkerRow({
         placeholder="画面描述：有什么、什么氛围…"
         onChange={(e) => setDesc(e.target.value)}
       />
-      <ImageStyleSamples value={style} onSelect={setStyle} />
       <div className={c('row')}>
-        <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
+        <select className={c('select')} value={style} onChange={(e) => onStyleChange(e.target.value)}>
           {IMAGE_STYLES.map((s) => (
             <option key={s.id} value={s.id}>
               {s.label}
@@ -2086,6 +2111,8 @@ function GeneratedImageRow({
   onPreview,
   onRegenerate,
   onRemove,
+  style,
+  onStyleChange,
 }: {
   image: BodyImage;
   /** 图在正文中的位置提示（前文摘录），改描述时有参照。 */
@@ -2094,9 +2121,11 @@ function GeneratedImageRow({
   onPreview: () => void;
   onRegenerate: (description: string, style: string, model: string) => void;
   onRemove: () => void;
+  /** 统一配图风格(父级持有)。 */
+  style: string;
+  onStyleChange: (v: string) => void;
 }): JSX.Element {
   const [desc, setDesc] = useState(image.alt || '');
-  const [style, setStyle] = useState('whiteboard');
   const [model, setModel] = useState(loadPreferredImageModel);
   return (
     <div className={c('genCard')}>
@@ -2114,7 +2143,7 @@ function GeneratedImageRow({
         onChange={(e) => setDesc(e.target.value)}
       />
       <div className={c('row')}>
-        <select className={c('select')} value={style} onChange={(e) => setStyle(e.target.value)}>
+        <select className={c('select')} value={style} onChange={(e) => onStyleChange(e.target.value)}>
           {IMAGE_STYLES.map((s) => (
             <option key={s.id} value={s.id}>
               {s.label}

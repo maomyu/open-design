@@ -41,10 +41,15 @@ export interface VolcImageOptions {
 }
 
 export async function generateVolcImage(opts: VolcImageOptions): Promise<string> {
-  const { fullPrompt } = composeStylePrompt(opts.style, opts.prompt);
+  // Seedream 生图接口没有 negative_prompt 参数——此前直接丢弃 negative,导致
+  // 「真实抓拍(纪实)」这类反精致清单全在负面词里的风格在火山路完全失效
+  // (2026-07-17 用户报"内置风格没生效"的根因之二)。把负面词转成「严格避免」
+  // 子句拼进提示词,Seedream 对这种否定式描述跟随良好。
+  const { fullPrompt, negative } = composeStylePrompt(opts.style, opts.prompt);
+  const prompt = `${fullPrompt}。严格避免出现:${negative}`.slice(0, 1000);
   const payload = {
     model: opts.model || DEFAULT_MODEL,
-    prompt: fullPrompt,
+    prompt,
     size: SIZE_MAP[opts.ratio ?? '4:3'] ?? SIZE_MAP['4:3']!,
     response_format: 'url',
     watermark: false,
