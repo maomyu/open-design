@@ -431,6 +431,8 @@ import { registerPluginEditRoutes } from './plugin-edit-routes.js';
 import { registerAccountRoutes } from './account-routes.js';
 import { registerMediaStudioRoutes } from './media-studio-routes.js';
 import {
+  ensureLarkCli,
+  larkCliRuntimeDir,
   resolveBakuanEngine,
   warmBakuanEngine,
   type EngineContext,
@@ -9666,21 +9668,31 @@ export async function startServer({
   let feishuLastLogin = null;      // 最近一次用户登录链接缓存 {url,userCode}(status 复用,避免每次刷新都换码)
   let feishuStarting = false;      // 正在发起登录(防 status 轮询并发重复起进程)
 
-  // 本机是否装了 lark-cli(装机自检)。
+  // daemon 侧 lark-cli spawn 的环境:packaged 下先确保自带 lark-cli 已解出,再把其目录放
+  // PATH 最前——客户机基本没装 lark-cli;此前只有引擎子进程 env(handleFor)带它,连接
+  // 飞书流程(config init / auth login / auth status)用 daemon 自己的 PATH,会误报「未检测到 lark-cli」。
+  async function larkCliSpawnEnv() {
+    await ensureLarkCli(BAKUAN_ENGINE_CTX).catch(() => { /* 解压失败退回系统 PATH */ });
+    const dir = larkCliRuntimeDir(BAKUAN_ENGINE_CTX);
+    if (!dir) return process.env;
+    return { ...process.env, PATH: [dir, process.env.PATH].filter(Boolean).join(path.delimiter) };
+  }
+
+  // 本机是否装了 lark-cli(装机自检;packaged 自带的也算「已装」)。
   async function larkCliInstalled() {
-    const r = await execFileBuffered('lark-cli', ['--version'], { timeout: 8_000 });
+    const r = await execFileBuffered('lark-cli', ['--version'], { timeout: 8_000, env: await larkCliSpawnEnv() });
     return r.ok;
   }
   // baochuang-client profile 是否【完整连接】(应用+用户身份都在,无副作用)。
   async function feishuProfileConnected() {
-    const r = await execFileBuffered('lark-cli', ['auth', 'status', '--profile', FEISHU_CLIENT_PROFILE, '--json']);
+    const r = await execFileBuffered('lark-cli', ['auth', 'status', '--profile', FEISHU_CLIENT_PROFILE, '--json'], { env: await larkCliSpawnEnv() });
     return r.ok
       && /ou_|user|valid|scopes/i.test(r.stdout)
       && !/missing|expired|not_found|token_missing|not_configured/i.test(r.stdout);
   }
   // 应用是否已配好(config init 完成即有 appId;此时可能还差用户登录)。
   async function feishuAppConfigured() {
-    const r = await execFileBuffered('lark-cli', ['auth', 'status', '--profile', FEISHU_CLIENT_PROFILE, '--json']);
+    const r = await execFileBuffered('lark-cli', ['auth', 'status', '--profile', FEISHU_CLIENT_PROFILE, '--json'], { env: await larkCliSpawnEnv() });
     return r.ok && /"appId"|app_id/i.test(r.stdout);
   }
   // 发起【用户设备流登录】:先 --no-wait 拿链接+设备码,再【后台】续跑轮询。
@@ -9690,7 +9702,7 @@ export async function startServer({
   async function feishuStartUserLogin() {
     const r = await execFileBuffered('lark-cli',
       ['auth', 'login', '--profile', FEISHU_CLIENT_PROFILE, '--domain', 'base',
-        '--scope', FEISHU_LOGIN_SCOPE, '--no-wait', '--json'], { timeout: 20_000 });
+        '--scope', FEISHU_LOGIN_SCOPE, '--no-wait', '--json'], { timeout: 20_000, env: await larkCliSpawnEnv() });
     if (!r.ok) return null;
     let url = '', device = '', userCode = '';
     try {
@@ -9706,7 +9718,7 @@ export async function startServer({
     if (feishuLoginChild && !feishuLoginChild.killed) { try { feishuLoginChild.kill(); } catch { /* ignore */ } }
     const child = spawn('lark-cli',
       ['auth', 'login', '--profile', FEISHU_CLIENT_PROFILE, '--device-code', device],
-      { stdio: ['ignore', 'ignore', 'ignore'] });
+      { stdio: ['ignore', 'ignore', 'ignore'], env: await larkCliSpawnEnv() });
     feishuLoginChild = child;
     child.on('close', () => { if (feishuLoginChild === child) feishuLoginChild = null; });
     child.on('error', () => { if (feishuLoginChild === child) feishuLoginChild = null; });
@@ -9768,7 +9780,7 @@ export async function startServer({
       // 第一步:长驻进程建应用;从早期输出里抓官方配置链接(客户用自己飞书创建免费应用)。
       const child = spawn('lark-cli',
         ['config', 'init', '--new', '--name', FEISHU_CLIENT_PROFILE, '--brand', 'feishu', '--lang', 'zh'],
-        { stdio: ['ignore', 'pipe', 'pipe'] });
+        { stdio: ['ignore', 'pipe', 'pipe'], env: await larkCliSpawnEnv() });
       feishuInitChild = child;
       const url = await new Promise((resolve) => {
         const timer = setTimeout(() => resolve(''), 20_000);

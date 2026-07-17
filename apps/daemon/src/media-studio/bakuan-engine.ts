@@ -22,6 +22,11 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+/** win32 与 POSIX 的 venv/可执行文件布局差异集中在这几个常量,别在调用点散写 platform 判断。 */
+const IS_WIN = process.platform === 'win32';
+const VENV_BIN_DIR = IS_WIN ? 'Scripts' : 'bin';
+const exeName = (name: string): string => (IS_WIN ? `${name}.exe` : name);
+
 export interface EngineHandle {
   /** 脚本运行的 cwd（源码 + .venv + .env + data 都在这里）。 */
   engineDir: string;
@@ -50,7 +55,7 @@ function runtimeRootFor(ctx: EngineContext): string {
 }
 
 function handleFor(ctx: EngineContext, engineDir: string): EngineHandle {
-  const venvBin = path.join(engineDir, '.venv', 'bin');
+  const venvBin = path.join(engineDir, '.venv', VENV_BIN_DIR);
   // packaged 自带静态 ffmpeg（首启动从 tar 解到 engine-runtime）；dev 依赖系统 PATH。
   const ffmpegDir = ctx.resourceRoot ? path.join(runtimeRootFor(ctx), 'ffmpeg') : null;
   // 飞书数据中心连接/建表/回写都跑 lark-cli(原生二进制)。packaged 自带(首启动从 tar 解到
@@ -58,18 +63,24 @@ function handleFor(ctx: EngineContext, engineDir: string): EngineHandle {
   const larkCliDir = ctx.resourceRoot ? path.join(runtimeRootFor(ctx), 'lark-cli') : null;
   // dev/兜底:再把常见 CLI 安装目录并进 PATH。GUI app 从 Finder 启动时 launchd 只给最小 PATH
   // (/usr/bin:/bin:…),没有 /opt/homebrew/bin;dev 态没打包 lark-cli 时靠这个找到系统装的。
-  const commonBins = [
-    '/opt/homebrew/bin', '/usr/local/bin',
-    path.join(os.homedir(), '.npm-global', 'bin'),
-    path.join(os.homedir(), '.local', 'bin'),
-    '/usr/bin', '/bin',
-  ];
+  // win32 没有这些 POSIX 目录,PATH 由系统给全,不额外并。
+  const commonBins = IS_WIN
+    ? []
+    : [
+        '/opt/homebrew/bin', '/usr/local/bin',
+        path.join(os.homedir(), '.npm-global', 'bin'),
+        path.join(os.homedir(), '.local', 'bin'),
+        '/usr/bin', '/bin',
+      ];
   const pathParts = [larkCliDir, venvBin, ffmpegDir, ...commonBins, process.env.PATH].filter(Boolean) as string[];
   return {
     engineDir,
-    python: path.join(venvBin, 'python'),
-    ytdlp: path.join(venvBin, 'yt-dlp'),
-    env: { ...process.env, PATH: pathParts.join(path.delimiter) },
+    python: path.join(venvBin, exeName('python')),
+    ytdlp: path.join(venvBin, exeName('yt-dlp')),
+    // PYTHONUTF8:中文 Windows 的 ANSI 码页是 GBK,不钉 UTF-8 的话 ①引擎里 subprocess text=True
+    // 会拿 GBK 解码 lark-cli/yt-dlp 的 UTF-8 输出(读线程炸、stdout=None)②print 中文可能
+    // UnicodeEncodeError。POSIX 上本就是 UTF-8,无副作用。
+    env: { ...process.env, PATH: pathParts.join(path.delimiter), PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
   };
 }
 
@@ -93,6 +104,15 @@ export function isBakuanEngineReady(ctx: EngineContext): boolean {
   return fs.existsSync(handleFor(ctx, engineDirFor(ctx)).python);
 }
 
+/** 解压用的 tar:win32 钉死 System32 的 bsdtar(Win10 1803+ 自带)。裸 'tar' 在 win 上可能
+ *  解析到 PATH 里 Git/MSYS 的 GNU tar——它把 `C:\...` 的冒号当 host:path 远程语法,直接
+ *  "Error is not recoverable" 拒开盘符路径;bsdtar 原生吃盘符。POSIX 维持系统 tar。 */
+function tarBinary(): string {
+  if (!IS_WIN) return 'tar';
+  const system32Tar = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+  return fs.existsSync(system32Tar) ? system32Tar : 'tar';
+}
+
 /** 把 opaque tar.gz 解到目标目录（幂等：目标标记文件已在则跳过）。 */
 async function extractTarOnce(tarPath: string, destRoot: string, marker: string): Promise<void> {
   if (fs.existsSync(marker)) return;
@@ -100,7 +120,7 @@ async function extractTarOnce(tarPath: string, destRoot: string, marker: string)
     throw new Error(`安装包缺少运行时归档：${path.basename(tarPath)}`);
   }
   await fs.promises.mkdir(destRoot, { recursive: true });
-  await execFileAsync('tar', ['xzf', tarPath, '-C', destRoot], { timeout: 180_000 });
+  await execFileAsync(tarBinary(), ['xzf', tarPath, '-C', destRoot], { timeout: 180_000 });
 }
 
 async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
@@ -109,7 +129,10 @@ async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
   const bundledEngine = path.join(resourceRoot, 'bakuan-engine');
   const wheels = path.join(resourceRoot, 'wheels');
   const runtimeRoot = runtimeRootFor(ctx);
-  const bundledPython = path.join(runtimeRoot, 'python-runtime', 'bin', 'python3');
+  // python-build-standalone 的目录布局按平台不同:POSIX 是 bin/python3,win 是根下 python.exe。
+  const bundledPython = IS_WIN
+    ? path.join(runtimeRoot, 'python-runtime', 'python.exe')
+    : path.join(runtimeRoot, 'python-runtime', 'bin', 'python3');
   if (!fs.existsSync(wheels) || !fs.existsSync(bundledEngine)) {
     throw new Error(
       '安装包缺少内置 Python 引擎（wheels / bakuan-engine 未随包发布）——请用带 vendor 的构建重新打包',
@@ -121,7 +144,7 @@ async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
   await extractTarOnce(
     path.join(resourceRoot, 'ffmpeg.tar.gz'),
     runtimeRoot,
-    path.join(runtimeRoot, 'ffmpeg', 'ffmpeg'),
+    path.join(runtimeRoot, 'ffmpeg', exeName('ffmpeg')),
   );
   // 自带 lark-cli 原生二进制(飞书数据中心连接/建表/回写)。见 ensureLarkCli(幂等,已 provision
   // 的引擎在 app 更新后也会补上——否则老用户升级拿不到 lark-cli、飞书仍不可用)。
@@ -138,7 +161,7 @@ async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
   await execFileAsync(bundledPython, ['-m', 'venv', venvDir], { cwd: engineDir, timeout: 180_000 });
 
   // 4) 离线装依赖（wheels 已按目标 ABI 预下载，无需联网/编译）。
-  const pip = path.join(venvDir, 'bin', 'pip');
+  const pip = path.join(venvDir, VENV_BIN_DIR, exeName('pip'));
   const runtimeReq = path.join(engineDir, 'requirements-runtime.txt');
   const req = fs.existsSync(runtimeReq) ? runtimeReq : path.join(engineDir, 'requirements.txt');
   await execFileAsync(
@@ -257,14 +280,21 @@ async function resyncEngineSourceIfStale(ctx: EngineContext, engineDir: string):
 
 /** 解压自带 lark-cli 二进制到 engine-runtime/lark-cli(飞书数据中心用)。幂等(extractTarOnce 按
  *  二进制存在与否判定);已 provision 的引擎在 app 更新后也调它,保证老用户升级后拿到 lark-cli。 */
-async function ensureLarkCli(ctx: EngineContext): Promise<void> {
+export async function ensureLarkCli(ctx: EngineContext): Promise<void> {
   const resourceRoot = ctx.resourceRoot;
   if (!resourceRoot) return;
   const larkCliTar = path.join(resourceRoot, 'lark-cli.tar.gz');
   if (!fs.existsSync(larkCliTar)) return;
   const runtimeRoot = runtimeRootFor(ctx);
   await fs.promises.mkdir(runtimeRoot, { recursive: true });
-  await extractTarOnce(larkCliTar, runtimeRoot, path.join(runtimeRoot, 'lark-cli', 'lark-cli'));
+  await extractTarOnce(larkCliTar, runtimeRoot, path.join(runtimeRoot, 'lark-cli', exeName('lark-cli')));
+}
+
+/** packaged 下自带 lark-cli 的落地目录(daemon 侧「连接飞书」spawn 也要把它并进 PATH——
+ *  客户机基本没装 lark-cli,只有引擎子进程 env 带它的话,连接流程会报「未检测到 lark-cli」);
+ *  dev 下返回 null,走系统 PATH。 */
+export function larkCliRuntimeDir(ctx: EngineContext): string | null {
+  return ctx.resourceRoot ? path.join(runtimeRootFor(ctx), 'lark-cli') : null;
 }
 
 /** 确保 packaged 引擎已 provision（幂等、防并发）；dev 直接返回。 */
