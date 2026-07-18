@@ -3,6 +3,8 @@
 # 结果按行记 JSONL(时间/耗时/exit/结果摘要),3天后汇总成功率交付。
 REPO="/Users/maoyu/开发/自媒体营销"
 LOG="$REPO/customers/煜之禾-鱼老师/稳定性测试/stability-log.jsonl"
+# cron 的 PATH 只有 /usr/bin:/bin——homebrew 的 node/timeout 都不在,不补 PATH 每轮 exit 127。
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 # 本机同时开发多个客户包:必须钉死到爆创专属 namespace(baochuang)的 daemon socket。
 # 钉死失败 CLI 会硬报错退出(绝不回退扫描连到别的客户的 daemon)。
 export OD_SIDECAR_IPC_PATH="/tmp/open-design/ipc/baochuang/daemon.sock"
