@@ -91,11 +91,18 @@ function timeLabel(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function NoteStudioView(): JSX.Element {
+// entryMode(2026-07-18 用户拍板:小红书第三形态「直接生图」):
+//  'note'         = 完整流程(选题→文案→图集→发布),默认。
+//  'direct-image' = 用户已有想法,跳过选题直接进图集:落地即建草稿、顶部自由框
+//                   「想法→生图/AI文案」,选题步隐藏。图集/文案机制完全复用本组件。
+export function NoteStudioView({ entryMode = 'note' }: { entryMode?: 'note' | 'direct-image' } = {}): JSX.Element {
+  const directImage = entryMode === 'direct-image';
   const license = useLicense();
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
-  const [tab, setTab] = useState<NoteTab>('copy');
+  const [tab, setTab] = useState<NoteTab>(directImage ? 'gallery' : 'copy');
+  // 直接生图:顶部自由提示词(用户自己的想法/画面),独立于 AI 图集建议。
+  const [freePrompt, setFreePrompt] = useState('');
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
@@ -179,10 +186,18 @@ export function NoteStudioView(): JSX.Element {
       const remembered = window.localStorage.getItem(LAST_ARTICLE_KEY);
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
       if (pick) await selectArticle(pick.id);
-      else setTab('topics');
+      else if (directImage) {
+        // 直接生图:没有现成稿就自动建一篇空白草稿承载图集/文案,用户无需先去选题。
+        const created = await createStudioArticle(PLATFORM, { title: '' });
+        if (created) {
+          setArticles((await refreshArticles()) as MediaArticleSummary[]);
+          await selectArticle(created.id);
+        }
+        setTab('gallery');
+      } else setTab('topics');
       setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
     })();
-  }, [refreshArticles, selectArticle]);
+  }, [refreshArticles, selectArticle, directImage]);
 
   // ---- 自动保存 ----
   const flushSave = useCallback(async () => {
@@ -478,7 +493,8 @@ export function NoteStudioView(): JSX.Element {
   };
 
   const TABS: Array<{ id: NoteTab; label: string; step: string }> = [
-    { id: 'topics', label: '选题', step: '1' },
+    // 直接生图形态隐藏「选题」——用户已有想法,不走选题funnel。
+    ...(directImage ? [] : [{ id: 'topics' as NoteTab, label: '选题', step: '1' }]),
     { id: 'copy', label: '文案', step: '2' },
     // 图集(图片生成)跟 cap.image。客户只要文案不要生图时,授权不含 cap.image → 图集隐藏。
     ...(hasFeature(license, 'cap.image') ? [{ id: 'gallery' as NoteTab, label: '图集', step: '3' }] : []),
@@ -725,6 +741,42 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('图集属于某篇笔记——先去「文案」新建。')
             ) : (
               <>
+                {/* 直接生图:用户自己的想法/画面 → 一键生图,并可让 AI 据此写配套文案。
+                    不必先选题/写文案(2026-07-18 用户拍板小红书第三形态)。 */}
+                {directImage ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      直接生图 · 你的想法
+                      <span className={c('cardHint')}>描述你想要的画面(产品/场景/风格),选下方风格与比例,点「生图」直接出图;也可让 AI 据此写小红书文案</span>
+                    </div>
+                    <textarea
+                      className={c('textarea')}
+                      style={{ minHeight: 64, marginBottom: 8 }}
+                      placeholder="例:水果娜旅行洗护8件套摆在浅粉色梳妆台上,樱花点缀,清新少女风,俯拍"
+                      value={freePrompt}
+                      onChange={(e) => setFreePrompt(e.target.value)}
+                    />
+                    <div className={c('row')} style={{ gap: 8 }}>
+                      <button
+                        type="button"
+                        className={`${c('btn')} ${c('btnPrimary')}`}
+                        disabled={galleryBusy !== null || !freePrompt.trim()}
+                        onClick={() => void generateGalleryImage(freePrompt.trim())}
+                      >
+                        {galleryBusy === freePrompt.trim() ? '生成中…' : '✨ 生图(用下方风格)'}
+                      </button>
+                      <button
+                        type="button"
+                        className={c('btn')}
+                        disabled={effectiveAiRunning || !freePrompt.trim()}
+                        title="按你的想法让 AI 写一篇小红书文案(标题+正文+标签),到「文案」步查看"
+                        onClick={() => void startAiTask('write', { note: freePrompt.trim() })}
+                      >
+                        {effectiveAiRunning ? 'AI 写作中…' : '📝 AI 帮我写文案'}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 {ideaLines.length > 0 ? (
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>

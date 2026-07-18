@@ -16,7 +16,7 @@ import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
-type XhsForm = 'note' | 'video';
+type XhsForm = 'note' | 'video' | 'directimg';
 const STORE_KEY = 'open-design:studio:xiaohongshu-form';
 
 export function XiaohongshuStudioShell(): JSX.Element {
@@ -24,6 +24,8 @@ export function XiaohongshuStudioShell(): JSX.Element {
   const forms: Array<{ id: XhsForm; label: string; licensed: boolean }> = [
     { id: 'note', label: '图文笔记', licensed: hasFeature(license, 'note.xiaohongshu') },
     { id: 'video', label: '视频', licensed: hasShortVideoPlatform(license, 'xiaohongshu') },
+    // 直接生图(2026-07-18):用户已有想法,跳过选题直接生图+文案。需 图文授权 + 生图能力。
+    { id: 'directimg', label: '直接生图', licensed: hasFeature(license, 'note.xiaohongshu') && hasFeature(license, 'cap.image') },
   ];
   const licensed = forms.filter((f) => f.licensed);
   const allowed = (id: string | null | undefined): id is XhsForm => licensed.some((f) => f.id === id);
@@ -55,8 +57,13 @@ export function XiaohongshuStudioShell(): JSX.Element {
           ))}
         </div>
       ) : null}
-      {/* 子台各自维护当前稿/自动保存;切形态=卸载重挂,各台 localStorage 记忆位置。 */}
-      {effective === 'note' ? <NoteStudioView /> : <ShortVideoStudioView platform="xiaohongshu" />}
+      {/* 子台各自维护当前稿/自动保存;切形态=卸载重挂,各台 localStorage 记忆位置。
+          直接生图复用 NoteStudioView(entryMode=direct-image):落地进图集、免选题。 */}
+      {effective === 'video' ? (
+        <ShortVideoStudioView platform="xiaohongshu" />
+      ) : (
+        <NoteStudioView key={effective} entryMode={effective === 'directimg' ? 'direct-image' : 'note'} />
+      )}
     </div>
   );
 }
