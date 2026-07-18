@@ -222,7 +222,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
           </span>
           <span className={c('cardHint')}>下面完成 文案/脚本→素材→发布;发布步可一稿多发</span>
           <span style={{ marginLeft: 'auto' }}>
-            <button type="button" className={c('btn')} onClick={() => setActiveDraft(null)}>
+            <button type="button" className={c('btn')} onClick={() => { setActiveDraft(null); void refreshTopics(); }}>
               ← 回选题(稿已自动保存)
             </button>
           </span>
