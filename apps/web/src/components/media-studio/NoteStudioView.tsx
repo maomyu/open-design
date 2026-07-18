@@ -1265,33 +1265,42 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                 {sourceImages.length === 0 ? (
                   <div className={c('cardHint')}>没有参考原图(此稿非爆款来源,或还没取原素材)。</div>
                 ) : (
-                  <div className={c('coverGrid')}>
+                  // 九宫格:一行 3 张缩略图,区域内部独立滚动(2026-07-18 用户拍板:图太大+滑整页麻烦)。
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, maxHeight: '58vh', overflowY: 'auto', paddingRight: 4 }}>
                     {sourceImages.map((url, i) => (
-                      <div key={url} className={c('coverCard')} style={url === refImage ? { outline: '2px solid #e8582e', outlineOffset: 2 } : undefined}>
-                        <img className={c('coverThumb')} style={{ aspectRatio: '3 / 4' }} src={url} alt={`参考 ${i + 1}`} onClick={() => setLightboxUrl(url)} />
-                        <div className={c('row')}>
+                      <div key={url} style={{ display: 'flex', flexDirection: 'column', gap: 3, outline: url === refImage ? '2px solid #e8582e' : 'none', outlineOffset: 2, borderRadius: 8 }}>
+                        <img
+                          src={url}
+                          alt={`参考 ${i + 1}`}
+                          title="点看大图"
+                          style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 8, cursor: 'zoom-in' }}
+                          onClick={() => setLightboxUrl(url)}
+                        />
+                        <div style={{ display: 'flex', gap: 3 }}>
                           <button
                             type="button"
                             className={`${c('btn')} ${url === refImage ? c('btnPrimary') : ''}`}
+                            style={{ flex: 1, padding: '2px 4px', fontSize: 11 }}
                             title="设为参考图:去左边写提示词生成同款风格质感的新图(不盗原图)"
                             onClick={() => setRefImage(url === refImage ? '' : url)}
                           >
-                            {url === refImage ? '✓ 参考中' : '作参考'}
+                            {url === refImage ? '✓参考' : '作参考'}
                           </button>
                           <button
                             type="button"
                             className={c('btn')}
+                            style={{ padding: '2px 5px', fontSize: 11 }}
                             title="确实要用这张原图 → 放进图集(版权自负,别人的图慎发)"
                             onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
                           >
-                            +图集
+                            +集
                           </button>
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
-                <div className={c('cardHint')} style={{ marginTop: 6 }}>别人的原图仅供参考,不自动进图集/发布。</div>
+                <div className={c('cardHint')} style={{ marginTop: 6 }}>一行3张·区内滚动;原图仅供参考,不自动进图集/发布。</div>
               </div>
             ) : (
             <div className={c('videoCard')}>
