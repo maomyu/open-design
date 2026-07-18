@@ -289,8 +289,30 @@ class Pipeline:
     _LADDER_LIKES = [("大爆款", 50_000), ("爆款", 20_000), ("热门", 5_000), ("小热", 2_000)]
 
     def _apply_tier_ladder(self, cands: list, target: int) -> tuple[list, str]:
-        """自动降档:从严到松逐档筛候选,第一个凑够 target 条的档即用;每档都不够则【取头部】兜底
-        (按指标降序,不设下线,保证永远有货)。返回 (pending=[(rc,[档名]),...], 命中档名)。
+        """自动降档总入口:**按平台各自独立降档再合并**(2026-07-19 用户定死:每个平台的爆款
+        只来源于该平台,绝不混排)。同池排序有两个串平台缺陷:①兜底把抖音播放数和小红书点赞数
+        放同一序列比大小,数值上抖音必然霸榜;②全局档位判定让强势平台在高档凑满就收工,弱势
+        平台自己档位里的货被整体挤出。改法:候选按 rc.platform 分组,每平台各拿 target 均分
+        份额(至少1条)独立走 _ladder_one,合并输出;单平台行为与原先完全一致。"""
+        if not cands:
+            return [], "无候选"
+        by_plat: dict[str, list] = {}
+        for rc in cands:
+            by_plat.setdefault(rc.platform, []).append(rc)
+        if len(by_plat) == 1:
+            return self._ladder_one(cands, target)
+        share = max(1, -(-target // len(by_plat)))   # ceil(target/平台数)
+        merged: list = []
+        tier_parts: list[str] = []
+        for plat, group in by_plat.items():
+            hits, tier = self._ladder_one(group, share)
+            merged.extend(hits)
+            tier_parts.append(f"{plat}:{tier}")
+        return merged, " / ".join(tier_parts)
+
+    def _ladder_one(self, cands: list, target: int) -> tuple[list, str]:
+        """单平台池的档位阶梯:从严到松逐档筛候选,第一个凑够 target 条的档即用;每档都不够则
+        【取头部】兜底(按指标降序,不设下线,保证永远有货)。返回 (pending=[(rc,[档名]),...], 命中档名)。
         视频号看点赞,其余平台看播放(缺播放退点赞)。"""
         if not cands:
             return [], "无候选"
