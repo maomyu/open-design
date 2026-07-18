@@ -406,7 +406,9 @@ export function registerWebviewFileInputBridge(): void {
     const webContentsId = typeof raw.webContentsId === "number" ? raw.webContentsId : -1;
     const selector = typeof raw.selector === "string" && raw.selector.trim() ? raw.selector.trim() : "input[type=file]";
     const files = Array.isArray(raw.files)
-      ? raw.files.filter((f): f is string => typeof f === "string" && f.startsWith("/"))
+      // 绝对路径校验必须按平台判:win 的绝对路径是 C:\... 不以 "/" 开头,写死 startsWith("/")
+      // 会把全部文件滤光 → 报「缺少 webview id 或文件绝对路径」(2026-07-19 win 客户机实炸)。
+      ? raw.files.filter((f): f is string => typeof f === "string" && path.isAbsolute(f))
       : [];
     if (webContentsId < 0 || files.length === 0) {
       return { ok: false, reason: "缺少 webview id 或文件绝对路径" };
