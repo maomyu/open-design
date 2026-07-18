@@ -1,8 +1,9 @@
-// 统一创作台(2026-07-18 用户拍板路线B;同日修正:选题平台【单选】+平台导航入口移除)。
+// 统一创作台(2026-07-18 用户拍板路线B;同日修正:选题平台【单选】+平台导航入口移除;
+// 再修正:选题平台区卡片化+AI 任务接 StudioAiPanel 实时进度,用户反馈"看不到智能体在干嘛")。
 // 唯一创作动线:选平台找灵感(chip 单选,逐平台选题) → 「去写作」形态分岔(图文→小红书
 // 图文台;视频→目标平台建稿跳对应台,源平台置顶) → 各台完成后发布步「一稿多发」。
 // 平台 view/路由保留(跳转到达+标签栏可回),导航不再显示平台入口(与创作重复)。
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MediaTopic } from '@open-design/contracts';
 import { TopicsTab } from './TopicsTab';
 import {
@@ -12,7 +13,9 @@ import {
   deleteStudioTopic,
   fetchStudioTopics,
 } from '../../providers/media-studio';
+import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { studioToast, StudioToastHost } from './StudioFeedback';
+import { useOrphanRun } from './useOrphanRun';
 import { hasFeature, hasShortVideoPlatform, useLicense, type LicenseInfo } from '../../state/license';
 import styles from './MediaStudio.module.css';
 
@@ -56,7 +59,15 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
   const [source, setSource] = useState<string>(() => loadSource(allowedSources.map((s) => s.id)));
   const [xhsType, setXhsType] = useState<'image' | 'video'>('image');
   const [topics, setTopics] = useState<MediaTopic[]>([]);
-  const [aiBusy, setAiBusy] = useState(false);
+  // AI 任务走 StudioAiPanel(与各平台台同款):实时流式输出/工具步骤/可中止,
+  // 用户反馈"只显示执行中看不到进度"——薄版轮询已废弃。
+  const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
+  const [aiRunning, setAiRunning] = useState(false);
+  const aiSeqRef = useRef(0);
+  const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
+  // 页面刷新/热更后认领孤儿 AI 任务,进度不丢。
+  const { orphan, cancelOrphan } = useOrphanRun(aiTask === null);
+  const effectiveAiRunning = aiRunning || orphan != null;
   // 「开写」形态分岔:暂存选中的选题,渲染形态/目标选择条。
   const [pendingTopic, setPendingTopic] = useState<MediaTopic | null>(null);
 
@@ -72,37 +83,41 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     void refreshTopics();
   }, [refreshTopics]);
 
-  // 薄版「AI 帮我选题」:挂短视频池的 AI 选题任务,完成靠轮询刷新候选列表。
+  // AI 任务运行中每 3 秒轮询候选——agent 中途写回的选题实时上屏(与各台同款节奏)。
+  useEffect(() => {
+    if (!effectiveAiRunning) return;
+    const timer = window.setInterval(() => {
+      void refreshTopics();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [effectiveAiRunning, refreshTopics]);
+
   const aiFind = useCallback(
     async (note: string, picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>) => {
-      setAiBusy(true);
       const created = await createStudioAiTask(TOPIC_POOL, {
         kind: 'topics',
         input: { ...(note ? { note } : {}), ...(picked && picked.length > 0 ? { picked } : {}) },
       });
       if ('error' in created) {
-        setAiBusy(false);
         studioToast.err(created.error);
         return;
       }
-      studioToast.ok('AI 选题任务已启动——候选会陆续出现在下方(约 1-2 分钟)。');
-      // 轮询 2 分钟:每 5s 刷一次候选;到点自动收尾。
-      let ticks = 0;
-      const timer = window.setInterval(() => {
-        ticks += 1;
-        void refreshTopics();
-        if (ticks >= 24) {
-          window.clearInterval(timer);
-          setAiBusy(false);
-        }
-      }, 5000);
+      aiSeqRef.current += 1;
+      setAiTask({ ...created, seq: aiSeqRef.current });
+    },
+    [],
+  );
+
+  const refreshAfterAiTask = useCallback(
+    (outcome: StudioAiOutcome) => {
+      void refreshTopics();
+      if (outcome === 'done') studioToast.ok('AI 选题完成——候选已更新,点「去写作」开做。');
     },
     [refreshTopics],
   );
 
   /** 图文形态:在 note 池建稿(复制选题引用)→ 记住稿 → 跳小红书入口(图文形态)。 */
   async function writeAsNote(topic: MediaTopic) {
-    // note 池复制一条候选(fromTopicId 标记 used 需同池;跨池用标题引用即可)。
     const noteTopic = await createStudioTopic('note', { title: topic.title, ...(topic.angle ? { angle: topic.angle } : {}), ...(topic.url ? { url: topic.url } : {}) });
     const created = await createStudioArticle('note', {
       ...(noteTopic ? { fromTopicId: noteTopic.id } : {}),
@@ -154,39 +169,50 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         <span className={c('cardHint')}>选平台找灵感 → 选形态开写 → 完成后发布步可一稿多发到其他平台</span>
       </div>
 
-      {/* 选题平台【单选 chip】(2026-07-18 用户拍板:逐个平台选题):与小红书形态
-          切换同款交互,切平台即切采集目标,无多余勾选操作。 */}
-      <div className={c('articleSwitch')}>
-        <span className={c('articleSwitchLabel')}>选题平台</span>
-        {allowedSources.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            className={`${c('articleSwitchBtn')}${s.id === source ? ` ${c('articleSwitchBtnActive')}` : ''}`}
-            aria-pressed={s.id === source}
-            onClick={() => pickSource(s.id)}
-          >
-            {s.label}
-          </button>
-        ))}
-        {source === 'xiaohongshu' ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 10, fontSize: 12.5 }}>
-            <label style={{ cursor: 'pointer' }}>
-              <input type="radio" name="xhs-type" checked={xhsType === 'image'} onChange={() => setXhsType('image')} /> 图文
-            </label>
-            <label style={{ cursor: 'pointer' }}>
-              <input type="radio" name="xhs-type" checked={xhsType === 'video'} onChange={() => setXhsType('video')} /> 视频
-            </label>
-          </span>
-        ) : null}
+      {/* 选题平台【单选】:卡片化(2026-07-18 用户反馈原 chip 裸排太乱)。
+          与下方卡片同宽同风格;小红书时右侧带 图文/视频 二选 chip。 */}
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          选题平台
+          <span className={c('cardHint')}>选一个平台找灵感——采集/AI 选题都只针对它(逐平台选题)</span>
+        </div>
+        <div className={c('row')} style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          {allowedSources.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`${c('articleSwitchBtn')}${s.id === source ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+              aria-pressed={s.id === source}
+              onClick={() => pickSource(s.id)}
+            >
+              {s.label}
+            </button>
+          ))}
+          {source === 'xiaohongshu' ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+              <span className={c('cardHint')}>内容形态</span>
+              {(['image', 'video'] as const).map((tpe) => (
+                <button
+                  key={tpe}
+                  type="button"
+                  className={`${c('articleSwitchBtn')}${xhsType === tpe ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+                  aria-pressed={xhsType === tpe}
+                  onClick={() => setXhsType(tpe)}
+                >
+                  {tpe === 'image' ? '图文' : '视频'}
+                </button>
+              ))}
+            </span>
+          ) : null}
+        </div>
       </div>
 
-      {/* 形态分岔条:点了候选「开写」后出现。 */}
+      {/* 形态分岔条:点了候选「去写作」后出现。 */}
       {pendingTopic ? (
         <div className={c('card')} style={{ borderColor: '#e8582e' }}>
           <div className={c('cardLabel')}>
             「{pendingTopic.title.slice(0, 24)}」做成什么?
-            <span className={c('cardHint')}>图文只能发小红书;视频可发各视频平台(选一个主平台开写,PR3 分发支持一稿多发)</span>
+            <span className={c('cardHint')}>图文只能发小红书;视频选一个主平台开写,完成后可一稿多发</span>
           </div>
           <div className={c('row')} style={{ gap: 8, flexWrap: 'wrap' }}>
             {canNote ? (
@@ -221,8 +247,29 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         }}
         onWrite={(topic) => setPendingTopic(topic)}
         onAiFind={(note, picked) => void aiFind(note, picked)}
-        aiBusy={aiBusy}
+        aiBusy={effectiveAiRunning}
       />
+
+      {/* AI 任务面板(与各平台台同款):实时流式输出/工具步骤/可中止——
+          用户反馈"看不到智能体在干嘛"的答案就是它。 */}
+      <StudioAiPanel
+        ref={aiPanelRef}
+        task={aiTask}
+        onFinished={refreshAfterAiTask}
+        onDismiss={() => setAiTask(null)}
+        onRunningChange={setAiRunning}
+      />
+      {/* 孤儿任务(页面刷新前启动的)提示:候选仍会自动更新,可中止。 */}
+      {orphan != null && aiTask === null ? (
+        <div className={c('card')}>
+          <div className={c('cardHint')}>
+            ⏳ 有一个 AI 任务仍在后台运行(页面刷新前启动)——候选会自动更新;
+            <button type="button" className={c('btn')} style={{ marginLeft: 8 }} onClick={() => void cancelOrphan()}>
+              中止它
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
