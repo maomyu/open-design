@@ -36,7 +36,7 @@ def main() -> None:
         print(json.dumps({"error": "取不到本条(笔记可能已删/链接不完整;可换带 xsec_token 的完整分享链接)"}, ensure_ascii=False))
         return
 
-    from src import normalize
+    from src.adapters import normalize
 
     rc = normalize.normalize(platform, item)
     raw = rc.raw if isinstance(getattr(rc, "raw", None), dict) else {}
