@@ -98,6 +98,9 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       else window.localStorage.removeItem(DRAFT_KEY);
     } catch { /* best-effort */ }
   };
+  // 「去创作」小红书图文时自动跑一次仿写的目标稿(瞬态,不进 localStorage——刷新后
+  // 不再自动重跑,免得反复烧 AI 额度/覆盖已写内容)。仅本次会话点「去创作」当下置位。
+  const [autoWriteId, setAutoWriteId] = useState<string | null>(null);
 
   const pickSource = (id: string) => {
     setSource(id);
@@ -172,6 +175,8 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       }
     }
     setActiveDraft({ articleId: created.id, form: 'note', title: topic.title });
+    // 去创作即自动仿写:正文直接出 AI 结果,不用再手点「AI 写笔记」(用户拍板:意图已声明)。
+    setAutoWriteId(created.id);
   }
 
   /** 视频形态:在 short-video 池建稿(归属所选平台)→ 就地展开嵌入视频台(零跳页)。 */
@@ -245,7 +250,12 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
           </span>
         </div>
         {activeDraft.form === 'note' ? (
-          <NoteStudioView key={activeDraft.articleId} entryMode="embedded" articleId={activeDraft.articleId} />
+          <NoteStudioView
+            key={activeDraft.articleId}
+            entryMode="embedded"
+            articleId={activeDraft.articleId}
+            autoWrite={activeDraft.articleId === autoWriteId}
+          />
         ) : (
           <ShortVideoStudioView
             key={activeDraft.articleId}

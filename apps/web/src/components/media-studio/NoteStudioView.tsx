@@ -100,7 +100,7 @@ function timeLabel(ts: number): string {
 //                   「想法→生图/AI文案」,选题步隐藏。图集/文案机制完全复用本组件。
 //  'embedded'     = 内嵌进统一创作台(零跳页):隐藏台头/选题步,只露 文案→图集→发布,
 //                   选中创作台指定的稿(articleId)。「正在做」条由创作台提供。
-export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 'note' | 'direct-image' | 'embedded'; articleId?: string } = {}): JSX.Element {
+export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = false }: { entryMode?: 'note' | 'direct-image' | 'embedded'; articleId?: string; autoWrite?: boolean } = {}): JSX.Element {
   const directImage = entryMode === 'direct-image';
   const embedded = entryMode === 'embedded';
   const license = useLicense();
@@ -369,6 +369,27 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     },
     [flushSave],
   );
+
+  // 自动仿写(2026-07-18 用户反馈"去创作后正文是空的、只有原文卡,搞不懂"):创作台
+  // 「去创作」建稿后正文空着——带了原素材就自动跑一次 AI 仿写把结果写进正文,不用手点
+  // 「AI 写笔记」。等原素材就绪再发(仅有链接的候选先自动抓完原文案),免得空手仿写。
+  // 每篇只自动仿一次;已有正文/正在跑则跳过(不覆盖用户已写的内容)。
+  const autoWroteRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!autoWrite || !article) return;
+    const id = article.id;
+    if (autoWroteRef.current.has(id)) return;
+    if (article.bodyMd.trim()) { autoWroteRef.current.add(id); return; }   // 已有正文,别覆盖
+    if (effectiveAiRunning) return;
+    const ex = article.extra as Record<string, unknown>;
+    const hasContent = typeof ex.sourceContent === 'string' && ex.sourceContent.trim();
+    const hasUrl = typeof ex.sourceUrl === 'string' && ex.sourceUrl.trim();
+    // 源就绪 = 有原文案 / 没链接可等 / 链接已自动抓过且抓取结束(失败也放行,退化为按标题写)。
+    const sourceReady = hasContent || !hasUrl || (autoFetchedRef.current.has(id) && !fetchingSource);
+    if (!sourceReady) return;
+    autoWroteRef.current.add(id);
+    void startAiTask('write');
+  }, [autoWrite, article, fetchingSource, effectiveAiRunning, startAiTask]);
 
   // AI 任务运行中每 3 秒轮询——agent 中途写回的文案/图集建议实时上屏。
   useEffect(() => {
@@ -714,39 +735,26 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
               emptyCta('还没有笔记。从「选题」挑一个开始，或新建一篇。')
             ) : (
               <>
-                {/* 原文参考卡(2026-07-18):有原文案直接展示;只有原文链接(AI选题/旧
-                    候选)时给「取原素材」按钮——一键抓回本条原文案+原图进图集。 */}
-                {typeof (article.extra as Record<string, unknown>).sourceContent === 'string'
-                  && (article.extra as Record<string, unknown>).sourceContent ? (
-                  <div className={c('card')}>
-                    <div className={c('cardLabel')}>
-                      原文参考 · 小红书图文
-                      <span className={c('cardHint')}>下面是原文案，AI 按它 + 你的知识库风格仿写（不照抄）；原图在下方「参考素材」区（不自动进图集，防盗图）</span>
-                    </div>
-                    <div className={c('cardHint')} style={{ whiteSpace: 'pre-wrap', maxHeight: 170, overflow: 'auto', lineHeight: 1.6 }}>
-                      {String((article.extra as Record<string, unknown>).sourceContent)}
-                    </div>
-                    {typeof (article.extra as Record<string, unknown>).sourceUrl === 'string' ? (
-                      <a href={String((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
-                    ) : null}
-                  </div>
-                ) : typeof (article.extra as Record<string, unknown>).sourceUrl === 'string'
-                  && (article.extra as Record<string, unknown>).sourceUrl ? (
+                {/* 原文只在右侧「📄 原文」tab 看,左栏不再重复铺一整段(2026-07-18 用户
+                    反馈:打开文案页顶上全是别人的原文,把自己的标题/正文挤下去了,懵)。
+                    这里只在「还没取到原文案、仅有链接」时留「取原素材」兜底(自动抓取失败时手动触发)。 */}
+                {!str((article.extra as Record<string, unknown>).sourceContent)
+                  && str((article.extra as Record<string, unknown>).sourceUrl) ? (
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>
                       原素材
-                      <span className={c('cardHint')}>本条来自选题候选(暂只有原文链接)——点「取原素材」抓回原文案+原图进图集,供 AI 仿写参考</span>
+                      <span className={c('cardHint')}>本条来自选题候选(暂只有原文链接)——点「取原素材」抓回原文案+原图,原文进右侧「原文」tab,供 AI 仿写参考</span>
                     </div>
                     <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
                       <button
                         type="button"
                         className={`${c('btn')} ${c('btnPrimary')}`}
                         disabled={fetchingSource}
-                        onClick={() => void fetchSourceNow(String((article.extra as Record<string, unknown>).sourceUrl))}
+                        onClick={() => void fetchSourceNow(str((article.extra as Record<string, unknown>).sourceUrl))}
                       >
                         {fetchingSource ? '抓取中…' : '取原素材(原文案+原图)'}
                       </button>
-                      <a href={String((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
+                      <a href={str((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
                     </div>
                   </div>
                 ) : null}
