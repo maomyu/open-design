@@ -60,7 +60,7 @@ standalone 内容缓存 `.tmp/tools-pack/cache/entries`(env 不进缓存 key)。
 | 命名空间 | `workbuild` | `workbuild-video` |
 | 身份 env(build 与 install/start/inspect 全要带) | `OD_PACK_PRODUCT_NAME=weiao-article OD_PACK_APP_ID=com.weiao.article NEXT_PUBLIC_OD_BRAND=weiao-article` | `OD_PACK_PRODUCT_NAME=weiao-video OD_PACK_APP_ID=com.weiao.video NEXT_PUBLIC_OD_BRAND=weiao-video` |
 | license | `license-article.json` | `license-video.json` |
-| 功能 | 公众号+知乎文章、企业知识库、账号(**仅发布账号,无运维块**) | 抖音/小红书(图文+视频)/快手/B站/视频号 平台入口、制作视频(口型替换)、企业知识库、账号(含运维) |
+| 功能 | 公众号+知乎文章、企业知识库、账号(**仅发布账号,无运维块**) | 「创作」统一台(多源选题+形态分岔+一稿多发)、抖音/小红书(图文+视频+直接生图)/快手/B站/视频号 快捷入口、制作视频(口型替换,已内嵌上传步)、企业知识库、账号 |
 
 打包命令（在仓库根；改过 tools/pack 先 `pnpm --filter @open-design/tools-pack build`）：
 
@@ -143,3 +143,14 @@ pnpm tools-pack mac stop    --namespace <ns>                 # 只停对应包�
   种子 `../seed-video.json`。**绝不把维澳知产内容灌进视频包**(会让 AI 写种草时
   串进知产公司资质案例,内容全错;2026-07-18 已犯过一次并修正)。
 - 以后新增知识/种子内容,先问「属于哪家公司主体」再决定进哪个包的种子。
+
+## 统一创作台(2026-07-18 用户拍板路线B,平台快捷入口保留)
+
+视频包导航新增「创作」置顶入口,平台差异拆三个开关:**选题=数据源多选**(5平台
+checkbox 一次采混合候选,collect-score 本就吃数组)、**内容=形态分岔**(图文→小红书
+图文台/视频→选主平台跳对应台,LAST_ARTICLE_KEY 带稿)、**分发=一稿多发**(发布步勾
+其他平台→`POST /articles/:id/distribute` 克隆子稿 extra.sourceArticleId+targetPlatform,
+幂等复用;各平台入口确认发布,合规确认不变)。素材直通:短视频「上传」步内嵌数字人
+口型替换(音频自动用本稿配音 extra.audioUrl,成片直写 extra.videoPath,0 下载;火山
+「视频改口型」AK/SK 仍待配,提交报明确指引属预期)。后续增益(未做):跨平台统一
+作品库聚合、AI 按平台适配标题。
