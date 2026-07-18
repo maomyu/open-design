@@ -284,7 +284,7 @@ import {
   VIDEO_LENGTHS_SEC,
   VIDEO_MODELS,
 } from './media-models.js';
-import { readMaskedConfig, writeConfig } from './media-config.js';
+import { readMaskedConfig, readStoredProviderKey, writeConfig } from './media-config.js';
 import {
   deleteMediaTask,
   getMediaTask,
