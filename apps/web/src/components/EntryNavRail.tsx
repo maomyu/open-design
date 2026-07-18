@@ -153,20 +153,9 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="edit" size={18} />
           </NavButton>
         ) : null}
-        {/* 平台一级入口(2026-07-17 用户拍板):抖音/小红书/快手/B站/视频号各自
-            一个入口,按平台授权裁剪;2026-07-18 起作为快捷入口保留(用户拍板)。 */}
-        {PLATFORM_NAV.filter((p) => p.licensed(license)).map((p) => (
-          <NavButton
-            key={p.view}
-            active={view === p.view || (p.view === 'studio-douyin' && view === 'studio-video') || (p.view === 'studio-xiaohongshu' && view === 'studio-note')}
-            ariaLabel={p.label}
-            label={p.label}
-            onClick={() => onViewChange(p.view)}
-            testId={`entry-nav-${p.view}`}
-          >
-            <Icon name={p.icon} size={18} />
-          </NavButton>
-        ))}
+        {/* 平台导航入口已移除(2026-07-18 用户拍板:「创作」已覆盖,重复冗余)。
+            平台 view/路由全保留——创作台「去写作」跳转到达,标签栏可回;要恢复
+            导航入口把 PLATFORM_NAV.map(NavButton) 渲染块加回此处。 */}
         {/* 制作视频 = 横切素材车间(数字人口型替换起步),产出给各平台用。 */}
         {hasFeature(license, 'cap.video') ? (
           <NavButton

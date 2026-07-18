@@ -1,8 +1,7 @@
-// 统一创作台(2026-07-18 用户拍板,路线B PR1):内容优先——平台差异拆进三个开关
-// (选题=数据源多选、内容=形态分岔、分发=目标多选,PR3)。本 PR 交付:
-//   ① 多源爆款雷达:5 平台数据源 checkbox,一次采集混合候选(来源在候选行 account 列);
-//   ② 「开写」形态分岔:图文笔记→小红书图文台;视频→选目标平台跳对应台(建稿+记忆稿id)。
-// 平台快捷入口保留并存(用户拍板),创作台不替代它们,先做"跨平台找灵感"的增量价值。
+// 统一创作台(2026-07-18 用户拍板路线B;同日修正:选题平台【单选】+平台导航入口移除)。
+// 唯一创作动线:选平台找灵感(chip 单选,逐平台选题) → 「去写作」形态分岔(图文→小红书
+// 图文台;视频→目标平台建稿跳对应台,源平台置顶) → 各台完成后发布步「一稿多发」。
+// 平台 view/路由保留(跳转到达+标签栏可回),导航不再显示平台入口(与创作重复)。
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { MediaTopic } from '@open-design/contracts';
 import { TopicsTab } from './TopicsTab';
@@ -41,37 +40,29 @@ const VIDEO_TARGETS: Array<{ nav: string; svId: string; label: string; licensed:
   { nav: 'studio-shipinhao', svId: 'tencent', label: '视频号', licensed: (l) => hasShortVideoPlatform(l, 'tencent') },
 ];
 
-function loadSources(allowed: string[]): Set<string> {
+function loadSource(allowed: string[]): string {
   try {
     const raw = window.localStorage.getItem(SOURCES_KEY);
-    if (raw) {
-      const arr = (JSON.parse(raw) as unknown[]).filter((s): s is string => typeof s === 'string' && allowed.includes(s));
-      if (arr.length > 0) return new Set(arr);
-    }
+    if (raw && allowed.includes(raw)) return raw;
   } catch { /* fall through */ }
-  // 默认勾小红书(演示优先);没授权小红书则勾第一个可用源。
-  return new Set(allowed.includes('xiaohongshu') ? ['xiaohongshu'] : allowed.slice(0, 1));
+  // 默认小红书(演示优先);没授权则第一个可用源。
+  return allowed.includes('xiaohongshu') ? 'xiaohongshu' : (allowed[0] ?? 'xiaohongshu');
 }
 
 export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) => void }): JSX.Element {
   const license = useLicense();
   const allowedSources = useMemo(() => SOURCE_DEFS.filter((s) => s.licensed(license)), [license]);
-  const [sources, setSources] = useState<Set<string>>(() => loadSources(allowedSources.map((s) => s.id)));
+  // 数据源【单选】(2026-07-18 用户拍板:创作时逐个平台选题,不混采)。chip 切换,记忆上次。
+  const [source, setSource] = useState<string>(() => loadSource(allowedSources.map((s) => s.id)));
   const [xhsType, setXhsType] = useState<'image' | 'video'>('image');
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [aiBusy, setAiBusy] = useState(false);
   // 「开写」形态分岔:暂存选中的选题,渲染形态/目标选择条。
   const [pendingTopic, setPendingTopic] = useState<MediaTopic | null>(null);
 
-  const toggleSource = (id: string) => {
-    setSources((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      if (next.size === 0) next.add(id); // 至少留一个源
-      window.localStorage.setItem(SOURCES_KEY, JSON.stringify([...next]));
-      return next;
-    });
+  const pickSource = (id: string) => {
+    setSource(id);
+    window.localStorage.setItem(SOURCES_KEY, id);
   };
 
   const refreshTopics = useCallback(async () => {
@@ -147,8 +138,12 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     onNavigate(target.nav);
   }
 
-  const collectTargets = [...sources];
-  const videoTargets = VIDEO_TARGETS.filter((t) => t.licensed(license));
+  const collectTargets = [source];
+  // 形态分岔的视频目标:当前选题源平台置顶(逐平台工作流,源=目标最常见)。
+  const srcAsSv = source === 'channels' ? 'tencent' : source;
+  const videoTargets = VIDEO_TARGETS.filter((t) => t.licensed(license)).sort(
+    (a, b) => Number(b.svId === srcAsSv) - Number(a.svId === srcAsSv),
+  );
   const canNote = hasFeature(license, 'note.xiaohongshu');
 
   return (
@@ -156,34 +151,34 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       <StudioToastHost />
       <div className={c('head')}>
         <h1 className={c('title')}>创作</h1>
-        <span className={c('cardHint')}>跨平台找灵感 → 选形态开写 → 到对应平台完成与发布(分发一稿多发即将上线)</span>
+        <span className={c('cardHint')}>选平台找灵感 → 选形态开写 → 完成后发布步可一稿多发到其他平台</span>
       </div>
 
-      {/* 数据源多选:平台在这里=「从哪找灵感」,不是「发到哪」。 */}
-      <div className={c('card')}>
-        <div className={c('cardLabel')}>
-          选题数据源
-          <span className={c('cardHint')}>勾选要采集的平台,可多选——一次真抓爆款同时看多个平台谁在爆(候选带来源)</span>
-        </div>
-        <div className={c('row')} style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          {allowedSources.map((s) => (
-            <label key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 13 }}>
-              <input type="checkbox" checked={sources.has(s.id)} onChange={() => toggleSource(s.id)} />
-              {s.label}
+      {/* 选题平台【单选 chip】(2026-07-18 用户拍板:逐个平台选题):与小红书形态
+          切换同款交互,切平台即切采集目标,无多余勾选操作。 */}
+      <div className={c('articleSwitch')}>
+        <span className={c('articleSwitchLabel')}>选题平台</span>
+        {allowedSources.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className={`${c('articleSwitchBtn')}${s.id === source ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+            aria-pressed={s.id === source}
+            onClick={() => pickSource(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+        {source === 'xiaohongshu' ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 10, fontSize: 12.5 }}>
+            <label style={{ cursor: 'pointer' }}>
+              <input type="radio" name="xhs-type" checked={xhsType === 'image'} onChange={() => setXhsType('image')} /> 图文
             </label>
-          ))}
-          {sources.has('xiaohongshu') ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8, fontSize: 12.5 }}>
-              <span className={c('cardHint')}>小红书内容:</span>
-              <label style={{ cursor: 'pointer' }}>
-                <input type="radio" name="xhs-type" checked={xhsType === 'image'} onChange={() => setXhsType('image')} /> 图文
-              </label>
-              <label style={{ cursor: 'pointer' }}>
-                <input type="radio" name="xhs-type" checked={xhsType === 'video'} onChange={() => setXhsType('video')} /> 视频
-              </label>
-            </span>
-          ) : null}
-        </div>
+            <label style={{ cursor: 'pointer' }}>
+              <input type="radio" name="xhs-type" checked={xhsType === 'video'} onChange={() => setXhsType('video')} /> 视频
+            </label>
+          </span>
+        ) : null}
       </div>
 
       {/* 形态分岔条:点了候选「开写」后出现。 */}
