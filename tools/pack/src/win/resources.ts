@@ -1,4 +1,4 @@
-import { cp, mkdir } from "node:fs/promises";
+import { copyFile, cp, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { hashJson, hashPath, ToolPackCache } from "../cache.js";
@@ -11,7 +11,13 @@ import {
 } from "../vela-cli.js";
 import type { WinPaths, ResourceTreeCacheMetadata } from "./types.js";
 
-const RESOURCE_TREE_CACHE_SCHEMA_VERSION = 4;
+const RESOURCE_TREE_CACHE_SCHEMA_VERSION = 5;
+
+/** 双包交付烤入(2026-07-19,与 mac/app.ts 对齐):OD_PACK_LICENSE_FILE / OD_PACK_SEED_FILE
+ *  指向的文件烤进包资源(resources/open-design/{license,seed}.json)。win 此前完全没有
+ *  这段——打出的包无 license → daemon 全解锁,客户机上文章包功能全冒出来(实测抓获)。 */
+function bakedLicenseFile(): string { return (process.env.OD_PACK_LICENSE_FILE ?? "").trim(); }
+function bakedSeedFile(): string { return (process.env.OD_PACK_SEED_FILE ?? "").trim(); }
 
 async function createResourceTreeCacheKey(config: ToolPackConfig): Promise<string> {
   const velaCliBin = await resolveOptionalVelaCliBinary({
@@ -28,6 +34,8 @@ async function createResourceTreeCacheKey(config: ToolPackConfig): Promise<strin
     designSystems: await hashPath(join(config.workspaceRoot, "design-systems")),
     designTemplates: await hashPath(join(config.workspaceRoot, "design-templates")),
     node: "win.resource-tree",
+    bakedLicense: bakedLicenseFile() ? await hashPath(bakedLicenseFile()) : null,
+    bakedSeed: bakedSeedFile() ? await hashPath(bakedSeedFile()) : null,
     pluginOfficial: await hashPath(join(config.workspaceRoot, "plugins", "_official")),
     pluginRegistry: await hashPath(join(config.workspaceRoot, "plugins", "registry")),
     promptTemplates: await hashPath(join(config.workspaceRoot, "prompt-templates")),
@@ -70,6 +78,15 @@ export async function prepareResourceTree(
         requireBundled: config.requireVelaCli,
         resourceRoot,
       });
+      // 双包交付:license/seed 烤进包资源(daemon 数据目录无 license 时回落读它)。
+      if (bakedLicenseFile()) {
+        await copyFile(bakedLicenseFile(), join(resourceRoot, "license.json"));
+        process.stderr.write(`[tools-pack win] baked license → resources/open-design/license.json (from ${bakedLicenseFile()})\n`);
+      }
+      if (bakedSeedFile()) {
+        await copyFile(bakedSeedFile(), join(resourceRoot, "seed.json"));
+        process.stderr.write(`[tools-pack win] baked seed → resources/open-design/seed.json (from ${bakedSeedFile()})\n`);
+      }
       return { resourceName: "open-design" };
     },
   };

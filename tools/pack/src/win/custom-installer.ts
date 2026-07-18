@@ -192,7 +192,10 @@ async function writeInstallerScript(config: ToolPackConfig, paths: WinPaths): Pr
   const appPathsKey = escapeNsisString(identity.appPathsKey);
   const namespace = escapeNsisString(config.namespace);
   const localDataRoot = `$APPDATA\\${escapeNsisString(PRODUCT_NAME)}\\namespaces\\${escapeNsisString(sanitizeNamespace(config.namespace))}`;
-  const nsisLogPath = escapeNsisString(paths.nsisLogPath);
+  // 安装日志写运行机的 $APPDATA 数据目录(2026-07-19):此前烤构建机的 paths.nsisLogPath
+  // 绝对路径——跨机交付时在客户 Windows 上是 mac 路径,CreateDirectory 直接报
+  // 「Relative paths not supported」装不了。$APPDATA 由 NSIS 运行期解析,天然本机正确。
+  const nsisLogPath = `${localDataRoot}\\logs\\nsis.log`;
   const runningInstancesScriptPath = join(dirname(paths.installerScriptPath), "running-instances.ps1");
 
   await mkdir(dirname(paths.installerScriptPath), { recursive: true });
@@ -298,7 +301,7 @@ Var LX
 Function LogInstallerEvent
   Exch $0
   Push $1
-  CreateDirectory "${escapeNsisString(dirname(paths.nsisLogPath))}"
+  CreateDirectory "${localDataRoot}\\logs"
   FileOpen $1 "${nsisLogPath}" a
   IfErrors done
   FileSeek $1 0 END
@@ -325,7 +328,7 @@ FunctionEnd
 Function un.LogInstallerEvent
   Exch $0
   Push $1
-  CreateDirectory "${escapeNsisString(dirname(paths.nsisLogPath))}"
+  CreateDirectory "${localDataRoot}\\logs"
   FileOpen $1 "${nsisLogPath}" a
   IfErrors done
   FileSeek $1 0 END
