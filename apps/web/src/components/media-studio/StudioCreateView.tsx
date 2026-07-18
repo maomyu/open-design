@@ -162,13 +162,13 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       studioToast.err('建稿失败——稍后再试');
       return;
     }
-    // 原图直链 → 下载进图集(资产化,复用「提取图文仿写」链路);失败不阻塞建稿。
+    // 原图直链 → 下载进【参考素材区】extra.sourceImages(非图集,防盗图;要用手动加入)。
     if (topic.sourceImages.length > 0) {
-      studioToast.info('正在把原图下载进图集…');
+      studioToast.info('正在下载原图到参考素材区…');
       const r = await importXhsNote(created.id, topic.sourceContent || '', topic.sourceImages);
       if (!('error' in r) && r.imageUrls.length > 0) {
-        await updateStudioArticle('note', created.id, { extra: { noteImages: r.imageUrls } });
-        studioToast.ok(`原图 ${r.imageUrls.length} 张已进图集,原文案在「原文参考」卡`);
+        await updateStudioArticle('note', created.id, { extra: { sourceImages: r.imageUrls } });
+        studioToast.ok(`原图 ${r.imageUrls.length} 张已进「参考素材」区,原文案在「原文参考」卡`);
       }
     }
     setActiveDraft({ articleId: created.id, form: 'note', title: topic.title });

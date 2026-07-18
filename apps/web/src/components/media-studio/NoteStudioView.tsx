@@ -114,17 +114,18 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     setFetchingSource(true);
     const r = await fetchSourceMaterial(url);
     if ('error' in r) { studioToast.err(r.error); setFetchingSource(false); return; }
-    // 原图下载进图集 + 原文案写回 extra.sourceContent(复用 importXhsNote 资产化)。
+    // 原图存进【参考素材区】extra.sourceImages,不直接进图集(2026-07-18 用户拍板:
+    // 别人的原图是参考,不能当自己成品直接发——防盗图;想用点参考图上的「+加入图集」)。
     let imageUrls: string[] = [];
     if (r.images.length > 0) {
       const imp = await importXhsNote(article.id, r.text, r.images);
       if (!('error' in imp)) imageUrls = imp.imageUrls;
     }
-    await updateStudioArticle(PLATFORM, article.id, { extra: { sourceContent: r.text, ...(imageUrls.length ? { noteImages: imageUrls } : {}) } });
+    await updateStudioArticle(PLATFORM, article.id, { extra: { sourceContent: r.text, ...(imageUrls.length ? { sourceImages: imageUrls } : {}) } });
     const fresh = await fetchStudioArticle(PLATFORM, article.id);
     if (fresh) setArticle(fresh);
     setFetchingSource(false);
-    studioToast.ok(`已取回原素材`);
+    studioToast.ok(`已取回原素材(原图在「参考素材」区,可作参考或手动加入图集)`);
   };
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -182,6 +183,10 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   const ideaLines = imageIdeas.split('\n').map((l) => l.trim()).filter(Boolean);
   const noteImages: string[] = Array.isArray(extra.noteImages)
     ? (extra.noteImages as unknown[]).filter((v): v is string => typeof v === 'string')
+    : [];
+  // 参考素材(原图)——独立于图集,仅供参考/仿风格/手动加入(防盗图,2026-07-18)。
+  const sourceImages: string[] = Array.isArray(extra.sourceImages)
+    ? (extra.sourceImages as unknown[]).filter((v): v is string => typeof v === 'string')
     : [];
 
   // ---- 数据加载 ----
@@ -674,7 +679,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>
                       原文参考 · 小红书图文
-                      <span className={c('cardHint')}>原图已进「图集」；下面是原文案，AI 按它 + 你的知识库风格仿写（不照抄）</span>
+                      <span className={c('cardHint')}>下面是原文案，AI 按它 + 你的知识库风格仿写（不照抄）；原图在下方「参考素材」区（不自动进图集，防盗图）</span>
                     </div>
                     <div className={c('cardHint')} style={{ whiteSpace: 'pre-wrap', maxHeight: 170, overflow: 'auto', lineHeight: 1.6 }}>
                       {String((article.extra as Record<string, unknown>).sourceContent)}
@@ -700,6 +705,42 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                         {fetchingSource ? '抓取中…' : '取原素材(原文案+原图)'}
                       </button>
                       <a href={String((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
+                    </div>
+                  </div>
+                ) : null}
+                {/* 参考素材区(2026-07-18 用户拍板):原图存这里当【参考】,不自动进图集
+                    (别人的图不能当自己成品发)。每张可「仿风格」生同款,或「+加入图集」手动放。 */}
+                {sourceImages.length > 0 ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      参考素材（{sourceImages.length}）· 原图
+                      <span className={c('cardHint')}>别人的原图仅供参考,不会自动进图集/发布。点「仿风格」生同款质感;确实要用点「+加入图集」</span>
+                    </div>
+                    <div className={c('coverGrid')}>
+                      {sourceImages.map((url, i) => (
+                        <div key={url} className={c('coverCard')}>
+                          <img className={c('coverThumb')} style={{ aspectRatio: '3 / 4' }} src={url} alt={`参考 ${i + 1}`} onClick={() => setLightboxUrl(url)} />
+                          <div className={c('row')}>
+                            <button
+                              type="button"
+                              className={c('btn')}
+                              disabled={galleryBusy !== null}
+                              title="用这张当风格参考生同款质感新图(自动不套模板)"
+                              onClick={() => void generateGalleryImage(freePrompt.trim() || galleryPrompt.trim() || str(article?.title) || '产品图', url)}
+                            >
+                              仿风格
+                            </button>
+                            <button
+                              type="button"
+                              className={`${c('btn')} ${c('btnPrimary')}`}
+                              title="确实要用这张原图 → 放进图集(注意版权,别人的图慎发)"
+                              onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
+                            >
+                              + 加入图集
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ) : null}
