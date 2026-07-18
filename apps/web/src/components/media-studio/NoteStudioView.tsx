@@ -100,7 +100,7 @@ function timeLabel(ts: number): string {
 //                   「想法→生图/AI文案」,选题步隐藏。图集/文案机制完全复用本组件。
 //  'embedded'     = 内嵌进统一创作台(零跳页):隐藏台头/选题步,只露 文案→图集→发布,
 //                   选中创作台指定的稿(articleId)。「正在做」条由创作台提供。
-export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = false }: { entryMode?: 'note' | 'direct-image' | 'embedded'; articleId?: string; autoWrite?: boolean } = {}): JSX.Element {
+export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 'note' | 'direct-image' | 'embedded'; articleId?: string } = {}): JSX.Element {
   const directImage = entryMode === 'direct-image';
   const embedded = entryMode === 'embedded';
   const license = useLicense();
@@ -375,27 +375,6 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
     },
     [flushSave],
   );
-
-  // 自动仿写(2026-07-18 用户反馈"去创作后正文是空的、只有原文卡,搞不懂"):创作台
-  // 「去创作」建稿后正文空着——带了原素材就自动跑一次 AI 仿写把结果写进正文,不用手点
-  // 「AI 写笔记」。等原素材就绪再发(仅有链接的候选先自动抓完原文案),免得空手仿写。
-  // 每篇只自动仿一次;已有正文/正在跑则跳过(不覆盖用户已写的内容)。
-  const autoWroteRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!autoWrite || !article) return;
-    const id = article.id;
-    if (autoWroteRef.current.has(id)) return;
-    if (article.bodyMd.trim()) { autoWroteRef.current.add(id); return; }   // 已有正文,别覆盖
-    if (effectiveAiRunning) return;
-    const ex = article.extra as Record<string, unknown>;
-    const hasContent = typeof ex.sourceContent === 'string' && ex.sourceContent.trim();
-    const hasUrl = typeof ex.sourceUrl === 'string' && ex.sourceUrl.trim();
-    // 源就绪 = 有原文案 / 没链接可等 / 链接已自动抓过且抓取结束(失败也放行,退化为按标题写)。
-    const sourceReady = hasContent || !hasUrl || (autoFetchedRef.current.has(id) && !fetchingSource);
-    if (!sourceReady) return;
-    autoWroteRef.current.add(id);
-    void startAiTask('write');
-  }, [autoWrite, article, fetchingSource, effectiveAiRunning, startAiTask]);
 
   // AI 任务运行中每 3 秒轮询——agent 中途写回的文案/图集建议实时上屏。
   useEffect(() => {
@@ -741,30 +720,12 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
               emptyCta('还没有笔记。从「选题」挑一个开始，或新建一篇。')
             ) : (
               <>
-                {/* 原素材入口(2026-07-18 用户要求:界面上要有下载原始素材的入口,且去创作
-                    时自动拉取原文案+原图)。原文/原图展示在右侧「原文」「参考图」tab,这里只放
-                    拉取按钮:有链接就常驻,随时可(重新)拉取;进创作时已自动拉一次,这是补拉/更新兜底。 */}
-                {sourceUrl ? (
+                {/* 原素材拉取(2026-07-18 用户拍板:去创作的第一步就是自动拉取,不设手动按钮):
+                    进创作即自动拉原文案+原图,原文进右侧「原文」tab、原图进「参考图」tab。
+                    这里只在拉取进行中给一条状态,拉完即隐藏;拉完后由用户主动点「AI 写笔记」。 */}
+                {fetchingSource ? (
                   <div className={c('card')}>
-                    <div className={c('cardLabel')}>
-                      原素材
-                      <span className={c('cardHint')}>
-                        {sourceContent || sourceImages.length
-                          ? `已拉取:${sourceContent ? '原文案✓(右侧「原文」)' : '原文案✗'} · ${sourceImages.length ? `原图 ${sourceImages.length} 张✓(右侧「参考图」)` : '原图✗'} — 缺了或要更新可重拉`
-                          : '本条只有原文链接——拉取原文案+原图供 AI 仿写参考(原图不自动进图集,防盗图)'}
-                      </span>
-                    </div>
-                    <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
-                      <button
-                        type="button"
-                        className={`${c('btn')} ${c('btnPrimary')}`}
-                        disabled={fetchingSource}
-                        onClick={() => void fetchSourceNow(sourceUrl)}
-                      >
-                        {fetchingSource ? '拉取中…' : (sourceContent || sourceImages.length ? '重新拉取原素材' : '拉取原素材(原文案+原图)')}
-                      </button>
-                      <a href={sourceUrl} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
-                    </div>
+                    <div className={c('cardHint')}>⏳ 第一步·正在自动拉取原素材(原文案+原图)——完成后见右侧「原文」「参考图」,再点下方「AI 写笔记」按原文仿写正文</div>
                   </div>
                 ) : null}
                 {/* 参考素材区已移到「图集」步(2026-07-18 用户拍板:参考图属于生图环节)。 */}
@@ -772,11 +733,17 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
                     AI 写笔记
-                    <span className={c('cardHint')}>一键全流程：先调研 → 小红书调性出稿（标题/正文/标签/图集建议）→ 清 AI 腔</span>
+                    <span className={c('cardHint')}>原素材拉好后点这里：先调研 → 按原文+知识库风格仿写出稿（标题/正文/标签/图集建议）→ 清 AI 腔</span>
                   </div>
                   <div className={c('row')}>
-                    <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void startAiTask('write')}>
-                      <Icon name="sparkles" size={14} /> AI 写笔记
+                    <button
+                      type="button"
+                      className={`${c('btn')} ${c('btnPrimary')}`}
+                      disabled={effectiveAiRunning || fetchingSource}
+                      title={fetchingSource ? '原素材拉取中——拉完再点,AI 才有原文可仿' : '按原素材(如有)+知识库风格仿写,结果写进下方标题/正文'}
+                      onClick={() => void startAiTask('write')}
+                    >
+                      <Icon name="sparkles" size={14} /> {fetchingSource ? '原素材拉取中…' : 'AI 写笔记'}
                     </button>
                     <input
                       className={`${c('input')} ${c('grow')}`}
@@ -1295,7 +1262,7 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
                     {str((article.extra as Record<string, unknown>).sourceContent)}
                   </div>
                 ) : (
-                  <div className={c('cardHint')}>没有原文案(此稿非爆款来源,或还没取原素材)。</div>
+                  <div className={c('cardHint')}>{fetchingSource ? '⏳ 正在自动拉取原文案…' : '没有原文案(此稿非爆款来源)。'}</div>
                 )}
                 {str((article.extra as Record<string, unknown>).sourceUrl) ? (
                   <a href={str((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ marginTop: 8, display: 'inline-block' }}>看原文 ↗</a>
@@ -1305,16 +1272,16 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
               <div className={c('videoCard')}>
                 {sourceImages.length === 0 ? (
                   <div>
-                    <div className={c('cardHint')}>没有参考原图(此稿非爆款来源,或还没取原素材)。</div>
-                    {sourceUrl ? (
+                    <div className={c('cardHint')}>{fetchingSource ? '⏳ 正在自动拉取原图…' : '没有参考原图(此稿非爆款来源)。'}</div>
+                    {/* 拉取是自动的(去创作第一步),不设常驻按钮;仅自动拉失败后留一个重试兜底。 */}
+                    {!fetchingSource && sourceUrl ? (
                       <button
                         type="button"
-                        className={`${c('btn')} ${c('btnPrimary')}`}
+                        className={c('btn')}
                         style={{ marginTop: 8 }}
-                        disabled={fetchingSource}
                         onClick={() => void fetchSourceNow(sourceUrl)}
                       >
-                        {fetchingSource ? '拉取中…' : '拉取原图'}
+                        自动拉取失败?点此重试
                       </button>
                     ) : null}
                   </div>
