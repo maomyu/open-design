@@ -107,6 +107,9 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   const [tab, setTab] = useState<NoteTab>(directImage ? 'gallery' : 'copy');
   // 直接生图:顶部自由提示词(用户自己的想法/画面),独立于 AI 图集建议。
   const [freePrompt, setFreePrompt] = useState('');
+  // 参考图(2026-07-18 用户拍板):选一张参考图后,图集里任何生图(AI写的提示词行/你自己写的)
+  // 都带它的风格(自动不套模板);清空=普通模板生图。参考素材/图集里的图都能设为参考。
+  const [refImage, setRefImage] = useState('');
   // 取原素材(url-only 候选补回原文案/原图)。
   const [fetchingSource, setFetchingSource] = useState(false);
   const fetchSourceNow = async (url: string) => {
@@ -452,14 +455,15 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   }
 
   // ---- 图集操作 ----
-  async function generateGalleryImage(description: string, referenceImage?: string) {
+  async function generateGalleryImage(description: string, referenceImageOverride?: string) {
     if (!article || !description.trim()) return;
+    // 参考图:显式传入的优先;否则用当前选中的 refImage(模式)。有参考图 → 自动切
+    // 「不用模板」让模型学参考图真实风格,不被内置模板覆盖(2026-07-18 用户拍板)。
+    const referenceImage = referenceImageOverride || refImage;
     setGalleryBusy(description);
     setNotice(null);
     const result = await generateArticleImage(PLATFORM, article.id, {
       description: description.trim(),
-      // 以原图作参考时(2026-07-18 用户拍板):自动切「不用模板(纯提示词)」——让模型
-      // 学参考图的真实风格,不被内置模板覆盖;否则用用户选的风格。
       style: referenceImage ? 'none' : galleryStyle,
       model: galleryModel,
       ratio: galleryRatio,
@@ -723,42 +727,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                     </div>
                   </div>
                 ) : null}
-                {/* 参考素材区(2026-07-18 用户拍板):原图存这里当【参考】,不自动进图集
-                    (别人的图不能当自己成品发)。每张可「仿风格」生同款,或「+加入图集」手动放。 */}
-                {sourceImages.length > 0 ? (
-                  <div className={c('card')}>
-                    <div className={c('cardLabel')}>
-                      参考素材（{sourceImages.length}）· 原图
-                      <span className={c('cardHint')}>别人的原图仅供参考,不会自动进图集/发布。点「仿风格」生同款质感;确实要用点「+加入图集」</span>
-                    </div>
-                    <div className={c('coverGrid')}>
-                      {sourceImages.map((url, i) => (
-                        <div key={url} className={c('coverCard')}>
-                          <img className={c('coverThumb')} style={{ aspectRatio: '3 / 4' }} src={url} alt={`参考 ${i + 1}`} onClick={() => setLightboxUrl(url)} />
-                          <div className={c('row')}>
-                            <button
-                              type="button"
-                              className={c('btn')}
-                              disabled={galleryBusy !== null}
-                              title="用这张当风格参考生同款质感新图(自动不套模板)"
-                              onClick={() => void generateGalleryImage(freePrompt.trim() || galleryPrompt.trim() || str(article?.title) || '产品图', url)}
-                            >
-                              仿风格
-                            </button>
-                            <button
-                              type="button"
-                              className={`${c('btn')} ${c('btnPrimary')}`}
-                              title="确实要用这张原图 → 放进图集(注意版权,别人的图慎发)"
-                              onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
-                            >
-                              + 加入图集
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+                {/* 参考素材区已移到「图集」步(2026-07-18 用户拍板:参考图属于生图环节)。 */}
                 {hasFeature(license, 'cap.ai') ? (
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
@@ -852,13 +821,63 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
               emptyCta('图集属于某篇笔记——先去「文案」新建。')
             ) : (
               <>
-                {/* 直接生图:用户自己的想法/画面 → 一键生图,并可让 AI 据此写配套文案。
-                    不必先选题/写文案(2026-07-18 用户拍板小红书第三形态)。 */}
-                {directImage ? (
+                {/* 参考图横幅(2026-07-18 用户拍板):选了参考图后,下面任何生图(AI写的
+                    提示词行/你自己写的)都参考它的风格质感,自动不套模板。✕ 清除。 */}
+                {refImage ? (
+                  <div className={c('card')} style={{ borderColor: '#e8582e', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <img src={refImage} alt="参考图" style={{ width: 56, height: 72, objectFit: 'cover', borderRadius: 8 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>已选参考图 · 生图将模仿它的风格质感</div>
+                      <div className={c('cardHint')}>下面写提示词(自己写或用 AI 图集建议),点生图即出同款风格;自动不套内置模板</div>
+                    </div>
+                    <button type="button" className={c('btn')} onClick={() => setRefImage('')}>✕ 清除参考</button>
+                  </div>
+                ) : null}
+                {/* 参考素材区(原图)——移到图集步(2026-07-18):点「用作参考」设为上方参考图;
+                    别人的原图不进图集,要用点「+加入图集」(版权自负)。 */}
+                {sourceImages.length > 0 ? (
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>
-                      直接生图 · 你的想法
-                      <span className={c('cardHint')}>描述你想要的画面(产品/场景/风格),选下方风格与比例,点「生图」直接出图;也可让 AI 据此写小红书文案</span>
+                      参考素材（{sourceImages.length}）· 原图
+                      <span className={c('cardHint')}>别人的原图仅供参考,不自动进图集/发布。点「用作参考」→ 写提示词生同款质感;确实要用点「+加入图集」</span>
+                    </div>
+                    <div className={c('coverGrid')}>
+                      {sourceImages.map((url, i) => (
+                        <div key={url} className={c('coverCard')} style={url === refImage ? { outline: '2px solid #e8582e', outlineOffset: 2 } : undefined}>
+                          <img className={c('coverThumb')} style={{ aspectRatio: '3 / 4' }} src={url} alt={`参考 ${i + 1}`} onClick={() => setLightboxUrl(url)} />
+                          <div className={c('row')}>
+                            <button
+                              type="button"
+                              className={`${c('btn')} ${url === refImage ? c('btnPrimary') : ''}`}
+                              title="设为参考图:下面写提示词生成同款风格质感的新图(不盗原图)"
+                              onClick={() => setRefImage(url === refImage ? '' : url)}
+                            >
+                              {url === refImage ? '✓ 参考中' : '用作参考'}
+                            </button>
+                            <button
+                              type="button"
+                              className={c('btn')}
+                              title="确实要用这张原图 → 放进图集(注意版权,别人的图慎发)"
+                              onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
+                            >
+                              + 加入图集
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {/* 生图·你的想法:非直接生图模式也显示(便于写自定义提示词+配参考图)。 */}
+                {directImage || refImage ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      {refImage ? '写提示词 · 配上方参考图生图' : '直接生图 · 你的想法'}
+                      <span className={c('cardHint')}>
+                        {refImage
+                          ? '描述你要的画面/产品,点「生图」按上方参考图的风格质感出图(不套模板)'
+                          : '描述你想要的画面(产品/场景/风格),选下方风格与比例,点「生图」直接出图;也可让 AI 据此写小红书文案'}
+                      </span>
                     </div>
                     <textarea
                       className={c('textarea')}
@@ -874,17 +893,19 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                         disabled={galleryBusy !== null || !freePrompt.trim()}
                         onClick={() => void generateGalleryImage(freePrompt.trim())}
                       >
-                        {galleryBusy === freePrompt.trim() ? '生成中…' : '✨ 生图(用下方风格)'}
+                        {galleryBusy === freePrompt.trim() ? '生成中…' : refImage ? '✨ 按参考图生图' : '✨ 生图(用下方风格)'}
                       </button>
-                      <button
-                        type="button"
-                        className={c('btn')}
-                        disabled={effectiveAiRunning || !freePrompt.trim()}
-                        title="按你的想法让 AI 写一篇小红书文案(标题+正文+标签),到「文案」步查看"
-                        onClick={() => void startAiTask('write', { note: freePrompt.trim() })}
-                      >
-                        {effectiveAiRunning ? 'AI 写作中…' : '📝 AI 帮我写文案'}
-                      </button>
+                      {directImage ? (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={effectiveAiRunning || !freePrompt.trim()}
+                          title="按你的想法让 AI 写一篇小红书文案(标题+正文+标签),到「文案」步查看"
+                          onClick={() => void startAiTask('write', { note: freePrompt.trim() })}
+                        >
+                          {effectiveAiRunning ? 'AI 写作中…' : '📝 AI 帮我写文案'}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -1115,19 +1136,15 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                             <button type="button" className={c('btn')} disabled={i === noteImages.length - 1} onClick={() => moveImage(i, 1)} title="后移">
                               →
                             </button>
-                            {/* 以这张(原图/已生成图)作参考生同款风格新图:自动切「不用模板」,
-                                让模型学它的真实质感(2026-07-18 用户拍板:产品图参考原图风格)。 */}
+                            {/* 设为参考图:上方「参考图」栏亮起,再写提示词生同款风格
+                                (2026-07-18 用户拍板:参考图+提示词两步,不再一点就生)。 */}
                             <button
                               type="button"
-                              className={c('btn')}
-                              disabled={galleryBusy !== null}
-                              title="用这张图当风格参考,按下方描述生成同款质感的新图(自动不套模板)"
-                              onClick={() => {
-                                const desc = freePrompt.trim() || galleryPrompt.trim() || str(article?.title) || '产品图';
-                                void generateGalleryImage(desc, url);
-                              }}
+                              className={`${c('btn')} ${url === refImage ? c('btnPrimary') : ''}`}
+                              title="把这张设为参考图 → 上方写提示词按它的风格生新图(不套模板)"
+                              onClick={() => setRefImage(url === refImage ? '' : url)}
                             >
-                              仿风格
+                              {url === refImage ? '✓ 参考中' : '作参考'}
                             </button>
                             <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => removeImage(i)}>
                               删
