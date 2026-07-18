@@ -267,31 +267,6 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         </div>
       </div>
 
-      {/* 形态分岔条:点了候选「去写作」后出现。 */}
-      {pendingTopic ? (
-        <div className={c('card')} style={{ borderColor: '#e8582e' }}>
-          <div className={c('cardLabel')}>
-            「{pendingTopic.title.slice(0, 24)}」做成什么?
-            <span className={c('cardHint')}>图文只能发小红书;视频选一个主平台开写,完成后可一稿多发</span>
-          </div>
-          <div className={c('row')} style={{ gap: 8, flexWrap: 'wrap' }}>
-            {canNote ? (
-              <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void writeAsNote(pendingTopic)}>
-                🖼 图文笔记(小红书)
-              </button>
-            ) : null}
-            {videoTargets.map((t) => (
-              <button key={t.nav} type="button" className={c('btn')} onClick={() => void writeAsVideo(pendingTopic, t)}>
-                🎬 视频 · {t.label}
-              </button>
-            ))}
-            <button type="button" className={c('btn')} onClick={() => setPendingTopic(null)}>
-              取消
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       <TopicsTab
         platform={TOPIC_POOL}
         browserCollect
@@ -305,9 +280,30 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         onDelete={async (id) => {
           if (await deleteStudioTopic(TOPIC_POOL, id)) setTopics((list) => list.filter((t) => t.id !== id));
         }}
-        onWrite={(topic) => setPendingTopic(topic)}
+        onWrite={(topic) => setPendingTopic((cur) => (cur?.id === topic.id ? null : topic))}
         onAiFind={(note, picked) => void aiFind(note, picked)}
         aiBusy={effectiveAiRunning}
+        /* 行内展开(2026-07-18 用户反馈"去写作弹在顶上看不见"):形态选择就在被点
+           的那一行正下方,视线零移动。再点一次「去写作」收起。 */
+        expandedTopicId={pendingTopic?.id ?? null}
+        renderTopicExpansion={(topic) => (
+          <div className={c('row')} style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '4px 0' }}>
+            <span style={{ fontWeight: 600, fontSize: 12.5 }}>这条做成:</span>
+            {canNote ? (
+              <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void writeAsNote(topic)}>
+                🖼 图文笔记(小红书)
+              </button>
+            ) : null}
+            {videoTargets.map((t) => (
+              <button key={t.nav} type="button" className={c('btn')} onClick={() => void writeAsVideo(topic, t)}>
+                🎬 视频 · {t.label}
+              </button>
+            ))}
+            <button type="button" className={c('btn')} onClick={() => setPendingTopic(null)}>
+              取消
+            </button>
+          </div>
+        )}
       />
 
       {/* AI 任务面板(与各平台台同款):实时流式输出/工具步骤/可中止——

@@ -1,7 +1,7 @@
 // 选题导航（两个创作台共享）：手动候选 + 组合式选题雷达（数据源可勾选
 // 组合：爆文榜/搜一搜/全库搜索/需求词/对标动态）+「AI 帮我选题」。
 // 独立可用，也向写作/脚本步输送选题。
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
@@ -217,9 +217,14 @@ export interface TopicsTabProps {
   collectPlatforms?: string[];
   /** 小红书内容类型覆盖(统一创作台用:图文/视频由用户选,不再由 platform 推断)。 */
   xhsContentType?: 'image' | 'video';
+  /** 行内展开(2026-07-18 用户反馈"去写作弹在顶上看不见"):点「去写作」后在该行
+   *  正下方展开自定义内容(如形态选择)——视线零移动。传了 renderTopicExpansion 且
+   *  expandedTopicId 命中该行时渲染。 */
+  expandedTopicId?: string | null;
+  renderTopicExpansion?: (topic: MediaTopic) => ReactNode;
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, nativeFeed, onOpenLink, browserCollect = false, collectPlatforms, xhsContentType }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, nativeFeed, onOpenLink, browserCollect = false, collectPlatforms, xhsContentType, expandedTopicId, renderTopicExpansion }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   // 上次在该平台的选题搜索结果（切标签/重启后恢复，见文件顶 loadTopicSearch）。
   const restored = useMemo(() => loadTopicSearch(platform), [platform]);
@@ -487,6 +492,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const canAdd = title.trim().length > 0;
   const candidates = useMemo(() => topics.filter((t) => t.status === 'candidate'), [topics]);
   const used = useMemo(() => topics.filter((t) => t.status === 'used'), [topics]);
+  // 已用过默认折叠(2026-07-18 用户反馈:候选区顺序要贴操作逻辑,历史项别占视线)。
+  const [showUsed, setShowUsed] = useState(false);
 
   function toggleFeed(id: TopicFeedKind) {
     setEnabledFeeds((prev) => {
@@ -1018,53 +1025,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           </table>
         ) : null}
       </div>
-      {aiOnly ? null : (
-      <div className={c('card')}>
-        <div className={c('cardLabel')}>
-          添加选题
-          <span className={c('cardHint')}>手动记一个想法，或把 AI 对话/爆文榜里的候选沉淀进来</span>
-        </div>
-        <div className={c('row')}>
-          <input
-            className={`${c('input')} ${c('grow')}`}
-            value={title}
-            placeholder="选题标题（必填）"
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submit();
-            }}
-          />
-        </div>
-        <div className={c('row')}>
-          <input
-            className={`${c('input')} ${c('grow')}`}
-            value={angle}
-            placeholder="切入角度（可选）"
-            onChange={(e) => setAngle(e.target.value)}
-          />
-          <input
-            className={c('input')}
-            style={{ width: 140 }}
-            value={source}
-            placeholder="来源（可选）"
-            onChange={(e) => setSource(e.target.value)}
-          />
-          <input
-            className={`${c('input')} ${c('grow')}`}
-            value={url}
-            placeholder="原文链接（可选）"
-            onChange={(e) => setUrl(e.target.value)}
-          />
-          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={!canAdd} onClick={() => void submit()}>
-            添加
-          </button>
-        </div>
-      </div>
-      )}
       <div className={c('card')}>
         <div className={c('cardLabel')}>候选选题（{candidates.length}）</div>
         {candidates.length === 0 ? (
-          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : '还没有候选选题——在上面添加第一个。'}</div>
+          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
         ) : (
           <table className={c('table')}>
             <thead>
@@ -1078,7 +1042,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             </thead>
             <tbody>
               {candidates.map((t) => (
-                <tr key={t.id}>
+                <Fragment key={t.id}>
+                <tr>
                   <td>{t.title}</td>
                   <td style={{ whiteSpace: 'nowrap', color: '#e8582e', fontWeight: 600 }}>{t.heat || '—'}</td>
                   <td>{t.angle || '—'}</td>
@@ -1112,6 +1077,15 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     </button>
                   </td>
                 </tr>
+                {/* 行内展开(点「去写作」后就在本行正下方,视线零移动)。 */}
+                {renderTopicExpansion && expandedTopicId === t.id ? (
+                  <tr key={`${t.id}-x`}>
+                    <td colSpan={5} style={{ background: 'var(--od-surface-muted, #faf6f0)', borderLeft: '3px solid #e8582e' }}>
+                      {renderTopicExpansion(t)}
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -1170,7 +1144,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       ) : null}
       {used.length > 0 ? (
         <div className={c('card')}>
-          <div className={c('cardLabel')}>已用过（{used.length}）</div>
+          <button type="button" className={c('cardLabel')} style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', width: '100%', textAlign: 'left' }} onClick={() => setShowUsed((v) => !v)}>
+            已用过（{used.length}）{showUsed ? ' ▾ 收起' : ' ▸ 展开'}
+          </button>
+          {showUsed ? (
           <table className={c('table')}>
             <tbody>
               {used.map((t) => (
@@ -1186,8 +1163,53 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               ))}
             </tbody>
           </table>
+          ) : null}
         </div>
       ) : null}
+      {/* 手动添加(低频,垫底;2026-07-18 用户反馈顺序不符操作逻辑:找题→候选→手动兜底) */}
+      {aiOnly ? null : (
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          添加选题
+          <span className={c('cardHint')}>手动记一个想法，或把 AI 对话/爆文榜里的候选沉淀进来</span>
+        </div>
+        <div className={c('row')}>
+          <input
+            className={`${c('input')} ${c('grow')}`}
+            value={title}
+            placeholder="选题标题（必填）"
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submit();
+            }}
+          />
+        </div>
+        <div className={c('row')}>
+          <input
+            className={`${c('input')} ${c('grow')}`}
+            value={angle}
+            placeholder="切入角度（可选）"
+            onChange={(e) => setAngle(e.target.value)}
+          />
+          <input
+            className={c('input')}
+            style={{ width: 140 }}
+            value={source}
+            placeholder="来源（可选）"
+            onChange={(e) => setSource(e.target.value)}
+          />
+          <input
+            className={`${c('input')} ${c('grow')}`}
+            value={url}
+            placeholder="原文链接（可选）"
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={!canAdd} onClick={() => void submit()}>
+            添加
+          </button>
+        </div>
+      </div>
+      )}
     </>
   );
 }
