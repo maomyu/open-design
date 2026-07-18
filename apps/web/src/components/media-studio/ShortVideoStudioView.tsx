@@ -240,6 +240,16 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   // 试听音色：preview 音频独立存放，绝不覆盖正式配音。
   const [voicePreviewUrl, setVoicePreviewUrl] = useState('');
   const [voicePreviewBusy, setVoicePreviewBusy] = useState(false);
+  // 音色预设(2026-07-19):「制作视频→音色设计」保存的音色,配音时选用。
+  // '' = 不用预设(原火山复刻音色链路,行为不变)。
+  const [voicePresets, setVoicePresets] = useState<Array<{ id: string; name: string; provider: string; speakerId?: string }>>([]);
+  const [voicePresetId, setVoicePresetId] = useState('');
+  useEffect(() => {
+    void fetch('/api/media-studio/voice-presets')
+      .then((r) => (r.ok ? r.json() : { presets: [] }))
+      .then((d: { presets?: Array<{ id: string; name: string; provider: string; speakerId?: string }> }) => setVoicePresets(d.presets ?? []))
+      .catch(() => undefined);
+  }, []);
   const [videoUploadBusy, setVideoUploadBusy] = useState(false);
   // 数字人口型替换(素材车间直通,PR2):原视频资产 URL + 任务状态。成片直写 extra.videoPath。
   const [lipsyncSrcUrl, setLipsyncSrcUrl] = useState('');
@@ -614,7 +624,10 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
     setTtsBusy(true);
     setNotice(null);
     const voice = str(extra.voice);
-    const result = await synthesizeStudioTts(PLATFORM, article.id, voice ? { voice } : {});
+    const result = await synthesizeStudioTts(PLATFORM, article.id, {
+      ...(voice ? { voice } : {}),
+      ...(voicePresetId ? { presetId: voicePresetId } : {}),
+    });
     setTtsBusy(false);
     if (result.error) {
       setNotice({ ok: false, text: result.error });
@@ -932,14 +945,28 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
               <>
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
-                    配音（火山复刻音色）· 可选
-                    <span className={c('cardHint')}>用口播脚本直接合成；音色 ID 以 S_ 开头为复刻音色，空用默认「解说1号」</span>
+                    配音 · 可选
+                    <span className={c('cardHint')}>用口播脚本直接合成；可选「音色设计」保存的音色预设，或直接填火山复刻音色 ID</span>
                   </div>
                   <div className={c('row')}>
+                    <select
+                      className={c('select')}
+                      value={voicePresetId}
+                      title="音色预设——在「制作视频→音色设计」里设计并保存"
+                      onChange={(e) => setVoicePresetId(e.target.value)}
+                    >
+                      <option value="">默认链路(音色 ID/解说1号)</option>
+                      {voicePresets.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          🎙 {p.name}（{p.provider === 'qwen' ? '千问' : '火山'}）
+                        </option>
+                      ))}
+                    </select>
                     <input
                       className={`${c('input')} ${c('grow')}`}
                       value={str(extra.voice)}
                       placeholder="音色 ID（可选，默认 S_M46v4EJ42 解说1号）"
+                      disabled={!!voicePresetId}
                       onChange={(e) => editArticle({ extra: { voice: e.target.value } })}
                     />
                     <button
@@ -954,6 +981,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                           const result = await synthesizeStudioTts(PLATFORM, article.id, {
                             text: '大家好，这是当前音色的试听效果，听听语气和节奏合不合适。',
                             ...(voice ? { voice } : {}),
+                            ...(voicePresetId ? { presetId: voicePresetId } : {}),
                             preview: true,
                           });
                           setVoicePreviewBusy(false);

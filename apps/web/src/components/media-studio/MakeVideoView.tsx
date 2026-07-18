@@ -217,8 +217,25 @@ export function MakeVideoView(): JSX.Element {
           {vdResult ? (
             <>
               <audio controls src={vdResult.audioUrl} style={{ height: 32 }} />
-              {vdResult.speakerId ? <span className={c('cardHint')}>音色位:{vdResult.speakerId}(配音可直接用)</span> : null}
-              {vdResult.provider === 'qwen' ? <span className={c('cardHint')}>复用参数:基底 {vdResult.voice} + 这段描述(配音时同参即同款声音)</span> : null}
+              <button
+                type="button"
+                className={c('btn')}
+                title="存为音色预设——各平台「配音」步即可选用这个声音"
+                onClick={() => {
+                  void (async () => {
+                    const resp = await fetch('/api/media-studio/voice-presets', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name: vdPrompt.trim().slice(0, 12), provider: vdResult.provider, ...(vdResult.voice ? { voice: vdResult.voice } : {}), ...(vdResult.prompt ? { prompt: vdResult.prompt } : {}), ...(vdResult.speakerId ? { speakerId: vdResult.speakerId } : {}) }),
+                    });
+                    if (resp.ok) studioToast.ok('已存为音色预设——去平台「配音」步选用');
+                    else studioToast.err('保存失败');
+                  })();
+                }}
+              >
+                💾 保存音色
+              </button>
+              {vdResult.speakerId ? <span className={c('cardHint')}>音色位:{vdResult.speakerId}</span> : null}
             </>
           ) : null}
         </div>
@@ -227,7 +244,7 @@ export function MakeVideoView(): JSX.Element {
       <div className={c('card')}>
         <div className={c('cardLabel')}>
           数字人 · 口型替换
-          <span className={c('cardHint')}>上传你拍好的原始视频 + 新口播音频,AI 把视频里的口型替换成匹配新音频(火山·视频改口型)</span>
+          <span className={c('cardHint')}>原始视频 + 新口播音频 → AI 口型同步成片(火山 Seedance 2.0)。真人素材需在火山控制台做「已授权真人素材」登记,否则平台会拦;虚拟形象/平台产物直接可用。本机上传的视频会按首帧图生口播(视频参考需公网 URL)</span>
         </div>
 
         <div className={c('row')} style={{ gap: 12, flexWrap: 'wrap' }}>

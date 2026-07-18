@@ -467,6 +467,20 @@ export interface VoiceDesignResponse {
   prompt?: string;
 }
 
+/** 已保存的音色预设（音色设计的产物，配音步选用）。 */
+export interface VoicePreset {
+  id: string;
+  name: string;
+  provider: 'qwen' | 'volc';
+  /** qwen：基底音色（Ethan/Cherry…）。 */
+  voice?: string;
+  /** qwen：音色描述指令（instructions）。 */
+  prompt?: string;
+  /** volc：voice_design 训练出的音色代号（S_ 开头）。 */
+  speakerId?: string;
+  createdAt: number;
+}
+
 /** 浏览器注入发布可用的平台（桌面端 webview 注入器白名单）。 */
 export type StudioHandoffPlatform = 'zhihu' | 'weibo' | 'xiaohongshu' | 'douyin' | 'kuaishou';
 

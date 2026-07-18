@@ -14,7 +14,9 @@
 //   GET/POST/PATCH/DELETE   /api/media-studio/:platform/topics[/:id]
 //   GET/POST/DELETE         /api/media-studio/:platform/snippets[/:id]
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { resolveBakuanEngine } from './media-studio/bakuan-engine.js';
 import path from 'node:path';
 import express from 'express';
 import type { Express } from 'express';
@@ -741,6 +743,42 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     }
   });
 
+  // ---- 音色预设(音色设计的产物,配音步选用;存独立 JSON,per-namespace) ----
+  const voicePresetsPath = path.join(paths.RUNTIME_DATA_DIR, 'voice-presets.json');
+  const readVoicePresets = async (): Promise<Array<Record<string, unknown>>> => {
+    try {
+      const arr = JSON.parse(await readFile(voicePresetsPath, 'utf8'));
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  };
+  app.get('/api/media-studio/voice-presets', async (_req, res) => {
+    res.json({ presets: await readVoicePresets() });
+  });
+  app.post('/api/media-studio/voice-presets', async (req, res) => {
+    const b = (req.body ?? {}) as { name?: string; provider?: string; voice?: string; prompt?: string; speakerId?: string };
+    const provider = b.provider === 'volc' ? 'volc' : 'qwen';
+    const name = String(b.name ?? '').trim() || String(b.prompt ?? '').trim().slice(0, 12) || '未命名音色';
+    if (provider === 'qwen' && !String(b.prompt ?? '').trim()) return bad(res, 400, 'qwen 预设需要 prompt(音色描述)');
+    if (provider === 'volc' && !/^S_/.test(String(b.speakerId ?? ''))) return bad(res, 400, 'volc 预设需要 speakerId(S_ 开头)');
+    const presets = await readVoicePresets();
+    const preset = {
+      id: randomUUID(), name, provider,
+      ...(b.voice ? { voice: String(b.voice) } : {}),
+      ...(b.prompt ? { prompt: String(b.prompt) } : {}),
+      ...(b.speakerId ? { speakerId: String(b.speakerId) } : {}),
+      createdAt: Date.now(),
+    };
+    presets.unshift(preset);
+    await writeFile(voicePresetsPath, JSON.stringify(presets, null, 2), 'utf8');
+    res.json({ preset });
+  });
+  app.delete('/api/media-studio/voice-presets/:id', async (req, res) => {
+    const presets = await readVoicePresets();
+    const next = presets.filter((p) => p.id !== req.params.id);
+    await writeFile(voicePresetsPath, JSON.stringify(next, null, 2), 'utf8');
+    res.json({ ok: true });
+  });
+
   // ---- 制作视频(2026-07-17 用户拍板:横切素材车间;首功能=数字人口型替换) ----
   // 上传免 article(固定 'make-video' 资产桶);口型替换接火山智能视觉「视频改口型」。
   // 火山侧需开通该产品并配 AK/SK(VOLC_VISUAL_ACCESS_KEY/VOLC_VISUAL_SECRET_KEY,
@@ -772,29 +810,100 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     }
   });
 
+  // 口型替换切 Seedance 2.0(2026-07-19,链路已真机验证):多模态参考生视频——
+  // 参考视频/图(base64 或公网 URL)+ 参考音频(base64)+ 提示词 → 口型同步成片。
+  // ⚠️ 平台限制:直接上传含真人的素材会被拦(InputVideoSensitiveContentDetected),
+  // 需在火山控制台做「已授权真人素材」登记或用虚拟形象——错误原样透传给界面。
+  // 视频仅支持公网 URL(Ark 不收 base64 视频):本地资产则用引擎 ffmpeg 抽首帧降级
+  // 「图生数字人口播」(图支持 base64)。任务映射内存持有(重启丢任务可接受,Ark 侧 7 天可查)。
+  const lipsyncJobs = new Map<string, { taskId: string; mode: 'video' | 'image' }>();
+  const localAssetToB64 = async (u: string, kind: 'audio' | 'image'): Promise<string | null> => {
+    if (!u.startsWith(STUDIO_ASSET_URL_PREFIX)) return null;
+    const rest = u.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
+    if (rest.length !== 2) return null;
+    const abs = path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? ''));
+    const buf = await readFile(abs);
+    const ext = path.extname(abs).toLowerCase().replace('.', '') || (kind === 'audio' ? 'wav' : 'png');
+    const mime = kind === 'audio' ? `audio/${ext === 'mp3' ? 'mp3' : 'wav'}` : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  };
   app.post('/api/media-studio/make-video/lipsync', async (req, res) => {
     const body = (req.body ?? {}) as { videoUrl?: string; audioUrl?: string };
     if (!body.videoUrl || !body.audioUrl) return bad(res, 400, '缺少 videoUrl / audioUrl');
-    const ak = process.env.VOLC_VISUAL_ACCESS_KEY ?? '';
-    const sk = process.env.VOLC_VISUAL_SECRET_KEY ?? '';
-    if (!ak || !sk) {
-      return bad(
-        res,
-        503,
-        '数字人口型替换还没接通:需在火山引擎开通「智能视觉·视频改口型」并配置 ' +
-          'VOLC_VISUAL_ACCESS_KEY / VOLC_VISUAL_SECRET_KEY(火山控制台-访问控制-密钥管理)。' +
-          '开通后重启应用即可用。',
-      );
+    try {
+      const ark = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine');
+      if (!ark.apiKey) return bad(res, 422, '还没配置火山方舟 ARK API Key(providers.volcengine)。');
+      // 音频:本地资产转 base64;公网 URL 直用。
+      const audio = (await localAssetToB64(body.audioUrl, 'audio')) ?? body.audioUrl;
+      const content: Array<Record<string, unknown>> = [];
+      let mode: 'video' | 'image' = 'video';
+      if (/^https?:\/\//i.test(body.videoUrl)) {
+        content.push({ type: 'video_url', video_url: { url: body.videoUrl }, role: 'reference_video' });
+      } else {
+        // 本地视频 → 引擎 ffmpeg 抽首帧 → 图生口播(Ark 视频不收 base64)。
+        mode = 'image';
+        const rest = body.videoUrl.startsWith(STUDIO_ASSET_URL_PREFIX)
+          ? body.videoUrl.slice(STUDIO_ASSET_URL_PREFIX.length).split('/') : null;
+        if (!rest || rest.length !== 2) return bad(res, 400, '视频需为公网 URL 或本机上传的素材');
+        const absVideo = path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? ''));
+        // ffmpeg 来自引擎 runtime(packaged 自带静态 ffmpeg;dev 用系统 PATH)。
+        const eng = await resolveBakuanEngine({
+          projectRoot: paths.PROJECT_ROOT,
+          dataDir: paths.RUNTIME_DATA_DIR,
+          resourceRoot: (process.env.OD_RESOURCE_ROOT ?? '').trim() || null,
+        });
+        const frame = path.join(path.dirname(absVideo), `frame-${Date.now()}.jpg`);
+        await new Promise<void>((resolve, reject) => {
+          execFile('ffmpeg', ['-y', '-ss', '0.5', '-i', absVideo, '-frames:v', '1', frame], { env: eng.env as NodeJS.ProcessEnv, timeout: 60_000 }, (e) => (e ? reject(e) : resolve()));
+        });
+        const buf = await readFile(frame);
+        content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${buf.toString('base64')}` } });
+      }
+      content.unshift({
+        type: 'text',
+        text: mode === 'video'
+          ? '以参考视频为基础做口播替换:保持人物形象、服装、姿态、场景与机位完全不变,人物自然口播,口型与参考音频的语音精准同步,声音使用参考音频。'
+          : '以这张图片为首帧,让画面中的人物自然开口说话,口型与参考音频的语音精准同步,声音使用参考音频,轻微自然的身体动作,场景与机位保持不变。',
+      });
+      content.push({ type: 'audio_url', audio_url: { url: audio }, role: 'reference_audio' });
+      const resp = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ark.apiKey}` },
+        body: JSON.stringify({ model: 'doubao-seedance-2-0-260128', content, resolution: '720p', duration: -1, generate_audio: true, watermark: false }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+      if (!resp.ok || !data?.id) {
+        return bad(res, 502, `口型替换任务提交失败:${String(data?.error?.message ?? data?.message ?? resp.status)}`);
+      }
+      const jobId = randomUUID();
+      lipsyncJobs.set(jobId, { taskId: String(data.id), mode });
+      res.json({ id: jobId, mode });
+    } catch (err) {
+      return bad(res, 500, `口型替换失败:${err instanceof Error ? err.message : String(err)}`);
     }
-    // TODO(下一步): 用 AK/SK 走火山 v4 签名调 visual.volcengineapi.com 提交
-    // 「视频改口型」任务(接口文档 docs/85128/1463538,req_key 按官方文档核对),
-    // 返回任务 id;此占位保证配了凭证也不误报"已提交"。
-    return bad(res, 501, '口型替换接口对接中(凭证已就位)——待按火山官方文档核对 req_key 后开通,本条报错属预期。');
   });
 
-  app.get('/api/media-studio/make-video/lipsync/:id', (_req, res) => {
-    // 任务查询——随提交实现一起接火山查询端点;当前无任务可查。
-    bad(res, 404, 'lipsync job not found');
+  app.get('/api/media-studio/make-video/lipsync/:id', async (req, res) => {
+    const job = lipsyncJobs.get(req.params.id);
+    if (!job) return bad(res, 404, 'lipsync job not found(应用重启会丢任务映射,请重新提交)');
+    try {
+      const ark = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine');
+      const resp = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(job.taskId)}`, {
+        headers: { Authorization: `Bearer ${ark.apiKey}` }, signal: AbortSignal.timeout(30_000),
+      });
+      const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+      const st = String(data?.status ?? '');
+      if (st === 'succeeded') {
+        return res.json({ id: req.params.id, status: 'done', resultUrl: String(data?.content?.video_url ?? '') });
+      }
+      if (st === 'failed' || st === 'expired') {
+        return res.json({ id: req.params.id, status: 'error', error: String(data?.error?.message ?? st) });
+      }
+      return res.json({ id: req.params.id, status: 'running' });
+    } catch (err) {
+      return res.json({ id: req.params.id, status: 'running', note: String(err instanceof Error ? err.message : err) });
+    }
   });
 
   // ---- 原文抓取（素材简报的原料;research AI 任务也走这里） ----
@@ -1107,7 +1216,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const article = getArticle(db, req.params.id);
     if (!article) return bad(res, 404, 'article not found');
     try {
-      const body = (req.body ?? {}) as { text?: string; voice?: string; preview?: boolean };
+      const body = (req.body ?? {}) as { text?: string; voice?: string; preview?: boolean; presetId?: string };
       const text = (body.text ?? '').trim() || scriptToSpeech(article.bodyMd);
       if (!text) return bad(res, 400, '没有可配音的文本——先在「脚本」里写口播稿');
       const keys = await resolveStudioKeys(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT);
@@ -1116,12 +1225,69 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       // preview（试听音色）只产音频不落库，绝不覆盖正式配音。
       const isPreview = body.preview === true;
       const file = `${isPreview ? 'voice-preview' : 'voice'}-${Date.now()}.wav`;
+      // 音色预设(2026-07-19):选了「音色设计」保存的预设时,按预设通道直调——
+      // qwen=千问 instruct TTS(voice+描述指令);volc=openspeech seed-icl-2.0(speaker_id)。
+      // 未选预设走原火山工作台脚本链路,行为不变。
+      const presetId = String(body.presetId ?? '').trim();
+      if (presetId) {
+        const presets = await readVoicePresets();
+        const preset = presets.find((p) => p.id === presetId) as { provider?: string; voice?: string; prompt?: string; speakerId?: string } | undefined;
+        if (!preset) return bad(res, 404, '音色预设不存在(可能已删除)——去「制作视频→音色设计」重新保存');
+        if (preset.provider === 'qwen') {
+          const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
+          if (!cfg.apiKey) return bad(res, 422, '千问(百炼)API Key 未配置(providers.qwenBailian)');
+          const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+          const r = await fetch(`${base}/api/v1/services/aigc/multimodal-generation/generation`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+            body: JSON.stringify({ model: 'qwen3-tts-instruct-flash', input: { text: text.slice(0, 2000), voice: preset.voice || 'Ethan', instructions: (preset.prompt || '').slice(0, 300) } }),
+            signal: AbortSignal.timeout(120_000),
+          });
+          const d = (await r.json().catch(() => ({}))) as Record<string, any>;
+          const audioUrl2 = d?.output?.audio?.url;
+          if (!r.ok || !audioUrl2) return bad(res, 502, `千问配音失败:${String(d?.message ?? d?.code ?? r.status)}`);
+          const ar = await fetch(audioUrl2, { signal: AbortSignal.timeout(60_000) });
+          if (!ar.ok) return bad(res, 502, `千问配音下载失败 HTTP ${ar.status}`);
+          await writeFile(path.join(dir, file), Buffer.from(await ar.arrayBuffer()));
+        } else {
+          const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcSpeech');
+          if (!cfg.apiKey) return bad(res, 422, '火山「语音技术」X-Api-Key 未配置(providers.volcSpeech)');
+          if (!preset.speakerId) return bad(res, 400, '该预设缺少 speakerId');
+          // openspeech v3 unidirectional(HTTP chunked):逐行 JSON,聚合 data(base64)段。
+          const r = await fetch('https://openspeech.bytedance.com/api/v3/tts/unidirectional', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Api-Key': cfg.apiKey,
+              'X-Api-Resource-Id': 'seed-icl-2.0',
+              'X-Api-Request-Id': randomUUID(),
+            },
+            body: JSON.stringify({ req_params: { text: text.slice(0, 3000), speaker: preset.speakerId, audio_params: { format: 'mp3', sample_rate: 24000 } } }),
+            signal: AbortSignal.timeout(180_000),
+          });
+          if (!r.ok) return bad(res, 502, `火山配音失败 HTTP ${r.status}: ${(await r.text().catch(() => '')).slice(0, 150)}`);
+          const raw = await r.text();
+          const chunks: Buffer[] = [];
+          for (const line of raw.split('\n')) {
+            const t = line.trim();
+            if (!t) continue;
+            try {
+              const j = JSON.parse(t) as { data?: string; code?: number; message?: string };
+              if (typeof j.data === 'string' && j.data) chunks.push(Buffer.from(j.data, 'base64'));
+              else if (j.code && j.code !== 0 && j.code !== 20000000) return bad(res, 502, `火山配音失败:${j.message ?? j.code}`);
+            } catch { /* 跳过非 JSON 行 */ }
+          }
+          if (!chunks.length) return bad(res, 502, '火山配音没有返回音频数据');
+          await writeFile(path.join(dir, file), Buffer.concat(chunks));
+        }
+      } else {
       await synthesizeVoice({
         text,
         ...(body.voice ? { voice: body.voice } : {}),
         outFile: path.join(dir, file),
         env: keys,
       });
+      }
       const url = `${STUDIO_ASSET_URL_PREFIX}${encodeURIComponent(article.id)}/${encodeURIComponent(file)}`;
       const updated = isPreview
         ? article

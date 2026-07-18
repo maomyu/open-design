@@ -2354,7 +2354,9 @@ async function runStudio(args) {
   od studio find --feed tikhub --target douyin|xiaohongshu|kuaishou|zhihu|weibo [--mode hot|search] [--keyword w]
   od studio topic-verify --url u · topic-comments --url u · account-rank [--type N] [--page N]
   od studio fetch --url "<原文链接>"                          # 抓原文转 markdown(素材)
-  od studio voice-design --prompt "<音色描述>" --text "<试听文本>" [--provider qwen|volc] [--voice v]  # 音色设计→试听音频
+  od studio voice-design --prompt "<音色描述>" --text "<试听文本>" [--provider qwen|volc] [--voice v] [--save 名字]  # 音色设计→试听
+  od studio voice-presets [--json]                            # 已存音色预设
+  od studio lipsync --video <URL> --audio <URL>               # 口型替换(Seedance 2.0),轮询到出片
 
 【AI 任务】(与界面「AI 帮我…」同一引擎;跑完产物自动落库)
   od studio ai <topics|write|revise|ai-check|script|research|review> [文章id]
@@ -2554,7 +2556,52 @@ async function runStudio(args) {
     });
     if (!resp.ok) return fail(resp, 'voice design');
     const data = await resp.json();
+    // --save "名字":设计成功即存为音色预设(配音步可选用)。
+    if (typeof flags.save === 'string' && flags.save.trim()) {
+      const saveResp = await fetch(`${root}/voice-presets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: flags.save.trim(),
+          provider: data?.provider,
+          ...(data?.voice ? { voice: data.voice } : {}),
+          ...(data?.prompt ? { prompt: data.prompt } : {}),
+          ...(data?.speakerId ? { speakerId: data.speakerId } : {}),
+        }),
+      });
+      if (saveResp.ok) console.log(`已保存音色预设「${flags.save.trim()}」`);
+    }
     return out(data, `voice designed (${data?.provider})  试听: ${data?.audioUrl}${data?.speakerId ? `  speaker: ${data.speakerId}` : ''}`);
+  }
+  if (sub === 'voice-presets') {
+    const resp = await fetch(`${root}/voice-presets`);
+    if (!resp.ok) return fail(resp, 'voice presets');
+    const data = await resp.json();
+    const rows = (data?.presets ?? []).map((p) => `${p.id}  [${p.provider}] ${p.name}${p.speakerId ? `  ${p.speakerId}` : ''}`);
+    return out(data, rows.join('\n') || '(还没有音色预设——od studio voice-design --save "名字" 保存)');
+  }
+  if (sub === 'lipsync') {
+    // 口型替换(Seedance 2.0):提交并轮询到终态。
+    if (typeof flags.video !== 'string' || typeof flags.audio !== 'string') {
+      console.error('Usage: od studio lipsync --video <公网URL|资产URL> --audio <URL>');
+      process.exit(2);
+    }
+    const resp = await fetch(`${root}/make-video/lipsync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoUrl: flags.video, audioUrl: flags.audio }),
+    });
+    if (!resp.ok) return fail(resp, 'lipsync submit');
+    const j = await resp.json();
+    console.log(`任务已提交 (${j?.mode})  轮询中…`);
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 15000));
+      const q = await fetch(`${root}/make-video/lipsync/${encodeURIComponent(j.id)}`);
+      const s = await q.json();
+      if (s?.status === 'done') return out(s, `完成: ${s.resultUrl}`);
+      if (s?.status === 'error') { console.error(`失败: ${s.error}`); process.exit(1); }
+      process.stderr.write('.');
+    }
   }
   if (sub === 'topic-add') {
     if (typeof flags.title !== 'string' || !flags.title.trim()) {

@@ -869,7 +869,7 @@ export async function uploadStudioVideo(
 export async function synthesizeStudioTts(
   platform: string,
   articleId: string,
-  body: { text?: string; voice?: string; preview?: boolean },
+  body: { text?: string; voice?: string; preview?: boolean; presetId?: string },
 ): Promise<{ url?: string; article?: MediaArticle; error?: string }> {
   try {
     const resp = await fetch(
