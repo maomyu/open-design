@@ -23,7 +23,8 @@
 
 ## Windows 打包机(局域网 192.168.1.11,仓库 E:\code\baochuang\open-design)
 
-- win 链路 2026-07-18 已补齐(commit a5fb3fc8/ba900ffe/3873bafe):provision win32 平台化、GBK 修复、win license 内嵌。构建命令:`pnpm tools-pack win build --to nsis --namespace baochuang --portable`(交付必须 `--portable`,否则本机路径烙进安装包;交付前设 `OD_PACK_CUSTOMER=煜之禾` 且 customers/ 下要有已签 license.json——**签名私钥只在 mac,永远不复制到 win**,只传签好的 license.json)。
+- win 链路 2026-07-18 已补齐(commit a5fb3fc8/ba900ffe/3873bafe):provision win32 平台化、GBK 修复、win license 内嵌。构建命令:`pnpm tools-pack win build --to nsis --namespace baochuang --portable`(交付必须 `--portable`,否则本机路径烙进安装包;交付前设 `OD_PACK_CUSTOMER=煜之禾`(ssh 下用 ASCII 别名 `yuzhihe`)且 customers/ 下要有已签 license.json——**签名私钥只在 mac,永远不复制到 win**,只传签好的 license.json)。
+- **交付 namespace 已拍板(2026-07-18 用户定):win 客户包就用 `baochuang`,不改 default**——多客户装同一台机器时快捷方式/卸载项(WorkBuild baochuang)天然可区分;注册表卸载键随 namespace 定死,后续升级包必须沿用同 namespace。未来其他客户包各用自己的 namespace(slug)。
 - win vendor 五件套(python-runtime/wheels/ffmpeg/lark-cli/requirements-runtime)是 win 机本地产物,重生成方法见 `tools/pack/VENDOR.win.md`;出厂 .env 模板是 tracked 的 `bakuan-engine/.env.factory`(密钥全空),两台打包机共用,别再手搓。
 - win 机 push GitHub 会卡 HTTPS 凭据(ssh 会话弹不出登录框):**由 mac 收提交再推**——win 机 `git bundle create C:\Users\Administrator\wip.bundle <base>..HEAD`,mac `scp` 回来 `git fetch <bundle> HEAD`,验完 typecheck 后 mac 推两跳。直接 `git fetch ssh://.../E:/...` 会因 win 默认 PATH 无 git-upload-pack 而失败。
 - ssh 远端 shell 对 `chcp`/`>nul` 组合会炸("系统找不到指定的路径"),带中文的 git commit 一律 `scp` 消息文件 + `git commit -F` 提交,提交后回读 `git log --format=%s -1` 校验没变 mojibake。
