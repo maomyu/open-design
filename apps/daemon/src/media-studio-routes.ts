@@ -139,6 +139,47 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     }
   });
 
+  // 一稿多发(统一创作台 PR3,2026-07-18):把一条做好的稿克隆到其他平台——
+  // 每个目标平台一份克隆稿(extra.sourceArticleId 指回源稿 + targetPlatform 归属),
+  // 复用各平台现有发布链路,零迁移。幂等:同源稿+同平台已有克隆则复用不重建。
+  app.post('/api/media-studio/:platform/articles/:id/distribute', (req, res) => {
+    const source = getArticle(db, req.params.id);
+    if (!source) return bad(res, 404, 'article not found');
+    const platforms = (Array.isArray(req.body?.platforms) ? (req.body.platforms as unknown[]) : [])
+      .map((p) => String(p).trim())
+      .filter(Boolean);
+    if (platforms.length === 0) return bad(res, 400, '缺少 platforms(目标平台中文名数组)');
+    try {
+      const family = listArticles(db, req.params.platform);
+      const results: Array<{ platform: string; articleId: string; reused: boolean }> = [];
+      for (const target of platforms) {
+        // 幂等查重:已有 同源+同平台 的克隆稿(summary 带 subPlatform=targetPlatform)。
+        const existing = family.find((a) => {
+          if (a.id === source.id) return false;
+          if ((a as { subPlatform?: string }).subPlatform !== target) return false;
+          const full = getArticle(db, a.id);
+          return full ? (full.extra as Record<string, unknown>).sourceArticleId === source.id : false;
+        });
+        if (existing) {
+          results.push({ platform: target, articleId: existing.id, reused: true });
+          continue;
+        }
+        const clone = createArticle(db, req.params.platform, {
+          title: source.title,
+          topic: source.topic,
+          headerMd: source.headerMd,
+          bodyMd: source.bodyMd,
+          footerMd: source.footerMd,
+          extra: { ...source.extra, targetPlatform: target, sourceArticleId: source.id },
+        });
+        results.push({ platform: target, articleId: clone.id, reused: false });
+      }
+      res.json({ results });
+    } catch (err) {
+      bad(res, 400, String(err instanceof Error ? err.message : err));
+    }
+  });
+
   app.get('/api/media-studio/:platform/articles/:id', (req, res) => {
     const article = getArticle(db, req.params.id);
     if (!article) return bad(res, 404, 'article not found');

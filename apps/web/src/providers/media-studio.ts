@@ -1264,3 +1264,23 @@ export async function queryLipsyncJob(id: string): Promise<{ id: string; status:
     return null;
   }
 }
+
+/** 一稿多发(PR3):把本稿克隆到其他平台(targetPlatform 归属),幂等复用已有克隆。 */
+export async function distributeStudioArticle(
+  platform: string,
+  articleId: string,
+  platforms: string[],
+): Promise<{ results: Array<{ platform: string; articleId: string; reused: boolean }> } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/distribute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platforms }),
+    });
+    const d = (await resp.json().catch(() => ({}))) as { results?: Array<{ platform: string; articleId: string; reused: boolean }>; error?: string };
+    if (!resp.ok) return { error: d.error ?? `分发失败(${resp.status})` };
+    return { results: d.results ?? [] };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
