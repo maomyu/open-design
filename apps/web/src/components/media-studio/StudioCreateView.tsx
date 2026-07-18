@@ -1,7 +1,7 @@
 // 统一创作台(2026-07-18 用户拍板路线B;同日修正:选题平台【单选】+平台导航入口移除;
 // 再修正:选题平台区卡片化+AI 任务接 StudioAiPanel 实时进度,用户反馈"看不到智能体在干嘛")。
-// 唯一创作动线:选平台找灵感(chip 单选,逐平台选题) → 「去写作」形态分岔(图文→小红书
-// 图文台;视频→目标平台建稿跳对应台,源平台置顶) → 各台完成后发布步「一稿多发」。
+// 唯一创作动线(2026-07-18 终版):顶部选好 平台+形态(=创作意图声明) → 候选点
+// 「去创作」一键直达(不二次询问)→ 嵌入台就地展开(零跳页)→ 发布步「一稿多发」。
 // 平台 view/路由保留(跳转到达+标签栏可回),导航不再显示平台入口(与创作重复)。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MediaTopic } from '@open-design/contracts';
@@ -85,8 +85,6 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
   // 页面刷新/热更后认领孤儿 AI 任务,进度不丢。
   const { orphan, cancelOrphan } = useOrphanRun(aiTask === null);
   const effectiveAiRunning = aiRunning || orphan != null;
-  // 「开写」形态分岔:暂存选中的选题,渲染形态/目标选择条。
-  const [pendingTopic, setPendingTopic] = useState<MediaTopic | null>(null);
   // 单页创作流:选完形态就地展开嵌入台(零跳页)。刷新后从 localStorage 恢复。
   const [activeDraft, setActiveDraftRaw] = useState<ActiveDraft | null>(loadActiveDraft);
   const setActiveDraft = (d: ActiveDraft | null) => {
@@ -137,7 +135,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
   const refreshAfterAiTask = useCallback(
     (outcome: StudioAiOutcome) => {
       void refreshTopics();
-      if (outcome === 'done') studioToast.ok('AI 选题完成——候选已更新,点「去写作」开做。');
+      if (outcome === 'done') studioToast.ok('AI 选题完成——候选已更新,点「去创作」开做。');
     },
     [refreshTopics],
   );
@@ -154,7 +152,6 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       studioToast.err('建稿失败——稍后再试');
       return;
     }
-    setPendingTopic(null);
     setActiveDraft({ articleId: created.id, form: 'note', title: topic.title });
   }
 
@@ -170,18 +167,22 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       studioToast.err('建稿失败——稍后再试');
       return;
     }
-    setPendingTopic(null);
     setTopics((list) => list.map((t) => (t.id === topic.id ? { ...t, status: 'used' } : t)));
     setActiveDraft({ articleId: created.id, form: 'video', svId: target.svId as SauPlatformId, title: topic.title });
   }
 
   const collectTargets = [source];
-  // 形态分岔的视频目标:当前选题源平台置顶(逐平台工作流,源=目标最常见)。
-  const srcAsSv = source === 'channels' ? 'tencent' : source;
-  const videoTargets = VIDEO_TARGETS.filter((t) => t.licensed(license)).sort(
-    (a, b) => Number(b.svId === srcAsSv) - Number(a.svId === srcAsSv),
-  );
-  const canNote = hasFeature(license, 'note.xiaohongshu');
+
+  /** 一键直达:按顶部已选的 平台+形态 直接建稿进创作区(用户拍板:意图已声明,不二次询问)。 */
+  async function startCreate(topic: MediaTopic) {
+    if (source === 'xiaohongshu' && xhsType === 'image') {
+      await writeAsNote(topic);
+      return;
+    }
+    const svId = (source === 'channels' ? 'tencent' : source) as SauPlatformId;
+    const target = VIDEO_TARGETS.find((t) => t.svId === svId) ?? VIDEO_TARGETS[0]!;
+    await writeAsVideo(topic, target);
+  }
 
   // 单页创作流:有进行中的稿 → 收起找题区,就地展开嵌入台(零跳页)。
   if (activeDraft) {
@@ -280,30 +281,11 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         onDelete={async (id) => {
           if (await deleteStudioTopic(TOPIC_POOL, id)) setTopics((list) => list.filter((t) => t.id !== id));
         }}
-        onWrite={(topic) => setPendingTopic((cur) => (cur?.id === topic.id ? null : topic))}
+        /* 一键直达(2026-07-18 用户拍板:顶部 平台+形态 已是创作意图声明,不再二次
+           询问):点「去创作」直接按当前选择建稿进创作区,零弹窗。 */
+        onWrite={(topic) => void startCreate(topic)}
         onAiFind={(note, picked) => void aiFind(note, picked)}
         aiBusy={effectiveAiRunning}
-        /* 行内展开(2026-07-18 用户反馈"去写作弹在顶上看不见"):形态选择就在被点
-           的那一行正下方,视线零移动。再点一次「去写作」收起。 */
-        expandedTopicId={pendingTopic?.id ?? null}
-        renderTopicExpansion={(topic) => (
-          <div className={c('row')} style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '4px 0' }}>
-            <span style={{ fontWeight: 600, fontSize: 12.5 }}>这条做成:</span>
-            {canNote ? (
-              <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void writeAsNote(topic)}>
-                🖼 图文笔记(小红书)
-              </button>
-            ) : null}
-            {videoTargets.map((t) => (
-              <button key={t.nav} type="button" className={c('btn')} onClick={() => void writeAsVideo(topic, t)}>
-                🎬 视频 · {t.label}
-              </button>
-            ))}
-            <button type="button" className={c('btn')} onClick={() => setPendingTopic(null)}>
-              取消
-            </button>
-          </div>
-        )}
       />
 
       {/* AI 任务面板(与各平台台同款):实时流式输出/工具步骤/可中止——

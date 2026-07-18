@@ -1070,7 +1070,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                   </td>
                   <td className={c('tdActions')}>
                     <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => onWrite(t)}>
-                      去写作
+                      去创作
                     </button>{' '}
                     <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => void onDelete(t.id)}>
                       删除
