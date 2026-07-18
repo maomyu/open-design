@@ -162,13 +162,13 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       studioToast.err('建稿失败——稍后再试');
       return;
     }
-    // 原图直链 → 下载进【参考素材区】extra.sourceImages(非图集,防盗图;要用手动加入)。
+    // 候选自带原图直链(真抓爆款采集时挂的)→ 直接下参考素材区;只有 url 的(AI选题)
+    // 由 NoteStudioView 挂载时自动抓(2026-07-18 用户反馈根因:候选库里没原文案)。
     if (topic.sourceImages.length > 0) {
       studioToast.info('正在下载原图到参考素材区…');
       const r = await importXhsNote(created.id, topic.sourceContent || '', topic.sourceImages);
       if (!('error' in r) && r.imageUrls.length > 0) {
         await updateStudioArticle('note', created.id, { extra: { sourceImages: r.imageUrls } });
-        studioToast.ok(`原图 ${r.imageUrls.length} 张已进「参考素材」区,原文案在「原文参考」卡`);
       }
     }
     setActiveDraft({ articleId: created.id, form: 'note', title: topic.title });

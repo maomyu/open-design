@@ -208,6 +208,21 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     setNotice(null);
   }, []);
 
+  // 自动取原素材(2026-07-18 用户反馈"去创作后看不到原文/原图"):选中的稿有原文链接
+  // 但还没原文案/原图 → 自动按链接抓一次(不用手点「取原素材」)。每篇只自动抓一次。
+  const autoFetchedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const a = article;
+    if (!a) return;
+    const ex = a.extra as Record<string, unknown>;
+    const url = typeof ex.sourceUrl === 'string' ? ex.sourceUrl : '';
+    const hasContent = typeof ex.sourceContent === 'string' && ex.sourceContent;
+    const hasImgs = Array.isArray(ex.sourceImages) && ex.sourceImages.length > 0;
+    if (!url || hasContent || hasImgs || fetchingSource || autoFetchedRef.current.has(a.id)) return;
+    autoFetchedRef.current.add(a.id);
+    void fetchSourceNow(url);
+  }, [article?.id]);
+
   useEffect(() => {
     void (async () => {
       const list = await refreshArticles();
