@@ -201,7 +201,10 @@ function ScriptTimeline({ bodyMd }: { bodyMd: string }): JSX.Element | null {
   );
 }
 
-export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauPlatformId } = {}): JSX.Element {
+// entryMode='embedded'(2026-07-18 单页创作流):内嵌统一创作台——隐藏台头/选题步,
+// 只露 脚本→配音→上传→发布,选中创作台指定的稿(articleId)。
+export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full', articleId }: { platform?: SauPlatformId; entryMode?: 'full' | 'embedded'; articleId?: string } = {}): JSX.Element {
+  const embedded = entryMode === 'embedded';
   const license = useLicense();
   // 平台化(2026-07-12):外壳传入当前短视频平台;每平台是本单池按 targetPlatform
   // 切出的视图(数据不迁移)。缺省抖音兼容(独立打开视图时)。
@@ -345,6 +348,14 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
 
   useEffect(() => {
     void (async () => {
+      await refreshArticles();
+      // 内嵌模式:直接选创作台指定的稿。
+      if (embedded && articleId) {
+        await selectArticle(articleId);
+        setTab('script');
+        setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+        return;
+      }
       const list = await refreshArticles();
       const remembered = window.localStorage.getItem(lastArticleKey);
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
@@ -352,7 +363,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
       else setTab('topics');
       setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
     })();
-  }, [refreshArticles, selectArticle, lastArticleKey]);
+  }, [refreshArticles, selectArticle, lastArticleKey, embedded, articleId]);
 
   // ---- 自动保存（与公众号创作台同款机制） ----
   const flushSave = useCallback(async () => {
@@ -624,7 +635,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   };
 
   const TABS: Array<{ id: VideoTab; label: string; step: string; optional?: boolean }> = [
-    { id: 'topics', label: '选题', step: '1' },
+    ...(embedded ? [] : ([{ id: 'topics', label: '选题', step: '1' }] as const)),
     { id: 'script', label: '脚本', step: '2' },
     // 授权裁剪:配音跟 cap.tts、成片(视频生成)跟 cap.video。客户口播自己拍不生视频时,
     // 授权不含 cap.tts/cap.video → 这两步自动隐藏,只留 选题→脚本→发布。
@@ -650,6 +661,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
 
   return (
     <div className={c('root')}>
+      {embedded ? null : (
       <div className={c('head')}>
         <h1 className={c('title')}>短视频创作台</h1>
         {activeStatus ? <span className={`${c('chip')} ${c(activeStatus.chip)}`}>{activeStatus.text}</span> : null}
@@ -666,6 +678,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
           ) : null}
         </div>
       </div>
+      )}
 
       {(aiTask && aiRunning) || orphan ? (
         <div className={c('aiGlobalBar')}>

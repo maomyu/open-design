@@ -16,8 +16,25 @@ import {
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { studioToast, StudioToastHost } from './StudioFeedback';
 import { useOrphanRun } from './useOrphanRun';
+import { NoteStudioView } from './NoteStudioView';
+import { ShortVideoStudioView } from './ShortVideoStudioView';
+import type { SauPlatformId } from '@open-design/contracts';
 import { hasFeature, hasShortVideoPlatform, useLicense, type LicenseInfo } from '../../state/license';
 import styles from './MediaStudio.module.css';
+
+/** 单页创作流(2026-07-18 用户拍板"零跳页"):去写作后就地展开嵌入台。localStorage 恢复。 */
+interface ActiveDraft { articleId: string; form: 'note' | 'video'; svId?: SauPlatformId; title: string }
+const DRAFT_KEY = 'open-design:studio:create:active-draft';
+function loadActiveDraft(): ActiveDraft | null {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as ActiveDraft;
+    return d && typeof d.articleId === 'string' && (d.form === 'note' || d.form === 'video') ? d : null;
+  } catch {
+    return null;
+  }
+}
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
@@ -70,6 +87,15 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
   const effectiveAiRunning = aiRunning || orphan != null;
   // 「开写」形态分岔:暂存选中的选题,渲染形态/目标选择条。
   const [pendingTopic, setPendingTopic] = useState<MediaTopic | null>(null);
+  // 单页创作流:选完形态就地展开嵌入台(零跳页)。刷新后从 localStorage 恢复。
+  const [activeDraft, setActiveDraftRaw] = useState<ActiveDraft | null>(loadActiveDraft);
+  const setActiveDraft = (d: ActiveDraft | null) => {
+    setActiveDraftRaw(d);
+    try {
+      if (d) window.localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+      else window.localStorage.removeItem(DRAFT_KEY);
+    } catch { /* best-effort */ }
+  };
 
   const pickSource = (id: string) => {
     setSource(id);
@@ -116,7 +142,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     [refreshTopics],
   );
 
-  /** 图文形态:在 note 池建稿(复制选题引用)→ 记住稿 → 跳小红书入口(图文形态)。 */
+  /** 图文形态:在 note 池建稿 → 就地展开嵌入图文台(零跳页)。 */
   async function writeAsNote(topic: MediaTopic) {
     const noteTopic = await createStudioTopic('note', { title: topic.title, ...(topic.angle ? { angle: topic.angle } : {}), ...(topic.url ? { url: topic.url } : {}) });
     const created = await createStudioArticle('note', {
@@ -128,13 +154,11 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       studioToast.err('建稿失败——稍后再试');
       return;
     }
-    window.localStorage.setItem('open-design:studio:last-note', created.id);
-    window.localStorage.setItem('open-design:studio:xiaohongshu-form', 'note');
     setPendingTopic(null);
-    onNavigate('studio-xiaohongshu');
+    setActiveDraft({ articleId: created.id, form: 'note', title: topic.title });
   }
 
-  /** 视频形态:在 short-video 池建稿(归属所选平台)→ 记住稿 → 跳对应平台台。 */
+  /** 视频形态:在 short-video 池建稿(归属所选平台)→ 就地展开嵌入视频台(零跳页)。 */
   async function writeAsVideo(topic: MediaTopic, target: (typeof VIDEO_TARGETS)[number]) {
     const created = await createStudioArticle(TOPIC_POOL, {
       fromTopicId: topic.id,
@@ -146,11 +170,9 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       studioToast.err('建稿失败——稍后再试');
       return;
     }
-    window.localStorage.setItem(`open-design:studio:last-video-article:${target.svId}`, created.id);
-    if (target.svId === 'xiaohongshu') window.localStorage.setItem('open-design:studio:xiaohongshu-form', 'video');
     setPendingTopic(null);
     setTopics((list) => list.map((t) => (t.id === topic.id ? { ...t, status: 'used' } : t)));
-    onNavigate(target.nav);
+    setActiveDraft({ articleId: created.id, form: 'video', svId: target.svId as SauPlatformId, title: topic.title });
   }
 
   const collectTargets = [source];
@@ -160,6 +182,44 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     (a, b) => Number(b.svId === srcAsSv) - Number(a.svId === srcAsSv),
   );
   const canNote = hasFeature(license, 'note.xiaohongshu');
+
+  // 单页创作流:有进行中的稿 → 收起找题区,就地展开嵌入台(零跳页)。
+  if (activeDraft) {
+    const draftPlatLabel =
+      activeDraft.form === 'note'
+        ? '小红书图文'
+        : `${VIDEO_TARGETS.find((t) => t.svId === activeDraft.svId)?.label ?? '抖音'}视频`;
+    return (
+      <div className={c('root')}>
+        <StudioToastHost />
+        <div className={c('head')}>
+          <h1 className={c('title')}>创作</h1>
+        </div>
+        {/* 「正在做」条:位置感钉死——标题+形态+回找题。 */}
+        <div className={c('card')} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 700, fontSize: 13.5 }}>
+            正在做:《{activeDraft.title.slice(0, 30) || '未命名'}》· {draftPlatLabel}
+          </span>
+          <span className={c('cardHint')}>下面完成 文案/脚本→素材→发布;发布步可一稿多发</span>
+          <span style={{ marginLeft: 'auto' }}>
+            <button type="button" className={c('btn')} onClick={() => setActiveDraft(null)}>
+              ← 回选题(稿已自动保存)
+            </button>
+          </span>
+        </div>
+        {activeDraft.form === 'note' ? (
+          <NoteStudioView key={activeDraft.articleId} entryMode="embedded" articleId={activeDraft.articleId} />
+        ) : (
+          <ShortVideoStudioView
+            key={activeDraft.articleId}
+            entryMode="embedded"
+            articleId={activeDraft.articleId}
+            platform={activeDraft.svId ?? 'douyin'}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={c('root')}>

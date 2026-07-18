@@ -91,12 +91,15 @@ function timeLabel(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// entryMode(2026-07-18 用户拍板:小红书第三形态「直接生图」):
+// entryMode(2026-07-18 用户拍板:小红书第三形态「直接生图」;同日单页创作流加 embedded):
 //  'note'         = 完整流程(选题→文案→图集→发布),默认。
 //  'direct-image' = 用户已有想法,跳过选题直接进图集:落地即建草稿、顶部自由框
 //                   「想法→生图/AI文案」,选题步隐藏。图集/文案机制完全复用本组件。
-export function NoteStudioView({ entryMode = 'note' }: { entryMode?: 'note' | 'direct-image' } = {}): JSX.Element {
+//  'embedded'     = 内嵌进统一创作台(零跳页):隐藏台头/选题步,只露 文案→图集→发布,
+//                   选中创作台指定的稿(articleId)。「正在做」条由创作台提供。
+export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 'note' | 'direct-image' | 'embedded'; articleId?: string } = {}): JSX.Element {
   const directImage = entryMode === 'direct-image';
+  const embedded = entryMode === 'embedded';
   const license = useLicense();
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
@@ -183,6 +186,13 @@ export function NoteStudioView({ entryMode = 'note' }: { entryMode?: 'note' | 'd
   useEffect(() => {
     void (async () => {
       const list = await refreshArticles();
+      // 内嵌模式:直接选创作台指定的稿,不走"上次记忆"。
+      if (embedded && articleId) {
+        await selectArticle(articleId);
+        setTab('copy');
+        setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+        return;
+      }
       const remembered = window.localStorage.getItem(LAST_ARTICLE_KEY);
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
       if (pick) await selectArticle(pick.id);
@@ -197,7 +207,7 @@ export function NoteStudioView({ entryMode = 'note' }: { entryMode?: 'note' | 'd
       } else setTab('topics');
       setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
     })();
-  }, [refreshArticles, selectArticle, directImage]);
+  }, [refreshArticles, selectArticle, directImage, embedded, articleId]);
 
   // ---- 自动保存 ----
   const flushSave = useCallback(async () => {
@@ -494,7 +504,7 @@ export function NoteStudioView({ entryMode = 'note' }: { entryMode?: 'note' | 'd
 
   const TABS: Array<{ id: NoteTab; label: string; step: string }> = [
     // 直接生图形态隐藏「选题」——用户已有想法,不走选题funnel。
-    ...(directImage ? [] : [{ id: 'topics' as NoteTab, label: '选题', step: '1' }]),
+    ...((directImage || embedded) ? [] : [{ id: 'topics' as NoteTab, label: '选题', step: '1' }]),
     { id: 'copy', label: '文案', step: '2' },
     // 图集(图片生成)跟 cap.image。客户只要文案不要生图时,授权不含 cap.image → 图集隐藏。
     ...(hasFeature(license, 'cap.image') ? [{ id: 'gallery' as NoteTab, label: '图集', step: '3' }] : []),
@@ -518,6 +528,7 @@ export function NoteStudioView({ entryMode = 'note' }: { entryMode?: 'note' | 'd
 
   return (
     <div className={c('root')}>
+      {embedded ? null : (
       <div className={c('head')}>
         <h1 className={c('title')}>图文笔记创作台</h1>
         {activeStatus ? <span className={`${c('chip')} ${c(activeStatus.chip)}`}>{activeStatus.text}</span> : null}
@@ -534,6 +545,7 @@ export function NoteStudioView({ entryMode = 'note' }: { entryMode?: 'note' | 'd
           ) : null}
         </div>
       </div>
+      )}
 
       {(aiTask && aiRunning) || orphan ? (
         <div className={c('aiGlobalBar')}>
