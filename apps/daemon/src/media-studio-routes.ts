@@ -517,13 +517,20 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       // 会同名互相覆盖（一张图丢失 + 前端候选 key 重复）。
       const baseName = `img-${(marker ?? 'x').replace(/[^\w-]/g, '')}-${Date.now()}-${randomUUID().slice(0, 6)}`;
       // 参考图若是我们自己的资产 URL（本机上传的图），映射回磁盘文件。
-      let referenceImage = typeof body.referenceImage === 'string' ? body.referenceImage.trim() : '';
-      if (referenceImage.startsWith(STUDIO_ASSET_URL_PREFIX)) {
-        const rest = referenceImage.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
-        if (rest.length === 2) {
-          referenceImage = path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? ''));
-        }
-      }
+      const assetToDisk = (ref: string): string => {
+        if (!ref.startsWith(STUDIO_ASSET_URL_PREFIX)) return ref;
+        const rest = ref.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
+        if (rest.length !== 2) return ref;
+        return path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? ''));
+      };
+      const referenceImage = typeof body.referenceImage === 'string' ? assetToDisk(body.referenceImage.trim()) : '';
+      // 多参考图(2026-07-18):产品图在前+风格图殿后,有序传引擎;优先于单图字段。
+      const referenceImages: string[] = Array.isArray(body.referenceImages)
+        ? (body.referenceImages as unknown[])
+            .filter((v): v is string => typeof v === 'string' && !!v.trim())
+            .slice(0, 6)
+            .map((v) => assetToDisk(v.trim()))
+        : [];
       let finalPath: string;
       let note: string | null = null;
       if (model === 'volc' || model.startsWith('volc:')) {
@@ -547,6 +554,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           ...(volcModel ? { model: volcModel } : {}),
           // 参考图接进火山 Seedream(2026-07-18 用户拍板:图生图,和千问对齐)。
           ...(referenceImage ? { referenceImage } : {}),
+          ...(referenceImages.length ? { referenceImages } : {}),
           apiKey: arkKey,
         });
       } else {
@@ -557,6 +565,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
             ...(body.style ? { style: body.style } : {}),
             ...(body.ratio ? { ratio: body.ratio } : {}),
             ...(referenceImage ? { referenceImage } : {}),
+          ...(referenceImages.length ? { referenceImages } : {}),
             apiKey,
           });
           finalPath = result.file;

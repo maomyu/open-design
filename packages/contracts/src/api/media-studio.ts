@@ -345,6 +345,9 @@ export interface GenerateArticleImageRequest {
   /** Optional reference image (URL or local absolute path) steering the
    *  generation — 封面可带参考图. */
   referenceImage?: string | null;
+  /** 多参考图（2026-07-18 用户拍板：产品图+风格图两类同传）——有序：产品图在前、
+   *  风格参考图殿后；prompt 里按「前N张=产品、最后一张=风格」指代。优先于 referenceImage。 */
+  referenceImages?: string[] | null;
 }
 export interface GenerateArticleImageResponse {
   /** Web-servable asset URL (/api/media-studio/assets/...). */
