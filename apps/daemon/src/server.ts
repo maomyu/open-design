@@ -9642,6 +9642,20 @@ export async function startServer({
     }
   });
 
+  // 媒体设置(media-config)里配的第三方数据 key 注入引擎 env(2026-07-18 修:引擎读
+  // env TIKHUB_API_KEY/DAJIALA_API_KEY,而用户配的 key 存 media-config——此前从未
+  // 打通,导致"key 配了仍采 0 条"。每次调用现读,配完即生效无需重启)。
+  async function bakuanKeysEnv(): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const [pid, envName] of [["tikhub", "TIKHUB_API_KEY"], ["dajiala", "DAJIALA_API_KEY"], ["volcengine", "ARK_API_KEY"]] as const) {
+      try {
+        const k = await readStoredProviderKey(PROJECT_ROOT, pid);
+        if (k.apiKey) out[envName] = k.apiKey;
+      } catch { /* 单个 provider 读失败不影响其余 */ }
+    }
+    return out;
+  }
+
   // ── 采集调度·完整管道入口(给 od baokuan CLI + 外部AI智能体/cron 定时调度)。引擎能力现成
   // (pipeline.py --scheduled/--account/--link/--regenerate),照 collect-score 包成端点。这些走
   // 【非 radar 完整链路】:采集→评分→拆解③→脚本④→复盘⑤,慢,timeout 给足 10 分钟。──
@@ -9649,7 +9663,7 @@ export async function startServer({
     const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
     const r = await execFileBuffered(eng.python, ['-m', 'src.pipeline', ...pipeArgs], {
       cwd: eng.engineDir,
-      env: { ...eng.env },
+      env: { ...eng.env, ...(await bakuanKeysEnv()) },
       // 完整管道含逐条视频 ASR(约2min/条)+LLM:scheduled/account 多条串行,10min 会被掐断,
       // 给足 30min(后台任务,cron/智能体调,无人在等)。
       timeout: 1_800_000,
@@ -9694,7 +9708,7 @@ export async function startServer({
     const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
     const r = await execFileBuffered(eng.python, ['scripts/cover_gen.py', ...argv], {
       cwd: eng.engineDir,
-      env: { ...eng.env },
+      env: { ...eng.env, ...(await bakuanKeysEnv()) },
       timeout: 300_000,
     });
     const out = String(r.stdout || '');
@@ -9745,7 +9759,7 @@ export async function startServer({
     const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
     const r = await execFileBuffered(eng.python, ['scripts/ops.py', ...argv], {
       cwd: eng.engineDir,
-      env: { ...eng.env },
+      env: { ...eng.env, ...(await bakuanKeysEnv()) },
       timeout: timeoutMs,
     });
     const out = String(r.stdout || '');
@@ -9835,7 +9849,7 @@ export async function startServer({
       if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
       const r = await execFileBuffered(eng.python, args, {
         cwd: eng.engineDir,
-        env: { ...eng.env, RADAR_MAX: '12' },
+        env: { ...eng.env, ...(await bakuanKeysEnv()), RADAR_MAX: "12" },
         timeout: 240_000,
       });
       // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
@@ -9871,7 +9885,8 @@ export async function startServer({
     if (!keyword) return res.status(400).json({ error: '缺少 keyword' });
     if (!platforms) return res.status(400).json({ error: '缺少 platforms' });
     // TikHub key 前置检查(2026-07-18 用户报"洗衣液抓不到"实为 key 未配却静默返回 0 条):
-    // 缺钥匙必须明说,不许让用户误以为是"没有爆款"。
+    // 缺钥匙必须明说,不许让用户误以为是"没有爆款"。key 存在则随 env 注入引擎
+    // (见 bakuanKeysEnv——媒体设置里配的 key 此前从未传给引擎,是"配了仍采 0"的第二个根因)。
     {
       const tk = await readStoredProviderKey(PROJECT_ROOT, 'tikhub');
       if (!tk.apiKey && tk.source === 'unset' && !(process.env.TIKHUB_API_KEY ?? '').trim()) {
@@ -9898,7 +9913,7 @@ export async function startServer({
         cwd: eng.engineDir,
         // RADAR_FAST=1:选题列表纯数据评分(不逐条打 LLM/取评论文本),分页多条也秒出。
         // RADAR_COLLECT/RADAR_MAX 按页数放大:采够候选 + 让所有过筛的都进列表。
-        env: { ...eng.env, RADAR_FAST: '1', RADAR_MAX: collectN, RADAR_COLLECT: collectN },
+        env: { ...eng.env, ...(await bakuanKeysEnv()), RADAR_FAST: "1", RADAR_MAX: collectN, RADAR_COLLECT: collectN },
         timeout: 240_000,
       });
       // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
