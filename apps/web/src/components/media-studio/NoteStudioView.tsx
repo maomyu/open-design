@@ -64,6 +64,9 @@ const NOTE_PLATFORMS: Array<{ id: string; label: string }> = [
 
 // 生图风格清单收进 contracts 共享(公众号台同源;15+ 常见风格,daemon 前缀表一一对应)。
 const IMAGE_STYLES = IMAGE_STYLE_PRESETS;
+// 参考图 = 风格轴上的一个选项(2026-07-18 用户拍板):选它=不套内置模板、照参考图的
+// 调子生图,与内置预设互斥。风格下拉里排第一;选它但还没挑图→跳右侧「参考图」tab 去挑。
+const REF_STYLE = '__ref__';
 const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
   // 火山按版本选：id 里 volc: 后面就是方舟的 Model ID（不带即用最新默认）。
@@ -482,6 +485,23 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     }
   }
 
+  // 风格轴统一入口(2026-07-18):内置预设和「参考图」二选一,互斥。
+  //   - 下拉/样例当前值:有参考图→显示「参考图」,否则→当前预设。
+  //   - 选内置预设:清掉参考图(退出参考图模式)+设预设。
+  //   - 选「参考图」但还没挑图:跳右侧「参考图」tab 让用户点某张「作参考」。
+  const styleAxisValue = refImage ? REF_STYLE : galleryStyle;
+  function onStyleAxisSelect(v: string) {
+    if (v === REF_STYLE) {
+      if (!refImage) {
+        setPreviewTab('refs');
+        studioToast.info('在右侧「参考图」里点某张原图的「作参考」,即用它的风格生图');
+      }
+      return;
+    }
+    if (refImage) setRefImage('');   // 切回内置预设 = 退出参考图模式
+    setGalleryStyle(v);
+  }
+
   /** 读最新图集——串行批量生成期间组件闭包会过期，靠 ref 拿实时数组防丢图。 */
   function latestNoteImages(): string[] {
     const raw = (articleRef.current?.extra as Record<string, unknown> | undefined)?.noteImages;
@@ -501,9 +521,11 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
       // eslint-disable-next-line no-await-in-loop
       const result = await generateArticleImage(PLATFORM, article.id, {
         description: idea,
-        style: galleryStyle,
+        // 参考图是风格轴:批量生成同样吃它(有参考图→不套模板,照它的调子)。
+        style: refImage ? 'none' : galleryStyle,
         model: galleryModel,
         ratio: galleryRatio,
+        ...(refImage ? { referenceImage: refImage } : {}),
       });
       if ('error' in result) {
         studioToast.err(`第 ${i + 1} 张失败：${result.error}`);
@@ -928,7 +950,8 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                       ))}
                     </div>
                     <div className={c('row')}>
-                      <select className={c('select')} value={galleryStyle} onChange={(e) => setGalleryStyle(e.target.value)}>
+                      <select className={c('select')} value={styleAxisValue} title="风格:内置预设 或 参考图(二选一)" onChange={(e) => onStyleAxisSelect(e.target.value)}>
+                        <option value={REF_STYLE}>🖼 参考图{refImage ? '(已选·照它生)' : ''}</option>
                         {IMAGE_STYLES.map((s) => (
                           <option key={s.id} value={s.id}>
                             {s.label}
@@ -965,7 +988,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                             : '按建议生成全部'}
                       </button>
                     </div>
-                    <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
+                    <ImageStyleSamples value={refImage ? '' : galleryStyle} onSelect={onStyleAxisSelect} />
                   </div>
                 ) : null}
                 <div className={c('card')}>
@@ -978,10 +1001,11 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                   <div className={c('row')}>
                     <select
                       className={c('select')}
-                      value={galleryStyle}
-                      title="图片风格模板——「不用模板」时画风全由提示词决定"
-                      onChange={(e) => setGalleryStyle(e.target.value)}
+                      value={styleAxisValue}
+                      title="风格:内置预设 或 参考图(二选一)——「不用模板」时画风全由提示词决定"
+                      onChange={(e) => onStyleAxisSelect(e.target.value)}
                     >
+                      <option value={REF_STYLE}>🖼 参考图{refImage ? '(已选·照它生)' : ''}</option>
                       {IMAGE_STYLES.map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.label}
@@ -1010,7 +1034,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                       ))}
                     </select>
                   </div>
-                  <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
+                  <ImageStyleSamples value={refImage ? '' : galleryStyle} onSelect={onStyleAxisSelect} />
                   <div className={c('row')}>
                     <input
                       className={`${c('input')} ${c('grow')}`}
