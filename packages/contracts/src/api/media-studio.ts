@@ -75,6 +75,9 @@ export interface MediaTopic {
   source: string;
   url: string;
   heat: string;
+  /** 原素材(爆款沉淀时带回;无则空)。 */
+  sourceContent: string;
+  sourceImages: string[];
   status: 'candidate' | 'used';
   createdAt: number;
 }
@@ -239,6 +242,9 @@ export interface CreateMediaTopicRequest {
   source?: string;
   url?: string;
   heat?: string;
+  /** 原素材(2026-07-18):爆款沉淀候选时带上原文案/原图,「去创作」随稿带走。 */
+  sourceContent?: string;
+  sourceImages?: string[];
 }
 export interface UpdateMediaTopicRequest {
   title?: string;

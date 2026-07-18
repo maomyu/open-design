@@ -320,6 +320,15 @@ function migrate(db: SqliteDb): void {
   if (mediaArticleCols.length > 0 && !mediaArticleCols.some((c: DbRow) => c.name === 'extra_json')) {
     db.exec(`ALTER TABLE media_articles ADD COLUMN extra_json TEXT`);
   }
+  // 选题候选带原素材(2026-07-18 用户拍板:去创作时原图/原文案/原视频要跟到创作区):
+  // 爆款沉淀候选时把 原文案/原图直链 存进 topic,建稿时随稿带走展示+喂 AI 仿写。
+  const topicCols = db.prepare(`PRAGMA table_info(media_topics)`).all() as DbRow[];
+  if (topicCols.length > 0 && !topicCols.some((c: DbRow) => c.name === 'source_content')) {
+    db.exec(`ALTER TABLE media_topics ADD COLUMN source_content TEXT`);
+  }
+  if (topicCols.length > 0 && !topicCols.some((c: DbRow) => c.name === 'source_images')) {
+    db.exec(`ALTER TABLE media_topics ADD COLUMN source_images TEXT`);
+  }
   const knowledgeCols = db.prepare(`PRAGMA table_info(media_knowledge)`).all() as DbRow[];
   if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'category')) {
     db.exec(`ALTER TABLE media_knowledge ADD COLUMN category TEXT`);

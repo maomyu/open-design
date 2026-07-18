@@ -124,7 +124,19 @@ function SourceMaterialCard({ videoFile, transcript, sourceUrl }: { videoFile: s
     });
     return () => { alive = false; if (revoke) revoke(); };
   }, [videoFile]);
-  if (!videoFile && !transcript) return null;
+  if (!videoFile && !transcript && !sourceUrl) return null;
+  // 只有原文链接(候选带来的):给看原视频入口+引导,不空白。
+  if (!videoFile && !transcript) {
+    return (
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          对照原爆款
+          <span className={c('cardHint')}>本稿来自选题候选——可打开原视频对照;要把原视频下载进来+提取口播文案仿写,去「创作」选题页爆款列表用「提取文案仿写」</span>
+        </div>
+        <a href={sourceUrl} target="_blank" rel="noreferrer" className={c('link')}>看原视频 ↗</a>
+      </div>
+    );
+  }
   return (
     <div className={c('card')}>
       <div className={c('cardLabel')}>

@@ -182,7 +182,7 @@ export interface TopicsTabProps {
   /** 公众号模式：候选只能由「AI 帮我选题」产出——隐藏手动添加与热榜「存为候选」。 */
   aiOnly?: boolean;
   topics: MediaTopic[];
-  onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string }) => Promise<void>;
+  onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string; sourceContent?: string; sourceImages?: string[] }) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onWrite: (topic: MediaTopic) => void;
   /** picked = 用户勾选的优先参考；单篇「AI 转题」= note 空 + picked 一篇。 */
@@ -614,6 +614,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       source: hit.account,
       ...(hit.url ? { url: hit.url } : {}),
       heat: hit.signals.length === 2 ? '高' : '中',
+      // 原素材随候选沉淀(2026-07-18):去创作时原文案/原图跟到创作区。
+      ...(hit.sourceContent ? { sourceContent: hit.sourceContent } : {}),
+      ...(hit.sourceImages && hit.sourceImages.length > 0 ? { sourceImages: hit.sourceImages } : {}),
     });
     setSavedHitUrls((prev) => new Set(prev).add(hit.url || hit.title));
   }

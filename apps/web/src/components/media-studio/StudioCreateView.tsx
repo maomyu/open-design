@@ -12,6 +12,8 @@ import {
   createStudioTopic,
   deleteStudioTopic,
   fetchStudioTopics,
+  importXhsNote,
+  updateStudioArticle,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { studioToast, StudioToastHost } from './StudioFeedback';
@@ -140,17 +142,32 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     [refreshTopics],
   );
 
-  /** 图文形态:在 note 池建稿 → 就地展开嵌入图文台(零跳页)。 */
+  /** 图文形态:在 note 池建稿 → 原素材(原文案/原图)随稿带走 → 就地展开嵌入图文台。 */
   async function writeAsNote(topic: MediaTopic) {
     const noteTopic = await createStudioTopic('note', { title: topic.title, ...(topic.angle ? { angle: topic.angle } : {}), ...(topic.url ? { url: topic.url } : {}) });
     const created = await createStudioArticle('note', {
       ...(noteTopic ? { fromTopicId: noteTopic.id } : {}),
       title: topic.title,
       topic: topic.title,
+      // 原素材上稿:原文参考卡展示 + AI 写笔记 prompt 自动带「原文参考·仿写不照抄」。
+      extra: {
+        targetPlatform: '小红书',
+        ...(topic.url ? { sourceUrl: topic.url } : {}),
+        ...(topic.sourceContent ? { sourceContent: topic.sourceContent } : {}),
+      },
     });
     if (!created) {
       studioToast.err('建稿失败——稍后再试');
       return;
+    }
+    // 原图直链 → 下载进图集(资产化,复用「提取图文仿写」链路);失败不阻塞建稿。
+    if (topic.sourceImages.length > 0) {
+      studioToast.info('正在把原图下载进图集…');
+      const r = await importXhsNote(created.id, topic.sourceContent || '', topic.sourceImages);
+      if (!('error' in r) && r.imageUrls.length > 0) {
+        await updateStudioArticle('note', created.id, { extra: { noteImages: r.imageUrls } });
+        studioToast.ok(`原图 ${r.imageUrls.length} 张已进图集,原文案在「原文参考」卡`);
+      }
     }
     setActiveDraft({ articleId: created.id, form: 'note', title: topic.title });
   }
@@ -161,7 +178,9 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       fromTopicId: topic.id,
       title: topic.title,
       topic: topic.title,
-      extra: { targetPlatform: target.label },
+      // sourceUrl 上稿:脚本步「对照原爆款」区给出看原视频入口(下载/提取仿写在
+      // 选题页爆款行一键完成;候选路径至少保住原文链接不丢)。
+      extra: { targetPlatform: target.label, ...(topic.url ? { sourceUrl: topic.url } : {}) },
     });
     if (!created) {
       studioToast.err('建稿失败——稍后再试');
