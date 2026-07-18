@@ -120,7 +120,12 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     if (!article) return;
     setFetchingSource(true);
     const r = await fetchSourceMaterial(url);
-    if ('error' in r) { studioToast.err(r.error); setFetchingSource(false); return; }
+    if ('error' in r) {
+      // 拉取失败(常见:AI 选题引用的新闻/公众号链接已过期)不阻断创作——明确告知可直接写。
+      studioToast.err(`原素材拉取失败:${r.error}。不影响创作——可直接点「AI 写笔记」按标题+知识库写`);
+      setFetchingSource(false);
+      return;
+    }
     // 原图存进【参考素材区】extra.sourceImages,不直接进图集(2026-07-18 用户拍板:
     // 别人的原图是参考,不能当自己成品直接发——防盗图;想用点参考图上的「+加入图集」)。
     let imageUrls: string[] = [];
@@ -134,7 +139,9 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     const fresh = await fetchStudioArticle(PLATFORM, article.id);
     if (fresh) setArticle(fresh);
     setFetchingSource(false);
-    studioToast.ok(`已取回原素材(原图在「参考素材」区,可作参考或手动加入图集)`);
+    studioToast.ok(imageUrls.length
+      ? `已取回原素材:原文案+${imageUrls.length}张原图 ✓(右侧「原文」「参考图」)`
+      : '已取回原文案 ✓(右侧「原文」;该来源无原图,如公众号/新闻页)');
   };
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');

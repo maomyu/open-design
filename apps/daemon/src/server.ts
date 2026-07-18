@@ -9872,25 +9872,65 @@ export async function startServer({
   // 关键:不传 --collect-file,引擎 _search 自动走 tik.search_keyword(TikHub)。
   // 按链接取单条原素材(2026-07-18 用户反馈:AI 选题/旧候选只带 url,创作时看不到原文案)。
   // 轻量脚本 fetch_source.py(不入库不拆解),级联取详情返回 原文案+原图直链。
+  /** 通用网页正文粗提——非平台链接(公众号/新闻页,AI 选题常引用这类来源)的原文降级
+   *  通道:抓 HTML → 去 script/style/标签取纯文本。公众号正文容器 #js_content 优先截取。
+   *  图不抓(公众号图有防盗链且杂),只回正文供 AI 仿写参考。 */
+  async function fetchGenericWebText(url) {
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+    const resp = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(30000) });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const html = await resp.text();
+    const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').replace(/\s+/g, ' ').trim();
+    // 公众号正文从 #js_content 起截一段(嵌套 div 不好精确闭合,多截点再去标签即可)。
+    const anchor = html.search(/id=["']js_content["']/);
+    const scoped = anchor >= 0 ? html.slice(anchor, anchor + 200000) : html;
+    const text = scoped
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, '\n')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .split('\n').map((l) => l.trim()).filter(Boolean).join('\n')
+      .slice(0, 6000);
+    if (text.replace(/\s/g, '').length < 80 || /环境异常|完成验证后即可继续访问/.test(text)) {
+      // 公众号死链的典型样子:HTTP 200 但空模板(无标题无正文)——sn 参数过期/不全。
+      throw new Error(/weixin\.qq\.com/i.test(url) ? '公众号链接打不开(多为链接已过期/参数不全)' : '页面没抓到正文(可能已失效或要登录/验证)');
+    }
+    return { title, text };
+  }
+
   app.post('/api/media-studio/fetch-source', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
     const url = String(req.body?.url || '').trim();
     if (!url) return res.status(400).json({ error: '缺少 url' });
-    let eng;
-    try {
-      eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
-    } catch (err) {
-      return res.status(500).json({ error: '内置引擎准备失败：' + String(err && err.message ? err.message : err) });
+    // 平台链接(小红书/抖音/快手/B站)走引擎级联取详情(原文案+原图直链);
+    // 其余(公众号/新闻页等)直接通用网页抓正文——此前对这类链接报「无法识别平台」
+    // 让用户在界面看到「获取失败」(2026-07-18 用户实测报障,AI 选题引用的就是新闻源)。
+    const isPlatformLink = /xiaohongshu\.com|xhslink\.com|douyin\.com|iesdouyin\.com|kuaishou\.com|chenzhongtech\.com|bilibili\.com|b23\.tv/i.test(url);
+    let engineErr = '';
+    if (isPlatformLink) {
+      try {
+        const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+        const argv = ['-m', 'scripts.fetch_source', url];
+        const r = await execFileBuffered(eng.python, argv, { cwd: eng.engineDir, env: { ...eng.env, ...(await bakuanKeysEnv()) }, timeout: 120000 });
+        const s2 = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+        const parsed = JSON.parse(s2);
+        if (!parsed.error) {
+          return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url });
+        }
+        engineErr = String(parsed.error);
+        // 平台链接且引擎明确报错(已删/链接不完整/缺 key)→ 网页降级对平台站也抓不到
+        // (登录墙),但仍试一次不损失什么;错误信息两者合并给足上下文。
+      } catch (err) {
+        engineErr = String(err && err.message ? err.message : err);
+      }
     }
     try {
-      const argv = ['-m', 'scripts.fetch_source', url];
-      const r = await execFileBuffered(eng.python, argv, { cwd: eng.engineDir, env: { ...eng.env, ...(await bakuanKeysEnv()) }, timeout: 120000 });
-      const s2 = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
-      const parsed = JSON.parse(s2);
-      if (parsed.error) return res.status(422).json({ error: String(parsed.error) });
-      return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url });
+      const g = await fetchGenericWebText(url);
+      return res.json({ text: g.text, images: [], title: g.title, mediaUrl: '', referer: url });
     } catch (err) {
-      return res.status(500).json({ error: '取原素材失败：' + String(err && err.message ? err.message : err) });
+      const webErr = String(err && err.message ? err.message : err);
+      return res.status(422).json({ error: engineErr ? `取原素材失败:${engineErr};按网页抓正文也失败:${webErr}` : `取原素材失败:${webErr}` });
     }
   });
 
