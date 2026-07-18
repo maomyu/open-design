@@ -9870,6 +9870,16 @@ export async function startServer({
     const collectN = String(pages * 12);
     if (!keyword) return res.status(400).json({ error: '缺少 keyword' });
     if (!platforms) return res.status(400).json({ error: '缺少 platforms' });
+    // TikHub key 前置检查(2026-07-18 用户报"洗衣液抓不到"实为 key 未配却静默返回 0 条):
+    // 缺钥匙必须明说,不许让用户误以为是"没有爆款"。
+    {
+      const tk = await readStoredProviderKey(PROJECT_ROOT, 'tikhub');
+      if (!tk.apiKey && tk.source === 'unset' && !(process.env.TIKHUB_API_KEY ?? '').trim()) {
+        return res.status(422).json({
+          error: '还没配置 TikHub key——真抓爆款的数据源是 TikHub(api.tikhub.io)。到「设置 → 接口与密钥」填入 TikHub API Key 后重试。',
+        });
+      }
+    }
     let eng;
     try {
       eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
