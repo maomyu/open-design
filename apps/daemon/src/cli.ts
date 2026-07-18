@@ -296,6 +296,16 @@ if (argv[0] === 'tools' && argv[1] === 'live-artifacts') {
       process.exitCode = 1;
     });
 } else {
+  // 瘦客户端 npm 包(workbuild-cli,构建期 define WB_THIN_CLI)不带 daemon 服务端的
+  // 原生/wasm 依赖(better-sqlite3、blake3 wasm 文件都不在 bundle 里),自起 daemon 必死
+  // (2026-07-19 客户机实炸)。产品模型:daemon 由爆创桌面端提供,CLI 是纯客户端——
+  // 起服务的意图一律引导去开桌面端;--help/help 照常放行。
+  const helpish = argv.length > 0 && (argv.includes('--help') || argv.includes('-h') || argv[0] === 'help');
+  if (process.env.WB_THIN_CLI === '1' && !helpish) {
+    console.error('此命令行是爆创(WorkBuild)的瘦客户端,不内置后台服务:请先启动爆创桌面应用,再运行具体子命令(如 workbuild studio --help / workbuild baokuan --help)。\n');
+    printRootHelp();
+    process.exit(2);
+  }
   await runDaemonCliStartup(argv, { printHelp: printRootHelp });
 }
 
@@ -6700,6 +6710,11 @@ function formatBytes(n) {
 }
 
 async function runDaemonStart(flags) {
+  if (process.env.WB_THIN_CLI === '1') {
+    // 同根守卫:瘦客户端包无服务端原生依赖,`workbuild daemon start` 与裸启动同样必死。
+    console.error('此命令行是爆创(WorkBuild)的瘦客户端,不内置后台服务:请启动爆创桌面应用(它自带后台服务),CLI 子命令会自动发现它。');
+    process.exit(2);
+  }
   // The headless flag implies --no-open AND auto-applies any other
   // headless-only env defaults. Because the existing default-mode boot
   // already handles port / host / no-open, we forward into it by

@@ -35,6 +35,17 @@ await build({
   format: 'esm',
   outfile: path.join(pkgDir, 'cli.mjs'),
   logLevel: 'warning',
+  // ESM bundle 必配:esbuild 把 CJS 依赖里的 require(Node 内置模块)转成 __require 垫片,
+  // 垫片在 ESM 里找不到全局 require 就 throw "Dynamic require of node:xxx is not supported"。
+  // 客户端命令(help/monitor/studio)走纯 fetch 碰不到;懒加载 daemon 服务端代码的路径必炸
+  // (2026-07-19 客户机实炸)。banner 用 createRequire 定义顶层 require,垫片检查直接命中。
+  // 导入名带前缀,避开 bundle 内依赖自己 hoist 的 createRequire 同名声明。
+  banner: {
+    js: 'import { createRequire as __wbCliCreateRequire } from "node:module"; const require = __wbCliCreateRequire(import.meta.url);',
+  },
+  // 瘦包标记:cli.ts 据此把「自起 daemon」的意图改成人话引导(bundle 里没有服务端的
+  // 原生/wasm 依赖,自起必死;daemon 由爆创桌面端提供)。
+  define: { 'process.env.WB_THIN_CLI': '"1"' },
 });
 
 writeFileSync(
