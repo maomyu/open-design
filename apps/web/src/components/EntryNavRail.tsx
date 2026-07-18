@@ -22,6 +22,8 @@ export type EntryView =
   | 'plugins'
   | 'accounts'
   | 'studio'
+  // 统一创作台(2026-07-18 路线B):跨平台选题→形态→分发;平台入口保留为快捷。
+  | 'studio-create'
   // 平台一级入口(2026-07-17 用户拍板:运营者按平台思考;小红书=图文+视频双形态)。
   | 'studio-douyin'
   | 'studio-xiaohongshu'
@@ -138,8 +140,21 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="edit" size={18} />
           </NavButton>
         ) : null}
+        {/* 统一创作台(2026-07-18 路线B):跨平台找灵感→形态分岔→(PR3)一稿多发。
+            放平台快捷入口之上=主动线;任一视频包能力即显示。 */}
+        {PLATFORM_NAV.some((p) => p.licensed(license)) ? (
+          <NavButton
+            active={view === 'studio-create'}
+            ariaLabel="创作"
+            label="创作"
+            onClick={() => onViewChange('studio-create')}
+            testId="entry-nav-studio-create"
+          >
+            <Icon name="edit" size={18} />
+          </NavButton>
+        ) : null}
         {/* 平台一级入口(2026-07-17 用户拍板):抖音/小红书/快手/B站/视频号各自
-            一个入口,按平台授权裁剪。旧「短视频/笔记」形态入口下线(revive 归一)。 */}
+            一个入口,按平台授权裁剪;2026-07-18 起作为快捷入口保留(用户拍板)。 */}
         {PLATFORM_NAV.filter((p) => p.licensed(license)).map((p) => (
           <NavButton
             key={p.view}

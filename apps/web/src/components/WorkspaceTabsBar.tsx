@@ -184,6 +184,7 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
       || view === 'plugins'
       || view === 'accounts'
       || view === 'studio'
+      || view === 'studio-create'
       || view === 'studio-douyin'
       || view === 'studio-xiaohongshu'
       || view === 'studio-kuaishou'
@@ -897,6 +898,7 @@ function displayTabFor(
     plugins: t('entry.navPlugins'),
     accounts: t('entry.navAccounts'),
     studio: '文章',
+    'studio-create': '创作',
     'studio-douyin': '抖音',
     'studio-xiaohongshu': '小红书',
     'studio-kuaishou': '快手',
@@ -919,6 +921,7 @@ function displayTabFor(
     plugins: 'grid',
     accounts: 'grid',
     studio: 'edit',
+    'studio-create': 'edit',
     'studio-douyin': 'play',
     'studio-xiaohongshu': 'image',
     'studio-kuaishou': 'play',

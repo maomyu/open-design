@@ -85,6 +85,9 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
       return anyShortVideoPlatform(license);
     case 'studio-note':
       return hasFeature(license, 'note.xiaohongshu');
+    // 统一创作台(2026-07-18):任一视频包平台能力即可用。
+    case 'studio-create':
+      return anyShortVideoPlatform(license) || hasFeature(license, 'note.xiaohongshu');
     // 平台一级入口(2026-07-17):按平台授权;小红书=视频或图文任一。
     case 'studio-douyin':
       return hasShortVideoPlatform(license, 'douyin');
@@ -112,6 +115,7 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
 
 const VIEW_FALLBACK_ORDER = [
   'studio',
+  'studio-create',
   'studio-douyin',
   'studio-xiaohongshu',
   'studio-kuaishou',

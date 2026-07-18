@@ -87,6 +87,7 @@ import { PluginsView } from './PluginsView';
 import { AccountsView } from './AccountsView';
 import { ArticleStudioShell } from './media-studio/ArticleStudioShell';
 import { ShortVideoStudioView } from './media-studio/ShortVideoStudioView';
+import { StudioCreateView } from './media-studio/StudioCreateView';
 import { XiaohongshuStudioShell } from './media-studio/XiaohongshuStudioShell';
 import { MakeVideoView } from './media-studio/MakeVideoView';
 import { KnowledgeView } from './media-studio/KnowledgeView';
@@ -670,6 +671,7 @@ export function EntryShell({
             {view === 'studio-weibo' ? <ArticleStudioShell /> : null}
             {/* 平台一级入口(2026-07-17):各平台直接渲染短视频台(单平台);小红书=
                 图文+视频双形态外壳。旧 studio-video/studio-note 深链降级到 抖音/小红书。 */}
+            {view === 'studio-create' ? <StudioCreateView onNavigate={(v) => changeView(v as EntryViewKind)} /> : null}
             {view === 'studio-douyin' || view === 'studio-video' ? <ShortVideoStudioView platform="douyin" /> : null}
             {view === 'studio-xiaohongshu' || view === 'studio-note' ? <XiaohongshuStudioShell /> : null}
             {view === 'studio-kuaishou' ? <ShortVideoStudioView platform="kuaishou" /> : null}

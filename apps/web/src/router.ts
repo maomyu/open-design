@@ -20,6 +20,8 @@ export type EntryHomeView =
   // 平台一级入口(2026-07-17 用户拍板:运营者按平台思考,平台各自一个导航入口;
   // 小红书=图文笔记+视频双形态)。旧 studio-video/studio-note 保留类型仅供
   // 历史深链/标签 revive 归一映射,不再直接渲染。
+  // 统一创作台(2026-07-18 路线B):跨平台选题→形态分岔→分发。平台入口保留为快捷。
+  | 'studio-create'
   | 'studio-douyin'
   | 'studio-xiaohongshu'
   | 'studio-kuaishou'
@@ -131,6 +133,7 @@ export function parseRoute(pathname: string): Route {
   // 创作台 — Media Studio (spec: specs/current/media-studio.md).
   // /studio → 文章(公众号/知乎);/studio/<平台> → 平台一级入口(2026-07-17)。
   if (parts[0] === 'studio') {
+    if (parts[1] === 'create') return { kind: 'home', view: 'studio-create' };
     if (parts[1] === 'douyin') return { kind: 'home', view: 'studio-douyin' };
     if (parts[1] === 'xiaohongshu') return { kind: 'home', view: 'studio-xiaohongshu' };
     if (parts[1] === 'kuaishou') return { kind: 'home', view: 'studio-kuaishou' };
@@ -202,6 +205,7 @@ export function buildPath(route: Route): string {
     if (route.view === 'plugins') return '/plugins';
     if (route.view === 'accounts') return '/accounts';
     if (route.view === 'studio') return '/studio';
+    if (route.view === 'studio-create') return '/studio/create';
     if (route.view === 'studio-douyin') return '/studio/douyin';
     if (route.view === 'studio-xiaohongshu') return '/studio/xiaohongshu';
     if (route.view === 'studio-kuaishou') return '/studio/kuaishou';

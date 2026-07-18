@@ -212,11 +212,14 @@ export interface TopicsTabProps {
    *  (极致数据/公众号生态)五源——极致数据只服务公众号/视频号,不该出现在短视频台。 */
   browserCollect?: boolean;
   /** 真抓爆款要采的平台。只采【当前选中平台】——选抖音就只抓抖音。抖音/小红书/快手/B站走 TikHub
-   *  直采;视频号走极致数据(dajiala,平台 id=channels,选题带 #odk= 解密key)。 */
+   *  直采;视频号走极致数据(dajiala,平台 id=channels,选题带 #odk= 解密key)。
+   *  统一创作台(2026-07-18)传多个平台 = 多源爆款雷达,一次采多平台混合候选(来源在 account 列)。 */
   collectPlatforms?: string[];
+  /** 小红书内容类型覆盖(统一创作台用:图文/视频由用户选,不再由 platform 推断)。 */
+  xhsContentType?: 'image' | 'video';
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, nativeFeed, onOpenLink, browserCollect = false, collectPlatforms }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, nativeFeed, onOpenLink, browserCollect = false, collectPlatforms, xhsContentType }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   // 上次在该平台的选题搜索结果（切标签/重启后恢复，见文件顶 loadTopicSearch）。
   const restored = useMemo(() => loadTopicSearch(platform), [platform]);
@@ -299,7 +302,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       const names = collectTargets.map((p) => (COLLECT_PLATFORM_LABEL[p] ?? p)).join('、');
       setBaokuanStatus(`正在用 ${collectSource} 直采【${names}】${radarPages} 页并按爆款标准筛选评分…(约十几秒${radarPages > 1 ? '~' + radarPages * 8 + '秒' : ''})`);
       // 小红书内容类型按创作台区分:图文笔记台(platform==='note')只采【图文】,短视频台采【视频】。
-      const xhsType = platform === 'note' ? 'image' : 'video';
+      const xhsType = xhsContentType ?? (platform === 'note' ? 'image' : 'video');
       const scored = await collectScoreTopics(kw, collectTargets, buildCriteria(), radarPages, xhsType);
       if ('error' in scored) { setBaokuanStatus(''); studioToast.err(scored.error); return; }
       // 评出的爆款 → hits 列表(带链接/点赞/播放/评论,可勾选),像公众号那样先列出来,
