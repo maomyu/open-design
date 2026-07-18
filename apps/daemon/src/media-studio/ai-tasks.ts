@@ -53,9 +53,20 @@ export interface ComposeAiTaskInput {
   knowledge?: Array<{ name: string; contentMd: string; category?: string }>;
   /** topics: 用户在搜索结果里勾选的优先参考文章。 */
   picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
+  /** topics: 选题目标平台 id——url 只准该平台站内链接(2026-07-18 用户拍板)。 */
+  sourcePlatform?: string;
   /** Absolute path of the od CLI entry (dist/cli.js) for PATH-less fallback. */
   cliPath: string;
 }
+
+/** 选题目标平台 → 站内域名白名单文案(prompt 用)。 */
+const SOURCE_PLATFORM_RULES: Record<string, { label: string; domains: string }> = {
+  xiaohongshu: { label: '小红书', domains: 'xiaohongshu.com / xhslink.com' },
+  douyin: { label: '抖音', domains: 'douyin.com / iesdouyin.com' },
+  kuaishou: { label: '快手', domains: 'kuaishou.com' },
+  bilibili: { label: 'B站', domains: 'bilibili.com / b23.tv' },
+  channels: { label: '视频号', domains: 'channels.weixin.qq.com' },
+};
 
 export interface ComposedAiTask {
   title: string;
@@ -188,6 +199,15 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '3. 每个选题用 CLI 落库（有原文依据的必须带来源和链接）：',
         `   \`od studio topic-add --title "<选题标题>" --angle "<切入角度>" --source "<来源公众号/平台>" --url "<原文链接>" --heat "<高|中|低>"\``,
         '   **标题参数里只放标题本身**——角度/来源/热度分别放各自参数，绝不把「｜ 角度：xxx」拼进 --title。',
+        (() => {
+          // 来源纪律(2026-07-18 用户拍板:选题给哪个平台用,引用就必须全来自该平台):
+          // 站外来源(新闻/公众号等)只能写进 --source 描述,--url 必须留空——站外链接常
+          // 过期打不开,且会让「小红书选题」列表里混进其它平台,被前端按域名过滤隐藏。
+          const rule = input.sourcePlatform ? SOURCE_PLATFORM_RULES[input.sourcePlatform] : null;
+          return rule
+            ? `4. **来源纪律(硬性)**：本次选题给「${rule.label}」用——\`--url\` 只允许 ${rule.domains} 的站内链接；引用新闻/公众号等站外内容时，来源名写进 \`--source\`，\`--url\` 一律留空。带站外链接的候选会被界面过滤掉，等于白做。`
+            : '';
+        })(),
         cli,
       ].filter(Boolean).join('\n\n'),
     };

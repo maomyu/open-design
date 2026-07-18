@@ -1274,6 +1274,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         ...(Array.isArray(body.input?.picked) && body.input.picked.length > 0
           ? { picked: body.input.picked.slice(0, 8) }
           : {}),
+        ...(body.input?.sourcePlatform ? { sourcePlatform: String(body.input.sourcePlatform) } : {}),
         account,
         knowledge: knowledgeItems,
         cliPath: path.join(paths.PROJECT_ROOT, 'apps', 'daemon', 'dist', 'cli.js'),

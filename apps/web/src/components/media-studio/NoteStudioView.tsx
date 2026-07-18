@@ -29,6 +29,7 @@ import {
   generateArticleImage,
   importXhsNote,
   fetchSourceMaterial,
+  topicOriginPlatform,
   lintStudioArticle,
   updateStudioArticle,
   uploadStudioAsset,
@@ -371,6 +372,8 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
         input: {
           ...(input?.note ? { note: input.note } : {}),
           ...(input?.picked && input.picked.length > 0 ? { picked: input.picked } : {}),
+          // 图文笔记台只面向小红书:AI 选题引用只准小红书站内链接(2026-07-18 用户拍板)。
+          ...(kind === 'topics' ? { sourcePlatform: 'xiaohongshu' } : {}),
         },
       });
       if ('error' in created) {
@@ -704,10 +707,11 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
             <TopicsTab
               platform={PLATFORM}
               /* 图文笔记=小红书图文笔记:选题走【小红书爆款采集】(与短视频台小红书一致,TikHub 直采),
-                 而不是纯 AI 找题。图文笔记只面向小红书,采集平台固定小红书。 */
+                 而不是纯 AI 找题。图文笔记只面向小红书,采集平台固定小红书。
+                 列表过滤(2026-07-18 用户拍板):只显示 小红书链接的 + 无链接灵感题,站外/其它平台不出现。 */
               browserCollect
               collectPlatforms={['xiaohongshu']}
-              topics={topics}
+              topics={topics.filter((t) => { const o = topicOriginPlatform(t.url); return o === 'any' || o === 'xiaohongshu'; })}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);
                 if (created) setTopics((list) => [created, ...list]);

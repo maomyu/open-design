@@ -16,6 +16,7 @@ import {
   updateStudioArticle,
   fetchSourceMaterial,
   downloadVideoByUrl,
+  topicOriginPlatform,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { studioToast, StudioToastHost } from './StudioFeedback';
@@ -124,7 +125,9 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     async (note: string, picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>) => {
       const created = await createStudioAiTask(TOPIC_POOL, {
         kind: 'topics',
-        input: { ...(note ? { note } : {}), ...(picked && picked.length > 0 ? { picked } : {}) },
+        // sourcePlatform:选题给当前所选平台用——AI 引用链接只准站内链接,站外来源
+        // (新闻/公众号)只写来源名不带 url(2026-07-18 用户拍板:小红书选题必须全来自小红书)。
+        input: { ...(note ? { note } : {}), ...(picked && picked.length > 0 ? { picked } : {}), sourcePlatform: source },
       });
       if ('error' in created) {
         studioToast.err(created.error);
@@ -133,7 +136,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       aiSeqRef.current += 1;
       setAiTask({ ...created, seq: aiSeqRef.current });
     },
-    [],
+    [source],
   );
 
   const refreshAfterAiTask = useCallback(
@@ -315,7 +318,9 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         browserCollect
         collectPlatforms={collectTargets}
         xhsContentType={xhsType}
-        topics={topics}
+        /* 按当前所选源过滤候选(2026-07-18 用户拍板:小红书选题必须全部来自小红书):
+           只显示 本平台链接的 + 无链接的纯灵感题;其它平台/站外(新闻公众号)链接一律不出现。 */
+        topics={topics.filter((t) => { const o = topicOriginPlatform(t.url); return o === 'any' || o === source; })}
         onAdd={async (draft) => {
           const created = await createStudioTopic(TOPIC_POOL, draft);
           if (created) setTopics((list) => [created, ...list]);

@@ -1300,3 +1300,17 @@ export async function fetchSourceMaterial(url: string): Promise<{ text: string; 
     return { error: '连不上本地服务(daemon)' };
   }
 }
+
+/** 候选链接的平台归属(2026-07-18 用户拍板:小红书选题必须全部来自小红书)。
+ *  无链接 → 'any'(纯灵感题,各平台通用,不过滤);站外(新闻/公众号)→ 'other'。
+ *  选题列表按当前所选源过滤:只显示 'any' 与本平台的候选。 */
+export function topicOriginPlatform(url?: string | null): string {
+  const u = (url || '').toLowerCase();
+  if (!u) return 'any';
+  if (/xiaohongshu\.com|xhslink\.com/.test(u)) return 'xiaohongshu';
+  if (/douyin\.com|iesdouyin\.com/.test(u)) return 'douyin';
+  if (/kuaishou\.com|chenzhongtech\.com/.test(u)) return 'kuaishou';
+  if (/bilibili\.com|b23\.tv/.test(u)) return 'bilibili';
+  if (/channels\.weixin\.qq\.com/.test(u)) return 'channels';
+  return 'other';
+}

@@ -426,6 +426,9 @@ export interface StudioAiTaskRequest {
     accountId?: string;
     /** topics: 用户勾选的优先参考文章（AI 优先围绕它们深挖出题）. */
     picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
+    /** topics: 选题目标平台 id（如 'xiaohongshu'）——引用链接只准该平台站内链接，
+     *  站外来源（新闻/公众号）只写来源名、url 留空（2026-07-18 用户拍板：小红书选题必须全部来自小红书）. */
+    sourcePlatform?: string;
   };
 }
 export interface StudioAiTaskResponse {
