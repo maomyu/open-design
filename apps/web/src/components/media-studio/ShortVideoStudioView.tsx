@@ -804,8 +804,9 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
               emptyCta('还没有作品。从「选题」挑一个开始，或新建一个空白作品。')
             ) : (
               <>
-                {/* 「提取文案仿写」来的稿:把原视频 + 原口播文案摆在脚本页顶部,对照着改仿写稿。 */}
-                {str(extra.sourceTranscript) || str(extra.sourceVideoFile) ? (
+                {/* 「提取文案仿写」来的稿:原视频+原口播文案摆在脚本页顶部对照;
+                    候选「去创作」来的稿(只有 sourceUrl)也显示看原视频入口(2026-07-18)。 */}
+                {str(extra.sourceTranscript) || str(extra.sourceVideoFile) || str(extra.sourceUrl) ? (
                   <SourceMaterialCard
                     videoFile={str(extra.sourceVideoFile)}
                     transcript={str(extra.sourceTranscript)}
