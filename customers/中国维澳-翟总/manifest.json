@@ -1,7 +1,12 @@
 {
   "slug": "zhongguoweiao",
   "customer": "中国维澳·翟总",
-  "aliases": ["翟总", "中国维澳", "zhongguoweiao", "zhaizong"],
+  "aliases": [
+    "翟总",
+    "中国维澳",
+    "zhongguoweiao",
+    "zhaizong"
+  ],
   "edition": "custom",
   "expires": "2027-12-31",
   "status": "active",
@@ -30,10 +35,6 @@
       "namespace": "workbuild-video",
       "license": "license-video.json",
       "features": [
-        "sv.douyin",
-        "sv.kuaishou",
-        "sv.shipinhao",
-        "sv.bilibili",
         "sv.xiaohongshu",
         "note.xiaohongshu",
         "kb.enterprise",
@@ -44,7 +45,7 @@
         "cap.handoff",
         "cap.publish"
       ],
-      "notes": "视频包:短视频5平台+小红书图文笔记+企业知识库+账号(含运维块)。"
+      "notes": "视频包:小红书专属(图文笔记+短视频+直接生图)+企业知识库+账号。2026-07-18 授权收窄:去掉抖音/快手/B站/视频号(翟总此部分授权不含)。"
     }
   },
   "notes": "企业客户。无飞书、无个人自媒体库、无 integrations。license 由 tools-pack 打包时烤进包资源(OD_PACK_LICENSE_FILE),装上即生效;运行时 license import 可覆盖。"

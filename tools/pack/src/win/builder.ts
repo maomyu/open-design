@@ -100,13 +100,18 @@ async function runElectronBuilderRaw(config: ToolPackConfig, paths: WinPaths, pr
     ? await writeWebStandaloneHookConfig(config, paths)
     : null;
   const builderConfig = {
-    appId: "com.workbuild.desktop",
+    // appId 支持 env 覆盖(双包交付,与 mac 对齐):视频包=OD_PACK_APP_ID=com.weiao.video。
+    appId: (process.env.OD_PACK_APP_ID ?? "").trim() || "com.workbuild.desktop",
     afterPack: webStandaloneHookConfigPath == null ? undefined : winResources.webStandaloneAfterPackHook,
     asar: ELECTRON_BUILDER_ASAR,
     buildDependenciesFromSource: ELECTRON_BUILDER_BUILD_DEPENDENCIES_FROM_SOURCE,
     compression: "maximum",
     directories: { output: paths.appBuilderOutputRoot },
-    electronDist: config.electronDistPath,
+    // 跨平台打 win 包(如 mac 宿主,2026-07-18):本地 node_modules/electron/dist 是宿主
+    // 平台的(mac=Electron.app,无 electron.exe),硬传会让 win-unpacked 缺 electron.exe
+    // → rename ENOENT。非 win 宿主不传 electronDist,让 electron-builder 按目标平台
+    // 自动下载 win32-x64 dist;win 本机构建仍用本地 dist(离线/一致)。
+    ...(process.platform === "win32" ? { electronDist: config.electronDistPath } : {}),
     electronVersion: config.electronVersion,
     executableName: PRODUCT_NAME,
     extraMetadata: {

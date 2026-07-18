@@ -52,24 +52,42 @@ async function findFirstExistingPath(candidates: string[]): Promise<string | nul
   return null;
 }
 
-async function findElectronBuilderMakensis(config: ToolPackConfig): Promise<string | null> {
+/** makensis 解析结果:POSIX 宿主用 electron-builder 工具链时需带 NSISDIR 指向数据根。 */
+interface MakensisResolved { command: string; env?: Record<string, string> }
+
+async function findElectronBuilderMakensis(config: ToolPackConfig): Promise<MakensisResolved | null> {
+  const home = process.env.HOME;
   const cacheRoots = [
     process.env.ELECTRON_BUILDER_CACHE,
     process.env.LOCALAPPDATA == null ? undefined : join(process.env.LOCALAPPDATA, "electron-builder", "Cache"),
     process.env.APPDATA == null ? undefined : join(process.env.APPDATA, "electron-builder", "Cache"),
+    home == null ? undefined : join(home, "Library", "Caches", "electron-builder"),
+    home == null ? undefined : join(home, ".cache", "electron-builder"),
     join(config.workspaceRoot, "node_modules", ".cache", "electron-builder"),
   ].filter((entry): entry is string => entry != null && entry.length > 0);
+  const posixDirName = process.platform === "darwin" ? "mac" : "linux";
   for (const cacheRoot of cacheRoots) {
-    const direct = await findFirstExistingPath([
+    const winDirect = await findFirstExistingPath([
       join(cacheRoot, "nsis", "nsis-3.0.4.1-nsis-3.0.4.1", "makensis.exe"),
       join(cacheRoot, "nsis", "nsis-3.0.4.1-nsis-3.0.4.1", "Bin", "makensis.exe"),
     ]);
-    if (direct != null) return direct;
+    if (winDirect != null) return { command: winDirect };
+    // POSIX 宿主跨平台编 win 安装器(2026-07-18):electron-builder 的 nsis 工具链自带
+    // mac/linux 版 makensis(布局 nsis[/nsis-3.0.4.1]/{mac,linux}/makensis,数据目录在
+    // 上一级根)——运行时必须 NSISDIR 指过去,否则找不到 Stubs。优先于系统 makensis
+    // (本机实测 brew makensis 3.12 arm64 写输出阶段必 std::bad_alloc,不可用)。
+    if (process.platform !== "win32") {
+      const posixDirect = await findFirstExistingPath([
+        join(cacheRoot, "nsis", posixDirName, "makensis"),
+        join(cacheRoot, "nsis", "nsis-3.0.4.1", posixDirName, "makensis"),
+      ]);
+      if (posixDirect != null) return { command: posixDirect, env: { NSISDIR: dirname(dirname(posixDirect)) } };
+    }
   }
   return null;
 }
 
-async function resolveMakensisCommand(config: ToolPackConfig): Promise<string> {
+async function resolveMakensisCommand(config: ToolPackConfig): Promise<MakensisResolved> {
   const cached = await findElectronBuilderMakensis(config);
   if (cached != null) return cached;
   const candidates = [
@@ -80,8 +98,9 @@ async function resolveMakensisCommand(config: ToolPackConfig): Promise<string> {
   ];
   for (const candidate of candidates) {
     try {
-      await execFileAsync(candidate, ["/VERSION"], { windowsHide: true });
-      return candidate;
+      // NSIS 选项前缀:win=/,POSIX=-(mac 的 brew makensis 把 /VERSION 当路径,永探不中)。
+      await execFileAsync(candidate, [process.platform === "win32" ? "/VERSION" : "-VERSION"], { windowsHide: true });
+      return { command: candidate };
     } catch {
       // Keep probing known locations.
     }
@@ -707,7 +726,8 @@ export async function buildCustomWinNsisInstaller(
   paths: WinPaths,
   builtApp: WinBuiltAppManifest,
 ): Promise<void> {
-  if (process.platform !== "win32") throw new Error("Windows installer build must run on Windows");
+  // 跨平台放开(2026-07-18):NSIS 脚本编译本身跨平台(mac `brew install nsis` 即有
+  // makensis)——不再按宿主平台一刀切;makensis 缺失时 resolveMakensisCommand 自会报错。
   const makensisCommand = await resolveMakensisCommand(config);
   const packagedVersion = await readPackagedVersion(config);
   await ensureNsisPersianLanguageAlias(config);
@@ -716,24 +736,30 @@ export async function buildCustomWinNsisInstaller(
   await mkdir(dirname(paths.setupPath), { recursive: true });
   await rm(paths.installerPayloadPath, { force: true });
   await rm(paths.setupPath, { force: true });
-  await execFileAsync(winResources.sevenZipExe, ["a", "-t7z", "-mx=1", "-ms=off", paths.installerPayloadPath, ".\\*"], {
+  // 压 payload 由【构建宿主】执行:win 用仓库自带 7z.exe;POSIX 宿主(mac 跨平台打包)
+  // 用系统 7z(brew p7zip)。安装器里打给用户机解压的仍是 win 版 7z.exe,与此无关。
+  const sevenZipBuildCmd = process.platform === "win32" ? winResources.sevenZipExe : "7z";
+  await execFileAsync(sevenZipBuildCmd, ["a", "-t7z", "-mx=1", "-ms=off", paths.installerPayloadPath, process.platform === "win32" ? ".\\*" : "."], {
     cwd: builtApp.unpackedRoot,
     windowsHide: true,
   });
   await stat(paths.installerPayloadPath);
   await writeInstallerScript(config, paths);
-  await execFileAsync(makensisCommand, [
-    "/V2",
-    `/DAPP_VERSION=${packagedVersion}`,
-    `/DOUTPUT_EXE=${paths.setupPath}`,
-    `/DPAYLOAD_7Z=${paths.installerPayloadPath}`,
-    `/DSEVEN_Z_EXE=${winResources.sevenZipExe}`,
-    `/DSEVEN_Z_DLL=${winResources.sevenZipDll}`,
-    `/DAPP_ICON=${paths.winIconPath}`,
-    `/DRUNNING_INSTANCES_PS1=${join(dirname(paths.installerScriptPath), "running-instances.ps1")}`,
+  // NSIS 选项前缀按宿主平台(win=/,POSIX=-):mac 跨平台编 win 安装器时 POSIX makensis 只认 -。
+  const o = process.platform === "win32" ? "/" : "-";
+  await execFileAsync(makensisCommand.command, [
+    `${o}V2`,
+    `${o}DAPP_VERSION=${packagedVersion}`,
+    `${o}DOUTPUT_EXE=${paths.setupPath}`,
+    `${o}DPAYLOAD_7Z=${paths.installerPayloadPath}`,
+    `${o}DSEVEN_Z_EXE=${winResources.sevenZipExe}`,
+    `${o}DSEVEN_Z_DLL=${winResources.sevenZipDll}`,
+    `${o}DAPP_ICON=${paths.winIconPath}`,
+    `${o}DRUNNING_INSTANCES_PS1=${join(dirname(paths.installerScriptPath), "running-instances.ps1")}`,
     paths.installerScriptPath,
   ], {
     cwd: dirname(paths.installerScriptPath),
+    ...(makensisCommand.env ? { env: { ...process.env, ...makensisCommand.env } } : {}),
     windowsHide: true,
   });
   await stat(paths.setupPath);

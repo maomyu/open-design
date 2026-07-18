@@ -4,10 +4,6 @@
     "edition": "custom",
     "customer": "中国维澳·翟总(视频包)",
     "features": [
-      "sv.douyin",
-      "sv.kuaishou",
-      "sv.shipinhao",
-      "sv.bilibili",
       "sv.xiaohongshu",
       "note.xiaohongshu",
       "kb.enterprise",
@@ -18,8 +14,8 @@
       "cap.handoff",
       "cap.publish"
     ],
-    "issuedAt": "2026-07-17",
+    "issuedAt": "2026-07-18",
     "expiresAt": "2027-12-31"
   },
-  "signature": "uNjK0GB8ODMI1UiiGrNdthJ9GAhCuLjImr1hAwEaoBbeDo7N401LVlm8Q3p5wZ5++s53FhpV7w34b4toxr8IAQ=="
+  "signature": "7WSiy5wV4LhTh0NWM327RtMPrEPbQpcXSxm4MnawCq6/S+EAHxxih2eV9muFpHXZDQ4fZZBHL3RAk3esucAuCA=="
 }

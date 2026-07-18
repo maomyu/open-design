@@ -1,4 +1,7 @@
-export const PRODUCT_NAME = "WorkBuild";
+// 产品名支持 env 覆盖(双包交付,2026-07-18 与 mac 侧对齐):同一分支打不同身份的
+// win 包——默认 WorkBuild;视频包=OD_PACK_PRODUCT_NAME=weiao-video(exe/安装目录/
+// userData 全跟着走)。build/app/identity/custom-installer 都 import 这个常量。
+export const PRODUCT_NAME = (process.env.OD_PACK_PRODUCT_NAME ?? "").trim() || "WorkBuild";
 export const DESKTOP_LOG_ECHO_ENV = "OD_DESKTOP_LOG_ECHO";
 export const WEB_STANDALONE_HOOK_CONFIG_ENV = "OD_TOOLS_PACK_WEB_STANDALONE_HOOK_CONFIG";
 export const WEB_STANDALONE_RESOURCE_NAME = "open-design-web-standalone";
