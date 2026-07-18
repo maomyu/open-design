@@ -9870,31 +9870,12 @@ export async function startServer({
   // 爆款标准,让引擎走 TikHub 搜索(翻页累积→按标准筛→评分),秒级出选题候选。比浏览器采集更快、
   // 字段更全(带粉丝/评论/真视频id→能下载仿写)、且无登录/验证码/滚动/DOM改版问题。
   // 关键:不传 --collect-file,引擎 _search 自动走 tik.search_keyword(TikHub)。
-  app.post('/api/media-studio/collect-score', async (req, res) => {
-    if (!isLocalSameOrigin(req, resolvedPort)) {
-      return res.status(403).json({ error: 'cross-origin request rejected' });
-    }
-    const keyword = String(req.body?.keyword || '').trim().slice(0, 100);
-    const rawPlatforms = req.body?.platforms;
-    const platforms = (Array.isArray(rawPlatforms) ? rawPlatforms : String(rawPlatforms || '').split(','))
-      .map((p) => String(p).trim()).filter(Boolean).join(',');
-    const criteria = req.body?.criteria; // { time_window, rules:[...] } 可选
-    // 页数(1-4):每页约 12 条候选。用户想多爬几页看更多爆款时调大;默认 1 页。
-    const pages = Math.max(1, Math.min(4, Math.floor(Number(req.body?.pages) || 1)));
-    const collectN = String(pages * 12);
-    if (!keyword) return res.status(400).json({ error: '缺少 keyword' });
-    if (!platforms) return res.status(400).json({ error: '缺少 platforms' });
-    // TikHub key 前置检查(2026-07-18 用户报"洗衣液抓不到"实为 key 未配却静默返回 0 条):
-    // 缺钥匙必须明说,不许让用户误以为是"没有爆款"。key 存在则随 env 注入引擎
-    // (见 bakuanKeysEnv——媒体设置里配的 key 此前从未传给引擎,是"配了仍采 0"的第二个根因)。
-    {
-      const tk = await readStoredProviderKey(PROJECT_ROOT, 'tikhub');
-      if (!tk.apiKey && tk.source === 'unset' && !(process.env.TIKHUB_API_KEY ?? '').trim()) {
-        return res.status(422).json({
-          error: '还没配置 TikHub key——真抓爆款的数据源是 TikHub(api.tikhub.io)。到「设置 → 接口与密钥」填入 TikHub API Key 后重试。',
-        });
-      }
-    }
+  // 按链接取单条原素材(2026-07-18 用户反馈:AI 选题/旧候选只带 url,创作时看不到原文案)。
+  // 轻量脚本 fetch_source.py(不入库不拆解),级联取详情返回 原文案+原图直链。
+  app.post('/api/media-studio/fetch-source', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const url = String(req.body?.url || '').trim();
+    if (!url) return res.status(400).json({ error: '缺少 url' });
     let eng;
     try {
       eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
@@ -9902,29 +9883,14 @@ export async function startServer({
       return res.status(500).json({ error: '内置引擎准备失败：' + String(err && err.message ? err.message : err) });
     }
     try {
-      const args = ['-m', 'src.pipeline', '--radar', '--keyword', keyword, '--platforms', platforms];
-      if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
-      // 小红书内容类型:图文笔记台只采图文(2),短视频台采视频(1)——前后端对应图文笔记模块。
-      const xhsType = req.body?.xhsContentType;
-      if (platforms.includes('xiaohongshu') && (xhsType === 'image' || xhsType === 'video')) {
-        args.push('--xhs-note-type', xhsType === 'image' ? '2' : '1');
-      }
-      const r = await execFileBuffered(eng.python, args, {
-        cwd: eng.engineDir,
-        // RADAR_FAST=1:选题列表纯数据评分(不逐条打 LLM/取评论文本),分页多条也秒出。
-        // RADAR_COLLECT/RADAR_MAX 按页数放大:采够候选 + 让所有过筛的都进列表。
-        env: { ...eng.env, ...(await bakuanKeysEnv()), RADAR_FAST: "1", RADAR_MAX: collectN, RADAR_COLLECT: collectN },
-        timeout: 240_000,
-      });
-      // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
-      const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
-      let parsed;
-      try { parsed = JSON.parse(s); } catch {
-        return res.status(500).json({ error: 'TikHub 采集/评分失败：' + (r.stderr || r.stdout || '').slice(-300) });
-      }
-      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null });
+      const argv = ['-m', 'scripts.fetch_source', url];
+      const r = await execFileBuffered(eng.python, argv, { cwd: eng.engineDir, env: { ...eng.env, ...(await bakuanKeysEnv()) }, timeout: 120000 });
+      const s2 = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+      const parsed = JSON.parse(s2);
+      if (parsed.error) return res.status(422).json({ error: String(parsed.error) });
+      return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '' });
     } catch (err) {
-      return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
+      return res.status(500).json({ error: '取原素材失败：' + String(err && err.message ? err.message : err) });
     }
   });
 

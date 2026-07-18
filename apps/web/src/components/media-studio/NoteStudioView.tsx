@@ -28,6 +28,7 @@ import {
   fetchStudioTopics,
   generateArticleImage,
   importXhsNote,
+  fetchSourceMaterial,
   lintStudioArticle,
   updateStudioArticle,
   uploadStudioAsset,
@@ -106,6 +107,25 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   const [tab, setTab] = useState<NoteTab>(directImage ? 'gallery' : 'copy');
   // 直接生图:顶部自由提示词(用户自己的想法/画面),独立于 AI 图集建议。
   const [freePrompt, setFreePrompt] = useState('');
+  // 取原素材(url-only 候选补回原文案/原图)。
+  const [fetchingSource, setFetchingSource] = useState(false);
+  const fetchSourceNow = async (url: string) => {
+    if (!article) return;
+    setFetchingSource(true);
+    const r = await fetchSourceMaterial(url);
+    if ('error' in r) { studioToast.err(r.error); setFetchingSource(false); return; }
+    // 原图下载进图集 + 原文案写回 extra.sourceContent(复用 importXhsNote 资产化)。
+    let imageUrls: string[] = [];
+    if (r.images.length > 0) {
+      const imp = await importXhsNote(article.id, r.text, r.images);
+      if (!('error' in imp)) imageUrls = imp.imageUrls;
+    }
+    await updateStudioArticle(PLATFORM, article.id, { extra: { sourceContent: r.text, ...(imageUrls.length ? { noteImages: imageUrls } : {}) } });
+    const fresh = await fetchStudioArticle(PLATFORM, article.id);
+    if (fresh) setArticle(fresh);
+    setFetchingSource(false);
+    studioToast.ok(`已取回原素材`);
+  };
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
@@ -644,7 +664,8 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
               emptyCta('还没有笔记。从「选题」挑一个开始，或新建一篇。')
             ) : (
               <>
-                {/* 「提取图文仿写」带来的小红书原文案参考(原图已进「图集」)。 */}
+                {/* 原文参考卡(2026-07-18):有原文案直接展示;只有原文链接(AI选题/旧
+                    候选)时给「取原素材」按钮——一键抓回本条原文案+原图进图集。 */}
                 {typeof (article.extra as Record<string, unknown>).sourceContent === 'string'
                   && (article.extra as Record<string, unknown>).sourceContent ? (
                   <div className={c('card')}>
@@ -658,6 +679,25 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                     {typeof (article.extra as Record<string, unknown>).sourceUrl === 'string' ? (
                       <a href={String((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
                     ) : null}
+                  </div>
+                ) : typeof (article.extra as Record<string, unknown>).sourceUrl === 'string'
+                  && (article.extra as Record<string, unknown>).sourceUrl ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      原素材
+                      <span className={c('cardHint')}>本条来自选题候选(暂只有原文链接)——点「取原素材」抓回原文案+原图进图集,供 AI 仿写参考</span>
+                    </div>
+                    <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className={`${c('btn')} ${c('btnPrimary')}`}
+                        disabled={fetchingSource}
+                        onClick={() => void fetchSourceNow(String((article.extra as Record<string, unknown>).sourceUrl))}
+                      >
+                        {fetchingSource ? '抓取中…' : '取原素材(原文案+原图)'}
+                      </button>
+                      <a href={String((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
+                    </div>
                   </div>
                 ) : null}
                 {hasFeature(license, 'cap.ai') ? (

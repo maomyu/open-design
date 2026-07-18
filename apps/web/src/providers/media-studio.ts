@@ -1284,3 +1284,19 @@ export async function distributeStudioArticle(
     return { error: '连不上本地服务(daemon)' };
   }
 }
+
+/** 按链接取单条原素材(2026-07-18):AI 选题/旧候选只带 url 时,创作区一键补回原文案+原图。 */
+export async function fetchSourceMaterial(url: string): Promise<{ text: string; images: string[]; title: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/fetch-source`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const d = (await resp.json().catch(() => ({}))) as { text?: string; images?: string[]; title?: string; error?: string };
+    if (!resp.ok) return { error: d.error ?? `取原素材失败(${resp.status})` };
+    return { text: d.text ?? '', images: Array.isArray(d.images) ? d.images : [], title: d.title ?? '' };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
