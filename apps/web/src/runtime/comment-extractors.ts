@@ -89,7 +89,10 @@ export const COMMENT_EXTRACTORS: Record<CommentPlatform, string> = {
     };
     const out = [];
     const seen = new Set();
-    const parents = document.querySelectorAll('.parent-comment, .comment-item.parent, .list-container .comment-item');
+    // 一级评论用 .parent-comment（真机核对：楼中楼在其内的 .reply-container 里，不会被这层选中）。
+    // 老版本无 .parent-comment 时退回 .comments-container 直属 .comment-item（避免把楼中楼当一级）。
+    let parents = document.querySelectorAll('.parent-comment');
+    if (!parents.length) parents = document.querySelectorAll('.comments-container > .comment-item, .list-container > .comment-item');
     parents.forEach((p) => {
       // 一级评论本体：优先取 .parent-comment 内的首个 .comment-item，否则 p 自身。
       const head = p.matches('.comment-item') ? p : (p.querySelector(':scope > .comment-item') || p);
