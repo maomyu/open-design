@@ -64,6 +64,32 @@ export function MakeVideoView(): JSX.Element {
   const [audioName, setAudioName] = useState('');
   const [busy, setBusy] = useState<'video' | 'audio' | 'submit' | null>(null);
   const [job, setJob] = useState<LipsyncJob | null>(null);
+  // 音色设计(2026-07-19 用户拍板):描述→设计→试听。qwen=千问指令音色(即设即听);
+  // volc=火山 voice_design(出可复用 speaker_id,需语音Key+已购音色位)。
+  const [vdProvider, setVdProvider] = useState<'qwen' | 'volc'>('qwen');
+  const [vdPrompt, setVdPrompt] = useState('');
+  const [vdText, setVdText] = useState('大家好,今天给大家带来一款超实用的好物,用过的都说回不去了。');
+  const [vdVoice, setVdVoice] = useState('');
+  const [vdBusy, setVdBusy] = useState(false);
+  const [vdResult, setVdResult] = useState<{ provider: string; audioUrl: string; speakerId?: string; voice?: string; prompt?: string } | null>(null);
+
+  async function runVoiceDesign() {
+    if (!vdPrompt.trim()) { studioToast.err('先写音色描述(如:年轻女性,声音温柔,语速中等)'); return; }
+    setVdBusy(true); setVdResult(null);
+    try {
+      const resp = await fetch('/api/media-studio/voice-design', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: vdProvider, prompt: vdPrompt.trim(), text: vdText.trim(), ...(vdVoice.trim() ? { voice: vdVoice.trim() } : {}) }),
+      });
+      const d = (await resp.json().catch(() => ({}))) as { audioUrl?: string; provider?: string; speakerId?: string; voice?: string; prompt?: string; error?: string };
+      if (!resp.ok || !d.audioUrl) { studioToast.err(d.error || `音色设计失败(${resp.status})`); return; }
+      setVdResult({ provider: d.provider || vdProvider, audioUrl: d.audioUrl, ...(d.speakerId ? { speakerId: d.speakerId } : {}), ...(d.voice ? { voice: d.voice } : {}), ...(d.prompt ? { prompt: d.prompt } : {}) });
+      studioToast.ok('音色已生成——点下方播放试听');
+    } finally {
+      setVdBusy(false);
+    }
+  }
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -134,6 +160,68 @@ export function MakeVideoView(): JSX.Element {
       <div className={c('head')}>
         <h1 className={c('title')}>制作视频</h1>
         <span className={c('cardHint')}>素材车间——做好的成片到各平台入口发布</span>
+      </div>
+
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          音色设计
+          <span className={c('cardHint')}>用一句话描述你想要的声音,AI 设计音色并生成试听——满意后配音/口播都用这个声音</span>
+        </div>
+        <div className={c('row')} style={{ gap: 8, marginBottom: 8 }}>
+          {([['qwen', '千问 · 即设即听'], ['volc', '火山 · 音色位(出 speaker_id)']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={`${c('btn')} ${vdProvider === id ? c('btnPrimary') : ''}`}
+              onClick={() => setVdProvider(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <input
+          className={c('input')}
+          style={{ marginBottom: 8 }}
+          placeholder="音色描述,例:年轻女性,声音温柔有亲和力,语速中等偏慢,像闺蜜聊天"
+          value={vdPrompt}
+          onChange={(e) => setVdPrompt(e.target.value)}
+        />
+        <input
+          className={c('input')}
+          style={{ marginBottom: 8 }}
+          placeholder="试听文本"
+          value={vdText}
+          onChange={(e) => setVdText(e.target.value)}
+        />
+        {vdProvider === 'volc' ? (
+          <input
+            className={c('input')}
+            style={{ marginBottom: 8 }}
+            placeholder="已购音色位 speaker_id(S_ 开头)——火山语音控制台购买"
+            value={vdVoice}
+            onChange={(e) => setVdVoice(e.target.value)}
+          />
+        ) : (
+          <input
+            className={c('input')}
+            style={{ marginBottom: 8 }}
+            placeholder="基底音色(可选,默认 Ethan;女声可填 Cherry)"
+            value={vdVoice}
+            onChange={(e) => setVdVoice(e.target.value)}
+          />
+        )}
+        <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={vdBusy} onClick={() => void runVoiceDesign()}>
+            {vdBusy ? '设计中…' : '🎙 设计并试听'}
+          </button>
+          {vdResult ? (
+            <>
+              <audio controls src={vdResult.audioUrl} style={{ height: 32 }} />
+              {vdResult.speakerId ? <span className={c('cardHint')}>音色位:{vdResult.speakerId}(配音可直接用)</span> : null}
+              {vdResult.provider === 'qwen' ? <span className={c('cardHint')}>复用参数:基底 {vdResult.voice} + 这段描述(配音时同参即同款声音)</span> : null}
+            </>
+          ) : null}
+        </div>
       </div>
 
       <div className={c('card')}>

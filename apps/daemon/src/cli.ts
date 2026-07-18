@@ -2354,6 +2354,7 @@ async function runStudio(args) {
   od studio find --feed tikhub --target douyin|xiaohongshu|kuaishou|zhihu|weibo [--mode hot|search] [--keyword w]
   od studio topic-verify --url u · topic-comments --url u · account-rank [--type N] [--page N]
   od studio fetch --url "<原文链接>"                          # 抓原文转 markdown(素材)
+  od studio voice-design --prompt "<音色描述>" --text "<试听文本>" [--provider qwen|volc] [--voice v]  # 音色设计→试听音频
 
 【AI 任务】(与界面「AI 帮我…」同一引擎;跑完产物自动落库)
   od studio ai <topics|write|revise|ai-check|script|research|review> [文章id]
@@ -2534,6 +2535,26 @@ async function runStudio(args) {
       console.log(`${t.id}  [${t.status}]  ${t.title}${t.source ? `  (${t.source})` : ''}`);
     }
     return;
+  }
+  if (sub === 'voice-design') {
+    // 音色设计(2026-07-19):描述→试听音频。qwen 即设即听;volc 需语音Key+已购音色位。
+    if (typeof flags.prompt !== 'string' || !flags.prompt.trim() || typeof flags.text !== 'string' || !flags.text.trim()) {
+      console.error('Usage: od studio voice-design --prompt "<音色描述>" --text "<试听文本>" [--provider qwen|volc] [--voice 基底音色|S_音色位]');
+      process.exit(2);
+    }
+    const resp = await fetch(`${root}/voice-design`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: flags.prompt,
+        text: flags.text,
+        ...(typeof flags.provider === 'string' ? { provider: flags.provider } : {}),
+        ...(typeof flags.voice === 'string' ? { voice: flags.voice } : {}),
+      }),
+    });
+    if (!resp.ok) return fail(resp, 'voice design');
+    const data = await resp.json();
+    return out(data, `voice designed (${data?.provider})  试听: ${data?.audioUrl}${data?.speakerId ? `  speaker: ${data.speakerId}` : ''}`);
   }
   if (sub === 'topic-add') {
     if (typeof flags.title !== 'string' || !flags.title.trim()) {

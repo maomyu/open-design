@@ -690,6 +690,57 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     }
   });
 
+  // ---- 音色设计(2026-07-19 用户拍板「这很重要」) ----
+  // 双通道:qwen=千问 qwen3-tts-instruct-flash(描述→指令控制音色,即设即听,本机已
+  // 实测出声);volc=火山 openspeech voice_design(正牌音色设计,产出可复用 speaker_id,
+  // 需「语音技术」X-Api-Key[providers.volcSpeech]+已购音色位)。key 都从 media-config 读。
+  app.post('/api/media-studio/voice-design', async (req, res) => {
+    const body = (req.body ?? {}) as { provider?: string; prompt?: string; text?: string; voice?: string };
+    const provider = body.provider === 'volc' ? 'volc' : 'qwen';
+    const prompt = String(body.prompt ?? '').trim();
+    const text = String(body.text ?? '').trim();
+    if (!prompt) return bad(res, 400, '缺少音色描述(prompt)');
+    if (!text) return bad(res, 400, '缺少试听文本(text)');
+    try {
+      if (provider === 'qwen') {
+        const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
+        if (!cfg.apiKey) return bad(res, 422, '还没配置千问(百炼)API Key——到「设置→接口与密钥」填 qwenBailian 后重试。');
+        const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+        const voice = (body.voice ?? '').trim() || 'Ethan';
+        const resp = await fetch(`${base}/api/v1/services/aigc/multimodal-generation/generation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+          body: JSON.stringify({ model: 'qwen3-tts-instruct-flash', input: { text: text.slice(0, 500), voice, instructions: prompt.slice(0, 300) } }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+        const url = data?.output?.audio?.url;
+        if (!resp.ok || !url) {
+          return bad(res, 502, `千问音色设计失败:${String(data?.message ?? data?.code ?? resp.status)}`);
+        }
+        return res.json({ provider: 'qwen', audioUrl: url, voice, prompt });
+      }
+      // volc voice_design:speaker_id 必填(控制台购买的音色位)。
+      const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcSpeech');
+      if (!cfg.apiKey) return bad(res, 422, '还没配置火山「语音技术」X-Api-Key(providers.volcSpeech)——控制台 https://console.volcengine.com/speech/new 获取后填入;或先用千问通道。');
+      const speaker = (body.voice ?? '').trim();
+      if (!/^S_/.test(speaker)) return bad(res, 400, '火山通道需要已购音色位 speaker_id(S_ 开头)——在火山语音控制台购买后填入。');
+      const resp = await fetch('https://openspeech.bytedance.com/api/v3/tts/voice_design', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': cfg.apiKey, 'X-Api-Request-Id': randomUUID() },
+        body: JSON.stringify({ speaker_id: speaker, text: text.slice(0, 300), prompt: { text_prompt: prompt.slice(0, 200) } }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+      if (!resp.ok || (data?.status !== 2 && data?.status !== 4 && !data?.demo_audio)) {
+        return bad(res, 502, `火山音色设计失败:${String(data?.message ?? data?.code ?? resp.status)}`);
+      }
+      return res.json({ provider: 'volc', audioUrl: String(data.demo_audio ?? ''), speakerId: String(data.speaker_id ?? speaker), prompt });
+    } catch (err) {
+      return bad(res, 500, `音色设计失败:${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
   // ---- 制作视频(2026-07-17 用户拍板:横切素材车间;首功能=数字人口型替换) ----
   // 上传免 article(固定 'make-video' 资产桶);口型替换接火山智能视觉「视频改口型」。
   // 火山侧需开通该产品并配 AK/SK(VOLC_VISUAL_ACCESS_KEY/VOLC_VISUAL_SECRET_KEY,

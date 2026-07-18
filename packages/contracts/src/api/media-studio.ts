@@ -442,6 +442,31 @@ export interface StudioAiTaskResponse {
   title: string;
 }
 
+/** 音色设计（2026-07-19 用户拍板「界面功能支持音色设计,这很重要」）。
+ *  双通道：qwen=千问 qwen3-tts-instruct（描述→指令控制音色,即设即听,无需预训练）;
+ *  volc=火山 openspeech voice_design（正牌音色设计,产出可复用 speaker_id,
+ *  需语音技术 X-Api-Key + 已购音色位）。 */
+export interface VoiceDesignRequest {
+  /** 默认 'qwen'。 */
+  provider?: 'qwen' | 'volc';
+  /** 音色描述提示词，如「年轻女性,声音温柔,语速中等偏慢」。 */
+  prompt: string;
+  /** 试听文本。 */
+  text: string;
+  /** qwen：基底音色（默认 Ethan）；volc：已购 speaker_id（S_ 开头，必填）。 */
+  voice?: string;
+}
+export interface VoiceDesignResponse {
+  provider: 'qwen' | 'volc';
+  /** 试听音频 URL（远端直链，短期有效，试听后可下载保存）。 */
+  audioUrl: string;
+  /** volc：训练出的音色代号（后续 TTS 直接用）。 */
+  speakerId?: string;
+  /** qwen：复用参数——配音时同 voice+instructions 即同款声音。 */
+  voice?: string;
+  prompt?: string;
+}
+
 /** 浏览器注入发布可用的平台（桌面端 webview 注入器白名单）。 */
 export type StudioHandoffPlatform = 'zhihu' | 'weibo' | 'xiaohongshu' | 'douyin' | 'kuaishou';
 
