@@ -510,9 +510,6 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const model = typeof body.model === 'string' && body.model ? body.model : 'qwen';
       const apiKey = (keys.QWEN_API_KEY ?? keys.DASHSCOPE_API_KEY ?? '').trim();
       if (model === 'qwen' && !apiKey) return bad(res, 422, missingKeyError('QWEN_API_KEY'));
-      if (model === 'gemini' && !(keys.GEMINI_API_KEY ?? '').trim()) {
-        return bad(res, 422, missingKeyError('GEMINI_API_KEY'));
-      }
       const dir = assetsDirFor(article.id);
       await mkdir(dir, { recursive: true });
       const marker = typeof body.marker === 'string' && body.marker ? body.marker : null;
@@ -548,15 +545,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           ...(body.style ? { style: body.style } : {}),
           ...(body.ratio ? { ratio: body.ratio } : {}),
           ...(volcModel ? { model: volcModel } : {}),
+          // 参考图接进火山 Seedream(2026-07-18 用户拍板:图生图,和千问对齐)。
+          ...(referenceImage ? { referenceImage } : {}),
           apiKey: arkKey,
-        });
-      } else if (model === 'gemini') {
-        // 用户显式选 Gemini：直接走 Gemini（不经过千问）。
-        finalPath = await generateGeminiImageFallback({
-          prompt: description,
-          outFile: path.join(dir, `${baseName}.png`),
-          ...(body.ratio ? { ratio: body.ratio } : {}),
-          env: keys,
         });
       } else {
         try {

@@ -101,7 +101,6 @@ const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'volc', label: '火山 · Seedream 5.0（最新）' },
   { id: 'volc:doubao-seedream-5-0-lite-260128', label: '火山 · Seedream 5.0 Lite（快·联网）' },
   { id: 'volc:doubao-seedream-4-5-251128', label: '火山 · Seedream 4.5' },
-  { id: 'gemini', label: 'Gemini（备用）' },
 ];
 
 /** 正文里已生成/已插入的图片：![alt](src)。 */
