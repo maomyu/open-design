@@ -120,7 +120,20 @@ class TikHubClient:
         # 够选题;后续按各自游标 pcursor/page 补分页)。
         # note_type 仅小红书用:0 综合 / 1 视频 / 2 图文——图文笔记台采图文(2),短视频台采视频(1)。
         if platform == "douyin":
-            return self._douyin_search_paged(keyword, count=count, time_window=time_window)
+            items = self._douyin_search_paged(keyword, count=count, time_window=time_window)
+            # 【采集端保底】窄时间窗(1d/7d)在搜索侧就可能归零——爆款多为存量内容,冷词近一周
+            # 常无高互动新作;候选 0 条时降档阶梯"无米下锅",用户看到的就是"筛不到爆款"。
+            # 首搜不足 5 条自动放宽到 180 天档重搜合并去重;精确时间窗由 criteria 按发布时间再筛
+            # (放宽只是服务端粗筛,不污染规则语义,见 _douyin_publish_time 注释)。
+            if len(items) < min(count, 5) and self._douyin_publish_time(time_window) in ("1", "7"):
+                logger.info(f"[采集保底] 抖音窄窗({time_window})仅 {len(items)} 条,放宽到 180 天档补采")
+                _dy_id = lambda it: str((it.get("aweme_info") or it).get("aweme_id") or id(it))
+                have = {_dy_id(it) for it in items}
+                for it in self._douyin_search_paged(keyword, count=count, time_window="180d"):
+                    if _dy_id(it) not in have:
+                        items.append(it)
+                        have.add(_dy_id(it))
+            return items[:count]
         cfg = _PLAT[platform]
         if cfg["method"] == "POST":
             data = self._call("POST", cfg["search"], body=cfg["body"](keyword, count))
@@ -134,6 +147,14 @@ class TikHubClient:
         if platform == "xiaohongshu" and note_type is not None:
             want_video = (note_type == 1)
             items = [it for it in items if _xhs_is_video(it) == want_video]
+            # 【采集端保底】指定类型搜索归零(如图文台的冷词首页全是视频笔记)→ 换综合(0)重搜一次,
+            # 仍只保留目标类型(note_type 参数是软过滤,综合池里常有漏网的目标类型)。仍为 0 才如实
+            # 返回空——上层 count=0 提示用户换词,而不是让"筛选逻辑"背锅。
+            if not items:
+                logger.info(f"[采集保底] 小红书 note_type={note_type} 归零,按综合重搜过滤目标类型")
+                data2 = self._call("GET", cfg["search"], params={**cfg["params"](keyword, count), "note_type": 0})
+                items = [it for it in _extract_items(data2, cfg["list"], cfg.get("item_key"))
+                         if _xhs_is_video(it) == want_video]
         return items[:count]
 
     @staticmethod
