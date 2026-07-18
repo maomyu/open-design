@@ -55,6 +55,10 @@ export interface ComposeAiTaskInput {
   picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
   /** topics: 选题目标平台 id——url 只准该平台站内链接(2026-07-18 用户拍板)。 */
   sourcePlatform?: string;
+  /** write(note): 用户上传的产品图磁盘绝对路径——图集建议必须以它为主体(先看图)。 */
+  productImagePaths?: string[];
+  /** write(note): 风格参考图(爆款原图)磁盘绝对路径——图集建议模仿其构图/光线/质感。 */
+  styleImagePaths?: string[];
   /** Absolute path of the od CLI entry (dist/cli.js) for PATH-less fallback. */
   cliPath: string;
 }
@@ -308,6 +312,20 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '- 话题标签 5-8 个（不带#，逗号分隔）；',
         '- 正文不放外链、不放微信号（平台高压线）。',
         '## 图集画面建议（3-6 张，之后图集页按描述逐张生成）',
+        // 看图定制(2026-07-18 用户拍板):有产品图/风格图时,建议必须「先看图再写」——
+        // 以自家产品为主体、模仿风格图的构图光线质感,不许凭正文空想一堆无关画面。
+        ...((input.productImagePaths?.length || input.styleImagePaths?.length)
+          ? [
+              '**先看图再写(必做)**:用 Read 工具逐张查看下面的图片,看清楚了再写建议——',
+              ...(input.productImagePaths?.length
+                ? [`- 产品图(自家产品,生成时会原样融入画面,建议里的主体就是它们):\n${input.productImagePaths.map((p) => `  ${p}`).join('\n')}`]
+                : []),
+              ...(input.styleImagePaths?.length
+                ? [`- 风格参考图(爆款原图——每条建议的构图/机位/光线/氛围/道具风格都要模仿它们的调子):\n${input.styleImagePaths.map((p) => `  ${p}`).join('\n')}`]
+                : []),
+              '每条建议 = 一个可直接执行的具体画面:【自家产品为主体】+【模仿风格图的构图光线氛围】+【呼应正文对应段落的卖点】。写清场景、机位/角度、光线、道具;别写与产品和风格图无关的泛泛画面。',
+            ]
+          : []),
         '- 第 1 张是封面：大字观点/清单结论，一眼有信息量；',
         '- 后续每张一个要点。',
         '## 交付',

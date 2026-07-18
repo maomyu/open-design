@@ -1273,6 +1273,21 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         .slice(0, 12)
         .map((k) => ({ name: k.name, contentMd: k.contentMd.slice(0, 2000), ...(k.category ? { category: k.category } : {}) }));
 
+      // 看图写图集建议(2026-07-18 用户拍板):把稿上的产品图(用户上传)与风格参考图
+      // (爆款原图)映射成磁盘路径给 agent——它用 Read 看图后按「产品为主体+模仿风格
+      // 图调子+呼应正文卖点」写每条生图提示词,不再凭正文空想。
+      const assetUrlToDisk = (u: unknown): string | null => {
+        if (typeof u !== 'string' || !u.startsWith(STUDIO_ASSET_URL_PREFIX)) return null;
+        const rest = u.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
+        if (rest.length !== 2) return null;
+        return path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? ''));
+      };
+      const articleExtra = (article?.extra ?? {}) as Record<string, unknown>;
+      const productImagePaths = (Array.isArray(articleExtra.userRefImages) ? articleExtra.userRefImages : [])
+        .map(assetUrlToDisk).filter((p): p is string => !!p).slice(0, 4);
+      const styleImagePaths = (Array.isArray(articleExtra.sourceImages) ? articleExtra.sourceImages : [])
+        .map(assetUrlToDisk).filter((p): p is string => !!p).slice(0, 3);
+
       const composed = await composeStudioAiTask({
         kind,
         platform,
@@ -1284,6 +1299,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           ? { picked: body.input.picked.slice(0, 8) }
           : {}),
         ...(body.input?.sourcePlatform ? { sourcePlatform: String(body.input.sourcePlatform) } : {}),
+        ...(productImagePaths.length ? { productImagePaths } : {}),
+        ...(styleImagePaths.length ? { styleImagePaths } : {}),
         account,
         knowledge: knowledgeItems,
         cliPath: path.join(paths.PROJECT_ROOT, 'apps', 'daemon', 'dist', 'cli.js'),
