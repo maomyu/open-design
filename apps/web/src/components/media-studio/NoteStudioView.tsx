@@ -109,6 +109,8 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   // 参考图(2026-07-18 用户拍板):选一张参考图后,图集里任何生图(AI写的提示词行/你自己写的)
   // 都带它的风格(自动不套模板);清空=普通模板生图。参考素材/图集里的图都能设为参考。
   const [refImage, setRefImage] = useState('');
+  // 右侧预览 tab(2026-07-18 用户拍板省空间):成稿(当前创作)/原文(原文案)/参考图(原图)。
+  const [previewTab, setPreviewTab] = useState<'draft' | 'source' | 'refs'>('draft');
   // 取原素材(url-only 候选补回原文案/原图)。
   const [fetchingSource, setFetchingSource] = useState(false);
   const fetchSourceNow = async (url: string) => {
@@ -832,41 +834,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                     <button type="button" className={c('btn')} onClick={() => setRefImage('')}>✕ 清除参考</button>
                   </div>
                 ) : null}
-                {/* 参考素材区(原图)——移到图集步(2026-07-18):点「用作参考」设为上方参考图;
-                    别人的原图不进图集,要用点「+加入图集」(版权自负)。 */}
-                {sourceImages.length > 0 ? (
-                  <div className={c('card')}>
-                    <div className={c('cardLabel')}>
-                      参考素材（{sourceImages.length}）· 原图
-                      <span className={c('cardHint')}>别人的原图仅供参考,不自动进图集/发布。点「用作参考」→ 写提示词生同款质感;确实要用点「+加入图集」</span>
-                    </div>
-                    <div className={c('coverGrid')}>
-                      {sourceImages.map((url, i) => (
-                        <div key={url} className={c('coverCard')} style={url === refImage ? { outline: '2px solid #e8582e', outlineOffset: 2 } : undefined}>
-                          <img className={c('coverThumb')} style={{ aspectRatio: '3 / 4' }} src={url} alt={`参考 ${i + 1}`} onClick={() => setLightboxUrl(url)} />
-                          <div className={c('row')}>
-                            <button
-                              type="button"
-                              className={`${c('btn')} ${url === refImage ? c('btnPrimary') : ''}`}
-                              title="设为参考图:下面写提示词生成同款风格质感的新图(不盗原图)"
-                              onClick={() => setRefImage(url === refImage ? '' : url)}
-                            >
-                              {url === refImage ? '✓ 参考中' : '用作参考'}
-                            </button>
-                            <button
-                              type="button"
-                              className={c('btn')}
-                              title="确实要用这张原图 → 放进图集(注意版权,别人的图慎发)"
-                              onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
-                            >
-                              + 加入图集
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+                {/* 参考素材(原图)已移到右侧预览的「参考图」tab(2026-07-18 用户拍板省空间)。 */}
                 {/* 生图·你的想法:非直接生图模式也显示(便于写自定义提示词+配参考图)。 */}
                 {directImage || refImage ? (
                   <div className={c('card')}>
@@ -945,15 +913,16 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                             className={c('btn')}
                             style={{ flexShrink: 0 }}
                             disabled={galleryBusy !== null}
-                            title="按左侧(可编辑的)提示词只生成这一张,用当前选中的风格/模型"
+                            title={refImage ? '按这条提示词 + 上方参考图生图(学参考图风格)' : '按左侧(可编辑的)提示词只生成这一张,用当前选中的风格/模型'}
                             onClick={(e) => {
-                              // 就地取输入框当前值:没失焦的最新编辑也要生效
+                              // 就地取输入框当前值:没失焦的最新编辑也要生效。refImage 由
+                              // generateGalleryImage 默认带上——AI 建议行同样吃参考图。
                               const input = (e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement | null);
                               const text = (input?.value ?? idea).trim();
                               if (text) void generateGalleryImage(text);
                             }}
                           >
-                            {galleryBusy === idea ? '生成中…' : '生图'}
+                            {galleryBusy === idea ? '生成中…' : refImage ? '生图·参考' : '生图'}
                           </button>
                         </div>
                       ))}
@@ -1263,9 +1232,68 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
 
         {article && tab !== 'topics' && tab !== 'list' ? (
           <div className={c('previewCol')}>
-            <span className={c('previewTag')}>
-              <Icon name="eye" size={13} /> 笔记卡（发布时的样子）
-            </span>
+            {/* 预览 tab:成稿(发布样子)/原文(原文案参考)/参考图(原图,可作参考·加入图集)。
+                把参考素材从左栏挪进这里,省左栏空间(2026-07-18 用户拍板)。 */}
+            <div className={c('row')} style={{ gap: 6, marginBottom: 8 }}>
+              {([['draft', '📱 成稿'], ['source', '📄 原文'], ['refs', `🖼 参考图${sourceImages.length ? `(${sourceImages.length})` : ''}`]] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`${c('articleSwitchBtn')}${previewTab === id ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+                  style={{ fontSize: 12 }}
+                  onClick={() => setPreviewTab(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {previewTab === 'source' ? (
+              <div className={c('videoCard')}>
+                {str((article.extra as Record<string, unknown>).sourceContent) ? (
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.7, maxHeight: '60vh', overflow: 'auto' }}>
+                    {str((article.extra as Record<string, unknown>).sourceContent)}
+                  </div>
+                ) : (
+                  <div className={c('cardHint')}>没有原文案(此稿非爆款来源,或还没取原素材)。</div>
+                )}
+                {str((article.extra as Record<string, unknown>).sourceUrl) ? (
+                  <a href={str((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ marginTop: 8, display: 'inline-block' }}>看原文 ↗</a>
+                ) : null}
+              </div>
+            ) : previewTab === 'refs' ? (
+              <div className={c('videoCard')}>
+                {sourceImages.length === 0 ? (
+                  <div className={c('cardHint')}>没有参考原图(此稿非爆款来源,或还没取原素材)。</div>
+                ) : (
+                  <div className={c('coverGrid')}>
+                    {sourceImages.map((url, i) => (
+                      <div key={url} className={c('coverCard')} style={url === refImage ? { outline: '2px solid #e8582e', outlineOffset: 2 } : undefined}>
+                        <img className={c('coverThumb')} style={{ aspectRatio: '3 / 4' }} src={url} alt={`参考 ${i + 1}`} onClick={() => setLightboxUrl(url)} />
+                        <div className={c('row')}>
+                          <button
+                            type="button"
+                            className={`${c('btn')} ${url === refImage ? c('btnPrimary') : ''}`}
+                            title="设为参考图:去左边写提示词生成同款风格质感的新图(不盗原图)"
+                            onClick={() => setRefImage(url === refImage ? '' : url)}
+                          >
+                            {url === refImage ? '✓ 参考中' : '作参考'}
+                          </button>
+                          <button
+                            type="button"
+                            className={c('btn')}
+                            title="确实要用这张原图 → 放进图集(版权自负,别人的图慎发)"
+                            onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
+                          >
+                            +图集
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className={c('cardHint')} style={{ marginTop: 6 }}>别人的原图仅供参考,不自动进图集/发布。</div>
+              </div>
+            ) : (
             <div className={c('videoCard')}>
               {noteImages.length > 0 ? (
                 <img
@@ -1309,6 +1337,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                 </div>
               ) : null}
             </div>
+            )}
           </div>
         ) : null}
       </div>
