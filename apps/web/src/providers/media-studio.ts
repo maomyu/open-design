@@ -1217,3 +1217,50 @@ export function topicLinkOpener(
     openWebTab({ url, platform, account: account || 'main' });
   };
 }
+
+// ---- 制作视频·数字人口型替换(素材车间共享,2026-07-18 PR2) ----
+// 短视频台「上传步」与「制作视频」入口共用:上传素材(免 article 桶)、提交口型
+// 替换、轮询任务。成片 URL 可直接写回稿件 extra.videoPath——全程 0 下载。
+
+export async function uploadMakeAsset(file: File): Promise<{ url?: string; error?: string }> {
+  try {
+    const resp = await fetch('/api/media-studio/make-video/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name) },
+      body: file,
+    });
+    const d = (await resp.json().catch(() => ({}))) as { url?: string; error?: string };
+    if (!resp.ok) return { error: d.error ?? `上传失败(${resp.status})` };
+    return d;
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+export async function submitLipsyncJob(videoUrl: string, audioUrl: string): Promise<{ id: string } | { error: string }> {
+  try {
+    const resp = await fetch('/api/media-studio/make-video/lipsync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoUrl, audioUrl }),
+    });
+    const d = (await resp.json().catch(() => ({}))) as { id?: string; error?: string | { message?: string } };
+    if (!resp.ok) {
+      const msg = typeof d.error === 'string' ? d.error : d.error?.message;
+      return { error: msg || `提交失败(${resp.status})` };
+    }
+    return { id: d.id ?? '' };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+export async function queryLipsyncJob(id: string): Promise<{ id: string; status: 'running' | 'done' | 'error'; resultUrl?: string; error?: string } | null> {
+  try {
+    const resp = await fetch(`/api/media-studio/make-video/lipsync/${encodeURIComponent(id)}`);
+    if (!resp.ok) return null;
+    return (await resp.json()) as { id: string; status: 'running' | 'done' | 'error'; resultUrl?: string; error?: string };
+  } catch {
+    return null;
+  }
+}

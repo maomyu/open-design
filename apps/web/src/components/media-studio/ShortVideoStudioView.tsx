@@ -33,6 +33,9 @@ import {
   updateStudioArticle,
   uploadStudioCover,
   uploadStudioVideo,
+  uploadMakeAsset,
+  submitLipsyncJob,
+  queryLipsyncJob,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
@@ -222,6 +225,48 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   const [voicePreviewUrl, setVoicePreviewUrl] = useState('');
   const [voicePreviewBusy, setVoicePreviewBusy] = useState(false);
   const [videoUploadBusy, setVideoUploadBusy] = useState(false);
+  // 数字人口型替换(素材车间直通,PR2):原视频资产 URL + 任务状态。成片直写 extra.videoPath。
+  const [lipsyncSrcUrl, setLipsyncSrcUrl] = useState('');
+  const [lipsyncSrcBusy, setLipsyncSrcBusy] = useState(false);
+  const [lipsyncJob, setLipsyncJob] = useState<{ id: string; status: 'running' | 'done' | 'error'; error?: string } | null>(null);
+
+  async function pickLipsyncSource(file: File) {
+    setLipsyncSrcBusy(true);
+    const r = await uploadMakeAsset(file);
+    setLipsyncSrcBusy(false);
+    if (r.error || !r.url) {
+      studioToast.err(r.error ?? '上传失败');
+      return;
+    }
+    setLipsyncSrcUrl(r.url);
+  }
+
+  async function startLipsync() {
+    if (!article || !lipsyncSrcUrl || !audioUrl) return;
+    const sub = await submitLipsyncJob(lipsyncSrcUrl, audioUrl);
+    if ('error' in sub) {
+      setLipsyncJob({ id: '', status: 'error', error: sub.error });
+      studioToast.err(sub.error);
+      return;
+    }
+    setLipsyncJob({ id: sub.id, status: 'running' });
+    studioToast.ok('口型替换任务已提交(通常 1-5 分钟)…');
+    const timer = window.setInterval(() => {
+      void queryLipsyncJob(sub.id).then((j) => {
+        if (!j) return;
+        if (j.status === 'done' && j.resultUrl) {
+          window.clearInterval(timer);
+          setLipsyncJob({ id: sub.id, status: 'done' });
+          editArticle({ extra: { videoPath: j.resultUrl } });
+          studioToast.ok('成片已生成并填入「成品视频」——可以去发布了');
+        } else if (j.status === 'error') {
+          window.clearInterval(timer);
+          setLipsyncJob({ id: sub.id, status: 'error', error: j.error });
+          studioToast.err(`口型替换失败:${j.error ?? '未知错误'}`);
+        }
+      });
+    }, 5000);
+  }
   const [coverUploadBusy, setCoverUploadBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
@@ -940,6 +985,50 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
                   />
                   {videoPath.trim() ? (
                     <div className={c('cardHint')}>发布时会校验文件存在；标题/描述/标签都从本作品带过去。</div>
+                  ) : null}
+                  {/* 素材车间直通(2026-07-18 PR2):数字人口型替换内嵌上传步——原视频+
+                      本稿配音(配音步产物 extra.audioUrl 一键带入)→成片直接写回
+                      videoPath,全程 0 下载。火山「视频改口型」凭证未配时提交会明确报错。 */}
+                  {hasFeature(license, 'cap.video') ? (
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed var(--od-border, #e5ded4)' }}>
+                      <div className={c('cardLabel')}>
+                        🧑 或用数字人口型替换生成
+                        <span className={c('cardHint')}>上传你的原始出镜视频,用「配音」步生成的音频替换口型——不用下载搬运</span>
+                      </div>
+                      <div className={c('row')} style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <label className={c('btn')} style={{ cursor: 'pointer' }}>
+                          {lipsyncSrcBusy ? '上传中…' : lipsyncSrcUrl ? '✓ 原视频已传(换)' : '① 上传原始视频'}
+                          <input
+                            type="file"
+                            accept="video/mp4,video/quicktime"
+                            style={{ display: 'none' }}
+                            disabled={lipsyncSrcBusy}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              e.target.value = '';
+                              if (f) void pickLipsyncSource(f);
+                            }}
+                          />
+                        </label>
+                        <span className={c('cardHint')}>
+                          ② 音频:{audioUrl ? '✓ 用本稿「配音」产物' : '本稿还没配音——先去「配音」步生成'}
+                        </span>
+                        <button
+                          type="button"
+                          className={`${c('btn')} ${c('btnPrimary')}`}
+                          disabled={!lipsyncSrcUrl || !audioUrl || lipsyncJob?.status === 'running'}
+                          onClick={() => void startLipsync()}
+                        >
+                          {lipsyncJob?.status === 'running' ? '口型替换中…' : '③ 生成成片'}
+                        </button>
+                      </div>
+                      {lipsyncJob?.status === 'error' ? (
+                        <div className={c('cardHint')} style={{ marginTop: 6, color: '#b0342c' }}>❌ {lipsyncJob.error}</div>
+                      ) : null}
+                      {lipsyncJob?.status === 'done' ? (
+                        <div className={c('cardHint')} style={{ marginTop: 6 }}>✅ 成片已生成并自动填入上方「成品视频」,可直接发布。</div>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
                 <div className={c('row')}>
