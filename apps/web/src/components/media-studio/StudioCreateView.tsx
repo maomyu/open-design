@@ -14,6 +14,8 @@ import {
   fetchStudioTopics,
   importXhsNote,
   updateStudioArticle,
+  fetchSourceMaterial,
+  downloadVideoByUrl,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { studioToast, StudioToastHost } from './StudioFeedback';
@@ -188,6 +190,21 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     }
     setTopics((list) => list.map((t) => (t.id === topic.id ? { ...t, status: 'used' } : t)));
     setActiveDraft({ articleId: created.id, form: 'video', svId: target.svId as SauPlatformId, title: topic.title });
+    // 原视频自动下载(2026-07-18 用户拍板):按链接取媒体直链→下原片→写 sourceVideoFile,
+    // 脚本步「对照原爆款」直接内嵌原视频播放器。后台异步,不阻塞进创作区(大文件耗时)。
+    if (topic.url) {
+      studioToast.info('正在后台下载原视频…(大文件稍等,完成后脚本步可对照播放)');
+      void (async () => {
+        const src = await fetchSourceMaterial(topic.url);
+        if ('error' in src || !src.mediaUrl) return;
+        const dl = await downloadVideoByUrl(src.mediaUrl, src.referer || topic.url, topic.title);
+        if ('error' in dl) return;
+        await updateStudioArticle(TOPIC_POOL, created.id, {
+          extra: { sourceVideoFile: dl.file, ...(src.text ? { sourceTranscript: src.text } : {}) },
+        });
+        studioToast.ok('原视频已下载,脚本步「对照原爆款」可播放对照');
+      })();
+    }
   }
 
   const collectTargets = [source];

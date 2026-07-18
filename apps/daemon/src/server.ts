@@ -9888,7 +9888,7 @@ export async function startServer({
       const s2 = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
       const parsed = JSON.parse(s2);
       if (parsed.error) return res.status(422).json({ error: String(parsed.error) });
-      return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '' });
+      return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url });
     } catch (err) {
       return res.status(500).json({ error: '取原素材失败：' + String(err && err.message ? err.message : err) });
     }

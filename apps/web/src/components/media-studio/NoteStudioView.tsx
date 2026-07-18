@@ -147,8 +147,8 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   const [galleryPrompt, setGalleryPrompt] = useState('');
   const [galleryStyle, setGalleryStyleRaw] = useState(() => {
     // 旧偏好可能存着已移除的风格(illustrated/clean/cyber)→ 兜底回默认白板
-    const v = loadStudioPref('gallery-style', 'whiteboard');
-    return IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : 'whiteboard';
+    const v = loadStudioPref('gallery-style', 'photo-film');
+    return IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : 'photo-film';
   });
   const [galleryRatio, setGalleryRatioRaw] = useState(() => loadStudioPref('gallery-ratio', '3:4'));
   const setGalleryRatio = (v: string) => {
@@ -158,7 +158,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   // 记住上次选的图片风格模板当默认（用户报：选完不该每次重置）。
   const setGalleryStyle = (v: string) => {
     setGalleryStyleRaw(v);
-    saveStudioPref('gallery-style', v, 'whiteboard');
+    saveStudioPref('gallery-style', v, 'photo-film');
   };
   const [galleryModel, setGalleryModel] = useState(loadPreferredImageModel);
   // 账号中心是唯一账号来源:各平台的账号名列表(没配的平台=空数组)。
@@ -432,15 +432,18 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   }
 
   // ---- 图集操作 ----
-  async function generateGalleryImage(description: string) {
+  async function generateGalleryImage(description: string, referenceImage?: string) {
     if (!article || !description.trim()) return;
     setGalleryBusy(description);
     setNotice(null);
     const result = await generateArticleImage(PLATFORM, article.id, {
       description: description.trim(),
-      style: galleryStyle,
+      // 以原图作参考时(2026-07-18 用户拍板):自动切「不用模板(纯提示词)」——让模型
+      // 学参考图的真实风格,不被内置模板覆盖;否则用用户选的风格。
+      style: referenceImage ? 'none' : galleryStyle,
       model: galleryModel,
       ratio: galleryRatio,
+      ...(referenceImage ? { referenceImage } : {}),
     });
     setGalleryBusy(null);
     if ('error' in result) {
@@ -1055,6 +1058,20 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                             </button>
                             <button type="button" className={c('btn')} disabled={i === noteImages.length - 1} onClick={() => moveImage(i, 1)} title="后移">
                               →
+                            </button>
+                            {/* 以这张(原图/已生成图)作参考生同款风格新图:自动切「不用模板」,
+                                让模型学它的真实质感(2026-07-18 用户拍板:产品图参考原图风格)。 */}
+                            <button
+                              type="button"
+                              className={c('btn')}
+                              disabled={galleryBusy !== null}
+                              title="用这张图当风格参考,按下方描述生成同款质感的新图(自动不套模板)"
+                              onClick={() => {
+                                const desc = freePrompt.trim() || galleryPrompt.trim() || str(article?.title) || '产品图';
+                                void generateGalleryImage(desc, url);
+                              }}
+                            >
+                              仿风格
                             </button>
                             <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => removeImage(i)}>
                               删

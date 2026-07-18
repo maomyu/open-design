@@ -74,12 +74,12 @@ export function ZhihuStudioView(): JSX.Element {
   const [tab, setTab] = useState<ZhihuTab>('write');
   // 统一配图风格(与公众号台同模式):CoverGenerator 受控,记忆偏好+移除风格兜底。
   const [imgStyle, setImgStyleRaw] = useState(() => {
-    const v = loadStudioPref('zhihu-image-style', 'whiteboard');
-    return IMAGE_STYLE_PRESETS.some((st) => st.id === v) ? v : 'whiteboard';
+    const v = loadStudioPref('zhihu-image-style', 'photo-film');
+    return IMAGE_STYLE_PRESETS.some((st) => st.id === v) ? v : 'photo-film';
   });
   const setImgStyle = (v: string) => {
     setImgStyleRaw(v);
-    saveStudioPref('zhihu-image-style', v, 'whiteboard');
+    saveStudioPref('zhihu-image-style', v, 'photo-film');
   };
   // 授权裁剪后的 tab 回落。
   useEffect(() => {

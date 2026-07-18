@@ -47,7 +47,13 @@ def main() -> None:
             if u:
                 images.append(u)
     text = (raw.get("desc") or rc.title or "").strip()
-    print(json.dumps({"title": rc.title, "text": text, "images": images}, ensure_ascii=False))
+    # 视频直链(抖音/快手/B站/小红书视频):深挖 play_addr/download_addr 拿真实媒体 url,
+    # 供创作台「取原素材」下载原视频(2026-07-18 用户拍板)。referer 用原文链接。
+    media_url = normalize._deep_find_url(raw) if hasattr(normalize, "_deep_find_url") else ""
+    print(json.dumps(
+        {"title": rc.title, "text": text, "images": images, "mediaUrl": media_url, "referer": url},
+        ensure_ascii=False,
+    ))
 
 
 if __name__ == "__main__":

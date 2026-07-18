@@ -209,12 +209,12 @@ export function MediaStudioView(): JSX.Element {
   // 公众号配图统一风格(2026-07-17 用户报"内置风格没生效"根因:标记图/封面/重生成各持独立
   // style,在A卡选了B卡不吃 + 一篇文章配图本该统一)。全部生成路径共用这一个,记住上次选择。
   const [imgStyle, setImgStyleRaw] = useState(() => {
-    const v = loadStudioPref('mp-image-style', 'whiteboard');
-    return IMAGE_STYLE_PRESETS.some((st) => st.id === v) ? v : 'whiteboard';
+    const v = loadStudioPref('mp-image-style', 'photo-film');
+    return IMAGE_STYLE_PRESETS.some((st) => st.id === v) ? v : 'photo-film';
   });
   const setImgStyle = (v: string) => {
     setImgStyleRaw(v);
-    saveStudioPref('mp-image-style', v, 'whiteboard');
+    saveStudioPref('mp-image-style', v, 'photo-film');
   };
   const [previewNotes, setPreviewNotes] = useState<string[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
