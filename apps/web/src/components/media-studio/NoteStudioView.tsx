@@ -128,7 +128,9 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
       const imp = await importXhsNote(article.id, r.text, r.images);
       if (!('error' in imp)) imageUrls = imp.imageUrls;
     }
-    await updateStudioArticle(PLATFORM, article.id, { extra: { sourceContent: r.text, ...(imageUrls.length ? { sourceImages: imageUrls } : {}) } });
+    // 重新拉取时若接口只返回图没返回文(或反之),别用空值覆盖已取到的原文案/原图。
+    const prevContent = str((articleRef.current?.extra as Record<string, unknown> | undefined)?.sourceContent);
+    await updateStudioArticle(PLATFORM, article.id, { extra: { sourceContent: r.text || prevContent, ...(imageUrls.length ? { sourceImages: imageUrls } : {}) } });
     const fresh = await fetchStudioArticle(PLATFORM, article.id);
     if (fresh) setArticle(fresh);
     setFetchingSource(false);
@@ -195,6 +197,8 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
   const sourceImages: string[] = Array.isArray(extra.sourceImages)
     ? (extra.sourceImages as unknown[]).filter((v): v is string => typeof v === 'string')
     : [];
+  const sourceContent = str(extra.sourceContent);
+  const sourceUrl = str(extra.sourceUrl);
 
   // ---- 数据加载 ----
   const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
@@ -225,7 +229,9 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
     const url = typeof ex.sourceUrl === 'string' ? ex.sourceUrl : '';
     const hasContent = typeof ex.sourceContent === 'string' && ex.sourceContent;
     const hasImgs = Array.isArray(ex.sourceImages) && ex.sourceImages.length > 0;
-    if (!url || hasContent || hasImgs || fetchingSource || autoFetchedRef.current.has(a.id)) return;
+    // 文案+原图都齐了才跳过;缺任一(常见:真抓爆款自带文案但图数组为空)就自动补拉
+    // (2026-07-18 用户反馈:去创作要自动把原文案+素材图都拉回来,别只拉到文案缺图)。
+    if (!url || (hasContent && hasImgs) || fetchingSource || autoFetchedRef.current.has(a.id)) return;
     autoFetchedRef.current.add(a.id);
     void fetchSourceNow(url);
   }, [article?.id]);
@@ -735,26 +741,29 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
               emptyCta('还没有笔记。从「选题」挑一个开始，或新建一篇。')
             ) : (
               <>
-                {/* 原文只在右侧「📄 原文」tab 看,左栏不再重复铺一整段(2026-07-18 用户
-                    反馈:打开文案页顶上全是别人的原文,把自己的标题/正文挤下去了,懵)。
-                    这里只在「还没取到原文案、仅有链接」时留「取原素材」兜底(自动抓取失败时手动触发)。 */}
-                {!str((article.extra as Record<string, unknown>).sourceContent)
-                  && str((article.extra as Record<string, unknown>).sourceUrl) ? (
+                {/* 原素材入口(2026-07-18 用户要求:界面上要有下载原始素材的入口,且去创作
+                    时自动拉取原文案+原图)。原文/原图展示在右侧「原文」「参考图」tab,这里只放
+                    拉取按钮:有链接就常驻,随时可(重新)拉取;进创作时已自动拉一次,这是补拉/更新兜底。 */}
+                {sourceUrl ? (
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>
                       原素材
-                      <span className={c('cardHint')}>本条来自选题候选(暂只有原文链接)——点「取原素材」抓回原文案+原图,原文进右侧「原文」tab,供 AI 仿写参考</span>
+                      <span className={c('cardHint')}>
+                        {sourceContent || sourceImages.length
+                          ? `已拉取:${sourceContent ? '原文案✓(右侧「原文」)' : '原文案✗'} · ${sourceImages.length ? `原图 ${sourceImages.length} 张✓(右侧「参考图」)` : '原图✗'} — 缺了或要更新可重拉`
+                          : '本条只有原文链接——拉取原文案+原图供 AI 仿写参考(原图不自动进图集,防盗图)'}
+                      </span>
                     </div>
                     <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
                       <button
                         type="button"
                         className={`${c('btn')} ${c('btnPrimary')}`}
                         disabled={fetchingSource}
-                        onClick={() => void fetchSourceNow(str((article.extra as Record<string, unknown>).sourceUrl))}
+                        onClick={() => void fetchSourceNow(sourceUrl)}
                       >
-                        {fetchingSource ? '抓取中…' : '取原素材(原文案+原图)'}
+                        {fetchingSource ? '拉取中…' : (sourceContent || sourceImages.length ? '重新拉取原素材' : '拉取原素材(原文案+原图)')}
                       </button>
-                      <a href={str((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
+                      <a href={sourceUrl} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
                     </div>
                   </div>
                 ) : null}
@@ -1295,7 +1304,20 @@ export function NoteStudioView({ entryMode = 'note', articleId, autoWrite = fals
             ) : previewTab === 'refs' ? (
               <div className={c('videoCard')}>
                 {sourceImages.length === 0 ? (
-                  <div className={c('cardHint')}>没有参考原图(此稿非爆款来源,或还没取原素材)。</div>
+                  <div>
+                    <div className={c('cardHint')}>没有参考原图(此稿非爆款来源,或还没取原素材)。</div>
+                    {sourceUrl ? (
+                      <button
+                        type="button"
+                        className={`${c('btn')} ${c('btnPrimary')}`}
+                        style={{ marginTop: 8 }}
+                        disabled={fetchingSource}
+                        onClick={() => void fetchSourceNow(sourceUrl)}
+                      >
+                        {fetchingSource ? '拉取中…' : '拉取原图'}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : (
                   // 九宫格:一行 3 张缩略图,区域内部独立滚动(2026-07-18 用户拍板:图太大+滑整页麻烦)。
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, maxHeight: '58vh', overflowY: 'auto', paddingRight: 4 }}>
