@@ -205,6 +205,11 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   const sourceImages: string[] = Array.isArray(extra.sourceImages)
     ? (extra.sourceImages as unknown[]).filter((v): v is string => typeof v === 'string')
     : [];
+  // 我的商品图(2026-07-18 用户拍板:上传自家产品图作生图参考,让产品融进生成图)。
+  // 与爆款原图分开存:自家图可随意进图集/发布,无防盗图顾虑。
+  const userRefImages: string[] = Array.isArray(extra.userRefImages)
+    ? (extra.userRefImages as unknown[]).filter((v): v is string => typeof v === 'string')
+    : [];
   const sourceContent = str(extra.sourceContent);
   const sourceUrl = str(extra.sourceUrl);
 
@@ -1254,7 +1259,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
             {/* 预览 tab:成稿(发布样子)/原文(原文案参考)/参考图(原图,可作参考·加入图集)。
                 把参考素材从左栏挪进这里,省左栏空间(2026-07-18 用户拍板)。 */}
             <div className={c('row')} style={{ gap: 6, marginBottom: 8 }}>
-              {([['draft', '📱 成稿'], ['source', '📄 原文'], ['refs', `🖼 参考图${sourceImages.length ? `(${sourceImages.length})` : ''}`]] as const).map(([id, label]) => (
+              {([['draft', '📱 成稿'], ['source', '📄 原文'], ['refs', `🖼 参考图${userRefImages.length + sourceImages.length ? `(${userRefImages.length + sourceImages.length})` : ''}`]] as const).map(([id, label]) => (
                 <button
                   key={id}
                   type="button"
@@ -1281,9 +1286,41 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
               </div>
             ) : previewTab === 'refs' ? (
               <div className={c('videoCard')}>
-                {sourceImages.length === 0 ? (
+                {/* 传我的商品图(2026-07-18 用户拍板):自家产品图作生图参考——选它作参考后,
+                    生成的图会把产品融进去(图生图);自家图也可直接进图集。 */}
+                {article ? (
+                  <label className={c('btn')} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                    <Icon name="upload" size={13} /> 传我的商品图(作生图参考)
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files ?? []);
+                        e.target.value = '';
+                        if (!files.length || !article) return;
+                        void (async () => {
+                          const urls: string[] = [];
+                          for (const file of files) {
+                            // eslint-disable-next-line no-await-in-loop
+                            const result = await uploadStudioAsset(PLATFORM, article.id, file);
+                            if (result.url) urls.push(result.url);
+                            else if (result.error) studioToast.err(result.error);
+                          }
+                          if (urls.length > 0) {
+                            editArticle({ extra: { userRefImages: [...userRefImages, ...urls] } });
+                            setRefImage(urls[0]!);   // 传完即选中第一张作参考,少点一步
+                            studioToast.ok(`商品图已传 ${urls.length} 张并设为参考——左边写提示词生图,产品会融进去`);
+                          }
+                        })();
+                      }}
+                    />
+                  </label>
+                ) : null}
+                {userRefImages.length === 0 && sourceImages.length === 0 ? (
                   <div>
-                    <div className={c('cardHint')}>{fetchingSource ? '⏳ 正在自动拉取原图…' : '没有参考原图(此稿非爆款来源)。'}</div>
+                    <div className={c('cardHint')}>{fetchingSource ? '⏳ 正在自动拉取原图…' : '还没有参考图——上面传自家商品图,或此稿非爆款来源(无原图)。'}</div>
                     {/* 拉取是自动的(去创作第一步),不设常驻按钮;仅自动拉失败后留一个重试兜底。 */}
                     {!fetchingSource && sourceUrl ? (
                       <button
@@ -1298,9 +1335,13 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                   </div>
                 ) : (
                   // 九宫格:一行 3 张缩略图,区域内部独立滚动(2026-07-18 用户拍板:图太大+滑整页麻烦)。
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, maxHeight: '58vh', overflowY: 'auto', paddingRight: 4 }}>
-                    {sourceImages.map((url, i) => (
-                      <div key={url} style={{ display: 'flex', flexDirection: 'column', gap: 3, outline: url === refImage ? '2px solid #e8582e' : 'none', outlineOffset: 2, borderRadius: 8 }}>
+                  // 我的商品图排前(标「我的」,可删、可自由进图集);爆款原图在后(防盗图,仅参考)。
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, maxHeight: '55vh', overflowY: 'auto', paddingRight: 4 }}>
+                    {[...userRefImages.map((url) => ({ url, mine: true })), ...sourceImages.map((url) => ({ url, mine: false }))].map(({ url, mine }, i) => (
+                      <div key={url} style={{ display: 'flex', flexDirection: 'column', gap: 3, outline: url === refImage ? '2px solid #e8582e' : 'none', outlineOffset: 2, borderRadius: 8, position: 'relative' }}>
+                        {mine ? (
+                          <span style={{ position: 'absolute', top: 4, left: 4, background: '#e8582e', color: '#fff', fontSize: 10, padding: '1px 5px', borderRadius: 6, zIndex: 1 }}>我的</span>
+                        ) : null}
                         <img
                           src={url}
                           alt={`参考 ${i + 1}`}
@@ -1313,7 +1354,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                             type="button"
                             className={`${c('btn')} ${url === refImage ? c('btnPrimary') : ''}`}
                             style={{ flex: 1, padding: '2px 4px', fontSize: 11 }}
-                            title="设为参考图:去左边写提示词生成同款风格质感的新图(不盗原图)"
+                            title={mine ? '设为参考图:生成的图会把你的产品融进去(图生图)' : '设为参考图:去左边写提示词生成同款风格质感的新图(不盗原图)'}
                             onClick={() => setRefImage(url === refImage ? '' : url)}
                           >
                             {url === refImage ? '✓参考' : '作参考'}
@@ -1322,17 +1363,31 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                             type="button"
                             className={c('btn')}
                             style={{ padding: '2px 5px', fontSize: 11 }}
-                            title="确实要用这张原图 → 放进图集(版权自负,别人的图慎发)"
+                            title={mine ? '自家图,直接放进图集发布' : '确实要用这张原图 → 放进图集(版权自负,别人的图慎发)'}
                             onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
                           >
                             +集
                           </button>
+                          {mine ? (
+                            <button
+                              type="button"
+                              className={c('btn')}
+                              style={{ padding: '2px 5px', fontSize: 11 }}
+                              title="移除这张商品图(不影响已生成的图)"
+                              onClick={() => {
+                                if (url === refImage) setRefImage('');
+                                editArticle({ extra: { userRefImages: userRefImages.filter((u) => u !== url) } });
+                              }}
+                            >
+                              ✕
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
-                <div className={c('cardHint')} style={{ marginTop: 6 }}>一行3张·区内滚动;原图仅供参考,不自动进图集/发布。</div>
+                <div className={c('cardHint')} style={{ marginTop: 6 }}>「我的」=你传的商品图(可进图集);其余为爆款原图,仅供参考不自动进图集/发布。</div>
               </div>
             ) : (
             <div className={c('videoCard')}>

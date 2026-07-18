@@ -1261,8 +1261,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       // 带给 AI（截断防提示词爆炸）。
       const knowledgeItems = listKnowledge(db, platform)
         .filter((k) => !k.accountId || k.accountId === (accountId ?? ''))
-        .slice(0, 6)
-        .map((k) => ({ name: k.name, contentMd: k.contentMd.slice(0, 2000) }));
+        .slice(0, 12)
+        .map((k) => ({ name: k.name, contentMd: k.contentMd.slice(0, 2000), ...(k.category ? { category: k.category } : {}) }));
 
       const composed = await composeStudioAiTask({
         kind,

@@ -272,6 +272,16 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     const sourceBlock = sourceContent
       ? `## 原文参考（这是要【仿写】的小红书爆款原文案——学它的钩子/结构/表达节奏，但换你自己的角度、素材和话术，绝不照抄，避免判重）\n${sourceContent.slice(0, 1500)}`
       : '';
+    // 产品纪律(2026-07-18 用户反馈「AI 文案和我的产品没关系」):有知识库时笔记主角
+    // 必须是自家产品——原文只借结构,别人的品牌绝不出现,否则种草种给了竞品。
+    const productDiscipline = (input.knowledge?.length ?? 0) > 0
+      ? [
+          '## 产品纪律（硬性——违反等于白写）',
+          '- 这篇笔记的主角【必须】是上面知识库里的自家产品/品牌；卖点、成分、场景、人群全从知识库取材，不足的地方宁可写少也不编造；',
+          '- 「原文参考」只借它的【结构/钩子/节奏/排版】；原文里出现的任何其它品牌名、产品名、店铺名一律不得写进你的笔记；',
+          '- 若选题方向与自家产品不直接相关，就以自家产品的视角切入这个话题（蹭结构不蹭品牌）。',
+        ].join('\n')
+      : '';
     const researchPhase = researchMd
       ? `## 素材简报（已调研——事实优先用这里的，不必重查）\n${researchMd.slice(0, 3000)}`
       : [
@@ -289,6 +299,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         note.trim() ? `补充要求：${note.trim()}` : '',
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
+        productDiscipline,
         sourceBlock,
         researchPhase,
         '## 硬限制（平台规则，超了发不出去）',
@@ -328,6 +339,9 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         note.trim() ? `补充要求：${note.trim()}` : '',
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
+        (input.knowledge?.length ?? 0) > 0
+          ? '## 产品纪律（硬性）：脚本主角必须是知识库里的自家产品/品牌，卖点从知识库取材；参考的爆款只借结构钩子，其它品牌名一律不出现。'
+          : '',
         '## 想清楚这几块，但【正文只写口播脚本本身】',
         '- 标题备选：构思 3 个（钩子感强、平台风格），挑最好的一个作 --title，其余不写进正文；',
         '- 口播脚本：钩子（前3秒）→ 预告 → 正文分点 → CTA，逐句可读，不写镜头术语、不写 markdown 强调符号——这就是正文的全部内容；',
