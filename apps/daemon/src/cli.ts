@@ -2589,7 +2589,7 @@ async function runStudio(args) {
     const resp = await fetch(`${root}/make-video/lipsync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: flags.video, audioUrl: flags.audio }),
+      body: JSON.stringify({ videoUrl: flags.video, audioUrl: flags.audio, ...(typeof flags.provider === 'string' ? { provider: flags.provider } : {}) }),
     });
     if (!resp.ok) return fail(resp, 'lipsync submit');
     const j = await resp.json();

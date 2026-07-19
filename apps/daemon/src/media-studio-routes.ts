@@ -816,7 +816,38 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   // 需在火山控制台做「已授权真人素材」登记或用虚拟形象——错误原样透传给界面。
   // 视频仅支持公网 URL(Ark 不收 base64 视频):本地资产则用引擎 ffmpeg 抽首帧降级
   // 「图生数字人口播」(图支持 base64)。任务映射内存持有(重启丢任务可接受,Ark 侧 7 天可查)。
-  const lipsyncJobs = new Map<string, { taskId: string; mode: 'video' | 'image' }>();
+  const lipsyncJobs = new Map<string, { taskId: string; mode: 'video' | 'image'; provider: 'qwen' | 'volc' }>();
+  /** DashScope 临时文件上传(本机素材免公网,2026-07-19):getPolicy → OSS 表单直传 →
+   *  oss:// 引用(请求头带 X-DashScope-OssResourceResolve)。48h 有效,够任务用。 */
+  const dashscopeUpload = async (base: string, apiKey: string, absPath: string, model: string): Promise<string> => {
+    const pol = await fetch(`${base}/api/v1/uploads?action=getPolicy&model=${encodeURIComponent(model)}`, {
+      headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(30_000),
+    });
+    const pd = (await pol.json().catch(() => ({}))) as Record<string, any>;
+    const p = pd?.data;
+    if (!pol.ok || !p?.policy) throw new Error(`获取上传策略失败:${String(pd?.message ?? pol.status)}`);
+    const name = `${Date.now()}-${path.basename(absPath).replace(/[^\w.-]+/g, '_')}`;
+    const key = `${p.upload_dir}/${name}`;
+    const form = new FormData();
+    form.append('OSSAccessKeyId', String(p.oss_access_key_id));
+    form.append('Signature', String(p.signature));
+    form.append('policy', String(p.policy));
+    form.append('key', key);
+    form.append('x-oss-object-acl', String(p.x_oss_object_acl ?? 'private'));
+    form.append('x-oss-forbid-overwrite', String(p.x_oss_forbid_overwrite ?? 'true'));
+    form.append('success_action_status', '200');
+    const buf = await readFile(absPath);
+    form.append('file', new Blob([new Uint8Array(buf)]), name);
+    const up = await fetch(String(p.upload_host), { method: 'POST', body: form, signal: AbortSignal.timeout(120_000) });
+    if (!up.ok) throw new Error(`素材上传 OSS 失败 HTTP ${up.status}`);
+    return `oss://${key}`;
+  };
+  const localAssetAbs = (u: string): string | null => {
+    if (!u.startsWith(STUDIO_ASSET_URL_PREFIX)) return null;
+    const rest = u.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
+    if (rest.length !== 2) return null;
+    return path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? ''));
+  };
   const localAssetToB64 = async (u: string, kind: 'audio' | 'image'): Promise<string | null> => {
     if (!u.startsWith(STUDIO_ASSET_URL_PREFIX)) return null;
     const rest = u.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
@@ -828,9 +859,43 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     return `data:${mime};base64,${buf.toString('base64')}`;
   };
   app.post('/api/media-studio/make-video/lipsync', async (req, res) => {
-    const body = (req.body ?? {}) as { videoUrl?: string; audioUrl?: string };
+    const body = (req.body ?? {}) as { videoUrl?: string; audioUrl?: string; provider?: string };
     if (!body.videoUrl || !body.audioUrl) return bad(res, 400, '缺少 videoUrl / audioUrl');
+    const provider = body.provider === 'volc' ? 'volc' : 'qwen';
     try {
+      if (provider === 'qwen') {
+        // 千问 videoretalk(2026-07-19 实测):真人素材直接可用、30-45s 出片、
+        // 真·原片改口型(火山 Seedance 拦真人且要 4-6 分钟)——默认通道。
+        const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
+        if (!cfg.apiKey) return bad(res, 422, '还没配置千问(百炼)API Key(providers.qwenBailian)');
+        const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+        const toRemote = async (u: string): Promise<{ url: string; oss: boolean }> => {
+          const abs = localAssetAbs(u);
+          if (!abs) return { url: u, oss: false };
+          return { url: await dashscopeUpload(base, cfg.apiKey, abs, 'videoretalk'), oss: true };
+        };
+        const v = await toRemote(body.videoUrl);
+        const a = await toRemote(body.audioUrl);
+        const resp = await fetch(`${base}/api/v1/services/aigc/image2video/video-synthesis`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${cfg.apiKey}`,
+            'X-DashScope-Async': 'enable',
+            ...((v.oss || a.oss) ? { 'X-DashScope-OssResourceResolve': 'enable' } : {}),
+          },
+          body: JSON.stringify({ model: 'videoretalk', input: { video_url: v.url, audio_url: a.url }, parameters: { video_extension: false } }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+        const taskId = data?.output?.task_id;
+        if (!resp.ok || !taskId) {
+          return bad(res, 502, `口型替换任务提交失败(千问):${String(data?.message ?? data?.code ?? resp.status)}`);
+        }
+        const jobId = randomUUID();
+        lipsyncJobs.set(jobId, { taskId: String(taskId), mode: 'video', provider: 'qwen' });
+        return res.json({ id: jobId, mode: 'video', provider: 'qwen' });
+      }
       const ark = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine');
       if (!ark.apiKey) return bad(res, 422, '还没配置火山方舟 ARK API Key(providers.volcengine)。');
       // 音频:本地资产转 base64;公网 URL 直用。
@@ -877,8 +942,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         return bad(res, 502, `口型替换任务提交失败:${String(data?.error?.message ?? data?.message ?? resp.status)}`);
       }
       const jobId = randomUUID();
-      lipsyncJobs.set(jobId, { taskId: String(data.id), mode });
-      res.json({ id: jobId, mode });
+      lipsyncJobs.set(jobId, { taskId: String(data.id), mode, provider: 'volc' });
+      res.json({ id: jobId, mode, provider: 'volc' });
     } catch (err) {
       return bad(res, 500, `口型替换失败:${err instanceof Error ? err.message : String(err)}`);
     }
@@ -888,6 +953,22 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const job = lipsyncJobs.get(req.params.id);
     if (!job) return bad(res, 404, 'lipsync job not found(应用重启会丢任务映射,请重新提交)');
     try {
+      if (job.provider === 'qwen') {
+        const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
+        const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+        const resp = await fetch(`${base}/api/v1/tasks/${encodeURIComponent(job.taskId)}`, {
+          headers: { Authorization: `Bearer ${cfg.apiKey}` }, signal: AbortSignal.timeout(30_000),
+        });
+        const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+        const st = String(data?.output?.task_status ?? '');
+        if (st === 'SUCCEEDED') {
+          return res.json({ id: req.params.id, status: 'done', resultUrl: String(data?.output?.video_url ?? '') });
+        }
+        if (st === 'FAILED' || st === 'CANCELED' || st === 'UNKNOWN') {
+          return res.json({ id: req.params.id, status: 'error', error: String(data?.output?.message ?? data?.output?.code ?? st) });
+        }
+        return res.json({ id: req.params.id, status: 'running' });
+      }
       const ark = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine');
       const resp = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(job.taskId)}`, {
         headers: { Authorization: `Bearer ${ark.apiKey}` }, signal: AbortSignal.timeout(30_000),

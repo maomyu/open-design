@@ -29,12 +29,12 @@ const c = (key: string): string => (styles as Record<string, string | undefined>
 
 type LipsyncJob = { id: string; status: 'running' | 'done' | 'error'; resultUrl?: string; error?: string };
 
-async function submitLipsync(videoUrl: string, audioUrl: string): Promise<{ id: string } | { error: string }> {
+async function submitLipsync(videoUrl: string, audioUrl: string, provider: 'qwen' | 'volc'): Promise<{ id: string } | { error: string }> {
   try {
     const resp = await fetch('/api/media-studio/make-video/lipsync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl, audioUrl }),
+      body: JSON.stringify({ videoUrl, audioUrl, provider }),
     });
     const d = (await resp.json().catch(() => ({}))) as { id?: string; error?: string | { message?: string } };
     if (!resp.ok) {
@@ -72,6 +72,9 @@ export function MakeVideoView(): JSX.Element {
   const [vdVoice, setVdVoice] = useState('');
   const [vdBusy, setVdBusy] = useState(false);
   const [vdResult, setVdResult] = useState<{ provider: string; audioUrl: string; speakerId?: string; voice?: string; prompt?: string } | null>(null);
+  // 口型替换通道(2026-07-19 实测):千问 videoretalk=真人素材直接可用+30-45s 出片+
+  // 原片只改口型(默认);火山 Seedance=生成式重绘(虚拟形象/延展场景,真人需授权登记)。
+  const [lipProvider, setLipProvider] = useState<'qwen' | 'volc'>('qwen');
 
   async function runVoiceDesign() {
     if (!vdPrompt.trim()) { studioToast.err('先写音色描述(如:年轻女性,声音温柔,语速中等)'); return; }
@@ -144,14 +147,14 @@ export function MakeVideoView(): JSX.Element {
       return;
     }
     setBusy('submit');
-    const r = await submitLipsync(videoUrl, audioUrl);
+    const r = await submitLipsync(videoUrl, audioUrl, lipProvider);
     setBusy(null);
     if ('error' in r) {
       studioToast.err(r.error);
       return;
     }
     setJob({ id: r.id, status: 'running' });
-    studioToast.ok('已提交口型替换任务,处理中…(通常 1-5 分钟,取决于视频时长)');
+    studioToast.ok(lipProvider === 'qwen' ? '已提交口型替换任务,处理中…(千问通道通常 1 分钟内出片)' : '已提交口型替换任务,处理中…(Seedance 通常 4-6 分钟)');
   }
 
   return (
@@ -244,7 +247,19 @@ export function MakeVideoView(): JSX.Element {
       <div className={c('card')}>
         <div className={c('cardLabel')}>
           数字人 · 口型替换
-          <span className={c('cardHint')}>原始视频 + 新口播音频 → AI 口型同步成片(火山 Seedance 2.0)。真人素材需在火山控制台做「已授权真人素材」登记,否则平台会拦;虚拟形象/平台产物直接可用。本机上传的视频会按首帧图生口播(视频参考需公网 URL)</span>
+          <span className={c('cardHint')}>原始视频 + 新口播音频 → AI 把视频里的口型替换成匹配新音频。千问通道:真人素材直接可用,约 1 分钟出片,原片只改口型(推荐);火山 Seedance:生成式重绘(真人需控制台授权登记)</span>
+        </div>
+        <div className={c('row')} style={{ gap: 8, marginBottom: 8 }}>
+          {([['qwen', '千问 · 真人可用·快(推荐)'], ['volc', '火山 Seedance · 生成式']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={`${c('btn')} ${lipProvider === id ? c('btnPrimary') : ''}`}
+              onClick={() => setLipProvider(id)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         <div className={c('row')} style={{ gap: 12, flexWrap: 'wrap' }}>
