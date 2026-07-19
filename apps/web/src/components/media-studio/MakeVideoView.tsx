@@ -27,6 +27,29 @@ async function uploadMakeFile(file: File): Promise<{ url?: string; error?: strin
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
+/** 千问 TTS 基底音色(2026-07-19 逐个实测有效)。描述指令(音色描述)在此基础上塑形。 */
+const QWEN_VOICES: Array<{ id: string; label: string }> = [
+  { id: 'Ethan', label: 'Ethan 晨煦 · 男声阳光(默认)' },
+  { id: 'Cherry', label: 'Cherry 芊悦 · 女声亲切' },
+  { id: 'Serena', label: 'Serena 苏瑶 · 女声温柔' },
+  { id: 'Chelsie', label: 'Chelsie 千雪 · 女声清甜' },
+  { id: 'Katerina', label: 'Katerina 卡捷琳娜 · 女声御姐' },
+  { id: 'Elias', label: 'Elias 墨讲师 · 男声讲解' },
+  { id: 'Ryan', label: 'Ryan 甜茶 · 男声活力' },
+  { id: 'Nofish', label: 'Nofish 不吃鱼 · 男声特色' },
+  { id: 'Jennifer', label: 'Jennifer · 女声英文' },
+  { id: 'Marcus', label: 'Marcus · 男声英文' },
+  { id: 'Roy', label: 'Roy · 男声' },
+  { id: 'Peter', label: 'Peter 李彼得 · 天津话' },
+  { id: 'Dylan', label: 'Dylan 晓东 · 北京话' },
+  { id: 'Jada', label: 'Jada 阿珍 · 上海话' },
+  { id: 'Sunny', label: 'Sunny 晴儿 · 四川话' },
+  { id: 'Li', label: 'Li 老李 · 南京话' },
+  { id: 'Eric', label: 'Eric · 四川风味' },
+  { id: 'Rocky', label: 'Rocky · 男声特色' },
+  { id: 'Kiki', label: 'Kiki · 女声特色' },
+];
+
 type LipsyncJob = { id: string; status: 'running' | 'done' | 'error'; resultUrl?: string; error?: string };
 
 async function submitLipsync(videoUrl: string, audioUrl: string, provider: 'qwen' | 'volc'): Promise<{ id: string } | { error: string }> {
@@ -189,10 +212,10 @@ export function MakeVideoView(): JSX.Element {
           value={vdPrompt}
           onChange={(e) => setVdPrompt(e.target.value)}
         />
-        <input
-          className={c('input')}
-          style={{ marginBottom: 8 }}
-          placeholder="试听文本"
+        <textarea
+          className={c('textarea')}
+          style={{ marginBottom: 8, minHeight: 64 }}
+          placeholder="口播文案——生成的音频可直接「用作口播音频」去做口型替换;先短句试听音色,满意后粘完整文案重新生成"
           value={vdText}
           onChange={(e) => setVdText(e.target.value)}
         />
@@ -205,13 +228,19 @@ export function MakeVideoView(): JSX.Element {
             onChange={(e) => setVdVoice(e.target.value)}
           />
         ) : (
-          <input
-            className={c('input')}
+          <select
+            className={c('select')}
             style={{ marginBottom: 8 }}
-            placeholder="基底音色(可选,默认 Ethan;女声可填 Cherry)"
+            title="基底音色(实测全部可用)——音色描述在此基础上塑形"
             value={vdVoice}
             onChange={(e) => setVdVoice(e.target.value)}
-          />
+          >
+            {QWEN_VOICES.map((v) => (
+              <option key={v.id} value={v.id === 'Ethan' ? '' : v.id}>
+                {v.label}
+              </option>
+            ))}
+          </select>
         )}
         <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
           <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={vdBusy} onClick={() => void runVoiceDesign()}>
@@ -237,6 +266,18 @@ export function MakeVideoView(): JSX.Element {
                 }}
               >
                 💾 保存音色
+              </button>
+              <button
+                type="button"
+                className={c('btn')}
+                title="把这条生成的音频直接填进下方「口型替换」的新口播音频——一条龙出片"
+                onClick={() => {
+                  setAudioUrl(vdResult.audioUrl);
+                  setAudioName('音色设计生成的口播音频');
+                  studioToast.ok('已填入下方口型替换的②新口播音频——传原始视频后点「开始口型替换」');
+                }}
+              >
+                🎬 用作口播音频
               </button>
               {vdResult.speakerId ? <span className={c('cardHint')}>音色位:{vdResult.speakerId}</span> : null}
             </>

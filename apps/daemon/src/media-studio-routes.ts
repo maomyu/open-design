@@ -720,7 +720,20 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         if (!resp.ok || !url) {
           return bad(res, 502, `千问音色设计失败:${String(data?.message ?? data?.code ?? resp.status)}`);
         }
-        return res.json({ provider: 'qwen', audioUrl: url, voice, prompt });
+        // 落地本地(2026-07-19 用户拍板:生成的音频要能直接用作口播音频)——远端 OSS
+        // 链接 24h 过期,下载存 make-video 桶,返回本地资产 URL(口型替换直接吃)。
+        const localUrl = await (async () => {
+          try {
+            const ar = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+            if (!ar.ok) return url;
+            const dir = assetsDirFor('make-video');
+            await mkdir(dir, { recursive: true });
+            const f = `voice-design-${Date.now()}.wav`;
+            await writeFile(path.join(dir, f), Buffer.from(await ar.arrayBuffer()));
+            return `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(f)}`;
+          } catch { return url; }
+        })();
+        return res.json({ provider: 'qwen', audioUrl: localUrl, remoteUrl: url, voice, prompt });
       }
       // volc voice_design:speaker_id 必填(控制台购买的音色位)。
       const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcSpeech');
@@ -737,7 +750,21 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       if (!resp.ok || (data?.status !== 2 && data?.status !== 4 && !data?.demo_audio)) {
         return bad(res, 502, `火山音色设计失败:${String(data?.message ?? data?.code ?? resp.status)}`);
       }
-      return res.json({ provider: 'volc', audioUrl: String(data.demo_audio ?? ''), speakerId: String(data.speaker_id ?? speaker), prompt });
+      // volc demo 音频同样落地本地(1 小时过期,存下来才可持久试听/用作口播)。
+      const volcRemote = String(data.demo_audio ?? '');
+      const volcLocal = await (async () => {
+        if (!volcRemote) return volcRemote;
+        try {
+          const ar = await fetch(volcRemote, { signal: AbortSignal.timeout(60_000) });
+          if (!ar.ok) return volcRemote;
+          const dir = assetsDirFor('make-video');
+          await mkdir(dir, { recursive: true });
+          const f = `voice-design-${Date.now()}.mp3`;
+          await writeFile(path.join(dir, f), Buffer.from(await ar.arrayBuffer()));
+          return `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(f)}`;
+        } catch { return volcRemote; }
+      })();
+      return res.json({ provider: 'volc', audioUrl: volcLocal, remoteUrl: volcRemote, speakerId: String(data.speaker_id ?? speaker), prompt });
     } catch (err) {
       return bad(res, 500, `音色设计失败:${err instanceof Error ? err.message : String(err)}`);
     }
