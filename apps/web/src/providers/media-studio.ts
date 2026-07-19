@@ -1167,6 +1167,35 @@ export function completeCommentReadJob(jobId: string, ok: boolean, detail: strin
   }).catch(() => undefined);
 }
 
+// ── 统一创作台「去创作」自动带入原素材（原文/原图/原视频直链）──
+// daemon /fetch-source 未接入时优雅降级(返回 error,创作台照常创作,不自动拉取)。
+export async function fetchSourceMaterial(url: string): Promise<{ text: string; images: string[]; title: string; mediaUrl: string; referer: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/fetch-source`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const d = (await resp.json().catch(() => ({}))) as { text?: string; images?: string[]; title?: string; mediaUrl?: string; referer?: string; error?: string };
+    if (!resp.ok) return { error: d.error ?? `取原素材失败(${resp.status})` };
+    return { text: d.text ?? '', images: Array.isArray(d.images) ? d.images : [], title: d.title ?? '', mediaUrl: d.mediaUrl ?? '', referer: d.referer ?? url };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+/** 由选题来源 URL 判定原平台（创作台选形态/数据源用）。纯客户端正则,无依赖。 */
+export function topicOriginPlatform(url?: string | null): string {
+  const u = (url || '').toLowerCase();
+  if (!u) return 'any';
+  if (/xiaohongshu\.com|xhslink\.com/.test(u)) return 'xiaohongshu';
+  if (/douyin\.com|iesdouyin\.com/.test(u)) return 'douyin';
+  if (/kuaishou\.com|chenzhongtech\.com/.test(u)) return 'kuaishou';
+  if (/bilibili\.com|b23\.tv/.test(u)) return 'bilibili';
+  if (/channels\.weixin\.qq\.com/.test(u)) return 'channels';
+  return 'other';
+}
+
 /** 图片资产的本机绝对路径(「一键存草稿」CDP 注入用)。 */
 export async function fetchStudioAssetPaths(
   platform: string,

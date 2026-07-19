@@ -17,6 +17,7 @@ export type EntryHomeView =
   | 'plugins'
   | 'accounts'
   | 'studio'
+  | 'studio-create'
   | 'studio-video'
   | 'studio-note'
   | 'studio-zhihu'
@@ -118,6 +119,7 @@ export function parseRoute(pathname: string): Route {
   // 创作台 — Media Studio (spec: specs/current/media-studio.md).
   // /studio → 公众号；/studio/short-video → 短视频。
   if (parts[0] === 'studio') {
+    if (parts[1] === 'create') return { kind: 'home', view: 'studio-create' };
     if (parts[1] === 'short-video') return { kind: 'home', view: 'studio-video' };
     if (parts[1] === 'note') return { kind: 'home', view: 'studio-note' };
     if (parts[1] === 'zhihu') return { kind: 'home', view: 'studio-zhihu' };
@@ -178,6 +180,7 @@ export function buildPath(route: Route): string {
     if (route.view === 'plugins') return '/plugins';
     if (route.view === 'accounts') return '/accounts';
     if (route.view === 'studio') return '/studio';
+    if (route.view === 'studio-create') return '/studio/create';
     if (route.view === 'studio-video') return '/studio/short-video';
     if (route.view === 'studio-note') return '/studio/note';
     if (route.view === 'studio-zhihu') return '/studio/zhihu';

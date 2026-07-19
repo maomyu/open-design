@@ -75,6 +75,10 @@ export interface MediaTopic {
   source: string;
   url: string;
   heat: string;
+  /** 原素材（爆款沉淀时带回;无则空）——统一创作台「去创作」自动带入原文/原图。可选:
+   *  daemon 选题存储未回填时为 undefined,创作台优雅降级(不自动拉取,不影响创作)。 */
+  sourceContent?: string;
+  sourceImages?: string[];
   status: 'candidate' | 'used';
   createdAt: number;
 }
@@ -446,6 +450,8 @@ export interface StudioAiTaskRequest {
     accountId?: string;
     /** topics: 用户勾选的优先参考文章（AI 优先围绕它们深挖出题）. */
     picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
+    /** 统一创作台 topics: 选题限定来源平台（如 'xiaohongshu'），站外来源只写名不带 url。 */
+    sourcePlatform?: string;
   };
 }
 export interface StudioAiTaskResponse {

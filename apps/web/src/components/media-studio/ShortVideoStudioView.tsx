@@ -39,7 +39,7 @@ import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './St
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { buildStudioDraft } from './draft-builders';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
-import { hasFeature, useLicense } from '../../state/license';
+import { hasFeature, hasShortVideoPlatform, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -120,7 +120,19 @@ function SourceMaterialCard({ videoFile, transcript, sourceUrl }: { videoFile: s
     });
     return () => { alive = false; if (revoke) revoke(); };
   }, [videoFile]);
-  if (!videoFile && !transcript) return null;
+  if (!videoFile && !transcript && !sourceUrl) return null;
+  // 只有原文链接(候选带来的):给看原视频入口+引导,不空白。
+  if (!videoFile && !transcript) {
+    return (
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          对照原爆款
+          <span className={c('cardHint')}>本稿来自选题候选——可打开原视频对照;要把原视频下载进来+提取口播文案仿写,去「创作」选题页爆款列表用「提取文案仿写」</span>
+        </div>
+        <a href={sourceUrl} target="_blank" rel="noreferrer" className={c('link')}>看原视频 ↗</a>
+      </div>
+    );
+  }
   return (
     <div className={c('card')}>
       <div className={c('cardLabel')}>
@@ -197,7 +209,10 @@ function ScriptTimeline({ bodyMd }: { bodyMd: string }): JSX.Element | null {
   );
 }
 
-export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauPlatformId } = {}): JSX.Element {
+// entryMode='embedded'(2026-07-18 单页创作流):内嵌统一创作台——隐藏台头/选题步,
+// 只露 脚本→配音→上传→发布,选中创作台指定的稿(articleId)。
+export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full', articleId }: { platform?: SauPlatformId; entryMode?: 'full' | 'embedded'; articleId?: string } = {}): JSX.Element {
+  const embedded = entryMode === 'embedded';
   const license = useLicense();
   // 平台化(2026-07-12):外壳传入当前短视频平台;每平台是本单池按 targetPlatform
   // 切出的视图(数据不迁移)。缺省抖音兼容(独立打开视图时)。
@@ -270,6 +285,14 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
 
   useEffect(() => {
     void (async () => {
+      await refreshArticles();
+      // 内嵌模式:直接选创作台指定的稿。
+      if (embedded && articleId) {
+        await selectArticle(articleId);
+        setTab('script');
+        setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+        return;
+      }
       const list = await refreshArticles();
       const remembered = window.localStorage.getItem(lastArticleKey);
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
@@ -277,7 +300,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
       else setTab('topics');
       setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
     })();
-  }, [refreshArticles, selectArticle, lastArticleKey]);
+  }, [refreshArticles, selectArticle, lastArticleKey, embedded, articleId]);
 
   // ---- 自动保存（与公众号创作台同款机制） ----
   const flushSave = useCallback(async () => {
@@ -516,7 +539,9 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
     setTtsBusy(true);
     setNotice(null);
     const voice = str(extra.voice);
-    const result = await synthesizeStudioTts(PLATFORM, article.id, voice ? { voice } : {});
+    const result = await synthesizeStudioTts(PLATFORM, article.id, {
+      ...(voice ? { voice } : {}),
+    });
     setTtsBusy(false);
     if (result.error) {
       setNotice({ ok: false, text: result.error });
@@ -549,7 +574,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   };
 
   const TABS: Array<{ id: VideoTab; label: string; step: string; optional?: boolean }> = [
-    { id: 'topics', label: '选题', step: '1' },
+    ...(embedded ? [] : ([{ id: 'topics', label: '选题', step: '1' }] as const)),
     { id: 'script', label: '脚本', step: '2' },
     // 授权裁剪:配音跟 cap.tts、成片(视频生成)跟 cap.video。客户口播自己拍不生视频时,
     // 授权不含 cap.tts/cap.video → 这两步自动隐藏,只留 选题→脚本→发布。
@@ -575,6 +600,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
 
   return (
     <div className={c('root')}>
+      {embedded ? null : (
       <div className={c('head')}>
         <h1 className={c('title')}>短视频创作台</h1>
         {activeStatus ? <span className={`${c('chip')} ${c(activeStatus.chip)}`}>{activeStatus.text}</span> : null}
@@ -591,6 +617,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
           ) : null}
         </div>
       </div>
+      )}
 
       {(aiTask && aiRunning) || orphan ? (
         <div className={c('aiGlobalBar')}>
@@ -704,8 +731,9 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               emptyCta('还没有作品。从「选题」挑一个开始，或新建一个空白作品。')
             ) : (
               <>
-                {/* 「提取文案仿写」来的稿:把原视频 + 原口播文案摆在脚本页顶部,对照着改仿写稿。 */}
-                {str(extra.sourceTranscript) || str(extra.sourceVideoFile) ? (
+                {/* 「提取文案仿写」来的稿:原视频+原口播文案摆在脚本页顶部对照;
+                    候选「去创作」来的稿(只有 sourceUrl)也显示看原视频入口(2026-07-18)。 */}
+                {str(extra.sourceTranscript) || str(extra.sourceVideoFile) || str(extra.sourceUrl) ? (
                   <SourceMaterialCard
                     videoFile={str(extra.sourceVideoFile)}
                     transcript={str(extra.sourceTranscript)}
@@ -831,8 +859,8 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               <>
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
-                    配音（火山复刻音色）· 可选
-                    <span className={c('cardHint')}>用口播脚本直接合成；音色 ID 以 S_ 开头为复刻音色，空用默认「解说1号」</span>
+                    配音 · 可选
+                    <span className={c('cardHint')}>用口播脚本直接合成；可填火山复刻音色 ID</span>
                   </div>
                   <div className={c('row')}>
                     <input

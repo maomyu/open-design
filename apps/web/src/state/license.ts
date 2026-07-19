@@ -81,6 +81,9 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
     case 'studio-zhihu':
     case 'studio-weibo':
       return anyArticlePlatform(license);
+    case 'studio-create':
+      // 统一创作台:短视频任一平台 或 小红书图文授权即可进。
+      return anyShortVideoPlatform(license) || hasFeature(license, 'note.xiaohongshu');
     case 'studio-video':
       return anyShortVideoPlatform(license);
     case 'studio-note':
@@ -97,7 +100,7 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
   }
 }
 
-const VIEW_FALLBACK_ORDER = ['studio', 'studio-video', 'studio-note', 'knowledge', 'accounts', 'integrations'];
+const VIEW_FALLBACK_ORDER = ['studio-create', 'studio', 'studio-video', 'studio-note', 'knowledge', 'accounts', 'integrations'];
 
 /** 未授权视图(直链/旧标签)落到第一个已授权模块。 */
 export function licensedViewOrFallback<T extends string>(view: T, license: LicenseInfo): T {

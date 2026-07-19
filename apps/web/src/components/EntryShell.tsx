@@ -88,6 +88,7 @@ import { AccountsView } from './AccountsView';
 import { ArticleStudioShell } from './media-studio/ArticleStudioShell';
 import { ShortVideoStudioShell } from './media-studio/ShortVideoStudioShell';
 import { NoteStudioView } from './media-studio/NoteStudioView';
+import { StudioCreateView } from './media-studio/StudioCreateView';
 import { KnowledgeView } from './media-studio/KnowledgeView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
@@ -663,6 +664,7 @@ export function EntryShell({
               />
             ) : null}
             {view === 'accounts' ? <AccountsView /> : null}
+            {view === 'studio-create' ? <StudioCreateView onNavigate={(v) => changeView(v as EntryViewKind)} /> : null}
             {view === 'studio' ? <ArticleStudioShell /> : null}
             {view === 'studio-zhihu' ? <ArticleStudioShell initial="zhihu" /> : null}
             {view === 'studio-weibo' ? <ArticleStudioShell initial="weibo" /> : null}

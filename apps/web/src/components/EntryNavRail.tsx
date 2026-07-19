@@ -21,6 +21,7 @@ export type EntryView =
   | 'plugins'
   | 'accounts'
   | 'studio'
+  | 'studio-create'
   | 'studio-video'
   | 'studio-note'
   | 'studio-zhihu'
@@ -94,6 +95,19 @@ export function EntryNavRail({ view, onViewChange }: Props) {
         {/* 创作台（客户定制,中文文案不进 i18n;spec: specs/current/media-studio.md） */}
         {/* 功能授权裁剪(2026-07-11):未授权的模块导航不渲染——客户看不到
             没买的能力。无授权文件时 hasFeature 恒真(全功能)。 */}
+        {/* 统一创作台(2026-07-18 用户拍板路线B):选平台+形态→选题→去创作就地展开→一稿多发。
+            与「文章/短视频/笔记」分入口并存,创作是统一动线入口。 */}
+        {anyShortVideoPlatform(license) || hasFeature(license, 'note.xiaohongshu') ? (
+          <NavButton
+            active={view === 'studio-create'}
+            ariaLabel="创作"
+            label="创作"
+            onClick={() => onViewChange('studio-create')}
+            testId="entry-nav-studio-create"
+          >
+            <Icon name="sparkles" size={18} />
+          </NavButton>
+        ) : null}
         {/* 「文章」入口(2026-07-10 用户拍板):公众号/知乎/微博同属文章形态,
             收进一个入口,内部平台切换(短视频/笔记是别的形态,各自独立)。 */}
         {anyArticlePlatform(license) ? (
