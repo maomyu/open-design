@@ -87,32 +87,29 @@ export function MakeVideoView(): JSX.Element {
     } catch { /* ignore */ }
   }, [videoUrl, videoName, audioUrl, audioName]);
 
-  // ---- ① 口播音频:AI 生成(音色设计) / 上传 ----
+  // ---- ① 口播音频:AI 生成(千问 TTS,2026-07-19 用户拍板仅千问) / 上传 ----
   const [audioTab, setAudioTab] = useState<'ai' | 'upload'>('ai');
-  const [vdProvider, setVdProvider] = useState<'qwen' | 'volc'>('qwen');
-  const [vdPrompt, setVdPrompt] = useState('');
   const [vdText, setVdText] = useState('');
   const [vdVoice, setVdVoice] = useState('');
   const [vdBusy, setVdBusy] = useState(false);
-  const [vdResult, setVdResult] = useState<{ provider: string; audioUrl: string; speakerId?: string; voice?: string; prompt?: string } | null>(null);
+  const [vdResult, setVdResult] = useState<{ audioUrl: string; voice?: string } | null>(null);
 
   async function runVoiceDesign() {
     if (!vdText.trim()) { studioToast.err('先写口播文案'); return; }
-    if (vdProvider === 'volc' && !vdPrompt.trim()) { studioToast.err('火山通道需要音色描述(voice_design 靠它出声线)'); return; }
     setVdBusy(true); setVdResult(null);
     try {
       const resp = await fetch('/api/media-studio/voice-design', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: vdProvider, ...(vdProvider === 'volc' ? { prompt: vdPrompt.trim() } : {}), text: vdText.trim(), ...(vdVoice.trim() ? { voice: vdVoice.trim() } : {}) }),
+        body: JSON.stringify({ provider: 'qwen', text: vdText.trim(), ...(vdVoice.trim() ? { voice: vdVoice.trim() } : {}) }),
       });
-      const d = (await resp.json().catch(() => ({}))) as { audioUrl?: string; provider?: string; speakerId?: string; voice?: string; prompt?: string; error?: string };
+      const d = (await resp.json().catch(() => ({}))) as { audioUrl?: string; voice?: string; error?: string };
       if (!resp.ok || !d.audioUrl) { studioToast.err(d.error || `生成失败(${resp.status})`); return; }
-      setVdResult({ provider: d.provider || vdProvider, audioUrl: d.audioUrl, ...(d.speakerId ? { speakerId: d.speakerId } : {}), ...(d.voice ? { voice: d.voice } : {}), ...(d.prompt ? { prompt: d.prompt } : {}) });
+      setVdResult({ audioUrl: d.audioUrl, ...(d.voice ? { voice: d.voice } : {}) });
       // 生成即设为当前口播音频(用户拍板:生成的音频直接作为口播用)。
       setAudioUrl(d.audioUrl);
       const voiceLabel = QWEN_VOICES.find((v) => v.id === (d.voice || 'Ethan'))?.label.split(' ')[0] ?? d.voice ?? '';
-      setAudioName(`AI 生成 · ${voiceLabel}${vdText.trim().slice(0, 10)}…`);
+      setAudioName(`AI 生成 · ${voiceLabel} ${vdText.trim().slice(0, 10)}…`);
       studioToast.ok('口播音频已生成并选用——试听满意后传原始视频出片');
     } finally {
       setVdBusy(false);
@@ -186,9 +183,15 @@ export function MakeVideoView(): JSX.Element {
           ① 口播音频
           <span className={c('cardHint')}>AI 生成(写文案选声音)或上传现成音频;成片时长跟着音频走</span>
         </div>
-        <div className={c('row')} style={{ gap: 8, marginBottom: 8 }}>
+        <div className={c('row')} style={{ gap: 8, marginBottom: 10, alignItems: 'center' }}>
           {([['ai', '🎙 AI 生成'], ['upload', '⬆ 上传音频']] as const).map(([id, label]) => (
-            <button key={id} type="button" className={`${c('btn')} ${audioTab === id ? c('btnPrimary') : ''}`} onClick={() => setAudioTab(id)}>
+            <button
+              key={id}
+              type="button"
+              className={`${c('articleSwitchBtn')}${audioTab === id ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+              aria-pressed={audioTab === id}
+              onClick={() => setAudioTab(id)}
+            >
               {label}
             </button>
           ))}
@@ -203,13 +206,6 @@ export function MakeVideoView(): JSX.Element {
         </div>
         {audioTab === 'ai' ? (
           <>
-            <div className={c('row')} style={{ gap: 8, marginBottom: 8 }}>
-              {([['qwen', '千问 · 即设即听'], ['volc', '火山 · 音色位(出 speaker_id)']] as const).map(([id, label]) => (
-                <button key={id} type="button" className={`${c('btn')} ${vdProvider === id ? c('btnPrimary') : ''}`} onClick={() => setVdProvider(id)}>
-                  {label}
-                </button>
-              ))}
-            </div>
             <textarea
               className={c('textarea')}
               style={{ marginBottom: 8, minHeight: 64 }}
@@ -217,28 +213,10 @@ export function MakeVideoView(): JSX.Element {
               value={vdText}
               onChange={(e) => setVdText(e.target.value)}
             />
-            {vdProvider === 'volc' ? (
-              <>
-                <input
-                  className={c('input')}
-                  style={{ marginBottom: 8 }}
-                  placeholder="音色描述(必填)——例:年轻女性,声音温柔有亲和力,语速中等偏慢"
-                  value={vdPrompt}
-                  onChange={(e) => setVdPrompt(e.target.value)}
-                />
-                <input
-                  className={c('input')}
-                  style={{ marginBottom: 8 }}
-                  placeholder="已购音色位 speaker_id(S_ 开头)——火山语音控制台购买"
-                  value={vdVoice}
-                  onChange={(e) => setVdVoice(e.target.value)}
-                />
-              </>
-            ) : (
+            <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
               <select
                 className={c('select')}
-                style={{ marginBottom: 8 }}
-                title="基底音色(实测全部可用)"
+                title="音色(千问,逐个实测可用)"
                 value={vdVoice}
                 onChange={(e) => setVdVoice(e.target.value)}
               >
@@ -246,8 +224,6 @@ export function MakeVideoView(): JSX.Element {
                   <option key={v.id} value={v.id === 'Ethan' ? '' : v.id}>{v.label}</option>
                 ))}
               </select>
-            )}
-            <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
               <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={vdBusy} onClick={() => void runVoiceDesign()}>
                 {vdBusy ? '生成中…' : '🎙 生成口播音频'}
               </button>
@@ -261,7 +237,7 @@ export function MakeVideoView(): JSX.Element {
                       const resp = await fetch('/api/media-studio/voice-presets', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ name: (vdPrompt.trim() || vdResult.voice || 'Ethan').slice(0, 12), provider: vdResult.provider, ...(vdResult.voice ? { voice: vdResult.voice } : {}), ...(vdResult.prompt ? { prompt: vdResult.prompt } : {}), ...(vdResult.speakerId ? { speakerId: vdResult.speakerId } : {}) }),
+                        body: JSON.stringify({ name: (vdResult.voice || 'Ethan').slice(0, 12), provider: 'qwen', voice: vdResult.voice || 'Ethan' }),
                       });
                       if (resp.ok) studioToast.ok('已存为音色预设');
                       else studioToast.err('保存失败');
@@ -271,7 +247,6 @@ export function MakeVideoView(): JSX.Element {
                   💾 保存音色
                 </button>
               ) : null}
-              {vdResult?.speakerId ? <span className={c('cardHint')}>音色位:{vdResult.speakerId}</span> : null}
             </div>
           </>
         ) : (
@@ -346,7 +321,13 @@ export function MakeVideoView(): JSX.Element {
         </div>
         <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
           {([['qwen', '千问 · 真人可用·快(推荐)'], ['volc', '火山 Seedance · 生成式']] as const).map(([id, label]) => (
-            <button key={id} type="button" className={`${c('btn')} ${lipProvider === id ? c('btnPrimary') : ''}`} onClick={() => setLipProvider(id)}>
+            <button
+              key={id}
+              type="button"
+              className={`${c('articleSwitchBtn')}${lipProvider === id ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+              aria-pressed={lipProvider === id}
+              onClick={() => setLipProvider(id)}
+            >
               {label}
             </button>
           ))}
