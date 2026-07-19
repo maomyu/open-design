@@ -284,7 +284,7 @@ import {
   VIDEO_LENGTHS_SEC,
   VIDEO_MODELS,
 } from './media-models.js';
-import { readMaskedConfig, writeConfig } from './media-config.js';
+import { readMaskedConfig, writeConfig, readStoredProviderKey } from './media-config.js';
 import {
   deleteMediaTask,
   getMediaTask,
@@ -9638,13 +9638,27 @@ export async function startServer({
 
   const dcErr = (err: unknown) => String(err && (err as any).message ? (err as any).message : err);
 
+  // 把【界面「集成/媒体设置」里配的媒体 API key】注入引擎子进程环境。引擎 config/settings.py
+  // 从环境变量读 TikHub/极致了/火山 ARK；此前 eng.env 只带 process.env,界面配的 key 传不到引擎,
+  // 导致"界面配了 key 采集仍返回 0 条"(选题采集/真抓爆款的根因)。provider id → 引擎认的 env 名。
+  async function bakuanKeysEnv(): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const [pid, envName] of [['tikhub', 'TIKHUB_API_KEY'], ['dajiala', 'DAJIALA_API_KEY'], ['volcengine', 'ARK_API_KEY']] as const) {
+      try {
+        const k = await readStoredProviderKey(PROJECT_ROOT, pid);
+        if (k.apiKey) out[envName] = k.apiKey;
+      } catch { /* 单个 provider 读失败不影响其余 */ }
+    }
+    return out;
+  }
+
   // ── 类似封面生成(模块7,验收8-9):参考封面解析 / 生成(背景另存) / 改标题重排版。
   // 引擎 scripts/cover_gen.py,中文标题程序叠字保证不错字。──
   async function runCoverGen(argv: string[]): Promise<any> {
     const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
     const r = await execFileBuffered(eng.python, ['scripts/cover_gen.py', ...argv], {
       cwd: eng.engineDir,
-      env: eng.env,
+      env: { ...eng.env, ...(await bakuanKeysEnv()) },
       timeout: 300_000,
     });
     const out = String(r.stdout || '');
@@ -9712,7 +9726,7 @@ export async function startServer({
       if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
       const r = await execFileBuffered(eng.python, args, {
         cwd: eng.engineDir,
-        env: { ...eng.env, RADAR_MAX: '12' },
+        env: { ...eng.env, ...(await bakuanKeysEnv()), RADAR_MAX: '12' },
         timeout: 240_000,
       });
       // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
@@ -9765,7 +9779,7 @@ export async function startServer({
         cwd: eng.engineDir,
         // RADAR_FAST=1:选题列表纯数据评分(不逐条打 LLM/取评论文本),分页多条也秒出。
         // RADAR_COLLECT/RADAR_MAX 按页数放大:采够候选 + 让所有过筛的都进列表。
-        env: { ...eng.env, RADAR_FAST: '1', RADAR_MAX: collectN, RADAR_COLLECT: collectN },
+        env: { ...eng.env, ...(await bakuanKeysEnv()), RADAR_FAST: '1', RADAR_MAX: collectN, RADAR_COLLECT: collectN },
         timeout: 240_000,
       });
       // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
@@ -9777,6 +9791,63 @@ export async function startServer({
       return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null });
     } catch (err) {
       return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
+  // 统一创作台「去创作」自动拉原素材:平台链接(小红书/抖音/快手/B站)走引擎级联取详情
+  // (原文案+原图直链);其余(公众号/新闻页)走通用网页抓正文。让"仿写"照着真实原爆款写,
+  // 而不是只看选题标题生成。
+  async function fetchGenericWebText(url: string): Promise<{ title: string; text: string }> {
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+    const resp = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(30000) });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const html = await resp.text();
+    const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').replace(/\s+/g, ' ').trim();
+    // 公众号正文从 #js_content 起截一段(嵌套 div 不好精确闭合,多截点再去标签即可)。
+    const anchor = html.search(/id=["']js_content["']/);
+    const scoped = anchor >= 0 ? html.slice(anchor, anchor + 200000) : html;
+    const text = scoped
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, '\n')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .split('\n').map((l) => l.trim()).filter(Boolean).join('\n')
+      .slice(0, 6000);
+    if (text.replace(/\s/g, '').length < 80 || /环境异常|完成验证后即可继续访问/.test(text)) {
+      throw new Error(/weixin\.qq\.com/i.test(url) ? '公众号链接打不开(多为链接已过期/参数不全)' : '页面没抓到正文(可能已失效或要登录/验证)');
+    }
+    return { title, text };
+  }
+
+  app.post('/api/media-studio/fetch-source', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const url = String(req.body?.url || '').trim();
+    if (!url) return res.status(400).json({ error: '缺少 url' });
+    const isPlatformLink = /xiaohongshu\.com|xhslink\.com|douyin\.com|iesdouyin\.com|kuaishou\.com|chenzhongtech\.com|bilibili\.com|b23\.tv/i.test(url);
+    let engineErr = '';
+    if (isPlatformLink) {
+      try {
+        const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+        const r = await execFileBuffered(eng.python, ['-m', 'scripts.fetch_source', url], {
+          cwd: eng.engineDir, env: { ...eng.env, ...(await bakuanKeysEnv()) }, timeout: 120000,
+        });
+        const s2 = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+        const parsed = JSON.parse(s2);
+        if (!parsed.error) {
+          return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url });
+        }
+        engineErr = String(parsed.error);
+      } catch (err) {
+        engineErr = String(err && (err as any).message ? (err as any).message : err);
+      }
+    }
+    try {
+      const g = await fetchGenericWebText(url);
+      return res.json({ text: g.text, images: [], title: g.title, mediaUrl: '', referer: url });
+    } catch (err) {
+      const webErr = String(err && (err as any).message ? (err as any).message : err);
+      return res.status(422).json({ error: engineErr ? `取原素材失败:${engineErr};按网页抓正文也失败:${webErr}` : `取原素材失败:${webErr}` });
     }
   });
 
@@ -10023,7 +10094,7 @@ export async function startServer({
       const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
       const r = await execFileBuffered(eng.python, ['scripts/extract_script.py', '--video', videoFile], {
         cwd: eng.engineDir,
-        env: eng.env,
+        env: { ...eng.env, ...(await bakuanKeysEnv()) },
         timeout: 300_000,
       });
       const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
