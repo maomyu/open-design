@@ -27,7 +27,7 @@ async function fetchJob(id: string): Promise<StudioCollectJob | null> {
   }
 }
 
-async function executeCollect(job: StudioCollectJob): Promise<void> {
+export async function executeCollect(job: StudioCollectJob): Promise<void> {
   if (!(await claimCollectJob(job.id))) return; // 别的窗口抢到了
   // 记住用户当前所在页(通常是「选题」),采集时视图会跟着各平台浏览器标签走(用户看得见
   // 内置浏览器逐个平台搜),采完自动切回这里看结果。若本就在浏览器标签则不回跳。

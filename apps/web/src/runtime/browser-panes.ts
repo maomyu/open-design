@@ -41,6 +41,13 @@ export interface InteractPaneSpec {
   text: string;
 }
 
+/** 登录态探测载荷:面板打开平台主站后判「这个账号还登录着吗」,回写 daemon login-check job。 */
+export interface LoginCheckPaneSpec {
+  jobId: string;
+  platform: string;
+  account: string;
+}
+
 export interface BrowserPaneRequest {
   platform: string;
   account: string;
@@ -55,6 +62,8 @@ export interface BrowserPaneRequest {
   readComments?: CommentReadPaneSpec;
   /** 互动执行:面板打开目标页后做自动评论回复/楼中楼(一次性)。 */
   interact?: InteractPaneSpec;
+  /** 登录态探测:面板打开平台主站后判登录态,回写 login-check job(一次性)。 */
+  loginCheck?: LoginCheckPaneSpec;
   /** 「边播边抓」下载:面板导航到 url(视频页)、抓 <video> 直链后回报(一次性)。 */
   grab?: { grabId: string };
 }

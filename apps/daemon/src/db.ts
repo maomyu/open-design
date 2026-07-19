@@ -345,6 +345,29 @@ function migrate(db: SqliteDb): void {
     );
     CREATE INDEX IF NOT EXISTS idx_interaction_rules_plat
       ON interaction_rules(platform, priority DESC, created_at);
+
+    -- 登录态保活(W6):按 平台×账号 记最近一次登录校验结果。桌面端探测后回写,界面显示状态。
+    CREATE TABLE IF NOT EXISTS media_login_status (
+      platform TEXT NOT NULL,
+      account TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'unknown',
+      detail TEXT,
+      checked_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (platform, account)
+    );
+
+    -- 告警(W6):登录态从"已登录→已失效"翻转时产一条,界面提示引导补登。dismissed 后不再顶显。
+    CREATE TABLE IF NOT EXISTS media_alerts (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT '',
+      account TEXT,
+      message TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      dismissed INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_alerts_open
+      ON media_alerts(dismissed, created_at DESC);
   `);
   // Forward-compatible column add for databases created before metadata_json.
   // SQLite has no IF NOT EXISTS for ALTER, so we check pragma_table_info.

@@ -30,12 +30,14 @@ import {
   type CollectPaneSpec,
   type CommentReadPaneSpec,
   type InteractPaneSpec,
+  type LoginCheckPaneSpec,
 } from '../runtime/browser-panes';
 import { runDraftInjection, humanSearch, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
 import { runReplyInjection } from '../runtime/reply-injectors';
 import { CARD_PROBE_SEL, EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, PLATFORM_HOMEPAGE, SEARCH_BY_TYPING, buildSearchUrl } from '../runtime/collect-extractors';
 import { COMMENT_EXTRACTORS, COMMENT_LOGIN_WALL, buildNoteUrl, type CommentPlatform } from '../runtime/comment-extractors';
-import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress, reportInteractionProgress, completeInteractionJob } from '../providers/media-studio';
+import { LOGIN_HOME, LOGIN_PROBE, parseLoginProbe } from '../runtime/login-markers';
+import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress, reportInteractionProgress, completeInteractionJob, reportLoginCheckProgress, postLoginCheckResult, completeLoginCheckJob } from '../providers/media-studio';
 import type { CommentNode, StudioCollectItem } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
 
@@ -352,6 +354,54 @@ async function runInteraction(
   completeInteractionJob(jobId, r.ok, r.detail);
 }
 
+/**
+ * 在本面板 webview 里探测某 平台×账号 是否还登录着(W6),回写 login-check job。
+ * 导航到平台主站 → 等就绪 → 跑登录探测脚本 → postLoginCheckResult(loggedIn) + completeLoginCheckJob。
+ * 掉线时标签停在主站/登录页,顺便当扫码补登入口(用户扫完下次心跳/手动检测即翻回已登录)。
+ */
+// 注意:探测是【只读、幂等、约 8s】的操作,故 runLoginCheck【不吃 isCancelled】——一旦启动就
+// 跑到底并回写终态。原因:pane 副作用的 cleanup(React 重渲染/StrictMode/同 pane 换 seq)会把
+// cancelled 置真;若在这里早退,job 会永远停在 running(不像读评论有 listener 侧兜底 complete)。
+// 重复触发顶多多探一次(幂等),远好过卡死。故这里不接 isCancelled 参数。
+async function runLoginCheck(el: DraftWebview | null, spec: LoginCheckPaneSpec): Promise<void> {
+  const { jobId, platform } = spec;
+  const say = (t: string) => reportLoginCheckProgress(jobId, t);
+  const finish = (loggedIn: boolean, detail: string) => {
+    postLoginCheckResult(jobId, loggedIn, detail);
+    completeLoginCheckJob(jobId, true, detail);
+  };
+  const probe = LOGIN_PROBE[platform];
+  const home = LOGIN_HOME[platform];
+  if (!el || !probe || !home) return finish(false, '该平台暂不支持登录态探测');
+  const evalJs = async (js: string, timeoutMs = 4000): Promise<unknown> => {
+    try {
+      return await Promise.race([
+        el.executeJavaScript(js),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+      ]);
+    } catch { return undefined; }
+  };
+  say('打开平台主站…');
+  await evalJs(`location.href = ${JSON.stringify(home)}`, 4000);
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const state = await evalJs('document.readyState', 2000);
+    if (state === 'complete' || state === 'interactive') break;
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  await new Promise((r) => setTimeout(r, 1500)); // 顶栏(头像/登录按钮)常在首帧后才渲染
+  // 探测重试:登录标记可能懒渲染,unknown 就多等两轮再判(避免刚打开就误判掉线)。
+  let result = parseLoginProbe(await evalJs(probe, 4000));
+  for (let i = 0; i < 3 && result === 'unknown'; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    result = parseLoginProbe(await evalJs(probe, 4000));
+  }
+  if (result === 'unknown') { say('登录态无法确定(页面未出现登录/头像标记),本次不改判'); return finish(false, 'unknown'); }
+  const loggedIn = result === 'logged-in';
+  say(loggedIn ? '仍在登录中 ✓' : '登录已失效——请在本标签扫码补登');
+  finish(loggedIn, loggedIn ? '仍登录' : '登录失效,标签已停在登录页可扫码补登');
+}
+
 interface PaneSpec {
   key: string;
   platform: string;
@@ -371,6 +421,9 @@ interface PaneSpec {
   /** 互动执行载荷:打开目标页后做自动评论回复/楼中楼,seq 递增触发。 */
   interact?: InteractPaneSpec;
   interactSeq?: number;
+  /** 登录态探测载荷:打开平台主站后判登录态,seq 递增触发。 */
+  loginCheck?: LoginCheckPaneSpec;
+  loginCheckSeq?: number;
   /** 「边播边抓」下载:导航到视频页、抓 <video> 直链后回报,seq 递增触发。 */
   grab?: { grabId: string };
   grabSeq?: number;
@@ -429,6 +482,13 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
                 : p,
             );
           }
+          if (req.loginCheck) {
+            return list.map((p) =>
+              p.key === key
+                ? { ...p, loginCheck: req.loginCheck!, loginCheckSeq: (p.loginCheckSeq ?? 0) + 1 }
+                : p,
+            );
+          }
           if (!req.draft) return list;
           return list.map((p) =>
             p.key === key
@@ -448,6 +508,7 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
             ...(req.collect ? { collect: req.collect, collectSeq: 1 } : {}),
             ...(req.readComments ? { readComments: req.readComments, readCommentsSeq: 1 } : {}),
             ...(req.interact ? { interact: req.interact, interactSeq: 1 } : {}),
+            ...(req.loginCheck ? { loginCheck: req.loginCheck, loginCheckSeq: 1 } : {}),
             ...(req.grab ? { grab: req.grab, grabSeq: 1 } : {}),
           },
         ];
@@ -683,6 +744,24 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     return () => { cancelled = true; window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec.interactSeq]);
+
+  // 登录态探测:在【本标签 webview】里打开平台主站判登录态,回写 login-check job。
+  // 【不】切前台——心跳每 15 分钟跑一次,不能反复抢用户视图;掉线后账号页给「去补登」按钮再切前台。
+  const ranLoginRef = useRef(0);
+  useEffect(() => {
+    const seq = spec.loginCheckSeq ?? 0;
+    if (!spec.loginCheck || seq === 0 || seq === ranLoginRef.current) return;
+    const loginSpec = spec.loginCheck;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      ranLoginRef.current = seq;
+      // 探测只读幂等,启动后跑到底(不传 isCancelled)——避免重渲染 cleanup 把它掐死导致 job 卡 running。
+      void runLoginCheck(ref.current as unknown as DraftWebview | null, loginSpec);
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec.loginCheckSeq]);
 
   // 「边播边抓」下载:导航到视频页 → 播放触发加载 → 抓 <video> 直链(或页面里的 mp4)→ 回报。
   const ranGrabRef = useRef(0);

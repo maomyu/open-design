@@ -1193,6 +1193,85 @@ export function completeInteractionJob(jobId: string, ok: boolean, detail: strin
   }).catch(() => undefined);
 }
 
+// ── 登录态保活(W6):校验派发 + 状态一览 + 失效告警 ──
+type LoginJob = import('@open-design/contracts').StudioLoginCheckJob;
+type LoginRec = import('@open-design/contracts').LoginStatusRecord;
+type Alert = import('@open-design/contracts').MediaAlert;
+
+/** UI/心跳触发一次登录态校验(桌面端离线时 daemon 回 409,这里降级成 error)。 */
+export async function requestLoginCheck(platform: string, account: string): Promise<LoginJob | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/login-check`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account }),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, '发起登录校验失败') };
+    return ((await resp.json()) as { job: LoginJob }).job;
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+export async function claimLoginCheckJob(jobId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ROOT}/login-check/${encodeURIComponent(jobId)}/claim`, { method: 'POST' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function reportLoginCheckProgress(jobId: string, message: string): void {
+  void fetch(`${ROOT}/login-check/${encodeURIComponent(jobId)}/progress`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }),
+  }).catch(() => undefined);
+}
+
+/** 探测结果回写:daemon 据此落 media_login_status,从已登录翻转到失效时产告警。 */
+export function postLoginCheckResult(jobId: string, loggedIn: boolean, detail: string): void {
+  void fetch(`${ROOT}/login-check/${encodeURIComponent(jobId)}/result`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loggedIn, detail }),
+  }).catch(() => undefined);
+}
+
+export function completeLoginCheckJob(jobId: string, ok: boolean, detail: string): void {
+  void fetch(`${ROOT}/login-check/${encodeURIComponent(jobId)}/complete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok, detail }),
+  }).catch(() => undefined);
+}
+
+/** 账号页:各 平台×账号 的最近登录态一览。 */
+export async function fetchLoginStatus(platform?: string): Promise<LoginRec[]> {
+  try {
+    const q = platform ? `?platform=${encodeURIComponent(platform)}` : '';
+    const resp = await fetch(`${ROOT}/login-status${q}`);
+    if (!resp.ok) return [];
+    const d = (await resp.json()) as { items?: LoginRec[] };
+    return Array.isArray(d.items) ? d.items : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchMediaAlerts(includeDismissed = false): Promise<Alert[]> {
+  try {
+    const resp = await fetch(`${ROOT}/alerts${includeDismissed ? '?all=1' : ''}`);
+    if (!resp.ok) return [];
+    const d = (await resp.json()) as { items?: Alert[] };
+    return Array.isArray(d.items) ? d.items : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function dismissMediaAlert(id: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ROOT}/alerts/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
 // ── 互动运营 UI:匹配规则 CRUD + 自动回复(预览/真发) ──
 type IRule = import('@open-design/contracts').InteractionRule;
 

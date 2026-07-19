@@ -13,7 +13,7 @@ import { buildNoteUrl, type CommentPlatform } from './comment-extractors';
 
 const EVENTS_URL = '/api/media-studio/interaction/events';
 
-async function executeInteraction(job: StudioInteractionJob): Promise<void> {
+export async function executeInteraction(job: StudioInteractionJob): Promise<void> {
   if (!(await claimInteractionJob(job.id))) return; // 别的窗口抢到了
   const acctResp = await fetchPlatformAccounts();
   const account =

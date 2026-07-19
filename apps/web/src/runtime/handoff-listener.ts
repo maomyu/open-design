@@ -20,7 +20,7 @@ import { buildStudioDraft } from '../components/media-studio/draft-builders';
 
 const EVENTS_URL = '/api/media-studio/handoff/events';
 
-async function executeJob(job: StudioHandoffJob): Promise<void> {
+export async function executeJob(job: StudioHandoffJob): Promise<void> {
   if (!(await claimHandoffJob(job.id))) return; // 别的窗口抢到了
   const fail = (detail: string) => completeHandoffJob(job.id, false, detail);
   try {

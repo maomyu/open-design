@@ -14,6 +14,8 @@ import {
   MEDIA_PLATFORMS,
   type AccountProfileView,
   type MediaPlatformDef,
+  type LoginStatusRecord,
+  type MediaAlert,
 } from '@open-design/contracts';
 import { useI18n } from '../i18n';
 import { Icon } from './Icon';
@@ -23,9 +25,27 @@ import {
   savePlatformAccount,
   deletePlatformAccountApi,
 } from '../providers/daemon';
-import { openStudioBrowser } from '../providers/media-studio';
+import {
+  openStudioBrowser,
+  fetchLoginStatus,
+  requestLoginCheck,
+  fetchMediaAlerts,
+  dismissMediaAlert,
+} from '../providers/media-studio';
 import './AccountsView.css';
 import './PluginEditView.css';
+
+const loginKey = (platform: string, account: string): string => `${platform}::${account}`;
+
+/** 登录态相对时间(刚刚/几分钟前/几小时前/几天前)——账号页状态芯片用。 */
+function agoText(ts: number): string {
+  if (!ts) return '';
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return '刚刚';
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
+  return `${Math.floor(s / 86400)} 天前`;
+}
 
 interface Draft {
   id?: string;
@@ -59,6 +79,10 @@ export function AccountsView() {
   const [byPlatform, setByPlatform] = useState<Record<string, AccountProfileView[]>>({});
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
+  // 登录态一览(键 平台::账号名)+ 失效告警。心跳/手动检测回写 daemon,这里拉来显示。
+  const [loginStatus, setLoginStatus] = useState<Record<string, LoginStatusRecord>>({});
+  const [alerts, setAlerts] = useState<MediaAlert[]>([]);
+  const [checking, setChecking] = useState<Record<string, boolean>>({});
 
   async function refresh() {
     const data = await fetchPlatformAccounts();
@@ -70,9 +94,52 @@ export function AccountsView() {
     setLoading(false);
   }
 
+  async function refreshStatus() {
+    const [recs, al] = await Promise.all([fetchLoginStatus(), fetchMediaAlerts()]);
+    const map: Record<string, LoginStatusRecord> = {};
+    for (const r of recs) map[loginKey(r.platform, r.account)] = r;
+    setLoginStatus(map);
+    setAlerts(al);
+  }
+
   useEffect(() => {
     void refresh();
+    void refreshStatus();
+    // 页内轮询(30s):心跳在后台探测,状态/告警变化不必刷新页面即可看到。
+    const timer = setInterval(() => void refreshStatus(), 30_000);
+    return () => clearInterval(timer);
   }, []);
+
+  // 手动「检测」:发起 login-check job(桌面端探测),几秒后拉回最新状态。
+  async function checkLogin(platform: string, account: string) {
+    const key = loginKey(platform, account);
+    setChecking((m) => ({ ...m, [key]: true }));
+    const r = await requestLoginCheck(platform, account);
+    if ('error' in r) {
+      setToast(`检测失败：${r.error}`);
+      setChecking((m) => ({ ...m, [key]: false }));
+      return;
+    }
+    // 探测约 5-8s;轮询几次拉最新 checkedAt,变了就停。
+    const before = loginStatus[key]?.checkedAt ?? 0;
+    for (let i = 0; i < 8; i++) {
+      await new Promise((res) => setTimeout(res, 1500));
+      const recs = await fetchLoginStatus(platform);
+      const rec = recs.find((x) => x.account === account);
+      if (rec && rec.checkedAt !== before) {
+        setLoginStatus((m) => ({ ...m, [key]: rec }));
+        setToast(rec.state === 'logged-in' ? `「${account}」仍在登录 ✓` : rec.state === 'logged-out' ? `「${account}」登录已失效,请补登` : `「${account}」登录态无法确定`);
+        break;
+      }
+    }
+    await refreshStatus();
+    setChecking((m) => ({ ...m, [key]: false }));
+  }
+
+  async function dismissAlert(id: string) {
+    await dismissMediaAlert(id);
+    setAlerts((list) => list.filter((a) => a.id !== id));
+  }
 
   return (
     <section className="accounts-view" aria-labelledby="accounts-title">
@@ -85,6 +152,46 @@ export function AccountsView() {
           <p className="plugins-view__lede">{t('accountsView.lede')}</p>
         </div>
       </header>
+
+      {/* ── 登录失效告警 ──
+          心跳探测到某账号从「已登录」掉线时产的告警,顶显引导补登;消隐后不再提醒。 */}
+      {alerts.length > 0 ? (
+        <div style={{ margin: '4px 0 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {alerts.map((a) => (
+            <div
+              key={a.id}
+              role="alert"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                borderRadius: 8, fontSize: 13, fontWeight: 600, lineHeight: 1.5,
+                background: 'rgba(220,38,38,0.1)', color: '#b0342c',
+                border: '1px solid rgba(220,38,38,0.35)',
+              }}
+            >
+              <Icon name="bell" size={15} />
+              <span style={{ flex: 1 }}>{a.message}</span>
+              {a.account ? (
+                <button
+                  type="button"
+                  className="plugin-edit-view__step-link"
+                  onClick={async () => {
+                    const loginUrl = PLATFORM_LOGIN_URLS[a.platform];
+                    const r = await openStudioBrowser({ platform: a.platform, account: a.account!, ...(loginUrl ? { url: loginUrl } : {}) });
+                    setToast(r.error ? `打开失败：${r.error}` : `已打开「${a.account}」浏览器——请扫码补登`);
+                  }}
+                >
+                  <Icon name="external-link" size={12} />
+                  <span>去补登</span>
+                </button>
+              ) : null}
+              <button type="button" className="plugin-edit-view__step-link" onClick={() => void dismissAlert(a.id)}>
+                <Icon name="close" size={12} />
+                <span>知道了</span>
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* ── 数据源 ──
           选题采集用 TikHub 内置数据源(无需在此配置或登录)。 */}
@@ -113,6 +220,9 @@ export function AccountsView() {
               key={platform.id}
               platform={platform}
               accounts={byPlatform[platform.id] ?? []}
+              loginStatus={loginStatus}
+              checking={checking}
+              onCheck={checkLogin}
               onChanged={async (msg) => {
                 if (msg) setToast(msg);
                 await refresh();
@@ -129,10 +239,16 @@ export function AccountsView() {
 function PlatformCard({
   platform,
   accounts,
+  loginStatus,
+  checking,
+  onCheck,
   onChanged,
 }: {
   platform: MediaPlatformDef;
   accounts: AccountProfileView[];
+  loginStatus: Record<string, LoginStatusRecord>;
+  checking: Record<string, boolean>;
+  onCheck: (platform: string, account: string) => Promise<void>;
   onChanged: (toast: string | null) => Promise<void>;
 }) {
   const { t } = useI18n();
@@ -217,7 +333,37 @@ function PlatformCard({
               <div className="plugin-edit-view__account-head">
                 <span className="plugin-edit-view__account-name">{a.name}</span>
                 <code className="plugin-edit-view__account-id">{a.id}</code>
+                {/* 登录态芯片(仅扫码登录类平台):已登录/已失效/未检测 + 相对时间。 */}
+                {platform.kind === 'sau-login' ? (() => {
+                  const st = loginStatus[loginKey(platform.id, a.name)];
+                  const state = st?.state ?? 'unknown';
+                  const color = state === 'logged-in' ? '#15803d' : state === 'logged-out' ? '#b0342c' : '#8a8a8a';
+                  const bg = state === 'logged-in' ? 'rgba(21,128,61,0.1)' : state === 'logged-out' ? 'rgba(220,38,38,0.1)' : 'rgba(0,0,0,0.05)';
+                  const label = state === 'logged-in' ? '已登录' : state === 'logged-out' ? '已失效' : '未检测';
+                  return (
+                    <span
+                      title={st?.checkedAt ? `最近检测：${agoText(st.checkedAt)}${st.detail ? `（${st.detail}）` : ''}` : '还没检测过登录态'}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 6, padding: '1px 8px', borderRadius: 10, fontSize: 11.5, fontWeight: 700, color, background: bg }}
+                    >
+                      {state === 'logged-in' ? '●' : state === 'logged-out' ? '⚠' : '○'} {label}
+                      {st?.checkedAt ? <span style={{ opacity: 0.6, fontWeight: 400 }}>· {agoText(st.checkedAt)}</span> : null}
+                    </span>
+                  );
+                })() : null}
                 <div className="plugin-edit-view__account-actions">
+                  {/* 登录态检测:发起 login-check job(桌面端在专属分区探测),几秒后回填状态。 */}
+                  {platform.kind === 'sau-login' ? (
+                    <button
+                      type="button"
+                      className="plugin-edit-view__step-link"
+                      title="检测该账号在本平台是否还登录着（不消耗互动名额；掉线会在顶部告警引导补登）"
+                      disabled={Boolean(checking[loginKey(platform.id, a.name)])}
+                      onClick={() => void onCheck(platform.id, a.name)}
+                    >
+                      <Icon name={checking[loginKey(platform.id, a.name)] ? 'spinner' : 'refresh'} size={12} />
+                      <span>{checking[loginKey(platform.id, a.name)] ? '检测中…' : '检测登录'}</span>
+                    </button>
+                  ) : null}
                   {/* 内置浏览器常驻入口(2026-07-09 用户问"怎么打开"——原先只
                       藏在三台的发布步骤里)。档案按 平台×账号 隔离,登录态长期
                       保持;桌面端开内置窗口,网页端降级拉独立 Chrome 档案。

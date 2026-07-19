@@ -24,7 +24,7 @@ async function fetchJob(id: string): Promise<StudioCommentReadJob | null> {
   }
 }
 
-async function executeRead(job: StudioCommentReadJob): Promise<void> {
+export async function executeRead(job: StudioCommentReadJob): Promise<void> {
   if (!(await claimCommentReadJob(job.id))) return; // 别的窗口抢到了
   const returnRoute = parseRoute(window.location.pathname);
   // 用账号中心该平台第一个账号(登录态所在分区);缺则 job.account,再缺 'main'。

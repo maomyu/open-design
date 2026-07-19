@@ -60,6 +60,7 @@ import { createHandoffBus, HANDOFF_PLATFORMS, HandoffError, isHandoffPlatform } 
 import { createCollectBus, COLLECT_PLATFORMS, CollectError, isCollectPlatform } from './media-studio/collect-jobs.js';
 import { createInteractionBus, InteractionError } from './media-studio/interaction-jobs.js';
 import { createCommentReadBus, CommentReadError } from './media-studio/comment-read-jobs.js';
+import { createLoginCheckBus, LoginCheckError } from './media-studio/login-check-jobs.js';
 import { DEFAULT_INTERACTION_POLICY } from './media-studio/interaction-quota.js';
 import { matchInteractionRule } from './media-studio/interaction-rules.js';
 import type {
@@ -110,6 +111,11 @@ import {
   createInteractionRule,
   updateInteractionRule,
   deleteInteractionRule,
+  setLoginStatus,
+  listLoginStatus,
+  createAlert,
+  listAlerts,
+  dismissAlert,
 } from './media-studio/store.js';
 import { fontSizesFromExtra, renderWechatHtml, WECHAT_SKINS } from './media-studio/wechat-render.js';
 import { publishWechatDraft, WechatPublishError } from './media-studio/wechat-publish.js';
@@ -1174,6 +1180,100 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     res.json({ read: flat.length, matched, dispatched } satisfies AutoReplyResponse);
   });
 
+  // ---- 登录态保活 + 失效告警 + 扫码补登（W6）----
+  // 登录态在桌面端 webview 分区里,daemon 够不着,故校验跑桌面端。心跳/手动建 login-check job →
+  // 桌面端打开平台主站看登录标记 → 回 loggedIn → 这里落 media_login_status;掉线翻转产告警。
+  const loginCheckBus = createLoginCheckBus();
+
+  app.post('/api/media-studio/login-check', (req, res) => {
+    const b = (req.body ?? {}) as { platform?: string; account?: string };
+    const platform = String(b.platform ?? '').trim();
+    const account = String(b.account ?? '').trim();
+    if (!platform || !account) return bad(res, 400, '缺少 platform/account');
+    try {
+      res.json({ job: loginCheckBus.create({ platform, account }) });
+    } catch (err) {
+      if (err instanceof LoginCheckError) return bad(res, 409, err.message);
+      bad(res, 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.get('/api/media-studio/login-check/events', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
+    res.write(': connected\n\n');
+    const unsubscribe = loginCheckBus.subscribe((job) => res.write(`event: job\ndata: ${JSON.stringify(job)}\n\n`));
+    const keepalive = setInterval(() => res.write(': keepalive\n\n'), 30_000);
+    req.on('close', () => { clearInterval(keepalive); unsubscribe(); });
+  });
+
+  app.post('/api/media-studio/login-check/:id/claim', (req, res) => {
+    const job = loginCheckBus.claim(req.params.id);
+    if (!job) { const e = loginCheckBus.get(req.params.id); return e ? bad(res, 409, `job 已被认领(${e.status})`) : bad(res, 404, 'job not found'); }
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/login-check/:id/progress', (req, res) => {
+    const message = String((req.body ?? {}).message ?? '').trim();
+    if (!message) return bad(res, 400, '缺少 message');
+    const job = loginCheckBus.progress(req.params.id, message);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  // 桌面端回写探测结果:落登录状态;从"已登录→已失效"翻转时产一条告警引导补登。
+  app.post('/api/media-studio/login-check/:id/result', (req, res) => {
+    const b = (req.body ?? {}) as { loggedIn?: boolean; detail?: string };
+    const job = loginCheckBus.get(req.params.id);
+    if (!job) return bad(res, 404, 'job not found');
+    const loggedIn = b.loggedIn === true;
+    const detail = String(b.detail ?? '');
+    loginCheckBus.setResult(req.params.id, loggedIn, detail);
+    const flip = setLoginStatus(db, job.platform, job.account, loggedIn ? 'logged-in' : 'logged-out', detail || null);
+    if (flip.flippedToLoggedOut) {
+      createAlert(db, { kind: 'login-expired', platform: job.platform, account: job.account, message: `「${job.account}」的${job.platform}登录已失效,请去账号页扫码补登。` });
+    }
+    res.json({ job: loginCheckBus.get(req.params.id) });
+  });
+
+  app.post('/api/media-studio/login-check/:id/complete', (req, res) => {
+    const b = (req.body ?? {}) as { ok?: boolean; detail?: string };
+    const job = loginCheckBus.complete(req.params.id, b.ok === true, String(b.detail ?? ''));
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/login-check/:id/wait', async (req, res) => {
+    const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
+    const timeoutMs = Number.isFinite(Number(req.query.timeoutMs)) ? Number(req.query.timeoutMs) : 25_000;
+    const snap = await loginCheckBus.wait(req.params.id, since, timeoutMs);
+    if (!snap) return bad(res, 404, 'job not found');
+    res.json(snap);
+  });
+
+  // 登录状态一览(账号页显示)。
+  app.get('/api/media-studio/login-status', (req, res) => {
+    const platform = typeof req.query.platform === 'string' && req.query.platform ? String(req.query.platform) : undefined;
+    res.json({ items: listLoginStatus(db, platform) });
+  });
+
+  // 告警(未消隐的顶显 + 消隐)。
+  app.get('/api/media-studio/alerts', (req, res) => {
+    res.json({ items: listAlerts(db, { includeDismissed: req.query.all === '1' }) });
+  });
+  app.post('/api/media-studio/alerts/:id/dismiss', (req, res) => {
+    res.json({ ok: dismissAlert(db, req.params.id) });
+  });
+
+  // 心跳保活:每 15 分钟对【已检测过的账号】重新校验一次(仅桌面在线时)。首检由账号页手动触发种下,
+  // 之后自动保鲜;掉线由 /result 翻转产告警。用 unref 定时器,不挡进程退出。
+  const heartbeat = setInterval(() => {
+    if (loginCheckBus.subscriberCount() === 0) return;
+    for (const s of listLoginStatus(db)) {
+      try { loginCheckBus.create({ platform: s.platform, account: s.account }); } catch { /* 忽略并发/离线 */ }
+    }
+  }, 15 * 60_000);
+  if (typeof heartbeat.unref === 'function') heartbeat.unref();
+
   // ---- 读评论派发桥（读一条笔记的评论树 → 桌面端应用内标签执行，不耗互动配额）----
   // 与 collect 同构。互动执行器「先读评论→关键词匹配→自动回复」的读环节；也可 CLI 单独触发看评论。
   const commentReadBus = createCommentReadBus();
@@ -1253,6 +1353,27 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const snap = await commentReadBus.wait(req.params.id, since, timeoutMs);
     if (!snap) return bad(res, 404, 'job not found');
     res.json(snap);
+  });
+
+  // ── 桌面端派发任务【合流】SSE(单连接多路复用)──
+  // 5 类需桌面端执行的派发任务(handoff/采集/读评论/互动/登录态校验)原各开一条 SSE,dev 代理
+  // 是 HTTP/1.1、同源并发连接上限 6,5 条常驻 SSE + 记忆面板等会撑爆导致【所有】派发都收不到。
+  // 这里把 5 条总线的 pending/新建事件打上 kind 标签并到一条流,web 侧只开这一条 EventSource。
+  // 各类【单独的 /xxx/events】仍保留(CLI/兼容),但桌面 web 只用本合流端点。
+  app.get('/api/media-studio/desktop-jobs/events', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
+    res.write(': connected\n\n');
+    const emit = (kind: string, job: unknown) => res.write(`event: job\ndata: ${JSON.stringify({ kind, job })}\n\n`);
+    // subscribe 会把各总线里【已 pending】的任务回放给新订阅者,故重连不丢单。
+    const unsubs = [
+      handoffBus.subscribe((job) => emit('handoff', job)),
+      collectBus.subscribe((job) => emit('collect', job)),
+      commentReadBus.subscribe((job) => emit('comment-read', job)),
+      interactionBus.subscribe((job) => emit('interaction', job)),
+      loginCheckBus.subscribe((job) => emit('login-check', job)),
+    ];
+    const keepalive = setInterval(() => res.write(': keepalive\n\n'), 30_000);
+    req.on('close', () => { clearInterval(keepalive); for (const u of unsubs) u(); });
   });
 
   // 打开文章的资产目录（图集/封面拖拽进浏览器发布页用）。

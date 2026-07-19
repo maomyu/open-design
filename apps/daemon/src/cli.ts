@@ -2320,7 +2320,7 @@ async function runStudio(args) {
       // 互动运营(W8):自动回复 + 匹配规则。
       'name', 'keywords', 'reply', 'action', 'priority', 'max',
     ],
-    boolean: ['json', 'help', 'h', 'as-cover', 'auto', 'no-wait', 'no-follow', 'live'],
+    boolean: ['json', 'help', 'h', 'as-cover', 'auto', 'no-wait', 'no-follow', 'live', 'all'],
   });
   const valueFlags = new Set([
     '--daemon-url', '--platform', '--title', '--topic', '--digest', '--skin', '--cover',
@@ -2394,7 +2394,13 @@ async function runStudio(args) {
                     [--mode contains|exact|regex] [--action reply|sub-reply|dm] [--priority 0] [--account 名]
   od studio rule-rm <ruleId>
   od studio auto-reply --note <笔记URL> [--account 名] [--max 3]              # 预览:读评论+匹配,不外发
-  od studio auto-reply --note <笔记URL> --live [--max 3]                      # 真发(逐条过风控)`);
+  od studio auto-reply --note <笔记URL> --live [--max 3]                      # 真发(逐条过风控)
+
+【登录态保活】(W6:探测账号是否还登录着 + 失效告警;需桌面端在运行)
+  od studio login-check --account <名> [--platform xiaohongshu]              # 发起探测,等回登录/失效
+  od studio login-status [--platform xiaohongshu] [--json]                    # 各账号最近登录态一览
+  od studio alerts [--all] [--json]                                          # 登录失效告警(--all 含已消隐)
+  od studio alert-dismiss <alertId>                                          # 消隐一条告警`);
     return;
   }
   const platform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'wechat-mp';
@@ -3212,6 +3218,66 @@ async function runStudio(args) {
     const resp = await fetch(`${root}/interaction-rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!resp.ok) return fail(resp, 'delete rule');
     console.log('已删除');
+    return;
+  }
+
+  // ── 登录态保活(W6):发起探测 / 看状态 / 看失效告警(UI 账号页的 CLI 双轨) ──
+  // login-check 需要桌面端在跑(登录态在 webview 分区里,CLI 够不着,故派发给桌面端探测)。
+  if (sub === 'login-check') {
+    const lcPlatform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'xiaohongshu';
+    const account = typeof flags.account === 'string' && flags.account ? flags.account : (rest.find((a) => a && !a.startsWith('--')) ?? '');
+    if (!account) { console.error('用法: od studio login-check --account <账号名> [--platform xiaohongshu]'); process.exit(2); }
+    const resp = await fetch(`${root}/login-check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: lcPlatform, account }) });
+    if (resp.status === 409) { console.error('桌面端未连接——登录探测需要 social-auto 桌面应用在运行'); process.exit(3); }
+    if (!resp.ok) return fail(resp, 'login-check');
+    const { job } = await resp.json();
+    // 桌面端探测约 5-10s;长轮询 wait 拿终态(loggedIn)。
+    const deadline = Date.now() + 60_000; let cursor = 0;
+    while (Date.now() < deadline) {
+      const w = await fetch(`${root}/login-check/${encodeURIComponent(job.id)}/wait?since=${cursor}&timeoutMs=25000`).catch(() => null);
+      if (!w || !w.ok) break;
+      const snap = await w.json();
+      for (const line of snap?.job?.progress ?? []) if (!flags.json) console.log(`  · ${line}`);
+      cursor = snap?.cursor ?? cursor;
+      const st = snap?.job?.status;
+      if (st === 'done' || st === 'error') {
+        if (flags.json) return out({ job: { ...snap.job, progress: undefined } });
+        const li = snap.job.loggedIn;
+        console.log(li === true ? '✓ 仍在登录' : li === false ? '⚠ 登录已失效——去桌面端账号页扫码补登' : `登录态未定:${snap.job.detail ?? '未知'}`);
+        return;
+      }
+    }
+    console.error('登录探测超时(桌面端可能没在跑)'); process.exit(1);
+  }
+  if (sub === 'login-status') {
+    const q = typeof flags.platform === 'string' && flags.platform ? `?platform=${encodeURIComponent(platform)}` : '';
+    const resp = await fetch(`${root}/login-status${q}`);
+    if (!resp.ok) return fail(resp, 'login-status');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    if (!data.items.length) { console.log('(还没有登录态记录——先 od studio login-check 或在账号页点「检测登录」)'); return; }
+    for (const r of data.items) {
+      const tag = r.state === 'logged-in' ? '● 已登录' : r.state === 'logged-out' ? '⚠ 已失效' : '○ 未定';
+      const at = r.checkedAt ? new Date(r.checkedAt).toLocaleString() : '';
+      console.log(`${tag}  ${r.platform} · ${r.account}${at ? `  (${at})` : ''}${r.detail ? ` — ${r.detail}` : ''}`);
+    }
+    return;
+  }
+  if (sub === 'alerts') {
+    const resp = await fetch(`${root}/alerts${flags.all ? '?all=1' : ''}`);
+    if (!resp.ok) return fail(resp, 'alerts');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    if (!data.items.length) { console.log('(无告警)'); return; }
+    for (const a of data.items) console.log(`${a.dismissed ? '·' : '⚠'} [${a.kind}] ${a.message} · ${a.id}`);
+    return;
+  }
+  if (sub === 'alert-dismiss') {
+    const id = rest.find((a) => a && !a.startsWith('--'));
+    if (!id) { console.error('用法: od studio alert-dismiss <alertId>'); process.exit(2); }
+    const resp = await fetch(`${root}/alerts/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
+    if (!resp.ok) return fail(resp, 'alert-dismiss');
+    console.log('已消隐');
     return;
   }
 

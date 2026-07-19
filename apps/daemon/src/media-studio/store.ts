@@ -15,6 +15,10 @@ import type {
   RuleMatchMode,
   CreateInteractionRuleRequest,
   UpdateInteractionRuleRequest,
+  LoginState,
+  LoginStatusRecord,
+  MediaAlert,
+  AlertKind,
   MediaArticle,
   MediaArticleSummary,
   MediaPublishRecord,
@@ -687,4 +691,82 @@ export function updateInteractionRule(db: Database.Database, id: string, patch: 
 
 export function deleteInteractionRule(db: Database.Database, id: string): boolean {
   return db.prepare(`DELETE FROM interaction_rules WHERE id = ?`).run(id).changes > 0;
+}
+
+// ---- 登录态保活 + 告警（W6）----
+
+function loginStatusFromRow(r: Row): LoginStatusRecord {
+  const s = str(r.state, 'unknown');
+  return {
+    platform: str(r.platform),
+    account: str(r.account),
+    state: (s === 'logged-in' || s === 'logged-out' ? s : 'unknown') as LoginState,
+    detail: strOrNull(r.detail),
+    checkedAt: numOrNull(r.checked_at) ?? 0,
+  };
+}
+
+export function listLoginStatus(db: Database.Database, platform?: string): LoginStatusRecord[] {
+  const rows = platform
+    ? db.prepare(`SELECT * FROM media_login_status WHERE platform = ? ORDER BY platform, account`).all(platform) as Row[]
+    : db.prepare(`SELECT * FROM media_login_status ORDER BY platform, account`).all() as Row[];
+  return rows.map(loginStatusFromRow);
+}
+
+export function getLoginStatus(db: Database.Database, platform: string, account: string): LoginStatusRecord | null {
+  const row = db.prepare(`SELECT * FROM media_login_status WHERE platform = ? AND account = ?`).get(platform, account) as Row | undefined;
+  return row ? loginStatusFromRow(row) : null;
+}
+
+/** 落一次登录校验结果。返回是否【从已登录翻转到已失效】(调用方据此产告警,只在真正掉线时提醒)。 */
+export function setLoginStatus(
+  db: Database.Database,
+  platform: string,
+  account: string,
+  state: LoginState,
+  detail: string | null = null,
+  at: number = Date.now(),
+): { flippedToLoggedOut: boolean } {
+  const prev = getLoginStatus(db, platform, account);
+  db.prepare(
+    `INSERT INTO media_login_status (platform, account, state, detail, checked_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(platform, account) DO UPDATE SET state = excluded.state, detail = excluded.detail, checked_at = excluded.checked_at`,
+  ).run(platform, account, state, detail, at);
+  return { flippedToLoggedOut: prev?.state === 'logged-in' && state === 'logged-out' };
+}
+
+function alertFromRow(r: Row): MediaAlert {
+  return {
+    id: str(r.id),
+    kind: (str(r.kind) === 'login-expired' ? 'login-expired' : 'login-expired') as AlertKind,
+    platform: str(r.platform),
+    account: strOrNull(r.account),
+    message: str(r.message),
+    createdAt: numOrNull(r.created_at) ?? 0,
+    dismissed: (numOrNull(r.dismissed) ?? 0) !== 0,
+  };
+}
+
+export function createAlert(
+  db: Database.Database,
+  input: { kind: AlertKind; platform: string; account?: string | null; message: string; at?: number },
+): MediaAlert {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO media_alerts (id, kind, platform, account, message, created_at, dismissed) VALUES (?, ?, ?, ?, ?, ?, 0)`,
+  ).run(id, input.kind, input.platform, input.account ?? null, input.message, input.at ?? Date.now());
+  return alertFromRow(db.prepare(`SELECT * FROM media_alerts WHERE id = ?`).get(id) as Row);
+}
+
+export function listAlerts(db: Database.Database, opts: { includeDismissed?: boolean; limit?: number } = {}): MediaAlert[] {
+  const limit = Math.max(1, Math.min(200, opts.limit ?? 50));
+  const rows = opts.includeDismissed
+    ? db.prepare(`SELECT * FROM media_alerts ORDER BY created_at DESC LIMIT ?`).all(limit) as Row[]
+    : db.prepare(`SELECT * FROM media_alerts WHERE dismissed = 0 ORDER BY created_at DESC LIMIT ?`).all(limit) as Row[];
+  return rows.map(alertFromRow);
+}
+
+export function dismissAlert(db: Database.Database, id: string): boolean {
+  return db.prepare(`UPDATE media_alerts SET dismissed = 1 WHERE id = ?`).run(id).changes > 0;
 }

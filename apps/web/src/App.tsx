@@ -26,10 +26,7 @@ import { migrateCustomPetAtlas } from './components/pet/pets';
 import { ProjectView } from './components/ProjectView';
 import { openWorkspaceTab, WorkspaceTabsBar } from './components/WorkspaceTabsBar';
 import { BrowserPanesHost } from './components/BrowserPanesHost';
-import { startHandoffListener } from './runtime/handoff-listener';
-import { startCollectListener } from './runtime/collect-listener';
-import { startCommentReadListener } from './runtime/comment-read-listener';
-import { startInteractionListener } from './runtime/interaction-listener';
+import { startDesktopJobsListener } from './runtime/desktop-jobs-listener';
 import { fetchLicenseInfo, LicenseContext, UNLOCKED_LICENSE, type LicenseInfo } from './state/license';
 import {
   DesignSystemCreationFlow,
@@ -212,13 +209,10 @@ function AppInner() {
       document.documentElement.setAttribute('data-od-app-mounted', '1');
     }
   }, []);
-  // handoff 桥:CLI「od studio handoff」派发的注入 job 由桌面端执行
-  // (监听器内部自判桌面端,网页版空载)。
-  useEffect(() => startHandoffListener(), []);
-  useEffect(() => startCommentReadListener(), []);
-  useEffect(() => startInteractionListener(), []);
-  // 爆款雷达采集桥:引擎「od media collect」派发的采集 job 由桌面端在应用内标签执行。
-  useEffect(() => startCollectListener(), []);
+  // 桌面端派发任务【单连接】监听:handoff/采集/读评论/互动/登录态校验 5 类合成一条 SSE 分派。
+  // (监听器内部自判桌面端,网页版空载。)原来 5 条独立 SSE 会撑爆 dev 代理 HTTP/1.1 的 6 连接上限,
+  // 导致所有派发都收不到——见 desktop-jobs-listener.ts 顶部说明。
+  useEffect(() => startDesktopJobsListener(), []);
   const [config, setConfig] = useState<AppConfig>(() => loadConfig());
   // 功能授权(定制版):启动拉一次,None/失败=全功能。裁剪只是体验层,
   // daemon 才是强制点。

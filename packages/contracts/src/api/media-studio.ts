@@ -733,6 +733,61 @@ export interface StudioInteractionWaitResponse {
   cursor: number;
 }
 
+// ── 登录态保活 / 失效告警 / 扫码补登（W6）──
+// 登录态在桌面端 webview 分区里（cookie vault，daemon 够不着），故校验必须跑在桌面端:
+// 心跳/手动触发建 login-check job → SSE 派给桌面端 → 打开平台主站探测登录标记 → 回 loggedIn。
+// daemon 落 media_login_status;从「已登录→已失效」翻转时产一条告警(media_alerts)引导补登。
+export type LoginState = 'logged-in' | 'logged-out' | 'unknown';
+
+export interface LoginStatusRecord {
+  platform: MediaStudioPlatform;
+  account: string;
+  state: LoginState;
+  detail: string | null;
+  checkedAt: number;
+}
+export interface LoginStatusListResponse {
+  items: LoginStatusRecord[];
+}
+
+export interface StudioLoginCheckJob {
+  id: string;
+  platform: MediaStudioPlatform;
+  account: string;
+  status: StudioInteractionStatus;
+  progress: string[];
+  loggedIn?: boolean;
+  detail?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface CreateStudioLoginCheckRequest {
+  platform: MediaStudioPlatform;
+  account: string;
+}
+export interface StudioLoginCheckWaitResponse {
+  job: StudioLoginCheckJob;
+  cursor: number;
+}
+export interface StudioLoginCheckResultRequest {
+  loggedIn: boolean;
+  detail?: string;
+}
+
+export type AlertKind = 'login-expired';
+export interface MediaAlert {
+  id: string;
+  kind: AlertKind;
+  platform: MediaStudioPlatform;
+  account: string | null;
+  message: string;
+  createdAt: number;
+  dismissed: boolean;
+}
+export interface MediaAlertListResponse {
+  items: MediaAlert[];
+}
+
 /** web 执行完回写终态（ok=false 时 detail 带失败原因，如「未登录」「找不到评论框」）。 */
 export interface StudioInteractionResultRequest {
   ok: boolean;
