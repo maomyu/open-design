@@ -163,7 +163,9 @@ export async function buildStudioDraft(target: string, article: MediaArticle): P
     }
     case 'short-video': {
       const file = typeof extra.videoPath === 'string' ? extra.videoPath.trim() : '';
-      if (!file.startsWith('/')) return null;
+      // 绝对路径判定必须兼容 win(C:\...):写死 startsWith('/') 在 win 上永假,
+      // 视频存草稿会静默 return null(2026-07-19 移植真测时代码审出,与注入桥同款病)。
+      if (!/^(?:[a-zA-Z]:[\\/]|\/)/.test(file)) return null;
       // 封面(用户在发布页上传的本机图):带上 → 注入时自动上传到抖音「设置封面」。
       const cover = typeof extra.coverPath === 'string' ? extra.coverPath.trim() : '';
       return {
@@ -174,7 +176,7 @@ export async function buildStudioDraft(target: string, article: MediaArticle): P
         body: plainTextBody(extractSpeechScript(article.bodyMd)),
         tags: splitTags(extra.tags),
         filePaths: [file],
-        ...(cover.startsWith('/') ? { coverPath: cover } : {}),
+        ...(/^(?:[a-zA-Z]:[\\/]|\/)/.test(cover) ? { coverPath: cover } : {}),
       };
     }
     default:
