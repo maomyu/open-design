@@ -617,23 +617,22 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     if (file.includes('..') || file.includes(path.sep) || file.startsWith('.')) {
       return bad(res, 400, 'bad file name');
     }
-    try {
-      const { readFile } = await import('node:fs/promises');
-      const buf = await readFile(path.join(dir, file));
-      res.setHeader(
-        'Content-Type',
-        /\.png$/i.test(file) ? 'image/png'
-          : /\.webp$/i.test(file) ? 'image/webp'
-            : /\.wav$/i.test(file) ? 'audio/wav'
-              : /\.mp3$/i.test(file) ? 'audio/mpeg'
-                : /\.mp4$/i.test(file) ? 'video/mp4'
-                  : 'image/jpeg',
-      );
-      res.setHeader('Cache-Control', 'private, max-age=3600');
-      res.send(buf);
-    } catch {
-      bad(res, 404, 'asset not found');
-    }
+    // sendFile 而非 readFile+send(2026-07-19 用户报「成片在界面播不了」根因):
+    // HTML5 <video> 按 Range 分段拉流(期待 206),整包 200 在 Electron 下直接拒播;
+    // express sendFile 原生支持 Range/Accept-Ranges 且流式传输(大视频不占内存)。
+    res.setHeader(
+      'Content-Type',
+      /\.png$/i.test(file) ? 'image/png'
+        : /\.webp$/i.test(file) ? 'image/webp'
+          : /\.wav$/i.test(file) ? 'audio/wav'
+            : /\.mp3$/i.test(file) ? 'audio/mpeg'
+              : /\.mp4$/i.test(file) ? 'video/mp4'
+                : 'image/jpeg',
+    );
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.sendFile(path.join(dir, file), (err) => {
+      if (err && !res.headersSent) bad(res, 404, 'asset not found');
+    });
   });
 
   // ---- 版本历史（AI 覆盖前自动快照,可回退） ----
