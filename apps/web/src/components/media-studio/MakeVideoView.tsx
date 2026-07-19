@@ -98,6 +98,44 @@ export function MakeVideoView(): JSX.Element {
   const [vdVoice, setVdVoice] = useState('');
   const [vdBusy, setVdBusy] = useState(false);
   const [vdResult, setVdResult] = useState<{ audioUrl: string; voice?: string } | null>(null);
+  // 复刻音色(2026-07-19 用户拍板):上传自己的声音→cosyvoice 复刻→存预设长期复用。
+  const [clonedVoices, setClonedVoices] = useState<Array<{ id: string; name: string; voice: string }>>([]);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const cloneFileRef = useRef<HTMLInputElement | null>(null);
+  const refreshClonedVoices = useCallback(async () => {
+    try {
+      const r = await fetch('/api/media-studio/voice-presets');
+      if (!r.ok) return;
+      const d = (await r.json()) as { presets?: Array<{ id: string; name: string; provider: string; voice?: string }> };
+      setClonedVoices((d.presets ?? [])
+        .filter((p) => p.provider === 'qwen' && (p.voice ?? '').startsWith('cosyvoice-'))
+        .map((p) => ({ id: p.id, name: p.name, voice: p.voice! })));
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { void refreshClonedVoices(); }, [refreshClonedVoices]);
+
+  async function runVoiceClone(file: File) {
+    setCloneBusy(true);
+    try {
+      const up = await uploadMakeFile(file);
+      if (!up.url) { studioToast.err(up.error || '样本上传失败'); return; }
+      const resp = await fetch('/api/media-studio/voice-clone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audioUrl: up.url, name: cloneName.trim() || file.name.replace(/\.\w+$/, '') }),
+      });
+      const d = (await resp.json().catch(() => ({}))) as { voiceId?: string; error?: string };
+      if (!resp.ok || !d.voiceId) { studioToast.err(d.error || `复刻失败(${resp.status})`); return; }
+      await refreshClonedVoices();
+      setVdVoice(d.voiceId);
+      setCloneOpen(false);
+      studioToast.ok('音色复刻成功——已选中,写文案生成口播试听');
+    } finally {
+      setCloneBusy(false);
+    }
+  }
 
   async function runVoiceDesign() {
     if (!vdText.trim()) { studioToast.err('先写口播文案'); return; }
@@ -259,14 +297,25 @@ export function MakeVideoView(): JSX.Element {
                 <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
                   <select
                     className={c('select')}
-                    title="音色(千问,逐个实测可用)"
+                    title="音色:🎤我的复刻音色 + 千问内置(逐个实测可用)"
                     value={vdVoice}
                     onChange={(e) => setVdVoice(e.target.value)}
                   >
+                    {clonedVoices.map((v) => (
+                      <option key={v.id} value={v.voice}>🎤 {v.name}(我的复刻)</option>
+                    ))}
                     {QWEN_VOICES.map((v) => (
                       <option key={v.id} value={v.id === 'Ethan' ? '' : v.id}>{v.label}</option>
                     ))}
                   </select>
+                  <button
+                    type="button"
+                    className={c('btn')}
+                    title="上传一段自己的声音(10 秒以上清晰人声),复刻出专属音色,长期复用"
+                    onClick={() => setCloneOpen((v) => !v)}
+                  >
+                    ➕ 复刻我的声音
+                  </button>
                   <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={vdBusy} onClick={() => void runVoiceDesign()}>
                     {vdBusy ? '生成中…' : '🎙 生成口播音频'}
                   </button>
@@ -291,6 +340,37 @@ export function MakeVideoView(): JSX.Element {
                     </button>
                   ) : null}
                 </div>
+                {cloneOpen ? (
+                  <div className={c('card')} style={{ marginTop: 8, borderColor: '#e8582e' }}>
+                    <div className={c('cardLabel')}>
+                      复刻我的声音
+                      <span className={c('cardHint')}>上传一段自己的录音(10 秒以上、清晰无杂音,正常语速说话),约半分钟出专属音色;复刻后长期保存在音色列表</span>
+                    </div>
+                    <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
+                      <input
+                        className={c('input')}
+                        style={{ maxWidth: 220 }}
+                        placeholder="音色名字(如:我的声音)"
+                        value={cloneName}
+                        onChange={(e) => setCloneName(e.target.value)}
+                      />
+                      <input
+                        ref={cloneFileRef}
+                        type="file"
+                        accept="audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a"
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = '';
+                          if (f) void runVoiceClone(f);
+                        }}
+                      />
+                      <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={cloneBusy} onClick={() => cloneFileRef.current?.click()}>
+                        {cloneBusy ? '复刻中…(约半分钟)' : '⬆ 选择录音并开始复刻'}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : (
               <div className={c('row')} style={{ gap: 8 }}>

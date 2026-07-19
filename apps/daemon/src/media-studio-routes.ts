@@ -18,6 +18,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { resolveBakuanEngine } from './media-studio/bakuan-engine.js';
+import { cosyvoiceSynthesize } from './media-studio/cosyvoice-ws.js';
 import path from 'node:path';
 import express from 'express';
 import type { Express } from 'express';
@@ -733,6 +734,15 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         if (!cfg.apiKey) return bad(res, 422, '还没配置千问(百炼)API Key——到「设置→接口与密钥」填 qwenBailian 后重试。');
         const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
         const voice = (body.voice ?? '').trim() || 'Ethan';
+        // 复刻音色(cosyvoice- 前缀)走 WS 合成通道(REST 对 cosyvoice 不可用,实测)。
+        if (voice.startsWith('cosyvoice-')) {
+          const buf = await cosyvoiceSynthesize({ baseUrl: base, apiKey: cfg.apiKey, voice, text: text.slice(0, 2000) });
+          const dir = assetsDirFor('make-video');
+          await mkdir(dir, { recursive: true });
+          const f = `voice-design-${Date.now()}.mp3`;
+          await writeFile(path.join(dir, f), buf);
+          return res.json({ provider: 'qwen', audioUrl: `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(f)}`, voice, prompt });
+        }
         // 无描述 → flash 基底原声;有描述 → instruct 塑形。
         const qwenPayload = prompt
           ? { model: 'qwen3-tts-instruct-flash', input: { text: text.slice(0, 2000), voice, instructions: prompt.slice(0, 300) } }
@@ -833,6 +843,48 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const next = presets.filter((p) => p.id !== req.params.id);
     await writeFile(voicePresetsPath, JSON.stringify(next, null, 2), 'utf8');
     res.json({ ok: true });
+  });
+
+  // ---- 音色复刻(2026-07-19 用户拍板:上传自己的音频→复刻专属音色→存预设复用) ----
+  // 链路(全网关实测):样本→DashScope OSS→voice-enrollment(cosyvoice-v2)→voice_id;
+  // 合成只走 WS(cosyvoice-ws.ts)。voice_id 以 cosyvoice- 开头,voice-design/配音端点按前缀分流。
+  app.post('/api/media-studio/voice-clone', async (req, res) => {
+    const body = (req.body ?? {}) as { audioUrl?: string; name?: string };
+    const audioUrl = String(body.audioUrl ?? '').trim();
+    if (!audioUrl) return bad(res, 400, '缺少 audioUrl(先上传你的声音样本)');
+    try {
+      const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
+      if (!cfg.apiKey) return bad(res, 422, '千问(百炼)API Key 未配置(providers.qwenBailian)');
+      const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+      const abs = localAssetAbs(audioUrl);
+      const sampleUrl = abs ? await dashscopeUpload(base, cfg.apiKey, abs, 'voice-enrollment') : audioUrl;
+      const resp = await fetch(`${base}/api/v1/services/audio/tts/customization`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${cfg.apiKey}`,
+          ...(sampleUrl.startsWith('oss://') ? { 'X-DashScope-OssResourceResolve': 'enable' } : {}),
+        },
+        body: JSON.stringify({ model: 'voice-enrollment', input: { action: 'create_voice', target_model: 'cosyvoice-v2', prefix: 'mine', url: sampleUrl } }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+      const voiceId = data?.output?.voice_id;
+      if (!resp.ok || !voiceId) {
+        const msg = String(data?.message ?? data?.code ?? resp.status);
+        const hint = /too short/i.test(msg) ? '(样本太短——请录 10 秒以上的清晰人声)' : '';
+        return bad(res, 502, `音色复刻失败:${msg}${hint}`);
+      }
+      // 复刻成功即存音色预设(后续口播/配音直接复用)。
+      const name = String(body.name ?? '').trim() || '我的音色';
+      const presets = await readVoicePresets();
+      const preset = { id: randomUUID(), name, provider: 'qwen', voice: String(voiceId), createdAt: Date.now() };
+      presets.unshift(preset);
+      await writeFile(voicePresetsPath, JSON.stringify(presets, null, 2), 'utf8');
+      res.json({ voiceId: String(voiceId), preset });
+    } catch (err) {
+      return bad(res, 500, `音色复刻失败:${err instanceof Error ? err.message : String(err)}`);
+    }
   });
 
   // ---- 制作视频(2026-07-17 用户拍板:横切素材车间;首功能=数字人口型替换) ----
@@ -1558,6 +1610,11 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
           if (!cfg.apiKey) return bad(res, 422, '千问(百炼)API Key 未配置(providers.qwenBailian)');
           const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+          // 复刻音色预设(cosyvoice- 前缀)走 WS 合成。
+          if ((preset.voice || '').startsWith('cosyvoice-')) {
+            const buf = await cosyvoiceSynthesize({ baseUrl: base, apiKey: cfg.apiKey, voice: preset.voice!, text: text.slice(0, 3000) });
+            await writeFile(path.join(dir, file), buf);
+          } else {
           // 预设无描述=基底原声(flash);有描述=instruct 塑形。
           const presetPrompt = (preset.prompt || '').trim();
           const r = await fetch(`${base}/api/v1/services/aigc/multimodal-generation/generation`, {
@@ -1574,6 +1631,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           const ar = await fetch(audioUrl2, { signal: AbortSignal.timeout(60_000) });
           if (!ar.ok) return bad(res, 502, `千问配音下载失败 HTTP ${ar.status}`);
           await writeFile(path.join(dir, file), Buffer.from(await ar.arrayBuffer()));
+          }
         } else {
           const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcSpeech');
           if (!cfg.apiKey) return bad(res, 422, '火山「语音技术」X-Api-Key 未配置(providers.volcSpeech)');
