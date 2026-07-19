@@ -4,8 +4,18 @@
   "aliases": ["油炸老总", "油炸", "youzha"],
   "edition": "custom",
   "expires": "2027-12-31",
-  "appName": "WorkBuild",
-  "status": "pending-requirements",
-  "features": [],
-  "notes": "特殊客户——功能需求待用户提供后填入 features"
+  "appName": "social-auto",
+  "status": "active",
+  "features": [
+    "note.xiaohongshu",
+    "article.zhihu",
+    "article.weibo",
+    "integrations",
+    "kb.enterprise",
+    "cap.ai",
+    "cap.image",
+    "cap.handoff",
+    "cap.publish"
+  ],
+  "notes": "合同=AI自媒体营销机器人(桌面版):内容平台 小红书图文/知乎/微博/百度知道,能力=自动发布+关键词检索+自动评论回复+AI文案改写,企业知识库。百度知道待 W12(article.baidu-zhidao 建好后加进 features)。刻意不含:公众号(article.wechat-mp,不在合同)、全部短视频(sv.*)、配音(cap.tts)、制作视频(cap.video)。"
 }
