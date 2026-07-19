@@ -30,6 +30,15 @@ export interface CommentReadPaneSpec {
   noteRef: string;
 }
 
+/** 互动执行载荷:面板打开目标页后做自动评论回复/楼中楼(拟人输入发送),回写 daemon interaction job。 */
+export interface InteractPaneSpec {
+  jobId: string;
+  platform: string;
+  action: 'reply' | 'sub-reply' | 'dm';
+  targetRef: string;
+  text: string;
+}
+
 export interface BrowserPaneRequest {
   platform: string;
   account: string;
@@ -42,6 +51,8 @@ export interface BrowserPaneRequest {
   collect?: CollectPaneSpec;
   /** 读评论:面板导航到笔记页后抓评论树(一次性)。 */
   readComments?: CommentReadPaneSpec;
+  /** 互动执行:面板打开目标页后做自动评论回复/楼中楼(一次性)。 */
+  interact?: InteractPaneSpec;
   /** 「边播边抓」下载:面板导航到 url(视频页)、抓 <video> 直链后回报(一次性)。 */
   grab?: { grabId: string };
 }

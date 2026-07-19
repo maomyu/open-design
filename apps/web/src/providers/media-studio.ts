@@ -1167,6 +1167,32 @@ export function completeCommentReadJob(jobId: string, ok: boolean, detail: strin
   }).catch(() => undefined);
 }
 
+// ── 互动执行桥(自动评论回复/楼中楼/私信;桌面端执行侧回写 daemon interaction job)──
+export async function claimInteractionJob(jobId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ROOT}/interaction/${encodeURIComponent(jobId)}/claim`, { method: 'POST' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+export function reportInteractionProgress(jobId: string, message: string): void {
+  void fetch(`${ROOT}/interaction/${encodeURIComponent(jobId)}/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  }).catch(() => undefined);
+}
+
+export function completeInteractionJob(jobId: string, ok: boolean, detail: string): void {
+  void fetch(`${ROOT}/interaction/${encodeURIComponent(jobId)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ok, detail }),
+  }).catch(() => undefined);
+}
+
 // ── 统一创作台「去创作」自动带入原素材（原文/原图/原视频直链）──
 // daemon /fetch-source 未接入时优雅降级(返回 error,创作台照常创作,不自动拉取)。
 export async function fetchSourceMaterial(url: string): Promise<{ text: string; images: string[]; title: string; mediaUrl: string; referer: string } | { error: string }> {

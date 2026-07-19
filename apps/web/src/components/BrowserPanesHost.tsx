@@ -29,11 +29,13 @@ import {
   type BrowserPaneRequest,
   type CollectPaneSpec,
   type CommentReadPaneSpec,
+  type InteractPaneSpec,
 } from '../runtime/browser-panes';
 import { runDraftInjection, humanSearch, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
+import { runReplyInjection } from '../runtime/reply-injectors';
 import { CARD_PROBE_SEL, EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, PLATFORM_HOMEPAGE, SEARCH_BY_TYPING, buildSearchUrl } from '../runtime/collect-extractors';
 import { COMMENT_EXTRACTORS, COMMENT_LOGIN_WALL, buildNoteUrl, type CommentPlatform } from '../runtime/comment-extractors';
-import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress } from '../providers/media-studio';
+import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress, reportInteractionProgress, completeInteractionJob } from '../providers/media-studio';
 import type { CommentNode, StudioCollectItem } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
 
@@ -334,6 +336,22 @@ async function runReadComments(
   finish(comments, false);
 }
 
+/**
+ * 在本面板 webview 里执行一次互动(自动评论回复/楼中楼),回写 interaction job 终态。
+ * 名额已在 daemon 建 job 时(W1 风控台账)占用;这里只负责真实外发。
+ */
+async function runInteraction(
+  el: DraftWebview | null,
+  spec: InteractPaneSpec,
+  isCancelled: () => boolean,
+): Promise<void> {
+  const { jobId } = spec;
+  const say = (t: string) => { if (!isCancelled()) reportInteractionProgress(jobId, t); };
+  const r = await runReplyInjection(el, spec, say);
+  if (isCancelled()) return;
+  completeInteractionJob(jobId, r.ok, r.detail);
+}
+
 interface PaneSpec {
   key: string;
   platform: string;
@@ -350,6 +368,9 @@ interface PaneSpec {
   /** 读评论载荷:导航到笔记页后抓评论树,seq 递增触发。 */
   readComments?: CommentReadPaneSpec;
   readCommentsSeq?: number;
+  /** 互动执行载荷:打开目标页后做自动评论回复/楼中楼,seq 递增触发。 */
+  interact?: InteractPaneSpec;
+  interactSeq?: number;
   /** 「边播边抓」下载:导航到视频页、抓 <video> 直链后回报,seq 递增触发。 */
   grab?: { grabId: string };
   grabSeq?: number;
@@ -401,6 +422,13 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
                 : p,
             );
           }
+          if (req.interact) {
+            return list.map((p) =>
+              p.key === key
+                ? { ...p, url: req.url, interact: req.interact!, interactSeq: (p.interactSeq ?? 0) + 1 }
+                : p,
+            );
+          }
           if (!req.draft) return list;
           return list.map((p) =>
             p.key === key
@@ -419,6 +447,7 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
             ...(req.draftJobId ? { draftJobId: req.draftJobId } : {}),
             ...(req.collect ? { collect: req.collect, collectSeq: 1 } : {}),
             ...(req.readComments ? { readComments: req.readComments, readCommentsSeq: 1 } : {}),
+            ...(req.interact ? { interact: req.interact, interactSeq: 1 } : {}),
             ...(req.grab ? { grab: req.grab, grabSeq: 1 } : {}),
           },
         ];
@@ -636,6 +665,24 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     return () => { cancelled = true; window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec.readCommentsSeq]);
+
+  // 互动执行:面板加载后在【本标签 webview】里做自动评论回复/楼中楼,回写 interaction job 终态。
+  const ranInteractRef = useRef(0);
+  useEffect(() => {
+    const seq = spec.interactSeq ?? 0;
+    if (!spec.interact || seq === 0 || seq === ranInteractRef.current) return;
+    const interactSpec = spec.interact;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      ranInteractRef.current = seq;
+      // 互动要用户看得见拟人操作(评论区高频发言,让用户能随时叫停),切到本标签前台。
+      navigate({ kind: 'browser', platform: spec.platform, account: spec.account });
+      void runInteraction(ref.current as unknown as DraftWebview | null, interactSpec, () => cancelled);
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec.interactSeq]);
 
   // 「边播边抓」下载:导航到视频页 → 播放触发加载 → 抓 <video> 直链(或页面里的 mp4)→ 回报。
   const ranGrabRef = useRef(0);

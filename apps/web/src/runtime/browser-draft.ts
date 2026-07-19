@@ -62,7 +62,7 @@ export interface DraftWebview extends HTMLElement {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function wvEval<T>(wv: DraftWebview, code: string): Promise<T | null> {
+export async function wvEval<T>(wv: DraftWebview, code: string): Promise<T | null> {
   try {
     // webview 在页面加载/导航中 executeJavaScript 可能挂起不返回(不 reject),
     // 必须超时竞速,否则整条注入流水线卡死。
@@ -93,7 +93,7 @@ async function clickByText(wv: DraftWebview, texts: string[]): Promise<boolean> 
 }
 
 /** 轮询直到页面上出现匹配选择器的可见元素。 */
-async function waitFor(wv: DraftWebview, selector: string, timeoutMs: number): Promise<boolean> {
+export async function waitFor(wv: DraftWebview, selector: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const found = await wvEval<boolean>(
@@ -245,7 +245,7 @@ async function focusBySelector(wv: DraftWebview, selector: string): Promise<bool
 
 /** 真实鼠标点击目标元素完成聚焦;元素在视口外(负坐标)或点击没落上时,
  *  退回 JS 合成聚焦(2026-07-10 知乎正文 y=-304 视口外导致键入落空)。 */
-async function focusByClick(wv: DraftWebview, selector: string): Promise<boolean> {
+export async function focusByClick(wv: DraftWebview, selector: string): Promise<boolean> {
   const r = await rectOf(wv, selector);
   if (!r || r.w < 4) return focusBySelector(wv, selector);
   // 元素在视口外(负坐标/超出下方):坐标点击无效,直接合成聚焦。
@@ -315,7 +315,7 @@ async function clearFieldBySelector(wv: DraftWebview, selector: string): Promise
  *  按码元拆开发 char 会撕成两个孤立代理,页面渲染成 ��(2026-07-09 用户
  *  报草稿乱码)。emoji 字素走 insertText 整体插入——真人输入 emoji 也是
  *  从表情面板「选」而不是「打」,行为模式反而更真实。 */
-async function typeText(
+export async function typeText(
   wv: DraftWebview,
   text: string,
   onProgress?: (percent: number) => void,
@@ -356,7 +356,7 @@ async function typeText(
 }
 
 /** 真实回车(keyDown + char\r + keyUp)。 */
-function pressEnter(wv: DraftWebview): void {
+export function pressEnter(wv: DraftWebview): void {
   wv.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
   wv.sendInputEvent({ type: 'char', keyCode: '\r' });
   wv.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
@@ -542,7 +542,7 @@ async function clickXhsSaveDraftByCoords(wv: DraftWebview): Promise<boolean> {
 
 /** 按精确文本找按钮并「真实鼠标坐标点击」(用于一键发布的发布/发送键——
  *  真实点击 isTrusted=true,与真人无异)。只点精确匹配的白名单文案。 */
-async function clickRealByText(wv: DraftWebview, texts: string[]): Promise<boolean> {
+export async function clickRealByText(wv: DraftWebview, texts: string[]): Promise<boolean> {
   const rect = await wvEval<{ x: number; y: number; w: number; h: number } | null>(
     wv,
     `(() => {
