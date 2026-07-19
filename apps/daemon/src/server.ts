@@ -284,7 +284,7 @@ import {
   VIDEO_LENGTHS_SEC,
   VIDEO_MODELS,
 } from './media-models.js';
-import { readMaskedConfig, writeConfig } from './media-config.js';
+import { readMaskedConfig, readStoredProviderKey, writeConfig } from './media-config.js';
 import {
   deleteMediaTask,
   getMediaTask,
@@ -9650,6 +9650,20 @@ export async function startServer({
     }
   });
 
+  // 媒体设置(media-config)里配的第三方数据 key 注入引擎 env(2026-07-18 修:引擎读
+  // env TIKHUB_API_KEY/DAJIALA_API_KEY,而用户配的 key 存 media-config——此前从未
+  // 打通,导致"key 配了仍采 0 条"。每次调用现读,配完即生效无需重启)。
+  async function bakuanKeysEnv(): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const [pid, envName] of [["tikhub", "TIKHUB_API_KEY"], ["dajiala", "DAJIALA_API_KEY"], ["volcengine", "ARK_API_KEY"]] as const) {
+      try {
+        const k = await readStoredProviderKey(PROJECT_ROOT, pid);
+        if (k.apiKey) out[envName] = k.apiKey;
+      } catch { /* 单个 provider 读失败不影响其余 */ }
+    }
+    return out;
+  }
+
   // ── 爆创·飞书数据中心:连接【客户自己的】飞书 + 用 lark-cli 在其账户下一键建表 ──
   //
   // 授权模型(零 App Secret,从零最简):客户点「连接飞书」→ 爆创跑 lark-cli 官方引导
@@ -9925,6 +9939,7 @@ export async function startServer({
     } finally {
       try { await fs.promises.unlink(tmpFile); } catch { /* ignore */ }
     }
+    return out;
   }
 
   // ── 块3:监控配置库 + 系统配置表 界面 CRUD(飞书数据中心;引擎定时任务读监控配置库,
@@ -9963,7 +9978,7 @@ export async function startServer({
     const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
     const r = await execFileBuffered(eng.python, ['-m', 'src.pipeline', ...pipeArgs], {
       cwd: eng.engineDir,
-      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      env: { ...eng.env, ...(await bakuanKeysEnv()), LARK_PROFILE: FEISHU_CLIENT_PROFILE },
       // 完整管道含逐条视频 ASR(约2min/条)+LLM:scheduled/account 多条串行,10min 会被掐断,
       // 给足 30min(后台任务,cron/智能体调,无人在等)。
       timeout: 1_800_000,
@@ -10018,7 +10033,7 @@ export async function startServer({
     const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
     const r = await execFileBuffered(eng.python, ['scripts/cover_gen.py', ...argv], {
       cwd: eng.engineDir,
-      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      env: { ...eng.env, ...(await bakuanKeysEnv()), LARK_PROFILE: FEISHU_CLIENT_PROFILE },
       timeout: 300_000,
     });
     const out = String(r.stdout || '');
@@ -10069,7 +10084,7 @@ export async function startServer({
     const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
     const r = await execFileBuffered(eng.python, ['scripts/ops.py', ...argv], {
       cwd: eng.engineDir,
-      env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE },
+      env: { ...eng.env, ...(await bakuanKeysEnv()), LARK_PROFILE: FEISHU_CLIENT_PROFILE },
       timeout: timeoutMs,
     });
     const out = String(r.stdout || '');
@@ -10165,7 +10180,7 @@ export async function startServer({
   });
 
   // 爆款雷达·直接评分:接收【内置浏览器采集到的条目】+ 关键词 + 爆款筛选标准,跑爆款引擎
-  // (--radar 只评分选题、不写脚本;顺带按 .env 回写客户飞书数据中心),返回选题候选。
+  // (--radar 只评分选题、不写脚本),返回选题候选。
   // 这是「真抓爆款采集」直连管线的评分环节(前端先 /collect 采集,再把结果丢这里评分)。
   app.post('/api/media-studio/radar-score', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
@@ -10187,7 +10202,7 @@ export async function startServer({
       if (criteria && typeof criteria === 'object') args.push('--criteria', JSON.stringify(criteria));
       const r = await execFileBuffered(eng.python, args, {
         cwd: eng.engineDir,
-        env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_MAX: '12' },
+        env: { ...eng.env, ...(await bakuanKeysEnv()), LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_MAX: "12" },
         timeout: 240_000,
       });
       // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
@@ -10208,6 +10223,8 @@ export async function startServer({
   // 爆款标准,让引擎走 TikHub 搜索(翻页累积→按标准筛→评分),秒级出选题候选。比浏览器采集更快、
   // 字段更全(带粉丝/评论/真视频id→能下载仿写)、且无登录/验证码/滚动/DOM改版问题。
   // 关键:不传 --collect-file,引擎 _search 自动走 tik.search_keyword(TikHub)。
+  // ⚠️ 2026-07-18 事故复盘:此端点曾在加「取原素材」时被误删(注释头留着、实现没了),
+  // 打包后真抓爆款 404「Cannot POST /api/media-studio/collect-score」——从父提交原样恢复。
   app.post('/api/media-studio/collect-score', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) {
       return res.status(403).json({ error: 'cross-origin request rejected' });
@@ -10222,6 +10239,17 @@ export async function startServer({
     const collectN = String(pages * 12);
     if (!keyword) return res.status(400).json({ error: '缺少 keyword' });
     if (!platforms) return res.status(400).json({ error: '缺少 platforms' });
+    // TikHub key 前置检查(2026-07-18 用户报"洗衣液抓不到"实为 key 未配却静默返回 0 条):
+    // 缺钥匙必须明说,不许让用户误以为是"没有爆款"。key 存在则随 env 注入引擎
+    // (见 bakuanKeysEnv——媒体设置里配的 key 此前从未传给引擎,是"配了仍采 0"的第二个根因)。
+    {
+      const tk = await readStoredProviderKey(PROJECT_ROOT, 'tikhub');
+      if (!tk.apiKey && tk.source === 'unset' && !(process.env.TIKHUB_API_KEY ?? '').trim()) {
+        return res.status(422).json({
+          error: '还没配置 TikHub key——真抓爆款的数据源是 TikHub(api.tikhub.io)。到「设置 → 接口与密钥」填入 TikHub API Key 后重试。',
+        });
+      }
+    }
     let eng;
     try {
       eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
@@ -10240,7 +10268,7 @@ export async function startServer({
         cwd: eng.engineDir,
         // RADAR_FAST=1:选题列表纯数据评分(不逐条打 LLM/取评论文本),分页多条也秒出。
         // RADAR_COLLECT/RADAR_MAX 按页数放大:采够候选 + 让所有过筛的都进列表。
-        env: { ...eng.env, LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_FAST: '1', RADAR_MAX: collectN, RADAR_COLLECT: collectN },
+        env: { ...eng.env, ...(await bakuanKeysEnv()), LARK_PROFILE: FEISHU_CLIENT_PROFILE, RADAR_FAST: "1", RADAR_MAX: collectN, RADAR_COLLECT: collectN },
         timeout: 240_000,
       });
       // radar 只往 stdout 打一段 JSON(loguru 日志走 stderr);从第一个 { 起解析。
@@ -10252,6 +10280,70 @@ export async function startServer({
       return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null, feishuSynced: parsed.feishu_synced !== false });
     } catch (err) {
       return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
+  // 按链接取单条原素材(2026-07-18 用户反馈:AI 选题/旧候选只带 url,创作时看不到原文案)。
+  // 轻量脚本 fetch_source.py(不入库不拆解),级联取详情返回 原文案+原图直链。
+  /** 通用网页正文粗提——非平台链接(公众号/新闻页,AI 选题常引用这类来源)的原文降级
+   *  通道:抓 HTML → 去 script/style/标签取纯文本。公众号正文容器 #js_content 优先截取。
+   *  图不抓(公众号图有防盗链且杂),只回正文供 AI 仿写参考。 */
+  async function fetchGenericWebText(url) {
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+    const resp = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(30000) });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const html = await resp.text();
+    const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').replace(/\s+/g, ' ').trim();
+    // 公众号正文从 #js_content 起截一段(嵌套 div 不好精确闭合,多截点再去标签即可)。
+    const anchor = html.search(/id=["']js_content["']/);
+    const scoped = anchor >= 0 ? html.slice(anchor, anchor + 200000) : html;
+    const text = scoped
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, '\n')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .split('\n').map((l) => l.trim()).filter(Boolean).join('\n')
+      .slice(0, 6000);
+    if (text.replace(/\s/g, '').length < 80 || /环境异常|完成验证后即可继续访问/.test(text)) {
+      // 公众号死链的典型样子:HTTP 200 但空模板(无标题无正文)——sn 参数过期/不全。
+      throw new Error(/weixin\.qq\.com/i.test(url) ? '公众号链接打不开(多为链接已过期/参数不全)' : '页面没抓到正文(可能已失效或要登录/验证)');
+    }
+    return { title, text };
+  }
+
+  app.post('/api/media-studio/fetch-source', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const url = String(req.body?.url || '').trim();
+    if (!url) return res.status(400).json({ error: '缺少 url' });
+    // 平台链接(小红书/抖音/快手/B站)走引擎级联取详情(原文案+原图直链);
+    // 其余(公众号/新闻页等)直接通用网页抓正文——此前对这类链接报「无法识别平台」
+    // 让用户在界面看到「获取失败」(2026-07-18 用户实测报障,AI 选题引用的就是新闻源)。
+    const isPlatformLink = /xiaohongshu\.com|xhslink\.com|douyin\.com|iesdouyin\.com|kuaishou\.com|chenzhongtech\.com|bilibili\.com|b23\.tv/i.test(url);
+    let engineErr = '';
+    if (isPlatformLink) {
+      try {
+        const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+        const argv = ['-m', 'scripts.fetch_source', url];
+        const r = await execFileBuffered(eng.python, argv, { cwd: eng.engineDir, env: { ...eng.env, ...(await bakuanKeysEnv()), LARK_PROFILE: FEISHU_CLIENT_PROFILE }, timeout: 120000 });
+        const s2 = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
+        const parsed = JSON.parse(s2);
+        if (!parsed.error) {
+          return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url });
+        }
+        engineErr = String(parsed.error);
+        // 平台链接且引擎明确报错(已删/链接不完整/缺 key)→ 网页降级对平台站也抓不到
+        // (登录墙),但仍试一次不损失什么;错误信息两者合并给足上下文。
+      } catch (err) {
+        engineErr = String(err && err.message ? err.message : err);
+      }
+    }
+    try {
+      const g = await fetchGenericWebText(url);
+      return res.json({ text: g.text, images: [], title: g.title, mediaUrl: '', referer: url });
+    } catch (err) {
+      const webErr = String(err && err.message ? err.message : err);
+      return res.status(422).json({ error: engineErr ? `取原素材失败:${engineErr};按网页抓正文也失败:${webErr}` : `取原素材失败:${webErr}` });
     }
   });
 

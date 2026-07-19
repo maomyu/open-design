@@ -212,6 +212,8 @@ function topicFromRow(r: Row): MediaTopic {
     source: str(r.source),
     url: str(r.url),
     heat: str(r.heat),
+    sourceContent: str(r.source_content),
+    sourceImages: (() => { try { const a = JSON.parse(str(r.source_images) || '[]'); return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []; } catch { return []; } })(),
     status: (str(r.status) || 'candidate') as MediaTopic['status'],
     createdAt: numOrNull(r.created_at) ?? 0,
   };
@@ -231,9 +233,9 @@ export function createTopic(
 ): MediaTopic {
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO media_topics (id, platform, title, angle, source, url, heat, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', ?)`,
-  ).run(id, platform, input.title, str(input.angle), str(input.source), str(input.url), str(input.heat), Date.now());
+    `INSERT INTO media_topics (id, platform, title, angle, source, url, heat, status, created_at, source_content, source_images)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', ?, ?, ?)`,
+  ).run(id, platform, input.title, str(input.angle), str(input.source), str(input.url), str(input.heat), Date.now(), str(input.sourceContent), JSON.stringify(Array.isArray(input.sourceImages) ? input.sourceImages : []));
   const row = db.prepare(`SELECT * FROM media_topics WHERE id = ?`).get(id) as Row;
   return topicFromRow(row);
 }
@@ -400,6 +402,8 @@ export function getVersion(db: Database.Database, id: string) {
 
 function knowledgeFromRow(r: Row): import('@open-design/contracts').MediaKnowledge {
   return {
+    feishuRecordId: strOrNull(r.feishu_record_id),
+    feishuTable: strOrNull(r.feishu_table),
     id: str(r.id),
     platform: str(r.platform),
     accountId: strOrNull(r.account_id),
@@ -407,8 +411,6 @@ function knowledgeFromRow(r: Row): import('@open-design/contracts').MediaKnowled
     contentMd: str(r.content_md),
     category: str(r.category) || 'other',
     updatedAt: numOrNull(r.updated_at) ?? 0,
-    feishuRecordId: strOrNull(r.feishu_record_id),
-    feishuTable: strOrNull(r.feishu_table),
   };
 }
 
@@ -446,7 +448,6 @@ export function getKnowledge(db: Database.Database, id: string) {
   const row = db.prepare(`SELECT * FROM media_knowledge WHERE id = ?`).get(id) as Row | undefined;
   return row ? knowledgeFromRow(row) : null;
 }
-
 /** 飞书双写成功后回写 record_id + 落表（供更新幂等 / 删除同步）。 */
 export function setKnowledgeFeishuRef(
   db: Database.Database,

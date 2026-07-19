@@ -19,7 +19,6 @@ import { FinalPromptPreview } from './FinalPromptPreview';
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
-  pushStudioReview,
   createStudioArticle,
   createStudioTopic,
   deleteStudioArticle,
@@ -30,6 +29,8 @@ import {
   fetchStudioTopics,
   generateArticleImage,
   importXhsNote,
+  fetchSourceMaterial,
+  topicOriginPlatform,
   lintStudioArticle,
   updateStudioArticle,
   uploadStudioAsset,
@@ -65,13 +66,15 @@ const NOTE_PLATFORMS: Array<{ id: string; label: string }> = [
 
 // 生图风格清单收进 contracts 共享(公众号台同源;15+ 常见风格,daemon 前缀表一一对应)。
 const IMAGE_STYLES = IMAGE_STYLE_PRESETS;
+// 参考图 = 风格轴上的一个选项(2026-07-18 用户拍板):选它=不套内置模板、照参考图的
+// 调子生图,与内置预设互斥。风格下拉里排第一;选它但还没挑图→跳右侧「参考图」tab 去挑。
+const REF_STYLE = '__ref__';
 const IMAGE_MODELS: Array<{ id: string; label: string }> = [
   { id: 'qwen', label: '千问 · 图像2.0 Pro（默认）' },
   // 火山按版本选：id 里 volc: 后面就是方舟的 Model ID（不带即用最新默认）。
   { id: 'volc', label: '火山 · Seedream 5.0（最新）' },
   { id: 'volc:doubao-seedream-5-0-lite-260128', label: '火山 · Seedream 5.0 Lite（快·联网）' },
   { id: 'volc:doubao-seedream-4-5-251128', label: '火山 · Seedream 4.5' },
-  { id: 'gemini', label: 'Gemini（备用）' },
 ];
 
 const STATUS_LABEL: Record<MediaArticle['status'], { text: string; chip: string }> = {
@@ -93,11 +96,59 @@ function timeLabel(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function NoteStudioView(): JSX.Element {
+// entryMode(2026-07-18 用户拍板:小红书第三形态「直接生图」;同日单页创作流加 embedded):
+//  'note'         = 完整流程(选题→文案→图集→发布),默认。
+//  'direct-image' = 用户已有想法,跳过选题直接进图集:落地即建草稿、顶部自由框
+//                   「想法→生图/AI文案」,选题步隐藏。图集/文案机制完全复用本组件。
+//  'embedded'     = 内嵌进统一创作台(零跳页):隐藏台头/选题步,只露 文案→图集→发布,
+//                   选中创作台指定的稿(articleId)。「正在做」条由创作台提供。
+export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 'note' | 'direct-image' | 'embedded'; articleId?: string } = {}): JSX.Element {
+  const directImage = entryMode === 'direct-image';
+  const embedded = entryMode === 'embedded';
   const license = useLicense();
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
-  const [tab, setTab] = useState<NoteTab>('copy');
+  const [tab, setTab] = useState<NoteTab>(directImage ? 'gallery' : 'copy');
+  // 直接生图:顶部自由提示词(用户自己的想法/画面),独立于 AI 图集建议。
+  const [freePrompt, setFreePrompt] = useState('');
+  // 风格参考图(2026-07-18 用户拍板两类分离):从爆款原图里选一张——生图只学它的
+  // 风格质感(自动不套内置模板),不搬它的内容。清空=用内置风格模板。
+  const [refImage, setRefImage] = useState('');
+  // 产品图参与集(2026-07-18):用户上传的商品图,勾选参与的生成时产品融入画面
+  // (与风格图同传,产品在前风格殿后)。新上传默认参与;按稿初始化为全部。
+  const [productPicks, setProductPicks] = useState<string[]>([]);
+  const productInitRef = useRef<string | null>(null);
+  // 右侧预览 tab(2026-07-18 用户拍板省空间):成稿(当前创作)/原文(原文案)/参考图(原图)。
+  const [previewTab, setPreviewTab] = useState<'draft' | 'source' | 'refs'>('draft');
+  // 取原素材(url-only 候选补回原文案/原图)。
+  const [fetchingSource, setFetchingSource] = useState(false);
+  const fetchSourceNow = async (url: string) => {
+    if (!article) return;
+    setFetchingSource(true);
+    const r = await fetchSourceMaterial(url);
+    if ('error' in r) {
+      // 拉取失败(常见:AI 选题引用的新闻/公众号链接已过期)不阻断创作——明确告知可直接写。
+      studioToast.err(`原素材拉取失败:${r.error}。不影响创作——可直接点「AI 写笔记」按标题+知识库写`);
+      setFetchingSource(false);
+      return;
+    }
+    // 原图存进【参考素材区】extra.sourceImages,不直接进图集(2026-07-18 用户拍板:
+    // 别人的原图是参考,不能当自己成品直接发——防盗图;想用点参考图上的「+加入图集」)。
+    let imageUrls: string[] = [];
+    if (r.images.length > 0) {
+      const imp = await importXhsNote(article.id, r.text, r.images);
+      if (!('error' in imp)) imageUrls = imp.imageUrls;
+    }
+    // 重新拉取时若接口只返回图没返回文(或反之),别用空值覆盖已取到的原文案/原图。
+    const prevContent = str((articleRef.current?.extra as Record<string, unknown> | undefined)?.sourceContent);
+    await updateStudioArticle(PLATFORM, article.id, { extra: { sourceContent: r.text || prevContent, ...(imageUrls.length ? { sourceImages: imageUrls } : {}) } });
+    const fresh = await fetchStudioArticle(PLATFORM, article.id);
+    if (fresh) setArticle(fresh);
+    setFetchingSource(false);
+    studioToast.ok(imageUrls.length
+      ? `已取回原素材:原文案+${imageUrls.length}张原图 ✓(右侧「原文」「参考图」)`
+      : '已取回原文案 ✓(右侧「原文」;该来源无原图,如公众号/新闻页)');
+  };
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [aiTask, setAiTask] = useState<StudioAiTask | null>(null);
@@ -119,8 +170,8 @@ export function NoteStudioView(): JSX.Element {
   const [galleryPrompt, setGalleryPrompt] = useState('');
   const [galleryStyle, setGalleryStyleRaw] = useState(() => {
     // 旧偏好可能存着已移除的风格(illustrated/clean/cyber)→ 兜底回默认白板
-    const v = loadStudioPref('gallery-style', 'whiteboard');
-    return IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : 'whiteboard';
+    const v = loadStudioPref('gallery-style', 'photo-film');
+    return IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : 'photo-film';
   });
   const [galleryRatio, setGalleryRatioRaw] = useState(() => loadStudioPref('gallery-ratio', '3:4'));
   const setGalleryRatio = (v: string) => {
@@ -130,7 +181,7 @@ export function NoteStudioView(): JSX.Element {
   // 记住上次选的图片风格模板当默认（用户报：选完不该每次重置）。
   const setGalleryStyle = (v: string) => {
     setGalleryStyleRaw(v);
-    saveStudioPref('gallery-style', v, 'whiteboard');
+    saveStudioPref('gallery-style', v, 'photo-film');
   };
   const [galleryModel, setGalleryModel] = useState(loadPreferredImageModel);
   // 账号中心是唯一账号来源:各平台的账号名列表(没配的平台=空数组)。
@@ -155,6 +206,17 @@ export function NoteStudioView(): JSX.Element {
   const noteImages: string[] = Array.isArray(extra.noteImages)
     ? (extra.noteImages as unknown[]).filter((v): v is string => typeof v === 'string')
     : [];
+  // 参考素材(原图)——独立于图集,仅供参考/仿风格/手动加入(防盗图,2026-07-18)。
+  const sourceImages: string[] = Array.isArray(extra.sourceImages)
+    ? (extra.sourceImages as unknown[]).filter((v): v is string => typeof v === 'string')
+    : [];
+  // 我的商品图(2026-07-18 用户拍板:上传自家产品图作生图参考,让产品融进生成图)。
+  // 与爆款原图分开存:自家图可随意进图集/发布,无防盗图顾虑。
+  const userRefImages: string[] = Array.isArray(extra.userRefImages)
+    ? (extra.userRefImages as unknown[]).filter((v): v is string => typeof v === 'string')
+    : [];
+  const sourceContent = str(extra.sourceContent);
+  const sourceUrl = str(extra.sourceUrl);
 
   // ---- 数据加载 ----
   const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
@@ -175,16 +237,57 @@ export function NoteStudioView(): JSX.Element {
     setNotice(null);
   }, []);
 
+  // 产品图参与集按稿初始化:默认全部参与(用户传商品图就是要融入)。
+  useEffect(() => {
+    if (!article) return;
+    if (productInitRef.current === article.id) return;
+    productInitRef.current = article.id;
+    setProductPicks(userRefImages);
+    setRefImage('');
+  }, [article?.id]);
+
+  // 自动取原素材(2026-07-18 用户反馈"去创作后看不到原文/原图"):选中的稿有原文链接
+  // 但还没原文案/原图 → 自动按链接抓一次(不用手点「取原素材」)。每篇只自动抓一次。
+  const autoFetchedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const a = article;
+    if (!a) return;
+    const ex = a.extra as Record<string, unknown>;
+    const url = typeof ex.sourceUrl === 'string' ? ex.sourceUrl : '';
+    const hasContent = typeof ex.sourceContent === 'string' && ex.sourceContent;
+    const hasImgs = Array.isArray(ex.sourceImages) && ex.sourceImages.length > 0;
+    // 文案+原图都齐了才跳过;缺任一(常见:真抓爆款自带文案但图数组为空)就自动补拉
+    // (2026-07-18 用户反馈:去创作要自动把原文案+素材图都拉回来,别只拉到文案缺图)。
+    if (!url || (hasContent && hasImgs) || fetchingSource || autoFetchedRef.current.has(a.id)) return;
+    autoFetchedRef.current.add(a.id);
+    void fetchSourceNow(url);
+  }, [article?.id]);
+
   useEffect(() => {
     void (async () => {
       const list = await refreshArticles();
+      // 内嵌模式:直接选创作台指定的稿,不走"上次记忆"。
+      if (embedded && articleId) {
+        await selectArticle(articleId);
+        setTab('copy');
+        setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+        return;
+      }
       const remembered = window.localStorage.getItem(LAST_ARTICLE_KEY);
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
       if (pick) await selectArticle(pick.id);
-      else setTab('topics');
+      else if (directImage) {
+        // 直接生图:没有现成稿就自动建一篇空白草稿承载图集/文案,用户无需先去选题。
+        const created = await createStudioArticle(PLATFORM, { title: '' });
+        if (created) {
+          setArticles((await refreshArticles()) as MediaArticleSummary[]);
+          await selectArticle(created.id);
+        }
+        setTab('gallery');
+      } else setTab('topics');
       setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
     })();
-  }, [refreshArticles, selectArticle]);
+  }, [refreshArticles, selectArticle, directImage, embedded, articleId]);
 
   // ---- 自动保存 ----
   const flushSave = useCallback(async () => {
@@ -288,6 +391,8 @@ export function NoteStudioView(): JSX.Element {
         input: {
           ...(input?.note ? { note: input.note } : {}),
           ...(input?.picked && input.picked.length > 0 ? { picked: input.picked } : {}),
+          // 图文笔记台只面向小红书:AI 选题引用只准小红书站内链接(2026-07-18 用户拍板)。
+          ...(kind === 'topics' ? { sourcePlatform: 'xiaohongshu' } : {}),
         },
       });
       if ('error' in created) {
@@ -389,15 +494,33 @@ export function NoteStudioView(): JSX.Element {
   }
 
   // ---- 图集操作 ----
-  async function generateGalleryImage(description: string) {
+  /** 组装两类参考(2026-07-18 用户拍板):产品图(勾选参与,融入画面)在前 + 风格图
+   *  (单选,只学调子)殿后;prompt 按序指代。只有风格图才禁内置模板——纯产品图
+   *  可叠加内置风格模板(产品从图来、风格从模板来)。 */
+  function composeRefRequest(description: string, styleOverride?: string) {
+    const products = userRefImages.filter((u) => productPicks.includes(u));
+    const styleR = styleOverride !== undefined ? styleOverride : refImage;
+    const refs = [...products, ...(styleR ? [styleR] : [])];
+    let desc = description.trim();
+    if (products.length) {
+      desc = `画面主体必须是参考图中前${products.length}张里的产品——严格保留产品的外观、造型、配色、包装与标签文字,不得改动走样。`
+        + (styleR ? '整体构图、光线与画面质感模仿最后一张参考图的风格。' : '')
+        + `场景要求:${desc}`;
+    }
+    return { desc, refs, style: styleR ? 'none' : galleryStyle };
+  }
+
+  async function generateGalleryImage(description: string, referenceImageOverride?: string) {
     if (!article || !description.trim()) return;
+    const { desc, refs, style } = composeRefRequest(description, referenceImageOverride);
     setGalleryBusy(description);
     setNotice(null);
     const result = await generateArticleImage(PLATFORM, article.id, {
-      description: description.trim(),
-      style: galleryStyle,
+      description: desc,
+      style,
       model: galleryModel,
       ratio: galleryRatio,
+      ...(refs.length ? { referenceImages: refs } : {}),
     });
     setGalleryBusy(null);
     if ('error' in result) {
@@ -409,6 +532,23 @@ export function NoteStudioView(): JSX.Element {
       editArticle({ extra: { noteImages: [...latestNoteImages(), result.url] } });
       setNotice({ ok: true, text: '已生成并加入图集' });
     }
+  }
+
+  // 风格轴统一入口(2026-07-18):内置预设和「参考图」二选一,互斥。
+  //   - 下拉/样例当前值:有参考图→显示「参考图」,否则→当前预设。
+  //   - 选内置预设:清掉参考图(退出参考图模式)+设预设。
+  //   - 选「参考图」但还没挑图:跳右侧「参考图」tab 让用户点某张「作参考」。
+  const styleAxisValue = refImage ? REF_STYLE : galleryStyle;
+  function onStyleAxisSelect(v: string) {
+    if (v === REF_STYLE) {
+      if (!refImage) {
+        setPreviewTab('refs');
+        studioToast.info('在右侧「参考图」的风格参考区点某张「作风格」,生图即照它的调子');
+      }
+      return;
+    }
+    if (refImage) setRefImage('');   // 切回内置预设 = 退出风格参考模式
+    setGalleryStyle(v);
   }
 
   /** 读最新图集——串行批量生成期间组件闭包会过期，靠 ref 拿实时数组防丢图。 */
@@ -428,11 +568,14 @@ export function NoteStudioView(): JSX.Element {
     for (const [i, idea] of ideas.entries()) {
       // 逐张串行生成（图接口有频控；中途失败不影响已生成的）。
       // eslint-disable-next-line no-await-in-loop
+      // 批量生成同样吃两类参考(产品图融入+风格图定调),与单张生图同一组装。
+      const { desc, refs, style } = composeRefRequest(idea);
       const result = await generateArticleImage(PLATFORM, article.id, {
-        description: idea,
-        style: galleryStyle,
+        description: desc,
+        style,
         model: galleryModel,
         ratio: galleryRatio,
+        ...(refs.length ? { referenceImages: refs } : {}),
       });
       if ('error' in result) {
         studioToast.err(`第 ${i + 1} 张失败：${result.error}`);
@@ -480,7 +623,8 @@ export function NoteStudioView(): JSX.Element {
   };
 
   const TABS: Array<{ id: NoteTab; label: string; step: string }> = [
-    { id: 'topics', label: '选题', step: '1' },
+    // 直接生图形态隐藏「选题」——用户已有想法,不走选题funnel。
+    ...((directImage || embedded) ? [] : [{ id: 'topics' as NoteTab, label: '选题', step: '1' }]),
     { id: 'copy', label: '文案', step: '2' },
     // 图集(图片生成)跟 cap.image。客户只要文案不要生图时,授权不含 cap.image → 图集隐藏。
     ...(hasFeature(license, 'cap.image') ? [{ id: 'gallery' as NoteTab, label: '图集', step: '3' }] : []),
@@ -504,6 +648,7 @@ export function NoteStudioView(): JSX.Element {
 
   return (
     <div className={c('root')}>
+      {embedded ? null : (
       <div className={c('head')}>
         <h1 className={c('title')}>图文笔记创作台</h1>
         {activeStatus ? <span className={`${c('chip')} ${c(activeStatus.chip)}`}>{activeStatus.text}</span> : null}
@@ -520,6 +665,7 @@ export function NoteStudioView(): JSX.Element {
           ) : null}
         </div>
       </div>
+      )}
 
       {(aiTask && aiRunning) || orphan ? (
         <div className={c('aiGlobalBar')}>
@@ -595,10 +741,11 @@ export function NoteStudioView(): JSX.Element {
             <TopicsTab
               platform={PLATFORM}
               /* 图文笔记=小红书图文笔记:选题走【小红书爆款采集】(与短视频台小红书一致,TikHub 直采),
-                 而不是纯 AI 找题。图文笔记只面向小红书,采集平台固定小红书。 */
+                 而不是纯 AI 找题。图文笔记只面向小红书,采集平台固定小红书。
+                 列表过滤(2026-07-18 用户拍板):只显示 小红书链接的 + 无链接灵感题,站外/其它平台不出现。 */
               browserCollect
               collectPlatforms={['xiaohongshu']}
-              topics={topics}
+              topics={topics.filter((t) => { const o = topicOriginPlatform(t.url); return o === 'any' || o === 'xiaohongshu'; })}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);
                 if (created) setTopics((list) => [created, ...list]);
@@ -618,31 +765,30 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('还没有笔记。从「选题」挑一个开始，或新建一篇。')
             ) : (
               <>
-                {/* 「提取图文仿写」带来的小红书原文案参考(原图已进「图集」)。 */}
-                {typeof (article.extra as Record<string, unknown>).sourceContent === 'string'
-                  && (article.extra as Record<string, unknown>).sourceContent ? (
+                {/* 原素材拉取(2026-07-18 用户拍板:去创作的第一步就是自动拉取,不设手动按钮):
+                    进创作即自动拉原文案+原图,原文进右侧「原文」tab、原图进「参考图」tab。
+                    这里只在拉取进行中给一条状态,拉完即隐藏;拉完后由用户主动点「AI 写笔记」。 */}
+                {fetchingSource ? (
                   <div className={c('card')}>
-                    <div className={c('cardLabel')}>
-                      原文参考 · 小红书图文
-                      <span className={c('cardHint')}>原图已进「图集」；下面是原文案，AI 按它 + 你的知识库风格仿写（不照抄）</span>
-                    </div>
-                    <div className={c('cardHint')} style={{ whiteSpace: 'pre-wrap', maxHeight: 170, overflow: 'auto', lineHeight: 1.6 }}>
-                      {String((article.extra as Record<string, unknown>).sourceContent)}
-                    </div>
-                    {typeof (article.extra as Record<string, unknown>).sourceUrl === 'string' ? (
-                      <a href={String((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')}>看原文 ↗</a>
-                    ) : null}
+                    <div className={c('cardHint')}>⏳ 第一步·正在自动拉取原素材(原文案+原图)——完成后见右侧「原文」「参考图」,再点下方「AI 写笔记」按原文仿写正文</div>
                   </div>
                 ) : null}
+                {/* 参考素材区已移到「图集」步(2026-07-18 用户拍板:参考图属于生图环节)。 */}
                 {hasFeature(license, 'cap.ai') ? (
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
                     AI 写笔记
-                    <span className={c('cardHint')}>一键全流程：先调研 → 小红书调性出稿（标题/正文/标签/图集建议）→ 清 AI 腔</span>
+                    <span className={c('cardHint')}>原素材拉好后点这里：先调研 → 按原文+知识库风格仿写出稿（标题/正文/标签/图集建议）→ 清 AI 腔</span>
                   </div>
                   <div className={c('row')}>
-                    <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void startAiTask('write')}>
-                      <Icon name="sparkles" size={14} /> AI 写笔记
+                    <button
+                      type="button"
+                      className={`${c('btn')} ${c('btnPrimary')}`}
+                      disabled={effectiveAiRunning || fetchingSource}
+                      title={fetchingSource ? '原素材拉取中——拉完再点,AI 才有原文可仿' : '按原素材(如有)+知识库风格仿写,结果写进下方标题/正文'}
+                      onClick={() => void startAiTask('write')}
+                    >
+                      <Icon name="sparkles" size={14} /> {fetchingSource ? '原素材拉取中…' : 'AI 写笔记'}
                     </button>
                     <input
                       className={`${c('input')} ${c('grow')}`}
@@ -727,6 +873,74 @@ export function NoteStudioView(): JSX.Element {
               emptyCta('图集属于某篇笔记——先去「文案」新建。')
             ) : (
               <>
+                {/* 参考横幅(2026-07-18 用户拍板两类分离):🛍 产品图(勾选参与,产品融入
+                    画面)+ 🎨 风格图(单选,只学调子·不套模板)。任一有选中就亮。 */}
+                {refImage || userRefImages.filter((u) => productPicks.includes(u)).length > 0 ? (
+                  <div className={c('card')} style={{ borderColor: '#e8582e', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {userRefImages.filter((u) => productPicks.includes(u)).slice(0, 3).map((u) => (
+                      <img key={u} src={u} alt="产品图" title="产品图(融入画面)" style={{ width: 44, height: 56, objectFit: 'cover', borderRadius: 8, border: '2px solid #e8582e' }} />
+                    ))}
+                    {refImage ? (
+                      <img src={refImage} alt="风格图" title="风格参考(只学调子)" style={{ width: 44, height: 56, objectFit: 'cover', borderRadius: 8, border: '2px dashed #999' }} />
+                    ) : null}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>
+                        {[userRefImages.filter((u) => productPicks.includes(u)).length ? `🛍 产品图 ${userRefImages.filter((u) => productPicks.includes(u)).length} 张参与(产品会融入画面)` : '', refImage ? '🎨 风格图已选(照它的调子,不套模板)' : ''].filter(Boolean).join(' · ')}
+                      </div>
+                      <div className={c('cardHint')}>下面写提示词或用 AI 图集建议,生图自动带上;到右侧「参考图」tab 增删/换选</div>
+                    </div>
+                    <button
+                      type="button"
+                      className={c('btn')}
+                      title="清掉本次生图的全部参考(产品图取消参与+风格图取消)"
+                      onClick={() => { setRefImage(''); setProductPicks([]); }}
+                    >
+                      ✕ 全部清除
+                    </button>
+                  </div>
+                ) : null}
+                {/* 参考素材(原图)已移到右侧预览的「参考图」tab(2026-07-18 用户拍板省空间)。 */}
+                {/* 生图·你的想法:非直接生图模式也显示(便于写自定义提示词+配参考图)。 */}
+                {directImage || refImage || productPicks.length > 0 ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      {refImage || productPicks.length ? '写提示词 · 配上方参考生图' : '直接生图 · 你的想法'}
+                      <span className={c('cardHint')}>
+                        {refImage || productPicks.length
+                          ? '描述场景/构图,点「生图」——产品图的产品会融入画面,风格图定调子'
+                          : '描述你想要的画面(产品/场景/风格),选下方风格与比例,点「生图」直接出图;也可让 AI 据此写小红书文案'}
+                      </span>
+                    </div>
+                    <textarea
+                      className={c('textarea')}
+                      style={{ minHeight: 64, marginBottom: 8 }}
+                      placeholder="例:水果娜旅行洗护8件套摆在浅粉色梳妆台上,樱花点缀,清新少女风,俯拍"
+                      value={freePrompt}
+                      onChange={(e) => setFreePrompt(e.target.value)}
+                    />
+                    <div className={c('row')} style={{ gap: 8 }}>
+                      <button
+                        type="button"
+                        className={`${c('btn')} ${c('btnPrimary')}`}
+                        disabled={galleryBusy !== null || !freePrompt.trim()}
+                        onClick={() => void generateGalleryImage(freePrompt.trim())}
+                      >
+                        {galleryBusy === freePrompt.trim() ? '生成中…' : productPicks.length ? '✨ 产品融入生图' : refImage ? '✨ 按风格图生图' : '✨ 生图(用下方风格)'}
+                      </button>
+                      {directImage ? (
+                        <button
+                          type="button"
+                          className={c('btn')}
+                          disabled={effectiveAiRunning || !freePrompt.trim()}
+                          title="按你的想法让 AI 写一篇小红书文案(标题+正文+标签),到「文案」步查看"
+                          onClick={() => void startAiTask('write', { note: freePrompt.trim() })}
+                        >
+                          {effectiveAiRunning ? 'AI 写作中…' : '📝 AI 帮我写文案'}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
                 {ideaLines.length > 0 ? (
                   <div className={c('card')}>
                     <div className={c('cardLabel')}>
@@ -764,21 +978,23 @@ export function NoteStudioView(): JSX.Element {
                             className={c('btn')}
                             style={{ flexShrink: 0 }}
                             disabled={galleryBusy !== null}
-                            title="按左侧(可编辑的)提示词只生成这一张,用当前选中的风格/模型"
+                            title={productPicks.length || refImage ? '按这条提示词生图——产品图融入画面/风格图定调子(与上方参考同吃)' : '按左侧(可编辑的)提示词只生成这一张,用当前选中的风格/模型'}
                             onClick={(e) => {
-                              // 就地取输入框当前值:没失焦的最新编辑也要生效
+                              // 就地取输入框当前值:没失焦的最新编辑也要生效。产品图/风格图
+                              // 由 composeRefRequest 统一带上——AI 建议行同样吃两类参考。
                               const input = (e.currentTarget.parentElement?.querySelector('input') as HTMLInputElement | null);
                               const text = (input?.value ?? idea).trim();
                               if (text) void generateGalleryImage(text);
                             }}
                           >
-                            {galleryBusy === idea ? '生成中…' : '生图'}
+                            {galleryBusy === idea ? '生成中…' : productPicks.length ? '生图·产品' : refImage ? '生图·风格' : '生图'}
                           </button>
                         </div>
                       ))}
                     </div>
                     <div className={c('row')}>
-                      <select className={c('select')} value={galleryStyle} onChange={(e) => setGalleryStyle(e.target.value)}>
+                      <select className={c('select')} value={styleAxisValue} title="风格:内置预设 或 参考图(二选一)" onChange={(e) => onStyleAxisSelect(e.target.value)}>
+                        <option value={REF_STYLE}>🎨 风格参考图{refImage ? '(已选·照它的调子)' : ''}</option>
                         {IMAGE_STYLES.map((s) => (
                           <option key={s.id} value={s.id}>
                             {s.label}
@@ -815,7 +1031,7 @@ export function NoteStudioView(): JSX.Element {
                             : '按建议生成全部'}
                       </button>
                     </div>
-                    <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
+                    <ImageStyleSamples value={refImage ? '' : galleryStyle} onSelect={onStyleAxisSelect} />
                   </div>
                 ) : null}
                 <div className={c('card')}>
@@ -828,10 +1044,11 @@ export function NoteStudioView(): JSX.Element {
                   <div className={c('row')}>
                     <select
                       className={c('select')}
-                      value={galleryStyle}
-                      title="图片风格模板——「不用模板」时画风全由提示词决定"
-                      onChange={(e) => setGalleryStyle(e.target.value)}
+                      value={styleAxisValue}
+                      title="风格:内置预设 或 参考图(二选一)——「不用模板」时画风全由提示词决定"
+                      onChange={(e) => onStyleAxisSelect(e.target.value)}
                     >
+                      <option value={REF_STYLE}>🎨 风格参考图{refImage ? '(已选·照它的调子)' : ''}</option>
                       {IMAGE_STYLES.map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.label}
@@ -860,8 +1077,8 @@ export function NoteStudioView(): JSX.Element {
                       ))}
                     </select>
                   </div>
-                  <ImageStyleSamples value={galleryStyle} onSelect={setGalleryStyle} />
-                  <FinalPromptPreview style={galleryStyle} description={galleryPrompt} />
+                  <ImageStyleSamples value={refImage ? '' : galleryStyle} onSelect={onStyleAxisSelect} />
+                  <FinalPromptPreview style={refImage ? '' : galleryStyle} description={galleryPrompt} />
                   <div className={c('row')}>
                     <input
                       className={`${c('input')} ${c('grow')}`}
@@ -955,6 +1172,16 @@ export function NoteStudioView(): JSX.Element {
                             <button type="button" className={c('btn')} disabled={i === noteImages.length - 1} onClick={() => moveImage(i, 1)} title="后移">
                               →
                             </button>
+                            {/* 设为参考图:上方「参考图」栏亮起,再写提示词生同款风格
+                                (2026-07-18 用户拍板:参考图+提示词两步,不再一点就生)。 */}
+                            <button
+                              type="button"
+                              className={`${c('btn')} ${url === refImage ? c('btnPrimary') : ''}`}
+                              title="把这张设为参考图 → 上方写提示词按它的风格生新图(不套模板)"
+                              onClick={() => setRefImage(url === refImage ? '' : url)}
+                            >
+                              {url === refImage ? '✓ 参考中' : '作参考'}
+                            </button>
                             <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => removeImage(i)}>
                               删
                             </button>
@@ -1035,7 +1262,6 @@ export function NoteStudioView(): JSX.Element {
                     <div className={c('row')}>
                       <button type="button" className={c('btn')} onClick={() => {
                         void startAiTask('review');
-                        void pushStudioReview(PLATFORM, article.id);
                       }}>
                         <Icon name="sparkles" size={14} /> AI 复盘并给下一篇建议
                       </button>
@@ -1074,9 +1300,176 @@ export function NoteStudioView(): JSX.Element {
 
         {article && tab !== 'topics' && tab !== 'list' ? (
           <div className={c('previewCol')}>
-            <span className={c('previewTag')}>
-              <Icon name="eye" size={13} /> 笔记卡（发布时的样子）
-            </span>
+            {/* 预览 tab:成稿(发布样子)/原文(原文案参考)/参考图(原图,可作参考·加入图集)。
+                把参考素材从左栏挪进这里,省左栏空间(2026-07-18 用户拍板)。 */}
+            <div className={c('row')} style={{ gap: 6, marginBottom: 8 }}>
+              {([['draft', '📱 成稿'], ['source', '📄 原文'], ['refs', `🖼 参考图${userRefImages.length + sourceImages.length ? `(${userRefImages.length + sourceImages.length})` : ''}`]] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`${c('articleSwitchBtn')}${previewTab === id ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+                  style={{ fontSize: 12 }}
+                  onClick={() => setPreviewTab(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {previewTab === 'source' ? (
+              <div className={c('videoCard')}>
+                {str((article.extra as Record<string, unknown>).sourceContent) ? (
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.7, maxHeight: '60vh', overflow: 'auto' }}>
+                    {str((article.extra as Record<string, unknown>).sourceContent)}
+                  </div>
+                ) : (
+                  <div className={c('cardHint')}>{fetchingSource ? '⏳ 正在自动拉取原文案…' : '没有原文案(此稿非爆款来源)。'}</div>
+                )}
+                {str((article.extra as Record<string, unknown>).sourceUrl) ? (
+                  <a href={str((article.extra as Record<string, unknown>).sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ marginTop: 8, display: 'inline-block' }}>看原文 ↗</a>
+                ) : null}
+              </div>
+            ) : previewTab === 'refs' ? (
+              <div className={c('videoCard')}>
+                {/* 两类参考分区(2026-07-18 用户拍板):🛍 产品图=自己上传(勾选参与→产品融入
+                    生成图);🎨 风格参考=爆款原素材图(单选→只学调子)。生图可同时带两类。 */}
+                <div style={{ fontWeight: 700, fontSize: 12.5, marginBottom: 6 }}>🛍 产品图 · 我上传的{userRefImages.length ? `(勾选=生成时产品融入画面)` : ''}</div>
+                {article ? (
+                  <label className={c('btn')} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                    <Icon name="upload" size={13} /> 传商品图
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files ?? []);
+                        e.target.value = '';
+                        if (!files.length || !article) return;
+                        void (async () => {
+                          const urls: string[] = [];
+                          for (const file of files) {
+                            // eslint-disable-next-line no-await-in-loop
+                            const result = await uploadStudioAsset(PLATFORM, article.id, file);
+                            if (result.url) urls.push(result.url);
+                            else if (result.error) studioToast.err(result.error);
+                          }
+                          if (urls.length > 0) {
+                            editArticle({ extra: { userRefImages: [...userRefImages, ...urls] } });
+                            setProductPicks((prev) => [...prev, ...urls]);   // 新传默认参与
+                            studioToast.ok(`商品图已传 ${urls.length} 张(默认参与生图)——左边写提示词,产品会融进画面`);
+                          }
+                        })();
+                      }}
+                    />
+                  </label>
+                ) : null}
+                {userRefImages.length === 0 ? (
+                  <div className={c('cardHint')} style={{ marginBottom: 10 }}>还没传——上面「传商品图」,生成的图会把你的产品画进去。</div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, maxHeight: '30vh', overflowY: 'auto', paddingRight: 4, marginBottom: 10 }}>
+                    {userRefImages.map((url, i) => {
+                      const picked = productPicks.includes(url);
+                      return (
+                        <div key={url} style={{ display: 'flex', flexDirection: 'column', gap: 3, outline: picked ? '2px solid #e8582e' : 'none', outlineOffset: 2, borderRadius: 8 }}>
+                          <img
+                            src={url}
+                            alt={`产品图 ${i + 1}`}
+                            title="点看大图"
+                            style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 8, cursor: 'zoom-in' }}
+                            onClick={() => setLightboxUrl(url)}
+                          />
+                          <div style={{ display: 'flex', gap: 3 }}>
+                            <button
+                              type="button"
+                              className={`${c('btn')} ${picked ? c('btnPrimary') : ''}`}
+                              style={{ flex: 1, padding: '2px 4px', fontSize: 11 }}
+                              title={picked ? '当前参与生图(产品融入画面)——点击取消' : '勾选参与:生成的图会把这张里的产品画进去'}
+                              onClick={() => setProductPicks((prev) => (picked ? prev.filter((u) => u !== url) : [...prev, url]))}
+                            >
+                              {picked ? '✓参与' : '参与'}
+                            </button>
+                            <button
+                              type="button"
+                              className={c('btn')}
+                              style={{ padding: '2px 5px', fontSize: 11 }}
+                              title="自家图,直接放进图集发布"
+                              onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
+                            >
+                              +集
+                            </button>
+                            <button
+                              type="button"
+                              className={c('btn')}
+                              style={{ padding: '2px 5px', fontSize: 11 }}
+                              title="移除这张商品图(不影响已生成的图)"
+                              onClick={() => {
+                                setProductPicks((prev) => prev.filter((u) => u !== url));
+                                editArticle({ extra: { userRefImages: userRefImages.filter((u) => u !== url) } });
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ fontWeight: 700, fontSize: 12.5, margin: '2px 0 6px' }}>🎨 风格参考 · 爆款原图{sourceImages.length ? `(选一张=只学它的调子,不搬内容)` : ''}</div>
+                {sourceImages.length === 0 ? (
+                  <div>
+                    <div className={c('cardHint')}>{fetchingSource ? '⏳ 正在自动拉取原图…' : '没有爆款原图(此稿非爆款来源)。'}</div>
+                    {/* 拉取是自动的(去创作第一步),不设常驻按钮;仅自动拉失败后留一个重试兜底。 */}
+                    {!fetchingSource && sourceUrl ? (
+                      <button
+                        type="button"
+                        className={c('btn')}
+                        style={{ marginTop: 8 }}
+                        onClick={() => void fetchSourceNow(sourceUrl)}
+                      >
+                        自动拉取失败?点此重试
+                      </button>
+                    ) : null}
+                  </div>
+                ) : (
+                  // 九宫格:一行 3 张,区内独立滚动(2026-07-18 用户拍板:图太大+滑整页麻烦)。
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, maxHeight: '30vh', overflowY: 'auto', paddingRight: 4 }}>
+                    {sourceImages.map((url, i) => (
+                      <div key={url} style={{ display: 'flex', flexDirection: 'column', gap: 3, outline: url === refImage ? '2px dashed #e8582e' : 'none', outlineOffset: 2, borderRadius: 8 }}>
+                        <img
+                          src={url}
+                          alt={`风格参考 ${i + 1}`}
+                          title="点看大图"
+                          style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', borderRadius: 8, cursor: 'zoom-in' }}
+                          onClick={() => setLightboxUrl(url)}
+                        />
+                        <div style={{ display: 'flex', gap: 3 }}>
+                          <button
+                            type="button"
+                            className={`${c('btn')} ${url === refImage ? c('btnPrimary') : ''}`}
+                            style={{ flex: 1, padding: '2px 4px', fontSize: 11 }}
+                            title="设为风格参考:生图只学它的构图/光线/质感,不搬它的内容(不盗原图)"
+                            onClick={() => setRefImage(url === refImage ? '' : url)}
+                          >
+                            {url === refImage ? '✓风格' : '作风格'}
+                          </button>
+                          <button
+                            type="button"
+                            className={c('btn')}
+                            style={{ padding: '2px 5px', fontSize: 11 }}
+                            title="确实要用这张原图 → 放进图集(版权自负,别人的图慎发)"
+                            onClick={() => editArticle({ extra: { noteImages: [...latestNoteImages(), url] } })}
+                          >
+                            +集
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className={c('cardHint')} style={{ marginTop: 6 }}>产品图与风格图可同时选:产品融入画面 + 照风格图的调子;爆款原图不自动进图集/发布。</div>
+              </div>
+            ) : (
             <div className={c('videoCard')}>
               {noteImages.length > 0 ? (
                 <img
@@ -1120,6 +1513,7 @@ export function NoteStudioView(): JSX.Element {
                 </div>
               ) : null}
             </div>
+            )}
           </div>
         ) : null}
       </div>

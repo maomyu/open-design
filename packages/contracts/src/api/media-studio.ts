@@ -75,6 +75,9 @@ export interface MediaTopic {
   source: string;
   url: string;
   heat: string;
+  /** 原素材(爆款沉淀时带回;无则空)。 */
+  sourceContent: string;
+  sourceImages: string[];
   status: 'candidate' | 'used';
   createdAt: number;
 }
@@ -243,6 +246,9 @@ export interface CreateMediaTopicRequest {
   source?: string;
   url?: string;
   heat?: string;
+  /** 原素材(2026-07-18):爆款沉淀候选时带上原文案/原图,「去创作」随稿带走。 */
+  sourceContent?: string;
+  sourceImages?: string[];
 }
 export interface UpdateMediaTopicRequest {
   title?: string;
@@ -343,6 +349,9 @@ export interface GenerateArticleImageRequest {
   /** Optional reference image (URL or local absolute path) steering the
    *  generation — 封面可带参考图. */
   referenceImage?: string | null;
+  /** 多参考图（2026-07-18 用户拍板：产品图+风格图两类同传）——有序：产品图在前、
+   *  风格参考图殿后；prompt 里按「前N张=产品、最后一张=风格」指代。优先于 referenceImage。 */
+  referenceImages?: string[] | null;
 }
 export interface GenerateArticleImageResponse {
   /** Web-servable asset URL (/api/media-studio/assets/...). */
@@ -424,6 +433,9 @@ export interface StudioAiTaskRequest {
     accountId?: string;
     /** topics: 用户勾选的优先参考文章（AI 优先围绕它们深挖出题）. */
     picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
+    /** topics: 选题目标平台 id（如 'xiaohongshu'）——引用链接只准该平台站内链接，
+     *  站外来源（新闻/公众号）只写来源名、url 留空（2026-07-18 用户拍板：小红书选题必须全部来自小红书）. */
+    sourcePlatform?: string;
   };
 }
 export interface StudioAiTaskResponse {
@@ -432,6 +444,45 @@ export interface StudioAiTaskResponse {
   /** Composed step prompt — the web starts the run via POST /api/runs. */
   prompt: string;
   title: string;
+}
+
+/** 音色设计（2026-07-19 用户拍板「界面功能支持音色设计,这很重要」）。
+ *  双通道：qwen=千问 qwen3-tts-instruct（描述→指令控制音色,即设即听,无需预训练）;
+ *  volc=火山 openspeech voice_design（正牌音色设计,产出可复用 speaker_id,
+ *  需语音技术 X-Api-Key + 已购音色位）。 */
+export interface VoiceDesignRequest {
+  /** 默认 'qwen'。 */
+  provider?: 'qwen' | 'volc';
+  /** 音色描述提示词，如「年轻女性,声音温柔,语速中等偏慢」。 */
+  prompt: string;
+  /** 试听文本。 */
+  text: string;
+  /** qwen：基底音色（默认 Ethan）；volc：已购 speaker_id（S_ 开头，必填）。 */
+  voice?: string;
+}
+export interface VoiceDesignResponse {
+  provider: 'qwen' | 'volc';
+  /** 试听音频 URL（远端直链，短期有效，试听后可下载保存）。 */
+  audioUrl: string;
+  /** volc：训练出的音色代号（后续 TTS 直接用）。 */
+  speakerId?: string;
+  /** qwen：复用参数——配音时同 voice+instructions 即同款声音。 */
+  voice?: string;
+  prompt?: string;
+}
+
+/** 已保存的音色预设（音色设计的产物，配音步选用）。 */
+export interface VoicePreset {
+  id: string;
+  name: string;
+  provider: 'qwen' | 'volc';
+  /** qwen：基底音色（Ethan/Cherry…）。 */
+  voice?: string;
+  /** qwen：音色描述指令（instructions）。 */
+  prompt?: string;
+  /** volc：voice_design 训练出的音色代号（S_ 开头）。 */
+  speakerId?: string;
+  createdAt: number;
 }
 
 /** 浏览器注入发布可用的平台（桌面端 webview 注入器白名单）。 */

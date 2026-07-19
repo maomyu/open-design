@@ -11,7 +11,8 @@
 import { type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { useT } from '../i18n';
-import { anyArticlePlatform, anyPublishingModule, anyShortVideoPlatform, hasFeature, useLicense } from '../state/license';
+import { anyArticlePlatform, anyPublishingModule, hasFeature, hasShortVideoPlatform, useLicense, type LicenseInfo } from '../state/license';
+import { hasAnyKnowledgeFeature } from '@open-design/contracts';
 
 export type EntryView =
   | 'home'
@@ -21,6 +22,16 @@ export type EntryView =
   | 'plugins'
   | 'accounts'
   | 'studio'
+  // 统一创作台(2026-07-18 路线B):跨平台选题→形态→分发;平台入口保留为快捷。
+  | 'studio-create'
+  // 平台一级入口(2026-07-17 用户拍板:运营者按平台思考;小红书=图文+视频双形态)。
+  | 'studio-douyin'
+  | 'studio-xiaohongshu'
+  | 'studio-kuaishou'
+  | 'studio-bilibili'
+  | 'studio-shipinhao'
+  // 制作视频(横切素材车间):当前=数字人口型替换。
+  | 'studio-make'
   | 'studio-video'
   | 'studio-note'
   | 'studio-zhihu'
@@ -28,6 +39,26 @@ export type EntryView =
   | 'knowledge'
   | 'design-systems'
   | 'integrations';
+
+/** 平台一级入口清单:授权判定按平台(小红书=视频或图文任一)。sauId 用于 sv.* 判定。 */
+const PLATFORM_NAV: Array<{
+  view: EntryView;
+  label: string;
+  icon: 'play' | 'image';
+  licensed: (license: LicenseInfo) => boolean;
+}> = [
+  // 小红书排第一(2026-07-18 用户拍板:优先给客户演示小红书)。
+  {
+    view: 'studio-xiaohongshu',
+    label: '小红书',
+    icon: 'image',
+    licensed: (l) => hasShortVideoPlatform(l, 'xiaohongshu') || hasFeature(l, 'note.xiaohongshu'),
+  },
+  { view: 'studio-douyin', label: '抖音', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'douyin') },
+  { view: 'studio-kuaishou', label: '快手', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'kuaishou') },
+  { view: 'studio-bilibili', label: 'B站', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'bilibili') },
+  { view: 'studio-shipinhao', label: '视频号', icon: 'play', licensed: (l) => hasShortVideoPlatform(l, 'tencent') },
+];
 
 interface Props {
   view: EntryView;
@@ -64,7 +95,9 @@ function NavButton({ active, ariaLabel, label, onClick, testId, children }: NavB
 export function EntryNavRail({ view, onViewChange }: Props) {
   const t = useT();
   const license = useLicense();
-  const brandLabel = t('app.brand');
+  // 双包交付(2026-07-17):打包时 NEXT_PUBLIC_OD_BRAND 注入各包品牌
+  // (文章包 weiao-article / 视频包 weiao-video),未注入回落 i18n。
+  const brandLabel = process.env.NEXT_PUBLIC_OD_BRAND || t('app.brand');
 
   return (
     <nav className="entry-nav-rail" aria-label="Primary">
@@ -107,31 +140,27 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="edit" size={18} />
           </NavButton>
         ) : null}
-        {anyShortVideoPlatform(license) ? (
+        {/* 统一创作台(2026-07-18 路线B):跨平台找灵感→形态分岔→(PR3)一稿多发。
+            放平台快捷入口之上=主动线;任一视频包能力即显示。 */}
+        {PLATFORM_NAV.some((p) => p.licensed(license)) ? (
           <NavButton
-            active={view === 'studio-video'}
-            ariaLabel="短视频"
-            label="短视频"
-            onClick={() => onViewChange('studio-video')}
-            testId="entry-nav-studio-video"
+            active={view === 'studio-create'}
+            ariaLabel="创作"
+            label="创作"
+            onClick={() => onViewChange('studio-create')}
+            testId="entry-nav-studio-create"
           >
-            <Icon name="play" size={18} />
+            <Icon name="edit" size={18} />
           </NavButton>
         ) : null}
-        {hasFeature(license, 'note.xiaohongshu') ? (
-          <NavButton
-            active={view === 'studio-note'}
-            ariaLabel="笔记"
-            label="笔记"
-            onClick={() => onViewChange('studio-note')}
-            testId="entry-nav-studio-note"
-          >
-            <Icon name="image" size={18} />
-          </NavButton>
-        ) : null}
+        {/* 平台导航入口已移除(2026-07-18 用户拍板:「创作」已覆盖,重复冗余)。
+            平台 view/路由全保留——创作台「去写作」跳转到达,标签栏可回;要恢复
+            导航入口把 PLATFORM_NAV.map(NavButton) 渲染块加回此处。 */}
+        {/* 制作视频模块本分支不启用(2026-07-19 用户定:创作台完整移植但不含制作视频)——
+            路由 id 'studio-make' 保留在 union 里避免类型面扩散,导航/视图均不挂。 */}
         {/* 知识库是公司级资产(2026-07-08 用户拍板):一级入口,一处维护、
-            三个创作台的 AI 全部共用,不再藏在单个创作台里。 */}
-        {hasFeature(license, 'cap.ai') ? (
+            三个创作台的 AI 全部共用。门禁跟 kb.*(2026-07-16 拆分后)。 */}
+        {license.features === null || hasAnyKnowledgeFeature([...license.features]) ? (
           <NavButton
             active={view === 'knowledge'}
             ariaLabel="知识库"

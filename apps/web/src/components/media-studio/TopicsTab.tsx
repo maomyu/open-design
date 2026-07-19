@@ -1,7 +1,7 @@
 // 选题导航（两个创作台共享）：手动候选 + 组合式选题雷达（数据源可勾选
 // 组合：爆文榜/搜一搜/全库搜索/需求词/对标动态）+「AI 帮我选题」。
 // 独立可用，也向写作/脚本步输送选题。
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
@@ -76,6 +76,54 @@ const FEED_SOURCES: Array<{ id: TopicFeedKind; label: string; usage: string; nee
 const FEEDS_STORE_KEY = 'open-design:studio:topic-feeds';
 const PEERS_STORE_KEY = 'open-design:studio:topic-peers';
 
+// 选题搜索结果留存（2026-07-12 用户要：切标签回来别丢）。按平台隔离存 localStorage，
+// 跨标签切换与应用重启都在。命中列表/提示文案/关键词/已存标记/已勾选一起存。
+const TOPIC_SEARCH_KEY = (platform: string): string => `open-design:studio:topic-search:${platform}`;
+const MAX_PERSIST_HITS = 120;
+
+interface PersistedTopicSearch {
+  hits: MediaTopicHit[];
+  notice: string | null;
+  direction: string;
+  savedUrls: string[];
+  picked: MediaTopicHit[];
+}
+
+function loadTopicSearch(platform: string): PersistedTopicSearch {
+  const empty: PersistedTopicSearch = { hits: [], notice: null, direction: '', savedUrls: [], picked: [] };
+  try {
+    const raw = window.localStorage.getItem(TOPIC_SEARCH_KEY(platform));
+    if (!raw) return empty;
+    const p = JSON.parse(raw) as Partial<PersistedTopicSearch>;
+    return {
+      hits: Array.isArray(p.hits) ? (p.hits as MediaTopicHit[]).slice(0, MAX_PERSIST_HITS) : [],
+      notice: typeof p.notice === 'string' ? p.notice : null,
+      direction: typeof p.direction === 'string' ? p.direction : '',
+      savedUrls: Array.isArray(p.savedUrls) ? (p.savedUrls as unknown[]).filter((u): u is string => typeof u === 'string') : [],
+      picked: Array.isArray(p.picked) ? (p.picked as MediaTopicHit[]).slice(0, MAX_PERSIST_HITS) : [],
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function saveTopicSearch(platform: string, data: PersistedTopicSearch): void {
+  try {
+    window.localStorage.setItem(
+      TOPIC_SEARCH_KEY(platform),
+      JSON.stringify({
+        hits: data.hits.slice(0, MAX_PERSIST_HITS),
+        notice: data.notice,
+        direction: data.direction,
+        savedUrls: data.savedUrls,
+        picked: data.picked.slice(0, MAX_PERSIST_HITS),
+      }),
+    );
+  } catch {
+    /* best-effort：容量满/隐私模式写失败无所谓，下次搜索照常 */
+  }
+}
+
 function loadEnabledFeeds(): Set<TopicFeedKind> {
   try {
     const raw = window.localStorage.getItem(FEEDS_STORE_KEY);
@@ -134,7 +182,7 @@ export interface TopicsTabProps {
   /** 公众号模式：候选只能由「AI 帮我选题」产出——隐藏手动添加与热榜「存为候选」。 */
   aiOnly?: boolean;
   topics: MediaTopic[];
-  onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string }) => Promise<void>;
+  onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string; sourceContent?: string; sourceImages?: string[] }) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onWrite: (topic: MediaTopic) => void;
   /** picked = 用户勾选的优先参考；单篇「AI 转题」= note 空 + picked 一篇。 */
@@ -150,22 +198,41 @@ export interface TopicsTabProps {
    *  平台走它自己的接口(抖音↔抖音、小红书↔小红书、快手↔快手),传了此
    *  prop 数据源区渲染平台 chips+热榜/搜索,不再是大家来(公众号生态)五源。 */
   tikhubTargets?: Array<{ id: 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo'; label: string }>;
+  /** 平台原生选题源(2026-07-12 知乎：登录态直取热榜/热搜/联想/搜索,替 TikHub)。
+   *  传了此 prop，数据源区渲染原生源按钮；结果同样进候选表(MediaTopicHit)。 */
+  nativeFeed?: {
+    label: string;
+    sources: Array<{ id: string; label: string; needsKeyword: boolean }>;
+    run: (sourceId: string, keyword?: string) => Promise<MediaTopicHit[] | { error: string }>;
+  };
+  /** 传了则文章链接(热点/候选原文)改在内置浏览器打开(桌面端);不传保持系统新标签。 */
+  onOpenLink?: (url: string) => void;
   /** 内置浏览器采集模式(短视频台:抖音/小红书/B站/快手)：选题数据【只】从平台内置浏览器
    *  采集而来(AI找选题→爆款雷达→内置浏览器)。传了此 prop:既不显示 TikHub 也不显示大家来
    *  (极致数据/公众号生态)五源——极致数据只服务公众号/视频号,不该出现在短视频台。 */
   browserCollect?: boolean;
   /** 真抓爆款要采的平台。只采【当前选中平台】——选抖音就只抓抖音。抖音/小红书/快手/B站走 TikHub
-   *  直采;视频号走极致数据(dajiala,平台 id=channels,选题带 #odk= 解密key)。 */
+   *  直采;视频号走极致数据(dajiala,平台 id=channels,选题带 #odk= 解密key)。
+   *  统一创作台(2026-07-18)传多个平台 = 多源爆款雷达,一次采多平台混合候选(来源在 account 列)。 */
   collectPlatforms?: string[];
+  /** 小红书内容类型覆盖(统一创作台用:图文/视频由用户选,不再由 platform 推断)。 */
+  xhsContentType?: 'image' | 'video';
+  /** 行内展开(2026-07-18 用户反馈"去写作弹在顶上看不见"):点「去写作」后在该行
+   *  正下方展开自定义内容(如形态选择)——视线零移动。传了 renderTopicExpansion 且
+   *  expandedTopicId 命中该行时渲染。 */
+  expandedTopicId?: string | null;
+  renderTopicExpansion?: (topic: MediaTopic) => ReactNode;
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, browserCollect = false, collectPlatforms }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, nativeFeed, onOpenLink, browserCollect = false, collectPlatforms, xhsContentType, expandedTopicId, renderTopicExpansion }: TopicsTabProps): JSX.Element {
   const license = useLicense();
+  // 上次在该平台的选题搜索结果（切标签/重启后恢复，见文件顶 loadTopicSearch）。
+  const restored = useMemo(() => loadTopicSearch(platform), [platform]);
   const [title, setTitle] = useState('');
   const [angle, setAngle] = useState('');
   const [source, setSource] = useState('');
   const [url, setUrl] = useState('');
-  const [direction, setDirection] = useState('');
+  const [direction, setDirection] = useState(restored.direction);
   // 🎯 爆款筛选（可选，喂给「AI 帮我选题」的爆款雷达）：时间窗 + 可组合的爆款规则（命中任一）。
   const [radarWindow, setRadarWindow] = useState<'all' | '7d' | '30d' | '180d'>('180d');
   const [radarRules, setRadarRules] = useState<Set<string>>(() => new Set());
@@ -240,7 +307,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       const names = collectTargets.map((p) => (COLLECT_PLATFORM_LABEL[p] ?? p)).join('、');
       setBaokuanStatus(`正在用 ${collectSource} 直采【${names}】${radarPages} 页并按爆款标准筛选评分…(约十几秒${radarPages > 1 ? '~' + radarPages * 8 + '秒' : ''})`);
       // 小红书内容类型按创作台区分:图文笔记台(platform==='note')只采【图文】,短视频台采【视频】。
-      const xhsType = platform === 'note' ? 'image' : 'video';
+      const xhsType = xhsContentType ?? (platform === 'note' ? 'image' : 'video');
       const scored = await collectScoreTopics(kw, collectTargets, buildCriteria(), radarPages, xhsType);
       if ('error' in scored) { setBaokuanStatus(''); studioToast.err(scored.error); return; }
       // 评出的爆款 → hits 列表(带链接/点赞/播放/评论,可勾选),像公众号那样先列出来,
@@ -274,10 +341,6 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       } else {
         const tierLabel = tier ? `按【${tier}】档 · ` : '';
         studioToast.ok(`${tierLabel}真抓到 ${hitList.length} 个爆款,已列在下面(带链接·点赞·粉丝)。勾选想做的,再点「AI 帮我选题」生成候选选题。`);
-      }
-      // 飞书数据中心回写失败时明确提示(不再静默)——多为未连接飞书/lark-cli 不可用。
-      if ('feishuSynced' in scored && scored.feishuSynced === false) {
-        studioToast.err('⚠️ 采到的爆款没同步到飞书数据中心(飞书未连接或回写失败)——去「账号/数据中心」连接飞书后重采即可回写。');
       }
     } finally {
       setCollectBusy(false);
@@ -347,7 +410,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     }
   };
 
-  const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? (latestBaokuanHitsByPlat[baokuanPlatKey] ?? []) : []));
+  // 内置浏览器采集(短视频爆款)从模块存储【本平台桶】恢复；其余(文章台)从 localStorage 留存恢复。
+  const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? (latestBaokuanHitsByPlat[baokuanPlatKey] ?? []) : restored.hits));
   // 真抓爆款结果:挂载/切平台时从模块存储读回【本平台】那桶(没有就清空,不串上个平台),并监听广播。
   useEffect(() => {
     if (!browserCollect) return;
@@ -360,13 +424,27 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     return () => window.removeEventListener(BAOKUAN_HITS_EVENT, onHits);
   }, [browserCollect, baokuanPlatKey]);
   const [feedBusy, setFeedBusy] = useState(false);
-  const [feedNotice, setFeedNotice] = useState<string | null>(null);
-  const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set());
+  const [feedNotice, setFeedNotice] = useState<string | null>(restored.notice);
+  const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set(restored.savedUrls));
   const [enabledFeeds, setEnabledFeeds] = useState<Set<TopicFeedKind>>(loadEnabledFeeds);
   const [peers, setPeers] = useState(() => window.localStorage.getItem(PEERS_STORE_KEY) ?? '');
   const [sugWords, setSugWords] = useState<string[]>([]);
   // 多选优先参考：勾选的文章喂给「AI 帮我选题」优先深挖（跨多轮搜索保留）。
-  const [pickedHits, setPickedHits] = useState<Map<string, MediaTopicHit>>(() => new Map());
+  const [pickedHits, setPickedHits] = useState<Map<string, MediaTopicHit>>(
+    () => new Map(restored.picked.map((h) => [h.url || h.title, h])),
+  );
+
+  // 每当命中/提示/关键词/已存/已勾选变化，回存该平台的选题搜索结果——切标签或
+  // 关闭再回来都还在。
+  useEffect(() => {
+    saveTopicSearch(platform, {
+      hits,
+      notice: feedNotice,
+      direction,
+      savedUrls: [...savedHitUrls],
+      picked: [...pickedHits.values()],
+    });
+  }, [platform, hits, feedNotice, direction, savedHitUrls, pickedHits]);
   // 选题深挖：类目榜找对标
   const [rankView, setRankView] = useState<RankedAccountRow[] | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
@@ -414,6 +492,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const canAdd = title.trim().length > 0;
   const candidates = useMemo(() => topics.filter((t) => t.status === 'candidate'), [topics]);
   const used = useMemo(() => topics.filter((t) => t.status === 'used'), [topics]);
+  // 已用过默认折叠(2026-07-18 用户反馈:候选区顺序要贴操作逻辑,历史项别占视线)。
+  const [showUsed, setShowUsed] = useState(false);
 
   function toggleFeed(id: TopicFeedKind) {
     setEnabledFeeds((prev) => {
@@ -434,6 +514,26 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     return (valid ? saved : tikhubTargets?.[0]?.id ?? 'douyin') as 'douyin' | 'xiaohongshu' | 'kuaishou' | 'zhihu' | 'weibo';
   });
   const tikhubTargetLabel = tikhubTargets?.find((t) => t.id === tikhubTarget)?.label ?? tikhubTarget;
+
+  async function runNative(sourceId: string) {
+    if (!nativeFeed) return;
+    const meta = nativeFeed.sources.find((s) => s.id === sourceId);
+    const keyword = direction.trim();
+    if (meta?.needsKeyword && !keyword) {
+      studioToast.info('先填个方向词再搜');
+      return;
+    }
+    setFeedBusy(true);
+    setFeedNotice(null);
+    const r = await nativeFeed.run(sourceId, keyword);
+    setFeedBusy(false);
+    if ('error' in r) {
+      studioToast.err(r.error);
+      return;
+    }
+    setHits(r);
+    setFeedNotice(`${nativeFeed.label} · ${meta?.label ?? sourceId} 共 ${r.length} 条`);
+  }
 
   async function runTikhub(mode: 'hot' | 'search') {
     const keyword = direction.trim();
@@ -514,6 +614,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       source: hit.account,
       ...(hit.url ? { url: hit.url } : {}),
       heat: hit.signals.length === 2 ? '高' : '中',
+      // 原素材随候选沉淀(2026-07-18):去创作时原文案/原图跟到创作区。
+      ...(hit.sourceContent ? { sourceContent: hit.sourceContent } : {}),
+      ...(hit.sourceImages && hit.sourceImages.length > 0 ? { sourceImages: hit.sourceImages } : {}),
     });
     setSavedHitUrls((prev) => new Set(prev).add(hit.url || hit.title));
   }
@@ -545,7 +648,23 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                 : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}
           </span>
         </div>
-        {tikhubTargets ? (
+        {nativeFeed && nativeFeed.sources.some((s) => !s.needsKeyword) ? (
+          <div className={c('row')} style={{ flexWrap: 'wrap' }}>
+            <span className={c('cardHint')}>看{nativeFeed.label}全站在热什么（免填词，与下面的关键词无关）：</span>
+            {nativeFeed.sources.filter((s) => !s.needsKeyword).map((s, i) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`${c('btn')}${i === 0 ? ` ${c('btnPrimary')}` : ''}`}
+                disabled={feedBusy}
+                title={`直接拉取${nativeFeed.label}「${s.label}」——看全站热点，不用填关键词`}
+                onClick={() => void runNative(s.id)}
+              >
+                {feedBusy ? '拉取中…' : s.label}
+              </button>
+            ))}
+          </div>
+        ) : tikhubTargets ? (
           <div className={c('row')}>
             <span className={c('cardHint')}>选题平台（数据从该平台自己的接口来）：</span>
             {tikhubTargets.map((t) => (
@@ -574,7 +693,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             </span>
           </div>
         ) : null}
-        {tikhubTargets || browserCollect ? null : (
+        {nativeFeed || tikhubTargets || browserCollect ? null : (
         <div className={c('row')}>
           {FEED_SOURCES.map((s) => (
             <label key={s.id} className={`${c('row')} ${c('feedSrc')}`} style={{ gap: 4, cursor: 'pointer' }}>
@@ -587,7 +706,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           ))}
         </div>
         )}
-        {!tikhubTargets && !browserCollect && enabledFeeds.has('peers') ? (
+        {!tikhubTargets && !nativeFeed && !browserCollect && enabledFeeds.has('peers') ? (
           <div className={c('row')}>
             <input
               className={`${c('input')} ${c('grow')}`}
@@ -613,13 +732,33 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           <input
             className={`${c('input')} ${c('grow')}`}
             value={direction}
-            placeholder="方向/领域关键词，例：AI 编程、考研、育儿…"
+            placeholder={nativeFeed ? '填方向词 → 点「联想词/搜索」，例：军队文职、考研…' : '方向/领域关键词，例：AI 编程、考研、育儿…'}
             onChange={(e) => setDirection(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !feedBusy && !browserCollect) void (tikhubTargets ? runTikhub('search') : runCombo());
+              if (e.key === 'Enter' && !feedBusy) {
+                if (nativeFeed) {
+                  const searchSrc = nativeFeed.sources.find((s) => s.needsKeyword);
+                  if (searchSrc) void runNative(searchSrc.id);
+                } else if (!browserCollect) void (tikhubTargets ? runTikhub('search') : runCombo());
+              }
             }}
           />
-          {tikhubTargets ? (
+          {nativeFeed ? (
+            <>
+              {nativeFeed.sources.filter((s) => s.needsKeyword).map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={c('btn')}
+                  disabled={feedBusy || !direction.trim()}
+                  title={`用左边的方向词在${nativeFeed.label}取「${s.label}」`}
+                  onClick={() => void runNative(s.id)}
+                >
+                  {feedBusy ? '拉取中…' : s.label}
+                </button>
+              ))}
+            </>
+          ) : tikhubTargets ? (
             <>
               <button
                 type="button"
@@ -665,7 +804,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               type="button"
               className={c('btn')}
               disabled={aiBusy}
-              onClick={() => onAiFind((direction.trim() + buildRadarNote()).trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
+              onClick={() => onAiFind((direction.trim() + (browserCollect ? buildRadarNote() : '')).trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
               title={
                 aiBusy
                   ? '有 AI 任务正在运行——等它结束（或在底部面板中止）再发起'
@@ -683,7 +822,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             </button>
           ) : null}
         </div>
-        {/* 🎯 爆款筛选：时间窗 + 可组合的爆款规则（喂给「AI 帮我选题」的爆款雷达采集+评分） */}
+        {/* 🎯 爆款筛选：短视频专属(时间窗+播放/点赞规则,喂给爆款雷达采集+评分)。文章台
+            (公众号走极致了/知乎走登录态直取/微博走 TikHub)不是视频指标,不显示。 */}
+        {browserCollect ? (
         <div className={c('row')} style={{ flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
           <span className={c('cardHint')}>🎯 爆款筛选：</span>
           <select
@@ -730,6 +871,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             {collectTargets.includes('channels') ? '视频号是纯点赞,默认门槛已自动降到 2000。' : ''}
           </span>
         </div>
+        ) : null}
         {sugWords.length > 0 ? (
           <div className={c('row')} style={{ flexWrap: 'wrap' }}>
             <span className={c('cardHint')}>💡 大家在搜：</span>
@@ -800,7 +942,18 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     <td>{signalTag(hit.signals)}</td>
                     <td>
                       {hit.url ? (
-                        <a className={c('link')} href={hit.url} target="_blank" rel="noreferrer">
+                        <a
+                          className={c('link')}
+                          href={hit.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => {
+                            if (onOpenLink && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+                              e.preventDefault();
+                              onOpenLink(hit.url);
+                            }
+                          }}
+                        >
                           {hit.title}
                         </a>
                       ) : (
@@ -813,7 +966,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         ? [hit.readNum ? `播放${hit.readNum >= 10000 ? (hit.readNum / 10000).toFixed(1) + '万' : hit.readNum}` : '',
                            hit.zanNum ? `赞${hit.zanNum >= 10000 ? (hit.zanNum / 10000).toFixed(1) + '万' : hit.zanNum}` : '']
                             .filter(Boolean).join('·') || (hit.hot ?? '—')
-                        : (hit.readNum ? `阅读 ${hit.readNum}` : hit.desc ? hit.desc.slice(0, 24) : '—')}
+                        : nativeFeed
+                          // 知乎原生源:热度(detail_text)是主信号,优先展示。
+                          ? (hit.hot ? hit.hot : hit.readNum ? `阅读 ${hit.readNum}` : '—')
+                          // 公众号(爆文榜/极致了)等:列意=数据(阅读)。没有数据就显示「—」,
+                          // 绝不回落正文/摘要凑数(2026-07-18 用户报:数据列全是正文很怪)。
+                          : (hit.readNum ? `阅读 ${hit.readNum}` : hit.hot ? hit.hot : '—')}
                     </td>
                     <td className={c('tdActions')}>
                       {/* 短视频台(onRewriteToScript):下原视频→ASR→口播稿仿写。
@@ -870,53 +1028,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           </table>
         ) : null}
       </div>
-      {aiOnly ? null : (
-      <div className={c('card')}>
-        <div className={c('cardLabel')}>
-          添加选题
-          <span className={c('cardHint')}>手动记一个想法，或把 AI 对话/爆文榜里的候选沉淀进来</span>
-        </div>
-        <div className={c('row')}>
-          <input
-            className={`${c('input')} ${c('grow')}`}
-            value={title}
-            placeholder="选题标题（必填）"
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submit();
-            }}
-          />
-        </div>
-        <div className={c('row')}>
-          <input
-            className={`${c('input')} ${c('grow')}`}
-            value={angle}
-            placeholder="切入角度（可选）"
-            onChange={(e) => setAngle(e.target.value)}
-          />
-          <input
-            className={c('input')}
-            style={{ width: 140 }}
-            value={source}
-            placeholder="来源（可选）"
-            onChange={(e) => setSource(e.target.value)}
-          />
-          <input
-            className={`${c('input')} ${c('grow')}`}
-            value={url}
-            placeholder="原文链接（可选）"
-            onChange={(e) => setUrl(e.target.value)}
-          />
-          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={!canAdd} onClick={() => void submit()}>
-            添加
-          </button>
-        </div>
-      </div>
-      )}
       <div className={c('card')}>
         <div className={c('cardLabel')}>候选选题（{candidates.length}）</div>
         {candidates.length === 0 ? (
-          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : '还没有候选选题——在上面添加第一个。'}</div>
+          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
         ) : (
           <table className={c('table')}>
             <thead>
@@ -930,14 +1045,27 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             </thead>
             <tbody>
               {candidates.map((t) => (
-                <tr key={t.id}>
+                <Fragment key={t.id}>
+                <tr>
                   <td>{t.title}</td>
                   <td style={{ whiteSpace: 'nowrap', color: '#e8582e', fontWeight: 600 }}>{t.heat || '—'}</td>
                   <td>{t.angle || '—'}</td>
                   <td>
                     {t.url ? (
-                      <a className={c('link')} href={t.url} target="_blank" rel="noreferrer" title="点开看原视频的真实点赞/评论">
-                        点击看原文 ↗
+                      <a
+                        className={c('link')}
+                        href={t.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="点开原文（短视频可看原视频真实点赞/评论）"
+                        onClick={(e) => {
+                          if (onOpenLink && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+                            e.preventDefault();
+                            onOpenLink(t.url!);
+                          }
+                        }}
+                      >
+                        {t.source || '点击看原文 ↗'}
                       </a>
                     ) : (
                       t.source || '—'
@@ -945,13 +1073,22 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                   </td>
                   <td className={c('tdActions')}>
                     <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => onWrite(t)}>
-                      去写作
+                      去创作
                     </button>{' '}
                     <button type="button" className={`${c('btn')} ${c('btnDanger')}`} onClick={() => void onDelete(t.id)}>
                       删除
                     </button>
                   </td>
                 </tr>
+                {/* 行内展开(点「去写作」后就在本行正下方,视线零移动)。 */}
+                {renderTopicExpansion && expandedTopicId === t.id ? (
+                  <tr key={`${t.id}-x`}>
+                    <td colSpan={5} style={{ background: 'var(--od-surface-muted, #faf6f0)', borderLeft: '3px solid #e8582e' }}>
+                      {renderTopicExpansion(t)}
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -1010,7 +1147,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       ) : null}
       {used.length > 0 ? (
         <div className={c('card')}>
-          <div className={c('cardLabel')}>已用过（{used.length}）</div>
+          <button type="button" className={c('cardLabel')} style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', width: '100%', textAlign: 'left' }} onClick={() => setShowUsed((v) => !v)}>
+            已用过（{used.length}）{showUsed ? ' ▾ 收起' : ' ▸ 展开'}
+          </button>
+          {showUsed ? (
           <table className={c('table')}>
             <tbody>
               {used.map((t) => (
@@ -1026,8 +1166,53 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               ))}
             </tbody>
           </table>
+          ) : null}
         </div>
       ) : null}
+      {/* 手动添加(低频,垫底;2026-07-18 用户反馈顺序不符操作逻辑:找题→候选→手动兜底) */}
+      {aiOnly ? null : (
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          添加选题
+          <span className={c('cardHint')}>手动记一个想法，或把 AI 对话/爆文榜里的候选沉淀进来</span>
+        </div>
+        <div className={c('row')}>
+          <input
+            className={`${c('input')} ${c('grow')}`}
+            value={title}
+            placeholder="选题标题（必填）"
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submit();
+            }}
+          />
+        </div>
+        <div className={c('row')}>
+          <input
+            className={`${c('input')} ${c('grow')}`}
+            value={angle}
+            placeholder="切入角度（可选）"
+            onChange={(e) => setAngle(e.target.value)}
+          />
+          <input
+            className={c('input')}
+            style={{ width: 140 }}
+            value={source}
+            placeholder="来源（可选）"
+            onChange={(e) => setSource(e.target.value)}
+          />
+          <input
+            className={`${c('input')} ${c('grow')}`}
+            value={url}
+            placeholder="原文链接（可选）"
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={!canAdd} onClick={() => void submit()}>
+            添加
+          </button>
+        </div>
+      </div>
+      )}
     </>
   );
 }

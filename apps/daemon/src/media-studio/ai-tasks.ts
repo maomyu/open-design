@@ -53,9 +53,24 @@ export interface ComposeAiTaskInput {
   knowledge?: Array<{ name: string; contentMd: string; category?: string }>;
   /** topics: 用户在搜索结果里勾选的优先参考文章。 */
   picked?: Array<{ title: string; url?: string; account?: string; readNum?: number | null }>;
+  /** topics: 选题目标平台 id——url 只准该平台站内链接(2026-07-18 用户拍板)。 */
+  sourcePlatform?: string;
+  /** write(note): 用户上传的产品图磁盘绝对路径——图集建议必须以它为主体(先看图)。 */
+  productImagePaths?: string[];
+  /** write(note): 风格参考图(爆款原图)磁盘绝对路径——图集建议模仿其构图/光线/质感。 */
+  styleImagePaths?: string[];
   /** Absolute path of the od CLI entry (dist/cli.js) for PATH-less fallback. */
   cliPath: string;
 }
+
+/** 选题目标平台 → 站内域名白名单文案(prompt 用)。 */
+const SOURCE_PLATFORM_RULES: Record<string, { label: string; domains: string }> = {
+  xiaohongshu: { label: '小红书', domains: 'xiaohongshu.com / xhslink.com' },
+  douyin: { label: '抖音', domains: 'douyin.com / iesdouyin.com' },
+  kuaishou: { label: '快手', domains: 'kuaishou.com' },
+  bilibili: { label: 'B站', domains: 'bilibili.com / b23.tv' },
+  channels: { label: '视频号', domains: 'channels.weixin.qq.com' },
+};
 
 export interface ComposedAiTask {
   title: string;
@@ -188,6 +203,15 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '3. 每个选题用 CLI 落库（有原文依据的必须带来源和链接）：',
         `   \`od studio topic-add --title "<选题标题>" --angle "<切入角度>" --source "<来源公众号/平台>" --url "<原文链接>" --heat "<高|中|低>"\``,
         '   **标题参数里只放标题本身**——角度/来源/热度分别放各自参数，绝不把「｜ 角度：xxx」拼进 --title。',
+        (() => {
+          // 来源纪律(2026-07-18 用户拍板:选题给哪个平台用,引用就必须全来自该平台):
+          // 站外来源(新闻/公众号等)只能写进 --source 描述,--url 必须留空——站外链接常
+          // 过期打不开,且会让「小红书选题」列表里混进其它平台,被前端按域名过滤隐藏。
+          const rule = input.sourcePlatform ? SOURCE_PLATFORM_RULES[input.sourcePlatform] : null;
+          return rule
+            ? `4. **来源纪律(硬性)**：本次选题给「${rule.label}」用——\`--url\` 只允许 ${rule.domains} 的站内链接；引用新闻/公众号等站外内容时，来源名写进 \`--source\`，\`--url\` 一律留空。带站外链接的候选会被界面过滤掉，等于白做。`
+            : '';
+        })(),
         cli,
       ].filter(Boolean).join('\n\n'),
     };
@@ -252,6 +276,16 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     const sourceBlock = sourceContent
       ? `## 原文参考（这是要【仿写】的小红书爆款原文案——学它的钩子/结构/表达节奏，但换你自己的角度、素材和话术，绝不照抄，避免判重）\n${sourceContent.slice(0, 1500)}`
       : '';
+    // 产品纪律(2026-07-18 用户反馈「AI 文案和我的产品没关系」):有知识库时笔记主角
+    // 必须是自家产品——原文只借结构,别人的品牌绝不出现,否则种草种给了竞品。
+    const productDiscipline = (input.knowledge?.length ?? 0) > 0
+      ? [
+          '## 产品纪律（硬性——违反等于白写）',
+          '- 这篇笔记的主角【必须】是上面知识库里的自家产品/品牌；卖点、成分、场景、人群全从知识库取材，不足的地方宁可写少也不编造；',
+          '- 「原文参考」只借它的【结构/钩子/节奏/排版】；原文里出现的任何其它品牌名、产品名、店铺名一律不得写进你的笔记；',
+          '- 若选题方向与自家产品不直接相关，就以自家产品的视角切入这个话题（蹭结构不蹭品牌）。',
+        ].join('\n')
+      : '';
     const researchPhase = researchMd
       ? `## 素材简报（已调研——事实优先用这里的，不必重查）\n${researchMd.slice(0, 3000)}`
       : [
@@ -269,6 +303,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         note.trim() ? `补充要求：${note.trim()}` : '',
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
+        productDiscipline,
         sourceBlock,
         researchPhase,
         '## 硬限制（平台规则，超了发不出去）',
@@ -277,6 +312,20 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '- 话题标签 5-8 个（不带#，逗号分隔）；',
         '- 正文不放外链、不放微信号（平台高压线）。',
         '## 图集画面建议（3-6 张，之后图集页按描述逐张生成）',
+        // 看图定制(2026-07-18 用户拍板):有产品图/风格图时,建议必须「先看图再写」——
+        // 以自家产品为主体、模仿风格图的构图光线质感,不许凭正文空想一堆无关画面。
+        ...((input.productImagePaths?.length || input.styleImagePaths?.length)
+          ? [
+              '**先看图再写(必做)**:用 Read 工具逐张查看下面的图片,看清楚了再写建议——',
+              ...(input.productImagePaths?.length
+                ? [`- 产品图(自家产品,生成时会原样融入画面,建议里的主体就是它们):\n${input.productImagePaths.map((p) => `  ${p}`).join('\n')}`]
+                : []),
+              ...(input.styleImagePaths?.length
+                ? [`- 风格参考图(爆款原图——每条建议的构图/机位/光线/氛围/道具风格都要模仿它们的调子):\n${input.styleImagePaths.map((p) => `  ${p}`).join('\n')}`]
+                : []),
+              '每条建议 = 一个可直接执行的具体画面:【自家产品为主体】+【模仿风格图的构图光线氛围】+【呼应正文对应段落的卖点】。写清场景、机位/角度、光线、道具;别写与产品和风格图无关的泛泛画面。',
+            ]
+          : []),
         '- 第 1 张是封面：大字观点/清单结论，一眼有信息量；',
         '- 后续每张一个要点。',
         '- 每条只写【画面内容】(主体/构图/信息),**禁止写画风词**(插画/手绘/摄影/水彩/3D/卡通等)——画风由图集页的风格模板在生图时动态注入,描述里写了画风会和用户选的风格打架。',
@@ -309,6 +358,9 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         note.trim() ? `补充要求：${note.trim()}` : '',
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
+        (input.knowledge?.length ?? 0) > 0
+          ? '## 产品纪律（硬性）：脚本主角必须是知识库里的自家产品/品牌，卖点从知识库取材；参考的爆款只借结构钩子，其它品牌名一律不出现。'
+          : '',
         '## 想清楚这几块，但【正文只写口播脚本本身】',
         '- 标题备选：构思 3 个（钩子感强、平台风格），挑最好的一个作 --title，其余不写进正文；',
         '- 口播脚本：钩子（前3秒）→ 预告 → 正文分点 → CTA，逐句可读，不写镜头术语、不写 markdown 强调符号——这就是正文的全部内容；',

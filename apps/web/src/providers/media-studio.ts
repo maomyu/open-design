@@ -29,6 +29,7 @@ import type {
 } from '@open-design/contracts';
 import { isOpenDesignHostBrowserAvailable, openHostBrowserProfile } from '@open-design/host';
 import { BROWSER_PLATFORM_TITLES, normalizeBrowserPlatform, openBrowserPane } from '../runtime/browser-panes';
+import { openWebTab } from '../runtime/web-tabs';
 
 const ROOT = '/api/media-studio';
 
@@ -868,7 +869,7 @@ export async function uploadStudioVideo(
 export async function synthesizeStudioTts(
   platform: string,
   articleId: string,
-  body: { text?: string; voice?: string; preview?: boolean },
+  body: { text?: string; voice?: string; preview?: boolean; presetId?: string },
 ): Promise<{ url?: string; article?: MediaArticle; error?: string }> {
   try {
     const resp = await fetch(
@@ -1198,6 +1199,82 @@ export async function markStudioPublished(
   }
 }
 
+export { errorMessage as studioErrorMessage };
+
+/**
+ * 选题台文章链接的「在内置浏览器打开」回调（2026-07-12 用户要：打开文章都走内置
+ * 浏览器，别弹到系统 Chrome/Safari；且要以「标签」形式在当前工具内打开，不弹独立
+ * 窗口）。桌面端 → 开一个应用内网页内容标签（openWebTab），用该 平台×账号 的登录态
+ * 分区，读全文不被登出墙挡、留在 app 内、可像浏览器标签一样并列切换。网页端（无内置
+ * 浏览器）返回 undefined，链接保持 `<a target="_blank">` 的系统新标签行为。
+ */
+export function topicLinkOpener(
+  platform: string,
+  account: string,
+): ((url: string) => void) | undefined {
+  if (!isOpenDesignHostBrowserAvailable()) return undefined;
+  return (url) => {
+    openWebTab({ url, platform, account: account || 'main' });
+  };
+}
+
+// ---- 制作视频·数字人口型替换(素材车间共享,2026-07-18 PR2) ----
+// 短视频台「上传步」与「制作视频」入口共用:上传素材(免 article 桶)、提交口型
+// 替换、轮询任务。成片 URL 可直接写回稿件 extra.videoPath——全程 0 下载。
+
+
+
+
+/** 一稿多发(PR3):把本稿克隆到其他平台(targetPlatform 归属),幂等复用已有克隆。 */
+export async function distributeStudioArticle(
+  platform: string,
+  articleId: string,
+  platforms: string[],
+): Promise<{ results: Array<{ platform: string; articleId: string; reused: boolean }> } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/${encodeURIComponent(platform)}/articles/${encodeURIComponent(articleId)}/distribute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platforms }),
+    });
+    const d = (await resp.json().catch(() => ({}))) as { results?: Array<{ platform: string; articleId: string; reused: boolean }>; error?: string };
+    if (!resp.ok) return { error: d.error ?? `分发失败(${resp.status})` };
+    return { results: d.results ?? [] };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+/** 按链接取单条原素材(2026-07-18):AI 选题/旧候选只带 url 时,创作区一键补回原文案+原图。 */
+export async function fetchSourceMaterial(url: string): Promise<{ text: string; images: string[]; title: string; mediaUrl: string; referer: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/fetch-source`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const d = (await resp.json().catch(() => ({}))) as { text?: string; images?: string[]; title?: string; mediaUrl?: string; referer?: string; error?: string };
+    if (!resp.ok) return { error: d.error ?? `取原素材失败(${resp.status})` };
+    return { text: d.text ?? '', images: Array.isArray(d.images) ? d.images : [], title: d.title ?? '', mediaUrl: d.mediaUrl ?? '', referer: d.referer ?? url };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+/** 候选链接的平台归属(2026-07-18 用户拍板:小红书选题必须全部来自小红书)。
+ *  无链接 → 'any'(纯灵感题,各平台通用,不过滤);站外(新闻/公众号)→ 'other'。
+ *  选题列表按当前所选源过滤:只显示 'any' 与本平台的候选。 */
+export function topicOriginPlatform(url?: string | null): string {
+  const u = (url || '').toLowerCase();
+  if (!u) return 'any';
+  if (/xiaohongshu\.com|xhslink\.com/.test(u)) return 'xiaohongshu';
+  if (/douyin\.com|iesdouyin\.com/.test(u)) return 'douyin';
+  if (/kuaishou\.com|chenzhongtech\.com/.test(u)) return 'kuaishou';
+  if (/bilibili\.com|b23\.tv/.test(u)) return 'bilibili';
+  if (/channels\.weixin\.qq\.com/.test(u)) return 'channels';
+  return 'other';
+}
+
 // 发布复盘 → 写飞书「发布复盘库」（复盘按钮点「AI 复盘」时同时调用;未连飞书 daemon 返 503,静默忽略）。
 export async function pushStudioReview(
   platform: string,
@@ -1239,5 +1316,43 @@ export async function syncStudioKnowledgeToFeishu(): Promise<
     return { error: '连接失败' };
   }
 }
-
-export { errorMessage as studioErrorMessage };
+export async function uploadMakeAsset(file: File): Promise<{ url?: string; error?: string }> {
+  try {
+    const resp = await fetch('/api/media-studio/make-video/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name) },
+      body: file,
+    });
+    const d = (await resp.json().catch(() => ({}))) as { url?: string; error?: string };
+    if (!resp.ok) return { error: d.error ?? `上传失败(${resp.status})` };
+    return d;
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+export async function submitLipsyncJob(videoUrl: string, audioUrl: string): Promise<{ id: string } | { error: string }> {
+  try {
+    const resp = await fetch('/api/media-studio/make-video/lipsync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoUrl, audioUrl }),
+    });
+    const d = (await resp.json().catch(() => ({}))) as { id?: string; error?: string | { message?: string } };
+    if (!resp.ok) {
+      const msg = typeof d.error === 'string' ? d.error : d.error?.message;
+      return { error: msg || `提交失败(${resp.status})` };
+    }
+    return { id: d.id ?? '' };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+export async function queryLipsyncJob(id: string): Promise<{ id: string; status: 'running' | 'done' | 'error'; resultUrl?: string; error?: string } | null> {
+  try {
+    const resp = await fetch(`/api/media-studio/make-video/lipsync/${encodeURIComponent(id)}`);
+    if (!resp.ok) return null;
+    return (await resp.json()) as { id: string; status: 'running' | 'done' | 'error'; resultUrl?: string; error?: string };
+  } catch {
+    return null;
+  }
+}

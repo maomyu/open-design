@@ -18,7 +18,6 @@ import type {
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
-  pushStudioReview,
   createStudioArticle,
   createStudioTopic,
   deleteStudioArticle,
@@ -34,13 +33,17 @@ import {
   updateStudioArticle,
   uploadStudioCover,
   uploadStudioVideo,
+  uploadMakeAsset,
+  submitLipsyncJob,
+  queryLipsyncJob,
+  distributeStudioArticle,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { buildStudioDraft } from './draft-builders';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
-import { hasFeature, useLicense } from '../../state/license';
+import { hasFeature, hasShortVideoPlatform, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -121,7 +124,19 @@ function SourceMaterialCard({ videoFile, transcript, sourceUrl }: { videoFile: s
     });
     return () => { alive = false; if (revoke) revoke(); };
   }, [videoFile]);
-  if (!videoFile && !transcript) return null;
+  if (!videoFile && !transcript && !sourceUrl) return null;
+  // 只有原文链接(候选带来的):给看原视频入口+引导,不空白。
+  if (!videoFile && !transcript) {
+    return (
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          对照原爆款
+          <span className={c('cardHint')}>本稿来自选题候选——可打开原视频对照;要把原视频下载进来+提取口播文案仿写,去「创作」选题页爆款列表用「提取文案仿写」</span>
+        </div>
+        <a href={sourceUrl} target="_blank" rel="noreferrer" className={c('link')}>看原视频 ↗</a>
+      </div>
+    );
+  }
   return (
     <div className={c('card')}>
       <div className={c('cardLabel')}>
@@ -198,7 +213,10 @@ function ScriptTimeline({ bodyMd }: { bodyMd: string }): JSX.Element | null {
   );
 }
 
-export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauPlatformId } = {}): JSX.Element {
+// entryMode='embedded'(2026-07-18 单页创作流):内嵌统一创作台——隐藏台头/选题步,
+// 只露 脚本→配音→上传→发布,选中创作台指定的稿(articleId)。
+export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full', articleId }: { platform?: SauPlatformId; entryMode?: 'full' | 'embedded'; articleId?: string } = {}): JSX.Element {
+  const embedded = entryMode === 'embedded';
   const license = useLicense();
   // 平台化(2026-07-12):外壳传入当前短视频平台;每平台是本单池按 targetPlatform
   // 切出的视图(数据不迁移)。缺省抖音兼容(独立打开视图时)。
@@ -222,7 +240,88 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   // 试听音色：preview 音频独立存放，绝不覆盖正式配音。
   const [voicePreviewUrl, setVoicePreviewUrl] = useState('');
   const [voicePreviewBusy, setVoicePreviewBusy] = useState(false);
+  // 音色预设(2026-07-19):「制作视频→音色设计」保存的音色,配音时选用。
+  // '' = 不用预设(原火山复刻音色链路,行为不变)。
+  const [voicePresets, setVoicePresets] = useState<Array<{ id: string; name: string; provider: string; speakerId?: string }>>([]);
+  const [voicePresetId, setVoicePresetId] = useState('');
+  useEffect(() => {
+    void fetch('/api/media-studio/voice-presets')
+      .then((r) => (r.ok ? r.json() : { presets: [] }))
+      .then((d: { presets?: Array<{ id: string; name: string; provider: string; speakerId?: string }> }) => setVoicePresets(d.presets ?? []))
+      .catch(() => undefined);
+  }, []);
   const [videoUploadBusy, setVideoUploadBusy] = useState(false);
+  // 数字人口型替换(素材车间直通,PR2):原视频资产 URL + 任务状态。成片直写 extra.videoPath。
+  const [lipsyncSrcUrl, setLipsyncSrcUrl] = useState('');
+  const [lipsyncSrcBusy, setLipsyncSrcBusy] = useState(false);
+  const [lipsyncJob, setLipsyncJob] = useState<{ id: string; status: 'running' | 'done' | 'error'; error?: string } | null>(null);
+
+  // 一稿多发(PR3):目标平台 = 除本稿归属平台外的已授权平台;克隆后提示去对应入口发布。
+  const [distPicked, setDistPicked] = useState<Set<string>>(() => new Set());
+  const [distBusy, setDistBusy] = useState(false);
+  const [distResult, setDistResult] = useState('');
+  const distTargets = SAU_PLATFORMS.filter(
+    (p) => p.label !== svPlatformLabel && hasShortVideoPlatform(license, p.id),
+  );
+
+  async function distributeNow() {
+    if (!article || distPicked.size === 0) return;
+    await flushSave();
+    setDistBusy(true);
+    setDistResult('');
+    const r = await distributeStudioArticle(PLATFORM, article.id, [...distPicked]);
+    setDistBusy(false);
+    if ('error' in r) {
+      studioToast.err(r.error);
+      return;
+    }
+    const made = r.results.filter((x) => !x.reused).length;
+    const reused = r.results.length - made;
+    setDistResult(
+      `✅ 已就位:${r.results.map((x) => x.platform).join('、')}${reused ? `(${reused} 个此前已克隆,复用)` : ''}——切到对应平台入口即可看到这条,确认后发布。`,
+    );
+    studioToast.ok(`一稿多发完成:新克隆 ${made} 个${reused ? `,复用 ${reused} 个` : ''}`);
+    setDistPicked(new Set());
+    await refreshArticles();
+  }
+
+  async function pickLipsyncSource(file: File) {
+    setLipsyncSrcBusy(true);
+    const r = await uploadMakeAsset(file);
+    setLipsyncSrcBusy(false);
+    if (r.error || !r.url) {
+      studioToast.err(r.error ?? '上传失败');
+      return;
+    }
+    setLipsyncSrcUrl(r.url);
+  }
+
+  async function startLipsync() {
+    if (!article || !lipsyncSrcUrl || !audioUrl) return;
+    const sub = await submitLipsyncJob(lipsyncSrcUrl, audioUrl);
+    if ('error' in sub) {
+      setLipsyncJob({ id: '', status: 'error', error: sub.error });
+      studioToast.err(sub.error);
+      return;
+    }
+    setLipsyncJob({ id: sub.id, status: 'running' });
+    studioToast.ok('口型替换任务已提交(通常 1-5 分钟)…');
+    const timer = window.setInterval(() => {
+      void queryLipsyncJob(sub.id).then((j) => {
+        if (!j) return;
+        if (j.status === 'done' && j.resultUrl) {
+          window.clearInterval(timer);
+          setLipsyncJob({ id: sub.id, status: 'done' });
+          editArticle({ extra: { videoPath: j.resultUrl } });
+          studioToast.ok('成片已生成并填入「成品视频」——可以去发布了');
+        } else if (j.status === 'error') {
+          window.clearInterval(timer);
+          setLipsyncJob({ id: sub.id, status: 'error', error: j.error });
+          studioToast.err(`口型替换失败:${j.error ?? '未知错误'}`);
+        }
+      });
+    }, 5000);
+  }
   const [coverUploadBusy, setCoverUploadBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishes, setPublishes] = useState<MediaPublishRecord[]>([]);
@@ -271,6 +370,14 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
 
   useEffect(() => {
     void (async () => {
+      await refreshArticles();
+      // 内嵌模式:直接选创作台指定的稿。
+      if (embedded && articleId) {
+        await selectArticle(articleId);
+        setTab('script');
+        setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+        return;
+      }
       const list = await refreshArticles();
       const remembered = window.localStorage.getItem(lastArticleKey);
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
@@ -278,7 +385,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
       else setTab('topics');
       setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
     })();
-  }, [refreshArticles, selectArticle, lastArticleKey]);
+  }, [refreshArticles, selectArticle, lastArticleKey, embedded, articleId]);
 
   // ---- 自动保存（与公众号创作台同款机制） ----
   const flushSave = useCallback(async () => {
@@ -517,7 +624,10 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
     setTtsBusy(true);
     setNotice(null);
     const voice = str(extra.voice);
-    const result = await synthesizeStudioTts(PLATFORM, article.id, voice ? { voice } : {});
+    const result = await synthesizeStudioTts(PLATFORM, article.id, {
+      ...(voice ? { voice } : {}),
+      ...(voicePresetId ? { presetId: voicePresetId } : {}),
+    });
     setTtsBusy(false);
     if (result.error) {
       setNotice({ ok: false, text: result.error });
@@ -550,7 +660,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
   };
 
   const TABS: Array<{ id: VideoTab; label: string; step: string; optional?: boolean }> = [
-    { id: 'topics', label: '选题', step: '1' },
+    ...(embedded ? [] : ([{ id: 'topics', label: '选题', step: '1' }] as const)),
     { id: 'script', label: '脚本', step: '2' },
     // 授权裁剪:配音跟 cap.tts、成片(视频生成)跟 cap.video。客户口播自己拍不生视频时,
     // 授权不含 cap.tts/cap.video → 这两步自动隐藏,只留 选题→脚本→发布。
@@ -576,6 +686,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
 
   return (
     <div className={c('root')}>
+      {embedded ? null : (
       <div className={c('head')}>
         <h1 className={c('title')}>短视频创作台</h1>
         {activeStatus ? <span className={`${c('chip')} ${c(activeStatus.chip)}`}>{activeStatus.text}</span> : null}
@@ -592,6 +703,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
           ) : null}
         </div>
       </div>
+      )}
 
       {(aiTask && aiRunning) || orphan ? (
         <div className={c('aiGlobalBar')}>
@@ -705,8 +817,9 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               emptyCta('还没有作品。从「选题」挑一个开始，或新建一个空白作品。')
             ) : (
               <>
-                {/* 「提取文案仿写」来的稿:把原视频 + 原口播文案摆在脚本页顶部,对照着改仿写稿。 */}
-                {str(extra.sourceTranscript) || str(extra.sourceVideoFile) ? (
+                {/* 「提取文案仿写」来的稿:原视频+原口播文案摆在脚本页顶部对照;
+                    候选「去创作」来的稿(只有 sourceUrl)也显示看原视频入口(2026-07-18)。 */}
+                {str(extra.sourceTranscript) || str(extra.sourceVideoFile) || str(extra.sourceUrl) ? (
                   <SourceMaterialCard
                     videoFile={str(extra.sourceVideoFile)}
                     transcript={str(extra.sourceTranscript)}
@@ -832,14 +945,28 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               <>
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
-                    配音（火山复刻音色）· 可选
-                    <span className={c('cardHint')}>用口播脚本直接合成；音色 ID 以 S_ 开头为复刻音色，空用默认「解说1号」</span>
+                    配音 · 可选
+                    <span className={c('cardHint')}>用口播脚本直接合成；可选「音色设计」保存的音色预设，或直接填火山复刻音色 ID</span>
                   </div>
                   <div className={c('row')}>
+                    <select
+                      className={c('select')}
+                      value={voicePresetId}
+                      title="音色预设——在「制作视频→音色设计」里设计并保存"
+                      onChange={(e) => setVoicePresetId(e.target.value)}
+                    >
+                      <option value="">默认链路(音色 ID/解说1号)</option>
+                      {voicePresets.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          🎙 {p.name}（{p.provider === 'qwen' ? '千问' : '火山'}）
+                        </option>
+                      ))}
+                    </select>
                     <input
                       className={`${c('input')} ${c('grow')}`}
                       value={str(extra.voice)}
                       placeholder="音色 ID（可选，默认 S_M46v4EJ42 解说1号）"
+                      disabled={!!voicePresetId}
                       onChange={(e) => editArticle({ extra: { voice: e.target.value } })}
                     />
                     <button
@@ -854,6 +981,7 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
                           const result = await synthesizeStudioTts(PLATFORM, article.id, {
                             text: '大家好，这是当前音色的试听效果，听听语气和节奏合不合适。',
                             ...(voice ? { voice } : {}),
+                            ...(voicePresetId ? { presetId: voicePresetId } : {}),
                             preview: true,
                           });
                           setVoicePreviewBusy(false);
@@ -942,6 +1070,50 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
                   {videoPath.trim() ? (
                     <div className={c('cardHint')}>发布时会校验文件存在；标题/描述/标签都从本作品带过去。</div>
                   ) : null}
+                  {/* 素材车间直通(2026-07-18 PR2):数字人口型替换内嵌上传步——原视频+
+                      本稿配音(配音步产物 extra.audioUrl 一键带入)→成片直接写回
+                      videoPath,全程 0 下载。火山「视频改口型」凭证未配时提交会明确报错。 */}
+                  {hasFeature(license, 'cap.video') ? (
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed var(--od-border, #e5ded4)' }}>
+                      <div className={c('cardLabel')}>
+                        🧑 或用数字人口型替换生成
+                        <span className={c('cardHint')}>上传你的原始出镜视频,用「配音」步生成的音频替换口型——不用下载搬运</span>
+                      </div>
+                      <div className={c('row')} style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <label className={c('btn')} style={{ cursor: 'pointer' }}>
+                          {lipsyncSrcBusy ? '上传中…' : lipsyncSrcUrl ? '✓ 原视频已传(换)' : '① 上传原始视频'}
+                          <input
+                            type="file"
+                            accept="video/mp4,video/quicktime"
+                            style={{ display: 'none' }}
+                            disabled={lipsyncSrcBusy}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              e.target.value = '';
+                              if (f) void pickLipsyncSource(f);
+                            }}
+                          />
+                        </label>
+                        <span className={c('cardHint')}>
+                          ② 音频:{audioUrl ? '✓ 用本稿「配音」产物' : '本稿还没配音——先去「配音」步生成'}
+                        </span>
+                        <button
+                          type="button"
+                          className={`${c('btn')} ${c('btnPrimary')}`}
+                          disabled={!lipsyncSrcUrl || !audioUrl || lipsyncJob?.status === 'running'}
+                          onClick={() => void startLipsync()}
+                        >
+                          {lipsyncJob?.status === 'running' ? '口型替换中…' : '③ 生成成片'}
+                        </button>
+                      </div>
+                      {lipsyncJob?.status === 'error' ? (
+                        <div className={c('cardHint')} style={{ marginTop: 6, color: '#b0342c' }}>❌ {lipsyncJob.error}</div>
+                      ) : null}
+                      {lipsyncJob?.status === 'done' ? (
+                        <div className={c('cardHint')} style={{ marginTop: 6 }}>✅ 成片已生成并自动填入上方「成品视频」,可直接发布。</div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className={c('row')}>
                   <button
@@ -963,6 +1135,45 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
               emptyCta('发布属于某个作品——先去「脚本」新建。')
             ) : (
               <>
+                {/* 一稿多发(统一创作台 PR3,2026-07-18):同一条内容克隆到其他平台——
+                    每个平台一份克隆稿(带 sourceArticleId),脚本/配音/成片全复制,
+                    到各平台入口按各自流程发布(发布确认合规铁律不变)。 */}
+                {distTargets.length > 0 ? (
+                  <div className={c('card')}>
+                    <div className={c('cardLabel')}>
+                      🚀 一稿多发
+                      <span className={c('cardHint')}>把这条(脚本/配音/成片一起)克隆到其他平台,免得每个平台重做一遍;克隆后到对应平台入口确认发布</span>
+                    </div>
+                    <div className={c('row')} style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {distTargets.map((p) => (
+                        <label key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 13 }}>
+                          <input
+                            type="checkbox"
+                            checked={distPicked.has(p.label)}
+                            onChange={() =>
+                              setDistPicked((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(p.label)) next.delete(p.label);
+                                else next.add(p.label);
+                                return next;
+                              })
+                            }
+                          />
+                          {p.label}
+                        </label>
+                      ))}
+                      <button
+                        type="button"
+                        className={`${c('btn')} ${c('btnPrimary')}`}
+                        disabled={distBusy || distPicked.size === 0}
+                        onClick={() => void distributeNow()}
+                      >
+                        {distBusy ? '克隆中…' : `克隆到所选平台(${distPicked.size})`}
+                      </button>
+                    </div>
+                    {distResult ? <div className={c('cardHint')} style={{ marginTop: 6 }}>{distResult}</div> : null}
+                  </div>
+                ) : null}
                 {/* 封面(可选):用户传一张封面图,一键存草稿时自动上传到抖音「设置封面」。
                     不传也能存草稿(抖音会用视频首帧)。 */}
                 <div className={c('card')}>
@@ -1052,7 +1263,6 @@ export function ShortVideoStudioView({ platform: svPlatform }: { platform?: SauP
                     <div className={c('row')}>
                       <button type="button" className={c('btn')} onClick={() => {
                         void startAiTask('review');
-                        void pushStudioReview(PLATFORM, article.id);
                       }}>
                         <Icon name="sparkles" size={14} /> AI 复盘并给下一条建议
                       </button>

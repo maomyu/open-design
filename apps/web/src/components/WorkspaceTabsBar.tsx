@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { navigate, type EntryHomeView, type Route } from '../router';
 import { BROWSER_PLATFORM_TITLES, notifyBrowserTabClosed } from '../runtime/browser-panes';
+import { closeWebTab, webTabInfo, webTabLabelFromUrl, WEB_TAB_UPDATED_EVENT } from '../runtime/web-tabs';
 import type { Project } from '../types';
 import { Icon, type IconName } from './Icon';
 
@@ -28,6 +29,14 @@ type WorkspaceChromeTab =
       kind: 'browser';
       platform: string;
       account: string;
+      createdAt: number;
+      lastActiveAt: number;
+    }
+  | {
+      // 应用内网页内容标签(读文章/网页内点开的新页)。webId 指向 web-tabs 注册表。
+      id: string;
+      kind: 'web';
+      webId: string;
       createdAt: number;
       lastActiveAt: number;
     }
@@ -115,6 +124,15 @@ function tabFromRoute(route: Route, timestamp = Date.now()): WorkspaceChromeTab 
       lastActiveAt: timestamp,
     };
   }
+  if (route.kind === 'web') {
+    return {
+      id: `web:${route.id}:${nowId()}`,
+      kind: 'web',
+      webId: route.id,
+      createdAt: timestamp,
+      lastActiveAt: timestamp,
+    };
+  }
   return createEntryTab(route.kind === 'home' ? route.view : 'design-systems', timestamp);
 }
 
@@ -135,6 +153,9 @@ function routeForTab(tab: WorkspaceChromeTab): Route {
   if (tab.kind === 'browser') {
     return { kind: 'browser', platform: tab.platform, account: tab.account };
   }
+  if (tab.kind === 'web') {
+    return { kind: 'web', id: tab.webId };
+  }
   return { kind: 'home', view: tab.view };
 }
 
@@ -146,9 +167,16 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
   const lastActiveAt = typeof record.lastActiveAt === 'number' ? record.lastActiveAt : createdAt;
   if (!id) return null;
   if (record.kind === 'entry') {
-    // 知乎/微博并入「文章」入口(2026-07-10 用户拍板):历史独立 view 标签
-    // 归一为 studio,平台切换现在是外壳内部状态,不再有独立标签。
-    const view = record.view === 'studio-zhihu' || record.view === 'studio-weibo' ? 'studio' : record.view;
+    // 知乎/微博并入「文章」(2026-07-10);短视频/笔记平台化(2026-07-17):历史
+    // 形态标签归一到对应平台入口(短视频→抖音、笔记→小红书)。
+    const view =
+      record.view === 'studio-zhihu' || record.view === 'studio-weibo'
+        ? 'studio'
+        : record.view === 'studio-video'
+          ? 'studio-douyin'
+          : record.view === 'studio-note'
+            ? 'studio-xiaohongshu'
+            : record.view;
     // 'home' 不在白名单:主页对话框已下线,历史存下的主页 tab 直接丢弃。
     if (
       view === 'projects'
@@ -156,10 +184,13 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
       || view === 'plugins'
       || view === 'accounts'
       || view === 'studio'
-      || view === 'studio-video'
-      || view === 'studio-note'
-      || view === 'studio-zhihu'
-      || view === 'studio-weibo'
+      || view === 'studio-create'
+      || view === 'studio-douyin'
+      || view === 'studio-xiaohongshu'
+      || view === 'studio-kuaishou'
+      || view === 'studio-bilibili'
+      || view === 'studio-shipinhao'
+      || view === 'studio-make'
       || view === 'knowledge'
       || view === 'design-systems'
       || view === 'integrations'
@@ -212,6 +243,7 @@ function uniqueIdForTab(tab: WorkspaceChromeTab): string {
     return `marketplace:${tab.pluginId ?? 'index'}:${nowId()}`;
   }
   if (tab.kind === 'browser') return `browser:${tab.platform}:${tab.account}:${nowId()}`;
+  if (tab.kind === 'web') return `web:${tab.webId}:${nowId()}`;
   return `entry:${tab.view}:${nowId()}`;
 }
 
@@ -331,6 +363,28 @@ function syncStateToRoute(state: WorkspaceTabsState, route: Route): WorkspaceTab
     });
   }
 
+  // 1c. 网页内容标签:每个 web id 一个标签。已有(点回旧标签)则聚焦,新 id
+  // (打开文章/网页内点开新页)则追加——绝不替换当前标签。
+  if (route.kind === 'web') {
+    const existingWebTab = current.tabs.find(
+      (tab) => tab.kind === 'web' && tab.webId === route.id,
+    );
+    if (existingWebTab) {
+      return normalizeTabsState({
+        ...current,
+        tabs: current.tabs.map((tab) =>
+          tab.id === existingWebTab.id ? { ...tab, lastActiveAt: timestamp } : tab,
+        ),
+        activeTabId: existingWebTab.id,
+      });
+    }
+    const nextTab = tabFromRoute(route, timestamp);
+    return normalizeTabsState({
+      tabs: [...current.tabs, nextTab],
+      activeTabId: nextTab.id,
+    });
+  }
+
   // 2. If we are navigating to a project, and that project tab already exists:
   if (route.kind === 'project') {
     const existingProjectTab = current.tabs.find(
@@ -400,6 +454,8 @@ const HOVER_PREVIEW_DELAY_MS = 380;
 export function WorkspaceTabsBar({ route, projects }: Props) {
   const t = useT();
   const [state, setState] = useState<WorkspaceTabsState>(() => initialTabsState(route));
+  // 网页标签标题回填(webview 拿到 <title>)后 bump,触发标签栏重算标题。
+  const [webTitleTick, setWebTitleTick] = useState(0);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
@@ -443,7 +499,8 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
 
   const displayTabs = useMemo(
     () => state.tabs.map((tab) => displayTabFor(tab, projectById, t)),
-    [state.tabs, projectById, t],
+    // webTitleTick：网页标签标题回填后强制重算(webTabInfo 是外部可变注册表)。
+    [state.tabs, projectById, t, webTitleTick],
   );
   const displayTabById = useMemo(
     () => new Map(displayTabs.map((tab) => [tab.id, tab])),
@@ -490,6 +547,13 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
 
     window.addEventListener(OPEN_WORKSPACE_TAB_EVENT, onOpenWorkspaceTab);
     return () => window.removeEventListener(OPEN_WORKSPACE_TAB_EVENT, onOpenWorkspaceTab);
+  }, []);
+
+  // 网页标签标题回填 → 重算标签栏标题。
+  useEffect(() => {
+    const onTitle = () => setWebTitleTick((v) => v + 1);
+    window.addEventListener(WEB_TAB_UPDATED_EVENT, onTitle);
+    return () => window.removeEventListener(WEB_TAB_UPDATED_EVENT, onTitle);
   }, []);
 
   useEffect(() => {
@@ -567,6 +631,8 @@ export function WorkspaceTabsBar({ route, projects }: Props) {
     const closing = normalized.tabs[closingIndex]!;
     // 后台标签关闭 = 结束该面板的 keep-alive(销毁 webview,下次重新加载)。
     if (closing.kind === 'browser') notifyBrowserTabClosed(closing.platform, closing.account);
+    // 网页内容标签关闭 = 销毁 webview + 出注册表(临时态,不再回来)。
+    if (closing.kind === 'web') closeWebTab(closing.webId);
     let nextRoute: Route | null = null;
     const nextTabs = normalized.tabs.filter((tab) => tab.id !== tabId);
     let nextState: WorkspaceTabsState;
@@ -814,6 +880,16 @@ function displayTabFor(
       tab,
     };
   }
+  if (tab.kind === 'web') {
+    const info = webTabInfo(tab.webId);
+    return {
+      id: tab.id,
+      title: info?.title?.trim() || (info ? webTabLabelFromUrl(info.url) : '网页'),
+      meta: '网页',
+      icon: 'link',
+      tab,
+    };
+  }
   const entryTitle: Record<EntryHomeView, string> = {
     home: t('entry.navHome'),
     onboarding: t('settings.welcomeTitle'),
@@ -822,8 +898,15 @@ function displayTabFor(
     plugins: t('entry.navPlugins'),
     accounts: t('entry.navAccounts'),
     studio: '文章',
-    'studio-video': '短视频',
-    'studio-note': '笔记',
+    'studio-create': '创作',
+    'studio-douyin': '抖音',
+    'studio-xiaohongshu': '小红书',
+    'studio-kuaishou': '快手',
+    'studio-bilibili': 'B站',
+    'studio-shipinhao': '视频号',
+    'studio-make': '制作视频',
+    'studio-video': '抖音',
+    'studio-note': '小红书',
     'studio-zhihu': '文章',
     'studio-weibo': '文章',
     knowledge: '知识库',
@@ -838,6 +921,13 @@ function displayTabFor(
     plugins: 'grid',
     accounts: 'grid',
     studio: 'edit',
+    'studio-create': 'edit',
+    'studio-douyin': 'play',
+    'studio-xiaohongshu': 'image',
+    'studio-kuaishou': 'play',
+    'studio-bilibili': 'play',
+    'studio-shipinhao': 'play',
+    'studio-make': 'sparkles',
     'studio-video': 'play',
     'studio-note': 'image',
     'studio-zhihu': 'pencil',

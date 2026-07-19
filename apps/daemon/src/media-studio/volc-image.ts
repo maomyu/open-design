@@ -4,7 +4,7 @@
  * （ARK_API_KEY，注意与火山 TTS 的 VOLC_TTS_API_KEY 不是同一把钥匙）。
  * 画风前缀与千问共用同一套约定（composeStylePrompt）。
  */
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { composeStylePrompt } from './qwen-image.js';
@@ -38,6 +38,21 @@ export interface VolcImageOptions {
   apiKey: string;
   /** 覆盖默认模型 id（将来 Seedream 升级只改这里/环境变量）。 */
   model?: string;
+  /** 参考图（2026-07-18）:图生图——URL 直用,本地绝对路径转 base64 data URI。
+   *  Seedream images/generations 的 `image` 字段:单图字符串 / 多图数组。 */
+  referenceImage?: string;
+  /** 多参考图(产品图在前+风格图殿后,有序)——优先于 referenceImage。 */
+  referenceImages?: string[];
+}
+
+/** 参考图 → Ark `image` 字段值:http(s) URL 直用;本地绝对路径读盘转 base64 data URI。 */
+async function volcRefImage(ref: string): Promise<string> {
+  if (/^https?:\/\//i.test(ref)) return ref;
+  if (!path.isAbsolute(ref)) throw new VolcImageError(`参考图必须是 URL 或本地绝对路径（收到:${ref}）`);
+  const buf = await readFile(ref);
+  const ext = path.extname(ref).toLowerCase();
+  const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
 export async function generateVolcImage(opts: VolcImageOptions): Promise<string> {
@@ -47,9 +62,15 @@ export async function generateVolcImage(opts: VolcImageOptions): Promise<string>
   // 子句拼进提示词,Seedream 对这种否定式描述跟随良好。
   const { fullPrompt, negative } = composeStylePrompt(opts.style, opts.prompt);
   const prompt = `${fullPrompt}。严格避免出现:${negative}`.slice(0, 1000);
+  // 参考图(图生图):Seedream 用 `image` 字段吃参考图——单图传字符串,多图传数组
+  // (多图有序:产品图在前、风格图殿后,prompt 按序指代)。
+  const refList = (opts.referenceImages?.length ? opts.referenceImages : (opts.referenceImage?.trim() ? [opts.referenceImage.trim()] : []))
+    .map((r) => r.trim()).filter(Boolean);
+  const images = await Promise.all(refList.map((r) => volcRefImage(r)));
   const payload = {
     model: opts.model || DEFAULT_MODEL,
     prompt,
+    ...(images.length === 1 ? { image: images[0] } : images.length > 1 ? { image: images } : {}),
     size: SIZE_MAP[opts.ratio ?? '4:3'] ?? SIZE_MAP['4:3']!,
     response_format: 'url',
     watermark: false,

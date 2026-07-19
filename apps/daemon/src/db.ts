@@ -320,10 +320,16 @@ function migrate(db: SqliteDb): void {
   if (mediaArticleCols.length > 0 && !mediaArticleCols.some((c: DbRow) => c.name === 'extra_json')) {
     db.exec(`ALTER TABLE media_articles ADD COLUMN extra_json TEXT`);
   }
-  const knowledgeCols = db.prepare(`PRAGMA table_info(media_knowledge)`).all() as DbRow[];
-  if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'category')) {
-    db.exec(`ALTER TABLE media_knowledge ADD COLUMN category TEXT`);
+  // 选题候选带原素材(2026-07-18 用户拍板:去创作时原图/原文案/原视频要跟到创作区):
+  // 爆款沉淀候选时把 原文案/原图直链 存进 topic,建稿时随稿带走展示+喂 AI 仿写。
+  const topicCols = db.prepare(`PRAGMA table_info(media_topics)`).all() as DbRow[];
+  if (topicCols.length > 0 && !topicCols.some((c: DbRow) => c.name === 'source_content')) {
+    db.exec(`ALTER TABLE media_topics ADD COLUMN source_content TEXT`);
   }
+  if (topicCols.length > 0 && !topicCols.some((c: DbRow) => c.name === 'source_images')) {
+    db.exec(`ALTER TABLE media_topics ADD COLUMN source_images TEXT`);
+  }
+  const knowledgeCols = db.prepare(`PRAGMA table_info(media_knowledge)`).all() as DbRow[];
   // 飞书数据中心双写：界面知识写本地的同时推到飞书「我的素材库/风格画像库」，存回 record_id
   // 便于更新幂等 + 删除时同步删飞书那条（feishu_table 记录落在哪张飞书表）。
   if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'feishu_record_id')) {
@@ -331,6 +337,9 @@ function migrate(db: SqliteDb): void {
   }
   if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'feishu_table')) {
     db.exec(`ALTER TABLE media_knowledge ADD COLUMN feishu_table TEXT`);
+  }
+  if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'category')) {
+    db.exec(`ALTER TABLE media_knowledge ADD COLUMN category TEXT`);
   }
   // 知识库升级为公司级全局资产(2026-07-08 用户拍板):对所有创作台生效,不再
   // 按平台隔离。历史上按平台挂载的条目归并到 'global'(幂等,归并后零行更新)。

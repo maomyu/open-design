@@ -101,6 +101,8 @@ export interface QwenImageOptions {
   /** Reference image steering the generation: http(s) URL or local absolute
    *  path (local files are inlined as base64 data URIs). */
   referenceImage?: string;
+  /** 多参考图(产品图在前+风格图殿后,有序)——优先于 referenceImage。 */
+  referenceImages?: string[];
   apiKey: string;
 }
 
@@ -219,8 +221,12 @@ async function generateQwenImageOnce(opts: QwenImageOptions): Promise<string> {
   const size = SIZE_MAP[opts.ratio ?? '4:3'] ?? SIZE_MAP['4:3']!;
 
   const requestContent: Array<Record<string, string>> = [];
-  if (opts.referenceImage?.trim()) {
-    requestContent.push(await referenceImageContent(opts.referenceImage.trim()));
+  // 多图有序注入(产品图在前+风格图殿后);单图字段兜底兼容。
+  const qwenRefs = (opts.referenceImages?.length ? opts.referenceImages : (opts.referenceImage?.trim() ? [opts.referenceImage.trim()] : []))
+    .map((r) => r.trim()).filter(Boolean);
+  for (const r of qwenRefs) {
+    // eslint-disable-next-line no-await-in-loop
+    requestContent.push(await referenceImageContent(r));
   }
   requestContent.push({ text: fullPrompt });
   const payload = {
