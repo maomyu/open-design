@@ -875,13 +875,37 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   // 自动适配(2026-07-19 用户拍板:成片跟着音频走)——视频超长自动裁到音频长度
   // (videoretalk 限 1~120s,用户 2min 素材直接报 Invalid file duration);音频超长自动
   // 分段生成再拼接;成片下载落地 make-video 桶,界面内嵌播放。
-  const lipsyncJobs = new Map<string, {
+  // 任务持久化(2026-07-19 用户拍板:成片要留存,切页/重启不丢)——落盘 JSON,
+  // 界面「成片库」由 GET /make-video/jobs 驱动;内存仅保留拼接防重入锁。
+  interface LipJob {
+    id: string;
     taskIds: string[];
     mode: 'video' | 'image';
     provider: 'qwen' | 'volc';
+    status: 'running' | 'done' | 'error';
     localUrl?: string;
-    assembling?: boolean;
-  }>();
+    error?: string;
+    createdAt: number;
+    audioName?: string;
+    videoName?: string;
+  }
+  const lipJobsPath = path.join(paths.RUNTIME_DATA_DIR, 'make-video-jobs.json');
+  const readLipJobs = async (): Promise<LipJob[]> => {
+    try {
+      const arr = JSON.parse(await readFile(lipJobsPath, 'utf8'));
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  };
+  const writeLipJobs = async (jobs: LipJob[]) => writeFile(lipJobsPath, JSON.stringify(jobs, null, 2), 'utf8');
+  const patchLipJob = async (id: string, patch: Partial<LipJob>): Promise<LipJob | null> => {
+    const jobs = await readLipJobs();
+    const i = jobs.findIndex((j) => j.id === id);
+    if (i < 0) return null;
+    jobs[i] = { ...jobs[i]!, ...patch };
+    await writeLipJobs(jobs);
+    return jobs[i]!;
+  };
+  const lipAssembling = new Set<string>();
   const engCtx = () => ({
     projectRoot: paths.PROJECT_ROOT,
     dataDir: paths.RUNTIME_DATA_DIR,
@@ -940,7 +964,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     return `data:${mime};base64,${buf.toString('base64')}`;
   };
   app.post('/api/media-studio/make-video/lipsync', async (req, res) => {
-    const body = (req.body ?? {}) as { videoUrl?: string; audioUrl?: string; provider?: string };
+    const body = (req.body ?? {}) as { videoUrl?: string; audioUrl?: string; provider?: string; audioName?: string; videoName?: string };
     if (!body.videoUrl || !body.audioUrl) return bad(res, 400, '缺少 videoUrl / audioUrl');
     const provider = body.provider === 'volc' ? 'volc' : 'qwen';
     try {
@@ -1017,7 +1041,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           taskIds.push(String(taskId));
         }
         const jobId = randomUUID();
-        lipsyncJobs.set(jobId, { taskIds, mode: 'video', provider: 'qwen' });
+        const jobs = await readLipJobs();
+        jobs.unshift({ id: jobId, taskIds, mode: 'video', provider: 'qwen', status: 'running', createdAt: Date.now(), ...(body.audioName ? { audioName: String(body.audioName) } : {}), ...(body.videoName ? { videoName: String(body.videoName) } : {}) });
+        await writeLipJobs(jobs);
         return res.json({ id: jobId, mode: 'video', provider: 'qwen', segments: taskIds.length });
       }
       const ark = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine');
@@ -1066,16 +1092,39 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         return bad(res, 502, `口型替换任务提交失败:${String(data?.error?.message ?? data?.message ?? resp.status)}`);
       }
       const jobId = randomUUID();
-      lipsyncJobs.set(jobId, { taskIds: [String(data.id)], mode, provider: 'volc' });
+      const jobs = await readLipJobs();
+      jobs.unshift({ id: jobId, taskIds: [String(data.id)], mode, provider: 'volc', status: 'running', createdAt: Date.now(), ...(body.audioName ? { audioName: String(body.audioName) } : {}), ...(body.videoName ? { videoName: String(body.videoName) } : {}) });
+      await writeLipJobs(jobs);
       res.json({ id: jobId, mode, provider: 'volc' });
     } catch (err) {
       return bad(res, 500, `口型替换失败:${err instanceof Error ? err.message : String(err)}`);
     }
   });
 
+  // ---- 成片库(2026-07-19):持久任务列表/删除 ----
+  app.get('/api/media-studio/make-video/jobs', async (_req, res) => {
+    res.json({ jobs: await readLipJobs() });
+  });
+  app.delete('/api/media-studio/make-video/jobs/:id', async (req, res) => {
+    const jobs = await readLipJobs();
+    const job = jobs.find((j) => j.id === req.params.id);
+    if (job?.localUrl?.startsWith(STUDIO_ASSET_URL_PREFIX)) {
+      const rest = job.localUrl.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
+      if (rest.length === 2) {
+        try { const { unlink } = await import('node:fs/promises'); await unlink(path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? ''))); } catch { /* 文件可能已删 */ }
+      }
+    }
+    await writeLipJobs(jobs.filter((j) => j.id !== req.params.id));
+    res.json({ ok: true });
+  });
+
   app.get('/api/media-studio/make-video/lipsync/:id', async (req, res) => {
-    const job = lipsyncJobs.get(req.params.id);
-    if (!job) return bad(res, 404, 'lipsync job not found(应用重启会丢任务映射,请重新提交)');
+    const jobsAll = await readLipJobs();
+    const job = jobsAll.find((j) => j.id === req.params.id);
+    if (!job) return bad(res, 404, 'lipsync job not found');
+    // 终态直接回持久结果(不再打远端)。
+    if (job.status === 'done') return res.json({ id: job.id, status: 'done', resultUrl: job.localUrl ?? '' });
+    if (job.status === 'error') return res.json({ id: job.id, status: 'error', error: job.error ?? '生成失败' });
     // 成片落地:全部子任务完成后下载(多段先 concat 拼接)存 make-video 桶,
     // 界面拿本地资产 URL 内嵌播放(远端 OSS 会过期)。
     const finalize = async (remoteUrls: string[]): Promise<string> => {
@@ -1099,7 +1148,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         await runFf('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', finalAbs], eng.env as NodeJS.ProcessEnv);
       }
       const url = `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(path.basename(finalAbs))}`;
-      job.localUrl = url;
+      await patchLipJob(job.id, { status: 'done', localUrl: url });
       return url;
     };
     try {
@@ -1119,15 +1168,18 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           });
         }
         const failed = states.find((s) => s.st === 'FAILED' || s.st === 'CANCELED' || s.st === 'UNKNOWN');
-        if (failed) return res.json({ id: req.params.id, status: 'error', error: failed.msg || failed.st });
+        if (failed) {
+          await patchLipJob(job.id, { status: 'error', error: failed.msg || failed.st });
+          return res.json({ id: req.params.id, status: 'error', error: failed.msg || failed.st });
+        }
         const doneCount = states.filter((s) => s.st === 'SUCCEEDED').length;
         if (doneCount === states.length) {
-          if (job.assembling && !job.localUrl) return res.json({ id: req.params.id, status: 'running', progress: '拼接落地中…' });
-          job.assembling = true;
+          if (lipAssembling.has(job.id) && !job.localUrl) return res.json({ id: req.params.id, status: 'running', progress: '拼接落地中…' });
+          lipAssembling.add(job.id);
           try {
             const url = await finalize(states.map((s) => s.url!).filter(Boolean));
             return res.json({ id: req.params.id, status: 'done', resultUrl: url });
-          } finally { job.assembling = false; }
+          } finally { lipAssembling.delete(job.id); }
         }
         return res.json({ id: req.params.id, status: 'running', progress: `${doneCount}/${states.length} 段完成` });
       }
@@ -1142,6 +1194,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         return res.json({ id: req.params.id, status: 'done', resultUrl: url });
       }
       if (st === 'failed' || st === 'expired') {
+        await patchLipJob(job.id, { status: 'error', error: String(data?.error?.message ?? st) });
         return res.json({ id: req.params.id, status: 'error', error: String(data?.error?.message ?? st) });
       }
       return res.json({ id: req.params.id, status: 'running' });
