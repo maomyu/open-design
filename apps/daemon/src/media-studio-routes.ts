@@ -61,6 +61,7 @@ import { createCollectBus, COLLECT_PLATFORMS, CollectError, isCollectPlatform } 
 import { createInteractionBus, InteractionError } from './media-studio/interaction-jobs.js';
 import { createCommentReadBus, CommentReadError } from './media-studio/comment-read-jobs.js';
 import { DEFAULT_INTERACTION_POLICY } from './media-studio/interaction-quota.js';
+import { matchInteractionRule } from './media-studio/interaction-rules.js';
 import type {
   CommentNode,
   CreateStudioCollectRequest,
@@ -101,6 +102,11 @@ import {
   recordInteraction,
   listInteractions,
   peekInteractionQuota,
+  listInteractionRules,
+  getInteractionRule,
+  createInteractionRule,
+  updateInteractionRule,
+  deleteInteractionRule,
 } from './media-studio/store.js';
 import { fontSizesFromExtra, renderWechatHtml, WECHAT_SKINS } from './media-studio/wechat-render.js';
 import { publishWechatDraft, WechatPublishError } from './media-studio/wechat-publish.js';
@@ -1021,6 +1027,75 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     if (typeof req.query.platform === 'string' && req.query.platform) filter.platform = String(req.query.platform);
     if (req.query.account !== undefined) filter.accountId = req.query.account ? String(req.query.account) : null;
     res.json({ items: listInteractions(db, filter) });
+  });
+
+  // ---- 互动匹配规则 CRUD + 匹配测试（自动评论回复的大脑:命中关键词→回复模板）----
+  app.get('/api/media-studio/interaction-rules', (req, res) => {
+    const platform = String(req.query.platform ?? '').trim();
+    if (!platform) return bad(res, 400, '缺少 platform');
+    const account = req.query.account === undefined ? undefined : (req.query.account ? String(req.query.account) : null);
+    res.json({ items: listInteractionRules(db, platform, account) });
+  });
+
+  app.post('/api/media-studio/interaction-rules', (req, res) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const platform = String(b.platform ?? '').trim();
+    const name = String(b.name ?? '').trim();
+    const keywords = Array.isArray(b.keywords) ? (b.keywords as unknown[]).map((k) => String(k).trim()).filter(Boolean) : [];
+    const replyTemplate = String(b.replyTemplate ?? '');
+    if (!platform) return bad(res, 400, '缺少 platform');
+    if (!name) return bad(res, 400, '缺少 name');
+    if (!keywords.length) return bad(res, 400, '至少一个关键词');
+    if (!replyTemplate.trim()) return bad(res, 400, '缺少 replyTemplate');
+    const mode = String(b.matchMode ?? 'contains');
+    const action = String(b.action ?? 'reply');
+    res.json({
+      rule: createInteractionRule(db, {
+        platform,
+        accountId: typeof b.accountId === 'string' && b.accountId ? b.accountId : null,
+        name,
+        keywords,
+        matchMode: (mode === 'exact' || mode === 'regex' ? mode : 'contains'),
+        replyTemplate,
+        action: (action === 'sub-reply' || action === 'dm' ? action : 'reply'),
+        priority: Number.isFinite(Number(b.priority)) ? Number(b.priority) : 0,
+        enabled: b.enabled !== false,
+      }),
+    });
+  });
+
+  app.put('/api/media-studio/interaction-rules/:id', (req, res) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+    if (b.accountId !== undefined) patch.accountId = typeof b.accountId === 'string' && b.accountId ? b.accountId : null;
+    if (typeof b.name === 'string') patch.name = b.name;
+    if (Array.isArray(b.keywords)) patch.keywords = (b.keywords as unknown[]).map((k) => String(k).trim()).filter(Boolean);
+    if (b.matchMode === 'contains' || b.matchMode === 'exact' || b.matchMode === 'regex') patch.matchMode = b.matchMode;
+    if (typeof b.replyTemplate === 'string') patch.replyTemplate = b.replyTemplate;
+    if (b.action === 'reply' || b.action === 'sub-reply' || b.action === 'dm') patch.action = b.action;
+    if (Number.isFinite(Number(b.priority))) patch.priority = Number(b.priority);
+    if (typeof b.enabled === 'boolean') patch.enabled = b.enabled;
+    const rule = updateInteractionRule(db, req.params.id, patch);
+    if (!rule) return bad(res, 404, 'rule not found');
+    res.json({ rule });
+  });
+
+  app.delete('/api/media-studio/interaction-rules/:id', (req, res) => {
+    if (!getInteractionRule(db, req.params.id)) return bad(res, 404, 'rule not found');
+    deleteInteractionRule(db, req.params.id);
+    res.json({ ok: true });
+  });
+
+  // 匹配测试:给一条评论,返回命中的规则+已解析回复(或 null=不回复)。UI 预览/CLI 调试用。
+  app.post('/api/media-studio/interaction-rules/match', (req, res) => {
+    const b = (req.body ?? {}) as { platform?: string; account?: string | null; comment?: { text?: string; author?: string } };
+    const platform = String(b.platform ?? '').trim();
+    if (!platform) return bad(res, 400, '缺少 platform');
+    const account = b.account === undefined ? undefined : (b.account ? String(b.account) : null);
+    const text = String(b.comment?.text ?? '');
+    const author = b.comment?.author ? String(b.comment.author) : undefined;
+    const rules = listInteractionRules(db, platform, account);
+    res.json({ match: matchInteractionRule(rules, author !== undefined ? { text, author } : { text }) });
   });
 
   // ---- 读评论派发桥（读一条笔记的评论树 → 桌面端应用内标签执行，不耗互动配额）----

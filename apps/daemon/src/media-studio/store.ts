@@ -10,7 +10,11 @@ import type {
   CreateMediaTopicRequest,
   InteractionAction,
   InteractionRecord,
+  InteractionRule,
   InteractionStatus,
+  RuleMatchMode,
+  CreateInteractionRuleRequest,
+  UpdateInteractionRuleRequest,
   MediaArticle,
   MediaArticleSummary,
   MediaPublishRecord,
@@ -581,4 +585,106 @@ export function claimInteractionSlot(
     return { ...decision, usedToday: nextCount };
   });
   return txn();
+}
+
+// ---- 互动匹配规则（命中关键词→回复模板;自动评论回复的大脑）----
+
+function ruleFromRow(r: Row): InteractionRule {
+  let keywords: string[] = [];
+  try {
+    const p = JSON.parse(str(r.keywords_json, '[]'));
+    if (Array.isArray(p)) keywords = p.filter((k): k is string => typeof k === 'string');
+  } catch { /* 坏 JSON 当空 */ }
+  const mode = str(r.match_mode, 'contains');
+  const action = str(r.action, 'reply');
+  return {
+    id: str(r.id),
+    platform: str(r.platform),
+    accountId: strOrNull(r.account_id),
+    name: str(r.name),
+    keywords,
+    matchMode: (mode === 'exact' || mode === 'regex' ? mode : 'contains') as RuleMatchMode,
+    replyTemplate: str(r.reply_template),
+    action: (action === 'sub-reply' || action === 'dm' ? action : 'reply') as InteractionAction,
+    priority: numOrNull(r.priority) ?? 0,
+    enabled: (numOrNull(r.enabled) ?? 1) !== 0,
+    createdAt: numOrNull(r.created_at) ?? 0,
+  };
+}
+
+/** 列规则:按平台(可选账号)取,优先级降序。account 传 null/省略=只取平台通用(account_id IS NULL)+
+ *  该账号专属;传具体账号名时把"通用规则 + 该账号规则"一起返回(匹配时账号专属优先靠 priority)。 */
+export function listInteractionRules(
+  db: Database.Database,
+  platform: string,
+  accountId?: string | null,
+): InteractionRule[] {
+  let rows: Row[];
+  if (accountId === undefined) {
+    rows = db.prepare(`SELECT * FROM interaction_rules WHERE platform = ? ORDER BY priority DESC, created_at`).all(platform) as Row[];
+  } else if (accountId === null) {
+    rows = db.prepare(`SELECT * FROM interaction_rules WHERE platform = ? AND account_id IS NULL ORDER BY priority DESC, created_at`).all(platform) as Row[];
+  } else {
+    rows = db.prepare(`SELECT * FROM interaction_rules WHERE platform = ? AND (account_id IS NULL OR account_id = ?) ORDER BY priority DESC, created_at`).all(platform, accountId) as Row[];
+  }
+  return rows.map(ruleFromRow);
+}
+
+export function getInteractionRule(db: Database.Database, id: string): InteractionRule | null {
+  const row = db.prepare(`SELECT * FROM interaction_rules WHERE id = ?`).get(id) as Row | undefined;
+  return row ? ruleFromRow(row) : null;
+}
+
+export function createInteractionRule(db: Database.Database, input: CreateInteractionRuleRequest): InteractionRule {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO interaction_rules (id, platform, account_id, name, keywords_json, match_mode, reply_template, action, priority, enabled, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.platform,
+    input.accountId ?? null,
+    input.name,
+    JSON.stringify(Array.isArray(input.keywords) ? input.keywords : []),
+    input.matchMode ?? 'contains',
+    input.replyTemplate,
+    input.action ?? 'reply',
+    Number.isFinite(input.priority) ? Number(input.priority) : 0,
+    input.enabled === false ? 0 : 1,
+    Date.now(),
+  );
+  return ruleFromRow(db.prepare(`SELECT * FROM interaction_rules WHERE id = ?`).get(id) as Row);
+}
+
+export function updateInteractionRule(db: Database.Database, id: string, patch: UpdateInteractionRuleRequest): InteractionRule | null {
+  const existing = getInteractionRule(db, id);
+  if (!existing) return null;
+  const next = {
+    accountId: patch.accountId !== undefined ? patch.accountId : existing.accountId,
+    name: patch.name ?? existing.name,
+    keywords: patch.keywords ?? existing.keywords,
+    matchMode: patch.matchMode ?? existing.matchMode,
+    replyTemplate: patch.replyTemplate ?? existing.replyTemplate,
+    action: patch.action ?? existing.action,
+    priority: patch.priority !== undefined ? patch.priority : existing.priority,
+    enabled: patch.enabled !== undefined ? patch.enabled : existing.enabled,
+  };
+  db.prepare(
+    `UPDATE interaction_rules SET account_id = ?, name = ?, keywords_json = ?, match_mode = ?, reply_template = ?, action = ?, priority = ?, enabled = ? WHERE id = ?`,
+  ).run(
+    next.accountId ?? null,
+    next.name,
+    JSON.stringify(next.keywords),
+    next.matchMode,
+    next.replyTemplate,
+    next.action,
+    next.priority,
+    next.enabled ? 1 : 0,
+    id,
+  );
+  return getInteractionRule(db, id);
+}
+
+export function deleteInteractionRule(db: Database.Database, id: string): boolean {
+  return db.prepare(`DELETE FROM interaction_rules WHERE id = ?`).run(id).changes > 0;
 }

@@ -328,6 +328,23 @@ function migrate(db: SqliteDb): void {
       last_action_at INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (platform, account_id)
     );
+
+    -- 互动匹配规则：命中关键词→回复模板。自动评论回复的"大脑"(读评论→匹配→回复)。
+    CREATE TABLE IF NOT EXISTS interaction_rules (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      account_id TEXT,
+      name TEXT NOT NULL DEFAULT '',
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      match_mode TEXT NOT NULL DEFAULT 'contains',
+      reply_template TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT 'reply',
+      priority INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_interaction_rules_plat
+      ON interaction_rules(platform, priority DESC, created_at);
   `);
   // Forward-compatible column add for databases created before metadata_json.
   // SQLite has no IF NOT EXISTS for ALTER, so we check pragma_table_info.

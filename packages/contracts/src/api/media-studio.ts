@@ -150,6 +150,56 @@ export interface InteractionRecord_ListResponse {
   items: InteractionRecord[];
 }
 
+/** 关键词匹配方式：contains=评论含任一关键词；exact=评论等于任一关键词；regex=用首个关键词作正则。 */
+export type RuleMatchMode = 'contains' | 'exact' | 'regex';
+
+/** 一条互动匹配规则（interaction_rules 一行）——决定"哪条评论该回、回什么"。 */
+export interface InteractionRule {
+  id: string;
+  platform: MediaStudioPlatform;
+  /** 绑定账号 id；null = 该平台所有账号通用。 */
+  accountId: string | null;
+  name: string;
+  /** 关键词集（contains/exact 命中任一即算；regex 用 keywords[0] 作正则）。 */
+  keywords: string[];
+  matchMode: RuleMatchMode;
+  /** 回复文案，可含占位符 {author}（评论者昵称）/ {keyword}（命中的关键词）。 */
+  replyTemplate: string;
+  /** 回复动作：默认一级回复；也可楼中楼 / 私信。 */
+  action: InteractionAction;
+  /** 优先级，高者先匹配（同评论命中多条时取最高）。 */
+  priority: number;
+  enabled: boolean;
+  createdAt: number;
+}
+
+export interface InteractionRuleListResponse {
+  items: InteractionRule[];
+}
+
+export interface CreateInteractionRuleRequest {
+  platform: MediaStudioPlatform;
+  accountId?: string | null;
+  name: string;
+  keywords: string[];
+  matchMode?: RuleMatchMode;
+  replyTemplate: string;
+  action?: InteractionAction;
+  priority?: number;
+  enabled?: boolean;
+}
+
+export type UpdateInteractionRuleRequest = Partial<Omit<CreateInteractionRuleRequest, 'platform'>>;
+
+/** 匹配命中结果：规则 id + 已解析占位符的回复文案 + 建议动作。 */
+export interface InteractionRuleMatch {
+  ruleId: string;
+  ruleName: string;
+  reply: string;
+  action: InteractionAction;
+  matchedKeyword: string | null;
+}
+
 export interface CreateMediaKnowledgeRequest {
   name: string;
   contentMd: string;
