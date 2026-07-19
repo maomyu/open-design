@@ -101,6 +101,7 @@ export function createInteractionBus(now: () => number = Date.now): InteractionB
         account: req.account ?? null,
         action: req.action,
         targetRef: req.targetRef,
+        ...(req.noteRef ? { noteRef: req.noteRef } : {}),
         text: req.text,
         status: 'pending',
         progress: [],

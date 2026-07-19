@@ -2317,8 +2317,10 @@ async function runStudio(args) {
       // 2026-07-10 全功能 CLI 化:补上历史缺注册的(category/accounts/type/
       // page 之前有代码用却没进白名单,strict 解析直接抛 unknown flag)。
       'category', 'accounts', 'type', 'page', 'slot', 'label', 'to', 'note', 'words', 'timeout',
+      // 互动运营(W8):自动回复 + 匹配规则。
+      'name', 'keywords', 'reply', 'action', 'priority', 'max',
     ],
-    boolean: ['json', 'help', 'h', 'as-cover', 'auto', 'no-wait', 'no-follow'],
+    boolean: ['json', 'help', 'h', 'as-cover', 'auto', 'no-wait', 'no-follow', 'live'],
   });
   const valueFlags = new Set([
     '--daemon-url', '--platform', '--title', '--topic', '--digest', '--skin', '--cover',
@@ -2326,6 +2328,7 @@ async function runStudio(args) {
     '--keyword', '--feed', '--days', '--desc', '--marker', '--style', '--ratio', '--tags', '--video', '--targets', '--voice',
     '--target', '--mode',
     '--category', '--accounts', '--type', '--page', '--slot', '--label', '--to', '--note', '--words', '--timeout',
+    '--name', '--keywords', '--reply', '--action', '--priority', '--max',
   ]);
   const bare = [];
   for (let i = 0; i < args.length; i++) {
@@ -2383,7 +2386,15 @@ async function runStudio(args) {
   od studio browser open --target <平台> [--account 名] · browser urls   # 独立 Chrome 档案(网页版逃生口)
 
 【知识库】(全平台共享,AI 任务自动注入)
-  od studio kb list · kb add --title n --file <md|-> [--category company|product|trust|case|card|other] [--account id] · kb rm <id>`);
+  od studio kb list · kb add --title n --file <md|-> [--category company|product|trust|case|card|other] [--account id] · kb rm <id>
+
+【互动运营】(读评论→匹配规则→拟人回复,受风控台账门控;需桌面端在运行)
+  od studio rules [--platform xiaohongshu] [--account 名]                     # 列匹配规则
+  od studio rule-add --name n --keywords "价格,多少钱" --reply "私信你啦{author}"
+                    [--mode contains|exact|regex] [--action reply|sub-reply|dm] [--priority 0] [--account 名]
+  od studio rule-rm <ruleId>
+  od studio auto-reply --note <笔记URL> [--account 名] [--max 3]              # 预览:读评论+匹配,不外发
+  od studio auto-reply --note <笔记URL> --live [--max 3]                      # 真发(逐条过风控)`);
     return;
   }
   const platform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'wechat-mp';
@@ -3150,6 +3161,60 @@ async function runStudio(args) {
     console.error(`[handoff] 等待超时(${timeoutSec}s)——注入可能仍在桌面端跑,看「${target}」面板顶部进度条`);
     process.exit(1);
   }
+
+  // ── 互动运营:自动评论回复 + 匹配规则(读评论→匹配→拟人回复,受风控台账门控) ──
+  if (sub === 'auto-reply') {
+    const note = typeof flags.note === 'string' ? flags.note : (rest.find((a) => a && !a.startsWith('--')) ?? '');
+    if (!note) { console.error('用法: od studio auto-reply --note <笔记URL> [--platform xiaohongshu] [--account 名] [--live] [--max 3]'); process.exit(2); }
+    const account = typeof flags.account === 'string' && flags.account ? flags.account : null;
+    const body = { platform, account, noteRef: note, dryRun: !flags.live, maxReplies: Number(flags.max || 3) };
+    const resp = await fetch(`${root}/auto-reply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!resp.ok) return fail(resp, 'auto-reply');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    if (data.needsLogin) { console.log('未登录:请在桌面端标签里扫码登录小红书后重试'); return; }
+    console.log(`读到 ${data.read} 条评论,命中 ${data.matched.length} 条规则${flags.live ? '' : ' (预览,未外发;加 --live 真发)'}`);
+    for (const m of data.matched) console.log(`  · @${m.author}「${(m.commentText || '').slice(0, 24)}」→ [${m.ruleName}] ${m.reply}`);
+    if (flags.live) {
+      const okN = data.dispatched.filter((d) => d.jobId).length;
+      const blk = data.dispatched.filter((d) => d.blocked);
+      console.log(`已派发 ${okN} 条回复${blk.length ? `;${blk.length} 条被风控拦(${[...new Set(blk.map((b) => b.blocked))].join('/')})` : ''}`);
+    }
+    return;
+  }
+  if (sub === 'rules') {
+    const account = flags.account === undefined ? undefined : (flags.account ? String(flags.account) : null);
+    const q = new URLSearchParams({ platform }); if (account !== undefined) q.set('account', account ?? '');
+    const resp = await fetch(`${root}/interaction-rules?${q}`);
+    if (!resp.ok) return fail(resp, 'list rules');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    if (!data.items.length) { console.log('(暂无规则)'); return; }
+    for (const r of data.items) console.log(`${r.enabled ? '●' : '○'} [P${r.priority}] ${r.name} · ${r.matchMode}(${r.keywords.join('/')}) → ${r.replyTemplate} · ${r.action} · ${r.id}`);
+    return;
+  }
+  if (sub === 'rule-add') {
+    const name = typeof flags.name === 'string' ? flags.name : '';
+    const keywords = String(flags.keywords || '').split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
+    const reply = typeof flags.reply === 'string' ? flags.reply : '';
+    if (!name || !keywords.length || !reply) { console.error('用法: od studio rule-add --name <名> --keywords "价格,多少钱" --reply "<回复文案,可含{author}/{keyword}>" [--mode contains|exact|regex] [--action reply|sub-reply|dm] [--priority 0] [--account 名]'); process.exit(2); }
+    const body = { platform, account: typeof flags.account === 'string' && flags.account ? flags.account : null, name, keywords, replyTemplate: reply, matchMode: flags.mode || 'contains', action: flags.action || 'reply', priority: Number(flags.priority || 0) };
+    const resp = await fetch(`${root}/interaction-rules`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!resp.ok) return fail(resp, 'add rule');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    console.log(`已加规则 ${data.rule.id}: ${data.rule.name}`);
+    return;
+  }
+  if (sub === 'rule-rm') {
+    const id = rest.find((a) => a && !a.startsWith('--'));
+    if (!id) { console.error('用法: od studio rule-rm <ruleId>'); process.exit(2); }
+    const resp = await fetch(`${root}/interaction-rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!resp.ok) return fail(resp, 'delete rule');
+    console.log('已删除');
+    return;
+  }
+
   console.error(`unknown studio subcommand: ${sub} (try: od studio --help)`);
   process.exit(2);
 }

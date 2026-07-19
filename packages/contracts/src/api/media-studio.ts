@@ -659,6 +659,9 @@ export interface StudioInteractionJob {
   action: InteractionAction;
   /** 目标引用：一级评论=笔记/帖子 URL 或 id；楼中楼=父评论 id；私信=对方用户 id。 */
   targetRef: string;
+  /** 要打开的页面（笔记/帖子 URL）。楼中楼时与 targetRef(父评论 id)分离:先打开 noteRef 再在页内
+   *  定位父评论。一级评论/省略时执行器用 targetRef 当页面。 */
+  noteRef?: string;
   text: string;
   status: StudioInteractionStatus;
   progress: string[];
@@ -672,7 +675,42 @@ export interface CreateStudioInteractionRequest {
   account?: string | null;
   action: InteractionAction;
   targetRef: string;
+  /** 楼中楼:要打开的笔记 URL(与 targetRef=父评论 id 分离)。一级评论省略即用 targetRef 当页面。 */
+  noteRef?: string;
   text: string;
+}
+
+// ── 自动评论回复编排（W8:读评论→匹配规则→拟人回复,把互动运营接成闭环）──
+export interface AutoReplyRequest {
+  platform: MediaStudioPlatform;
+  account?: string | null;
+  /** 目标笔记：URL 或 note id。 */
+  noteRef: string;
+  /** true=只出计划(读评论+匹配,不外发),供预览/验证;false=真发(受风控台账门控)。 */
+  dryRun?: boolean;
+  /** 本轮最多回复几条(安全上限;真发时逐条过风控,冷却/上限会自然截断)。 */
+  maxReplies?: number;
+}
+
+/** 一条被规则命中、拟回复的评论。 */
+export interface AutoReplyPlanItem {
+  commentId: string;
+  author: string;
+  commentText: string;
+  ruleName: string;
+  reply: string;
+  action: InteractionAction;
+}
+
+export interface AutoReplyResponse {
+  /** 读到的评论总数(含楼中楼)。 */
+  read: number;
+  /** 命中规则的拟回复计划(dryRun 只返回这个)。 */
+  matched: AutoReplyPlanItem[];
+  /** 真发模式:实际派发的回复 job(含被风控拦下的)。 */
+  dispatched: Array<AutoReplyPlanItem & { jobId: string | null; blocked?: string }>;
+  needsLogin?: boolean;
+  detail?: string;
 }
 
 /** 建 job 的应答：被风控拦下时 job 为 null,附拦截原因;放行时回 job。 */

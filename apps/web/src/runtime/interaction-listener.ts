@@ -20,16 +20,24 @@ async function executeInteraction(job: StudioInteractionJob): Promise<void> {
     job.account ||
     acctResp?.platforms.find((x) => x.id === job.platform)?.accounts?.[0]?.name ||
     'main';
-  // 一级评论:targetRef 是笔记链接,打开它;楼中楼:也先打开笔记页(注入器在页内定位父评论)。
+  // 要打开的页面:楼中楼用 noteRef(笔记 URL,targetRef 是父评论 id);一级评论 noteRef 省略即用 targetRef。
+  const pageRef = job.noteRef || job.targetRef;
   const url =
     job.action === 'dm'
       ? 'about:blank'
-      : buildNoteUrl(job.platform as CommentPlatform, job.targetRef) || 'about:blank';
+      : buildNoteUrl(job.platform as CommentPlatform, pageRef) || 'about:blank';
   openBrowserPane({
     platform: job.platform,
     account,
     url,
-    interact: { jobId: job.id, platform: job.platform, action: job.action, targetRef: job.targetRef, text: job.text },
+    interact: {
+      jobId: job.id,
+      platform: job.platform,
+      action: job.action,
+      targetRef: job.targetRef,
+      ...(job.noteRef ? { noteRef: job.noteRef } : {}),
+      text: job.text,
+    },
   });
 }
 

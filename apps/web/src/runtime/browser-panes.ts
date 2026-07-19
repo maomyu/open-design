@@ -36,6 +36,8 @@ export interface InteractPaneSpec {
   platform: string;
   action: 'reply' | 'sub-reply' | 'dm';
   targetRef: string;
+  /** 楼中楼:要打开的笔记 URL(targetRef 为父评论 id)。 */
+  noteRef?: string;
   text: string;
 }
 

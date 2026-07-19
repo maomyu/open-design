@@ -18,6 +18,8 @@ export interface ReplyInjectSpec {
   action: InteractionAction; // 'reply'(一级) | 'sub-reply'(楼中楼) | 'dm'(私信,后续 W18)
   /** 一级=笔记 URL/id;楼中楼=父评论 id(在笔记页内定位那条评论)。 */
   targetRef: string;
+  /** 楼中楼:要打开的笔记 URL(targetRef 为父评论 id)。一级评论省略即用 targetRef 当页面。 */
+  noteRef?: string;
   text: string;
 }
 
@@ -54,8 +56,9 @@ async function injectXhsReply(
   spec: ReplyInjectSpec,
   say: (m: string) => void,
 ): Promise<ReplyInjectResult> {
-  const noteUrl = buildNoteUrl('xiaohongshu', spec.action === 'sub-reply' ? '' : spec.targetRef);
-  // 一级评论:targetRef 是笔记链接,导航过去;楼中楼:调用方已在笔记页,targetRef 是父评论 id。
+  // 要打开的笔记:楼中楼用 noteRef(targetRef 是父评论 id);一级评论用 targetRef(即笔记链接)。
+  const pageRef = spec.action === 'sub-reply' ? (spec.noteRef ?? '') : spec.targetRef;
+  const noteUrl = buildNoteUrl('xiaohongshu', pageRef);
   if (noteUrl) {
     say('打开笔记页…');
     await wvEval(wv, `location.href = ${JSON.stringify(noteUrl)}`);

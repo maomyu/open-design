@@ -63,6 +63,9 @@ import { createCommentReadBus, CommentReadError } from './media-studio/comment-r
 import { DEFAULT_INTERACTION_POLICY } from './media-studio/interaction-quota.js';
 import { matchInteractionRule } from './media-studio/interaction-rules.js';
 import type {
+  AutoReplyPlanItem,
+  AutoReplyRequest,
+  AutoReplyResponse,
   CommentNode,
   CreateStudioCollectRequest,
   CreateStudioInteractionRequest,
@@ -909,6 +912,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const platform = String(body.platform ?? '').trim();
     const action = String(body.action ?? '') as InteractionAction;
     const targetRef = String(body.targetRef ?? '').trim();
+    const noteRef = typeof body.noteRef === 'string' && body.noteRef ? body.noteRef : undefined;
     const text = String(body.text ?? '');
     const account = typeof body.account === 'string' && body.account ? body.account : null;
     if (!platform) return bad(res, 400, '缺少 platform');
@@ -934,7 +938,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       });
     }
     try {
-      const job = interactionBus.create({ platform, account, action, targetRef, text });
+      const job = interactionBus.create({ platform, account, action, targetRef, ...(noteRef ? { noteRef } : {}), text });
       res.json({ job });
     } catch (err) {
       if (err instanceof InteractionError) return bad(res, 409, err.message);
@@ -1096,6 +1100,78 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const author = b.comment?.author ? String(b.comment.author) : undefined;
     const rules = listInteractionRules(db, platform, account);
     res.json({ match: matchInteractionRule(rules, author !== undefined ? { text, author } : { text }) });
+  });
+
+  // ---- 自动评论回复编排（W8:读评论→匹配规则→拟人回复,把互动运营接成闭环）----
+  // dryRun=只出计划(安全预览);真发时逐条过风控台账(冷却/上限自然截断),把回复挂到执行器。
+  app.post('/api/media-studio/auto-reply', async (req, res) => {
+    const b = (req.body ?? {}) as AutoReplyRequest;
+    const platform = String(b.platform ?? '').trim();
+    const noteRef = String(b.noteRef ?? '').trim();
+    const account = typeof b.account === 'string' && b.account ? b.account : null;
+    // 安全默认:只有【显式传 dryRun:false】才真发;缺省/dryRun:true 都只出计划,不外发。
+    const isDry = b.dryRun !== false;
+    const maxReplies = Number.isFinite(Number(b.maxReplies)) ? Math.max(1, Math.min(20, Number(b.maxReplies))) : 3;
+    if (!platform) return bad(res, 400, '缺少 platform');
+    if (!noteRef) return bad(res, 400, '缺少 noteRef');
+    if (commentReadBus.subscriberCount() === 0) {
+      return bad(res, 409, '桌面端未连接——读评论/回复都需要 social-auto 桌面应用在运行。');
+    }
+    // 1) 读这条笔记的评论(桌面端执行);轮询到终态或读到评论。
+    let readJob;
+    try {
+      readJob = commentReadBus.create({ platform, account, noteRef });
+    } catch (err) {
+      return bad(res, 409, err instanceof Error ? err.message : String(err));
+    }
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      await commentReadBus.wait(readJob.id, readJob.progress.length, 4000);
+      const j = commentReadBus.get(readJob.id);
+      if (!j) break;
+      if (j.status === 'done' || j.status === 'error' || j.comments.length > 0 || j.needsLogin) { readJob = j; break; }
+      readJob = j;
+    }
+    const cur = commentReadBus.get(readJob.id) ?? readJob;
+    if (cur.needsLogin) return res.json({ read: 0, matched: [], dispatched: [], needsLogin: true, detail: '未登录:请在标签里扫码登录后重试' } satisfies AutoReplyResponse);
+    // 2) 拍平评论(一级 + 楼中楼)后逐条过匹配规则。
+    const rules = listInteractionRules(db, platform, account);
+    const flat: Array<{ id: string; author: string; text: string }> = [];
+    for (const c of cur.comments) {
+      flat.push({ id: c.id, author: c.author, text: c.text });
+      for (const s of c.subReplies ?? []) flat.push({ id: s.id, author: s.author, text: s.text });
+    }
+    const matched: AutoReplyPlanItem[] = [];
+    for (const c of flat) {
+      const m = matchInteractionRule(rules, { text: c.text, author: c.author });
+      if (m) matched.push({ commentId: c.id, author: c.author, commentText: c.text, ruleName: m.ruleName, reply: m.reply, action: m.action });
+    }
+    // 3) 预览模式到此为止。
+    if (isDry) {
+      return res.json({ read: flat.length, matched, dispatched: [] } satisfies AutoReplyResponse);
+    }
+    // 4) 真发:逐条过风控台账,放行则派发回复 job(楼中楼 noteRef=笔记 URL + targetRef=评论 id;
+    //    一级=targetRef 笔记)。冷却/单日上限会自然截断,不会一次性刷屏。
+    const dispatched: AutoReplyResponse['dispatched'] = [];
+    let sent = 0;
+    for (const item of matched) {
+      if (sent >= maxReplies) break;
+      const decision = claimInteractionSlot(db, platform, account, interactionPolicy());
+      if (!decision.allowed) {
+        recordInteraction(db, { platform, accountId: account, action: item.action, targetRef: item.commentId, text: item.reply, status: 'blocked', detail: decision.reason ?? null });
+        dispatched.push({ ...item, jobId: null, blocked: decision.reason ?? 'blocked' });
+        continue;
+      }
+      try {
+        const targetRef = item.action === 'reply' ? noteRef : item.commentId;
+        const job = interactionBus.create({ platform, account, action: item.action, targetRef, noteRef, text: item.reply });
+        dispatched.push({ ...item, jobId: job.id });
+        sent += 1;
+      } catch (err) {
+        dispatched.push({ ...item, jobId: null, blocked: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    res.json({ read: flat.length, matched, dispatched } satisfies AutoReplyResponse);
   });
 
   // ---- 读评论派发桥（读一条笔记的评论树 → 桌面端应用内标签执行，不耗互动配额）----
