@@ -107,7 +107,8 @@ export function MakeVideoView(): JSX.Element {
       const resp = await fetch('/api/media-studio/voice-design', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: vdProvider, prompt: vdPrompt.trim(), text: vdText.trim(), ...(vdVoice.trim() ? { voice: vdVoice.trim() } : {}) }),
+        // 千问=纯基底音色(不发描述,2026-07-19 用户拍板);火山=描述必填。
+        body: JSON.stringify({ provider: vdProvider, ...(vdProvider === 'volc' ? { prompt: vdPrompt.trim() } : {}), text: vdText.trim(), ...(vdVoice.trim() ? { voice: vdVoice.trim() } : {}) }),
       });
       const d = (await resp.json().catch(() => ({}))) as { audioUrl?: string; provider?: string; speakerId?: string; voice?: string; prompt?: string; error?: string };
       if (!resp.ok || !d.audioUrl) { studioToast.err(d.error || `音色设计失败(${resp.status})`); return; }
@@ -206,15 +207,15 @@ export function MakeVideoView(): JSX.Element {
             </button>
           ))}
         </div>
-        <input
-          className={c('input')}
-          style={{ marginBottom: 8 }}
-          placeholder={vdProvider === 'qwen'
-            ? '音色描述(可选)——不填=下面选的基底音色原声;填了在基底上塑形,例:像闺蜜聊天,语速偏慢'
-            : '音色描述(必填)——例:年轻女性,声音温柔有亲和力,语速中等偏慢'}
-          value={vdPrompt}
-          onChange={(e) => setVdPrompt(e.target.value)}
-        />
+        {vdProvider === 'volc' ? (
+          <input
+            className={c('input')}
+            style={{ marginBottom: 8 }}
+            placeholder="音色描述(必填)——例:年轻女性,声音温柔有亲和力,语速中等偏慢"
+            value={vdPrompt}
+            onChange={(e) => setVdPrompt(e.target.value)}
+          />
+        ) : null}
         <textarea
           className={c('textarea')}
           style={{ marginBottom: 8, minHeight: 64 }}

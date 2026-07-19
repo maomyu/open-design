@@ -850,7 +850,32 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   // 需在火山控制台做「已授权真人素材」登记或用虚拟形象——错误原样透传给界面。
   // 视频仅支持公网 URL(Ark 不收 base64 视频):本地资产则用引擎 ffmpeg 抽首帧降级
   // 「图生数字人口播」(图支持 base64)。任务映射内存持有(重启丢任务可接受,Ark 侧 7 天可查)。
-  const lipsyncJobs = new Map<string, { taskId: string; mode: 'video' | 'image'; provider: 'qwen' | 'volc' }>();
+  // 自动适配(2026-07-19 用户拍板:成片跟着音频走)——视频超长自动裁到音频长度
+  // (videoretalk 限 1~120s,用户 2min 素材直接报 Invalid file duration);音频超长自动
+  // 分段生成再拼接;成片下载落地 make-video 桶,界面内嵌播放。
+  const lipsyncJobs = new Map<string, {
+    taskIds: string[];
+    mode: 'video' | 'image';
+    provider: 'qwen' | 'volc';
+    localUrl?: string;
+    assembling?: boolean;
+  }>();
+  const engCtx = () => ({
+    projectRoot: paths.PROJECT_ROOT,
+    dataDir: paths.RUNTIME_DATA_DIR,
+    resourceRoot: (process.env.OD_RESOURCE_ROOT ?? '').trim() || null,
+  });
+  const runFf = (bin: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> =>
+    new Promise((resolve, reject) => {
+      execFile(bin, args, { env, timeout: 300_000, maxBuffer: 16 * 1024 * 1024 }, (e, stdout, stderr) =>
+        e ? reject(new Error(`${bin} 失败:${String(stderr || e.message).slice(-200)}`)) : resolve(String(stdout)));
+    });
+  const ffDuration = async (abs: string, env: NodeJS.ProcessEnv): Promise<number> => {
+    const out = await runFf('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', abs], env);
+    const d = parseFloat(out.trim());
+    if (!Number.isFinite(d) || d <= 0) throw new Error('无法读取媒体时长');
+    return d;
+  };
   /** DashScope 临时文件上传(本机素材免公网,2026-07-19):getPolicy → OSS 表单直传 →
    *  oss:// 引用(请求头带 X-DashScope-OssResourceResolve)。48h 有效,够任务用。 */
   const dashscopeUpload = async (base: string, apiKey: string, absPath: string, model: string): Promise<string> => {
@@ -904,32 +929,74 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         if (!cfg.apiKey) return bad(res, 422, '还没配置千问(百炼)API Key(providers.qwenBailian)');
         const qwenKey = cfg.apiKey;
         const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
-        const toRemote = async (u: string): Promise<{ url: string; oss: boolean }> => {
-          const abs = localAssetAbs(u);
-          if (!abs) return { url: u, oss: false };
-          return { url: await dashscopeUpload(base, qwenKey, abs, 'videoretalk'), oss: true };
+        const vAbs = localAssetAbs(body.videoUrl);
+        const aAbs = localAssetAbs(body.audioUrl);
+        let videoAbs = vAbs;
+        let extension = false;
+        const audioSegs: string[] = [];
+        if (vAbs && aAbs) {
+          const eng = await resolveBakuanEngine(engCtx());
+          const env = eng.env as NodeJS.ProcessEnv;
+          const vDur = await ffDuration(vAbs, env);
+          const aDur = await ffDuration(aAbs, env);
+          // 成片跟着音频走:视频比音频长 → 裁到音频长度(+0.5s 余量,封顶 119s 合规)。
+          const target = Math.min(aDur + 0.5, 119);
+          if (vDur > target + 0.3) {
+            const cut = path.join(path.dirname(vAbs), `cut-${Date.now()}.mp4`);
+            await runFf('ffmpeg', ['-y', '-ss', '0', '-i', vAbs, '-t', String(target.toFixed(2)), '-c', 'copy', cut], env);
+            videoAbs = cut;
+          }
+          const usedVDur = Math.min(vDur, target);
+          // 音频比(裁后)视频长 → 让模型自动延展视频。
+          if (aDur > usedVDur + 0.3) extension = true;
+          // 音频超 120s → 按 110s 分段,逐段生成后拼接。
+          if (aDur > 119) {
+            const segBase = path.join(path.dirname(aAbs), `seg-${Date.now()}`);
+            const ext = path.extname(aAbs) || '.wav';
+            await runFf('ffmpeg', ['-y', '-i', aAbs, '-f', 'segment', '-segment_time', '110', '-c', 'copy', `${segBase}-%03d${ext}`], env);
+            const dir = await readdir(path.dirname(aAbs));
+            for (const f of dir.sort()) {
+              if (f.startsWith(path.basename(segBase))) audioSegs.push(path.join(path.dirname(aAbs), f));
+            }
+            if (!audioSegs.length) return bad(res, 500, '音频分段失败');
+            extension = true;
+          }
+        }
+        const uploadCache = new Map<string, string>();
+        const remoteOf = async (absOrUrl: string | null, rawUrl: string): Promise<string> => {
+          if (!absOrUrl) return rawUrl;   // 公网 URL 直用
+          const hit = uploadCache.get(absOrUrl);
+          if (hit) return hit;
+          const u = await dashscopeUpload(base, qwenKey, absOrUrl, 'videoretalk');
+          uploadCache.set(absOrUrl, u);
+          return u;
         };
-        const v = await toRemote(body.videoUrl);
-        const a = await toRemote(body.audioUrl);
-        const resp = await fetch(`${base}/api/v1/services/aigc/image2video/video-synthesis`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${cfg.apiKey}`,
-            'X-DashScope-Async': 'enable',
-            ...((v.oss || a.oss) ? { 'X-DashScope-OssResourceResolve': 'enable' } : {}),
-          },
-          body: JSON.stringify({ model: 'videoretalk', input: { video_url: v.url, audio_url: a.url }, parameters: { video_extension: false } }),
-          signal: AbortSignal.timeout(120_000),
-        });
-        const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
-        const taskId = data?.output?.task_id;
-        if (!resp.ok || !taskId) {
-          return bad(res, 502, `口型替换任务提交失败(千问):${String(data?.message ?? data?.code ?? resp.status)}`);
+        const videoRemote = await remoteOf(videoAbs, body.videoUrl);
+        const audioList = audioSegs.length ? audioSegs : [aAbs];
+        const taskIds: string[] = [];
+        for (const seg of audioList) {
+          const audioRemote = await remoteOf(seg, body.audioUrl);
+          const resp = await fetch(`${base}/api/v1/services/aigc/image2video/video-synthesis`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${qwenKey}`,
+              'X-DashScope-Async': 'enable',
+              ...(videoAbs || seg ? { 'X-DashScope-OssResourceResolve': 'enable' } : {}),
+            },
+            body: JSON.stringify({ model: 'videoretalk', input: { video_url: videoRemote, audio_url: audioRemote }, parameters: { video_extension: extension } }),
+            signal: AbortSignal.timeout(120_000),
+          });
+          const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+          const taskId = data?.output?.task_id;
+          if (!resp.ok || !taskId) {
+            return bad(res, 502, `口型替换任务提交失败(千问):${String(data?.message ?? data?.code ?? resp.status)}`);
+          }
+          taskIds.push(String(taskId));
         }
         const jobId = randomUUID();
-        lipsyncJobs.set(jobId, { taskId: String(taskId), mode: 'video', provider: 'qwen' });
-        return res.json({ id: jobId, mode: 'video', provider: 'qwen' });
+        lipsyncJobs.set(jobId, { taskIds, mode: 'video', provider: 'qwen' });
+        return res.json({ id: jobId, mode: 'video', provider: 'qwen', segments: taskIds.length });
       }
       const ark = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine');
       if (!ark.apiKey) return bad(res, 422, '还没配置火山方舟 ARK API Key(providers.volcengine)。');
@@ -977,7 +1044,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         return bad(res, 502, `口型替换任务提交失败:${String(data?.error?.message ?? data?.message ?? resp.status)}`);
       }
       const jobId = randomUUID();
-      lipsyncJobs.set(jobId, { taskId: String(data.id), mode, provider: 'volc' });
+      lipsyncJobs.set(jobId, { taskIds: [String(data.id)], mode, provider: 'volc' });
       res.json({ id: jobId, mode, provider: 'volc' });
     } catch (err) {
       return bad(res, 500, `口型替换失败:${err instanceof Error ? err.message : String(err)}`);
@@ -987,31 +1054,70 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   app.get('/api/media-studio/make-video/lipsync/:id', async (req, res) => {
     const job = lipsyncJobs.get(req.params.id);
     if (!job) return bad(res, 404, 'lipsync job not found(应用重启会丢任务映射,请重新提交)');
+    // 成片落地:全部子任务完成后下载(多段先 concat 拼接)存 make-video 桶,
+    // 界面拿本地资产 URL 内嵌播放(远端 OSS 会过期)。
+    const finalize = async (remoteUrls: string[]): Promise<string> => {
+      if (job.localUrl) return job.localUrl;
+      const dir = assetsDirFor('make-video');
+      await mkdir(dir, { recursive: true });
+      const parts: string[] = [];
+      for (let i = 0; i < remoteUrls.length; i++) {
+        const r = await fetch(remoteUrls[i]!, { signal: AbortSignal.timeout(180_000) });
+        if (!r.ok) throw new Error(`成片下载失败 HTTP ${r.status}`);
+        const f = path.join(dir, `lip-part-${Date.now()}-${i}.mp4`);
+        await writeFile(f, Buffer.from(await r.arrayBuffer()));
+        parts.push(f);
+      }
+      let finalAbs = parts[0]!;
+      if (parts.length > 1) {
+        const eng = await resolveBakuanEngine(engCtx());
+        const listFile = path.join(dir, `concat-${Date.now()}.txt`);
+        await writeFile(listFile, parts.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
+        finalAbs = path.join(dir, `lipsync-${Date.now()}.mp4`);
+        await runFf('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', finalAbs], eng.env as NodeJS.ProcessEnv);
+      }
+      const url = `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(path.basename(finalAbs))}`;
+      job.localUrl = url;
+      return url;
+    };
     try {
       if (job.provider === 'qwen') {
         const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
         const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
-        const resp = await fetch(`${base}/api/v1/tasks/${encodeURIComponent(job.taskId)}`, {
-          headers: { Authorization: `Bearer ${cfg.apiKey}` }, signal: AbortSignal.timeout(30_000),
-        });
-        const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
-        const st = String(data?.output?.task_status ?? '');
-        if (st === 'SUCCEEDED') {
-          return res.json({ id: req.params.id, status: 'done', resultUrl: String(data?.output?.video_url ?? '') });
+        const states: Array<{ st: string; url?: string; msg?: string }> = [];
+        for (const tid of job.taskIds) {
+          const resp = await fetch(`${base}/api/v1/tasks/${encodeURIComponent(tid)}`, {
+            headers: { Authorization: `Bearer ${cfg.apiKey}` }, signal: AbortSignal.timeout(30_000),
+          });
+          const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
+          states.push({
+            st: String(data?.output?.task_status ?? ''),
+            url: String(data?.output?.video_url ?? ''),
+            msg: String(data?.output?.message ?? data?.output?.code ?? ''),
+          });
         }
-        if (st === 'FAILED' || st === 'CANCELED' || st === 'UNKNOWN') {
-          return res.json({ id: req.params.id, status: 'error', error: String(data?.output?.message ?? data?.output?.code ?? st) });
+        const failed = states.find((s) => s.st === 'FAILED' || s.st === 'CANCELED' || s.st === 'UNKNOWN');
+        if (failed) return res.json({ id: req.params.id, status: 'error', error: failed.msg || failed.st });
+        const doneCount = states.filter((s) => s.st === 'SUCCEEDED').length;
+        if (doneCount === states.length) {
+          if (job.assembling && !job.localUrl) return res.json({ id: req.params.id, status: 'running', progress: '拼接落地中…' });
+          job.assembling = true;
+          try {
+            const url = await finalize(states.map((s) => s.url!).filter(Boolean));
+            return res.json({ id: req.params.id, status: 'done', resultUrl: url });
+          } finally { job.assembling = false; }
         }
-        return res.json({ id: req.params.id, status: 'running' });
+        return res.json({ id: req.params.id, status: 'running', progress: `${doneCount}/${states.length} 段完成` });
       }
       const ark = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine');
-      const resp = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(job.taskId)}`, {
+      const resp = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${encodeURIComponent(job.taskIds[0]!)}`, {
         headers: { Authorization: `Bearer ${ark.apiKey}` }, signal: AbortSignal.timeout(30_000),
       });
       const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
       const st = String(data?.status ?? '');
       if (st === 'succeeded') {
-        return res.json({ id: req.params.id, status: 'done', resultUrl: String(data?.content?.video_url ?? '') });
+        const url = await finalize([String(data?.content?.video_url ?? '')]);
+        return res.json({ id: req.params.id, status: 'done', resultUrl: url });
       }
       if (st === 'failed' || st === 'expired') {
         return res.json({ id: req.params.id, status: 'error', error: String(data?.error?.message ?? st) });
