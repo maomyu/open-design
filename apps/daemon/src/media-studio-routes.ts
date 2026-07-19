@@ -919,7 +919,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const voiceId = data?.output?.voice_id;
       if (!resp.ok || !voiceId) {
         const msg = String(data?.message ?? data?.code ?? resp.status);
-        const hint = /too short/i.test(msg) ? '(样本太短——请录 10 秒以上的清晰人声)' : '';
+        const hint = /too short/i.test(msg) ? '(样本太短——请录 10 秒以上的清晰人声)'
+          : /silent audio/i.test(msg) ? '(没录到人声——离麦克风近一点,出声把提示文案念完再试)' : '';
         return bad(res, 502, `音色复刻失败:${msg}${hint}`);
       }
       // 复刻完立刻合成一段固定文案的试听样本(2026-07-19 用户拍板:复刻完一定要能听)。
