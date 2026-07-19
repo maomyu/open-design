@@ -99,7 +99,7 @@ export function MakeVideoView(): JSX.Element {
   const [vdBusy, setVdBusy] = useState(false);
   const [vdResult, setVdResult] = useState<{ audioUrl: string; voice?: string } | null>(null);
   // 复刻音色(2026-07-19 用户拍板):上传自己的声音→cosyvoice 复刻→存预设长期复用。
-  const [clonedVoices, setClonedVoices] = useState<Array<{ id: string; name: string; voice: string }>>([]);
+  const [clonedVoices, setClonedVoices] = useState<Array<{ id: string; name: string; voice: string; demoUrl?: string }>>([]);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneName, setCloneName] = useState('');
   const [cloneBusy, setCloneBusy] = useState(false);
@@ -108,10 +108,10 @@ export function MakeVideoView(): JSX.Element {
     try {
       const r = await fetch('/api/media-studio/voice-presets');
       if (!r.ok) return;
-      const d = (await r.json()) as { presets?: Array<{ id: string; name: string; provider: string; voice?: string }> };
+      const d = (await r.json()) as { presets?: Array<{ id: string; name: string; provider: string; voice?: string; demoUrl?: string }> };
       setClonedVoices((d.presets ?? [])
         .filter((p) => p.provider === 'qwen' && (p.voice ?? '').startsWith('cosyvoice-'))
-        .map((p) => ({ id: p.id, name: p.name, voice: p.voice! })));
+        .map((p) => ({ id: p.id, name: p.name, voice: p.voice!, ...(p.demoUrl ? { demoUrl: p.demoUrl } : {}) })));
     } catch { /* ignore */ }
   }, []);
   useEffect(() => { void refreshClonedVoices(); }, [refreshClonedVoices]);
@@ -130,10 +130,22 @@ export function MakeVideoView(): JSX.Element {
       if (!resp.ok || !d.voiceId) { studioToast.err(d.error || `复刻失败(${resp.status})`); return; }
       await refreshClonedVoices();
       setVdVoice(d.voiceId);
-      setCloneOpen(false);
-      studioToast.ok('音色复刻成功——已选中,写文案生成口播试听');
+      studioToast.ok('音色复刻成功——已选中,点下面的试听样本听效果');
     } finally {
       setCloneBusy(false);
+    }
+  }
+
+  async function deleteClonedVoice(v: { id: string; name: string; voice: string }) {
+    if (!window.confirm(`删除复刻音色「${v.name}」?删除后不可恢复`)) return;
+    try {
+      const resp = await fetch(`/api/media-studio/voice-presets/${encodeURIComponent(v.id)}`, { method: 'DELETE' });
+      if (!resp.ok) { studioToast.err(`删除失败(${resp.status})`); return; }
+      if (vdVoice === v.voice) setVdVoice('');
+      await refreshClonedVoices();
+      studioToast.ok('已删除');
+    } catch {
+      studioToast.err('删除失败');
     }
   }
 
@@ -369,6 +381,20 @@ export function MakeVideoView(): JSX.Element {
                         {cloneBusy ? '复刻中…(约半分钟)' : '⬆ 选择录音/视频并开始复刻'}
                       </button>
                     </div>
+                    {clonedVoices.length ? (
+                      <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {clonedVoices.map((v) => (
+                          <div key={v.id} className={c('row')} style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ minWidth: 150, fontWeight: vdVoice === v.voice ? 600 : 400 }}>🎤 {v.name}{vdVoice === v.voice ? ' ·已选中' : ''}</span>
+                            {v.demoUrl
+                              ? <audio src={v.demoUrl} controls preload="none" style={{ height: 32, flex: 1, minWidth: 220, maxWidth: 340 }} />
+                              : <span className={c('cardHint')}>(无试听样本)</span>}
+                            <button type="button" className={c('btn')} onClick={() => setVdVoice(v.voice)} disabled={vdVoice === v.voice}>选用</button>
+                            <button type="button" className={c('btn')} onClick={() => void deleteClonedVoice(v)}>🗑 删除</button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </>

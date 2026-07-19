@@ -840,8 +840,31 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   });
   app.delete('/api/media-studio/voice-presets/:id', async (req, res) => {
     const presets = await readVoicePresets();
+    const target = presets.find((p) => p.id === req.params.id);
     const next = presets.filter((p) => p.id !== req.params.id);
     await writeFile(voicePresetsPath, JSON.stringify(next, null, 2), 'utf8');
+    // 复刻音色顺带清远端注册与本地试听文件(best-effort:清理失败不影响本地删除)。
+    if (target && target.provider === 'qwen' && String(target.voice ?? '').startsWith('cosyvoice-')) {
+      void (async () => {
+        try {
+          const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
+          if (!cfg.apiKey) return;
+          const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+          await fetch(`${base}/api/v1/services/audio/tts/customization`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+            body: JSON.stringify({ model: 'voice-enrollment', input: { action: 'delete_voice', voice_id: String(target.voice) } }),
+            signal: AbortSignal.timeout(30_000),
+          });
+        } catch { /* ignore */ }
+      })();
+    }
+    if (target && typeof target.demoUrl === 'string') {
+      const demoAbs = localAssetAbs(target.demoUrl);
+      if (demoAbs) {
+        void import('node:fs/promises').then(({ unlink }) => unlink(demoAbs)).catch(() => {});
+      }
+    }
     res.json({ ok: true });
   });
 
@@ -896,13 +919,27 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         const hint = /too short/i.test(msg) ? '(样本太短——请录 10 秒以上的清晰人声)' : '';
         return bad(res, 502, `音色复刻失败:${msg}${hint}`);
       }
+      // 复刻完立刻合成一段固定文案的试听样本(2026-07-19 用户拍板:复刻完一定要能听)。
+      // 试听失败不阻断复刻——音色本身已注册成功,预设照存,只是没有 demoUrl。
+      let demoUrl: string | undefined;
+      try {
+        const buf = await cosyvoiceSynthesize({
+          baseUrl: base, apiKey: cfg.apiKey, voice: String(voiceId), timeoutMs: 60_000,
+          text: '你好,这是我刚复刻好的专属音色。往后的口播和配音,都可以用这个声音。',
+        });
+        const dir = assetsDirFor('make-video');
+        await mkdir(dir, { recursive: true });
+        const f = `clone-demo-${Date.now()}.mp3`;
+        await writeFile(path.join(dir, f), buf);
+        demoUrl = `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(f)}`;
+      } catch { /* 试听样本失败可接受 */ }
       // 复刻成功即存音色预设(后续口播/配音直接复用)。
       const name = String(body.name ?? '').trim() || '我的音色';
       const presets = await readVoicePresets();
-      const preset = { id: randomUUID(), name, provider: 'qwen', voice: String(voiceId), createdAt: Date.now() };
+      const preset = { id: randomUUID(), name, provider: 'qwen', voice: String(voiceId), ...(demoUrl ? { demoUrl } : {}), createdAt: Date.now() };
       presets.unshift(preset);
       await writeFile(voicePresetsPath, JSON.stringify(presets, null, 2), 'utf8');
-      res.json({ voiceId: String(voiceId), preset });
+      res.json({ voiceId: String(voiceId), preset, ...(demoUrl ? { demoUrl } : {}) });
     } catch (err) {
       return bad(res, 500, `音色复刻失败:${err instanceof Error ? err.message : String(err)}`);
     }

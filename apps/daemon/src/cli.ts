@@ -2355,7 +2355,7 @@ async function runStudio(args) {
   od studio topic-verify --url u · topic-comments --url u · account-rank [--type N] [--page N]
   od studio fetch --url "<原文链接>"                          # 抓原文转 markdown(素材)
   od studio voice-design --prompt "<音色描述>" --text "<试听文本>" [--provider qwen|volc] [--voice v] [--save 名字]  # 音色设计→试听
-  od studio voice-presets [--json]                            # 已存音色预设
+  od studio voice-presets [--delete <id>] [--json]            # 已存音色预设(--delete 删除,复刻音色连远端一并清)
   od studio lipsync --video <URL> --audio <URL>               # 口型替换(Seedance 2.0),轮询到出片
 
 【AI 任务】(与界面「AI 帮我…」同一引擎;跑完产物自动落库)
@@ -2574,10 +2574,15 @@ async function runStudio(args) {
     return out(data, `voice designed (${data?.provider})  试听: ${data?.audioUrl}${data?.speakerId ? `  speaker: ${data.speakerId}` : ''}`);
   }
   if (sub === 'voice-presets') {
+    if (typeof flags.delete === 'string' && flags.delete.trim()) {
+      const del = await fetch(`${root}/voice-presets/${encodeURIComponent(flags.delete.trim())}`, { method: 'DELETE' });
+      if (!del.ok) return fail(del, 'voice preset delete');
+      return out(await del.json(), `已删除音色预设 ${flags.delete.trim()}(复刻音色连远端注册与试听文件一并清理)`);
+    }
     const resp = await fetch(`${root}/voice-presets`);
     if (!resp.ok) return fail(resp, 'voice presets');
     const data = await resp.json();
-    const rows = (data?.presets ?? []).map((p) => `${p.id}  [${p.provider}] ${p.name}${p.speakerId ? `  ${p.speakerId}` : ''}`);
+    const rows = (data?.presets ?? []).map((p) => `${p.id}  [${p.provider}] ${p.name}${p.speakerId ? `  ${p.speakerId}` : ''}${p.demoUrl ? `  试听:${p.demoUrl}` : ''}`);
     return out(data, rows.join('\n') || '(还没有音色预设——od studio voice-design --save "名字" 保存)');
   }
   if (sub === 'lipsync') {
