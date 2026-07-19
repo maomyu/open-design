@@ -633,7 +633,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
             : /\.wav$/i.test(file) ? 'audio/wav'
               : /\.mp3$/i.test(file) ? 'audio/mpeg'
                 : /\.mp4$/i.test(file) ? 'video/mp4'
-                  : 'image/jpeg',
+                  : /\.webm$/i.test(file) ? 'audio/webm'
+                    : 'image/jpeg',
       );
       res.setHeader('Cache-Control', 'private, max-age=3600');
       res.setHeader('Accept-Ranges', 'bytes');
@@ -885,12 +886,14 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       // 按原样上传(不比放宽前多一条失败路径)。
       let sampleAbs = abs;
       const isVideoSample = abs ? /\.(mp4|mov|m4v)$/i.test(abs) : false;
+      // 界面实时录音产 webm/opus(MediaRecorder),enrollment 不认这个容器——必转 wav。
+      const isRecordedSample = abs ? /\.webm$/i.test(abs) : false;
       if (abs) {
         try {
           const eng = await resolveBakuanEngine(engCtx());
           const env = eng.env as NodeJS.ProcessEnv;
           const dur = await ffDuration(abs, env).catch(() => 0);
-          if (isVideoSample || dur > 46) {
+          if (isVideoSample || isRecordedSample || dur > 46) {
             const out = path.join(path.dirname(abs), `clone-sample-${Date.now()}.wav`);
             await runFf('ffmpeg', ['-y', '-i', abs, '-t', '45', '-vn', '-ac', '1', '-ar', '22050', out], env);
             const outDur = await ffDuration(out, env).catch(() => 0);
@@ -898,7 +901,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
             sampleAbs = out;
           }
         } catch (err) {
-          if (isVideoSample) return bad(res, 422, `视频样本处理失败(可能没有声音轨道):${err instanceof Error ? err.message.slice(0, 120) : String(err)}`);
+          if (isVideoSample || isRecordedSample) return bad(res, 422, `样本处理失败(可能没有声音轨道):${err instanceof Error ? err.message.slice(0, 120) : String(err)}`);
         }
       }
       const sampleUrl = sampleAbs ? await dashscopeUpload(base, cfg.apiKey, sampleAbs, 'voice-enrollment') : audioUrl;
@@ -962,8 +965,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       if (buf.length > 500 * 1024 * 1024) return bad(res, 413, '文件超过 500MB');
       const rawName = decodeURIComponent(String(req.headers['x-file-name'] ?? 'file'));
       const ext = (path.extname(rawName) || '.bin').toLowerCase();
-      if (!['.mp4', '.mov', '.mp3', '.wav', '.m4a'].includes(ext)) {
-        return bad(res, 400, '只支持 mp4/mov 视频或 mp3/wav/m4a 音频');
+      if (!['.mp4', '.mov', '.mp3', '.wav', '.m4a', '.webm'].includes(ext)) {
+        return bad(res, 400, '只支持 mp4/mov 视频或 mp3/wav/m4a/webm 音频');
       }
       const dir = assetsDirFor('make-video');
       await mkdir(dir, { recursive: true });

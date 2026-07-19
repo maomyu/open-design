@@ -104,6 +104,20 @@ export function MakeVideoView(): JSX.Element {
   const [cloneName, setCloneName] = useState('');
   const [cloneBusy, setCloneBusy] = useState(false);
   const cloneFileRef = useRef<HTMLInputElement | null>(null);
+  // 实时录音复刻(2026-07-20 用户拍板):界面直接录一段话当样本。MediaRecorder 产
+  // webm/opus,daemon 侧统一转 wav。10s 起步(千问 enrollment 下限),45s 自动停。
+  const [recState, setRecState] = useState<'idle' | 'recording'>('idle');
+  const [recSecs, setRecSecs] = useState(0);
+  const recRef = useRef<{ mr: MediaRecorder; stream: MediaStream; timer: number; startTs: number; cancelled: boolean } | null>(null);
+  useEffect(() => () => {
+    const r = recRef.current;
+    if (r) {
+      r.cancelled = true;
+      try { if (r.mr.state !== 'inactive') r.mr.stop(); } catch { /* ignore */ }
+      r.stream.getTracks().forEach((t) => t.stop());
+      window.clearInterval(r.timer);
+    }
+  }, []);
   const refreshClonedVoices = useCallback(async () => {
     try {
       const r = await fetch('/api/media-studio/voice-presets');
@@ -134,6 +148,50 @@ export function MakeVideoView(): JSX.Element {
     } finally {
       setCloneBusy(false);
     }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks: Blob[] = [];
+      const startTs = Date.now();
+      mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      mr.onstop = () => {
+        const r = recRef.current;
+        recRef.current = null;
+        if (r) window.clearInterval(r.timer);
+        stream.getTracks().forEach((t) => t.stop());
+        setRecState('idle');
+        if (r?.cancelled) return;
+        const secs = (Date.now() - startTs) / 1000;
+        const blob = new Blob(chunks, { type: mime || 'audio/webm' });
+        if (secs < 10 || blob.size < 10_000) { studioToast.err('录音不足 10 秒——重录一段,把提示文案念完正好'); return; }
+        void runVoiceClone(new File([blob], `现场录音-${Date.now()}.webm`, { type: blob.type }));
+      };
+      const timer = window.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTs) / 1000);
+        setRecSecs(elapsed);
+        if (elapsed >= 45) {
+          const r = recRef.current;
+          if (r && r.mr.state === 'recording') r.mr.stop();
+        }
+      }, 500);
+      recRef.current = { mr, stream, timer, startTs, cancelled: false };
+      setRecSecs(0);
+      setRecState('recording');
+      mr.start();
+    } catch {
+      studioToast.err('无法访问麦克风——请允许本应用使用麦克风(系统设置→隐私与安全性→麦克风)');
+    }
+  }
+
+  function stopRecording(cancelled: boolean) {
+    const r = recRef.current;
+    if (!r) return;
+    r.cancelled = cancelled;
+    try { if (r.mr.state !== 'inactive') r.mr.stop(); } catch { /* ignore */ }
   }
 
   async function deleteClonedVoice(v: { id: string; name: string; voice: string }) {
@@ -356,7 +414,7 @@ export function MakeVideoView(): JSX.Element {
                   <div className={c('card')} style={{ marginTop: 8, borderColor: '#e8582e' }}>
                     <div className={c('cardLabel')}>
                       复刻我的声音
-                      <span className={c('cardHint')}>上传一段自己的录音或视频(自动提取声音;10 秒以上、清晰无杂音,超长自动截取前 45 秒),约半分钟出专属音色;复刻后长期保存在音色列表</span>
+                      <span className={c('cardHint')}>直接录一段话,或上传录音/视频(自动提取声音;10 秒以上、清晰无杂音,超长自动截取前 45 秒),约半分钟出专属音色;复刻后长期保存在音色列表</span>
                     </div>
                     <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
                       <input
@@ -377,10 +435,30 @@ export function MakeVideoView(): JSX.Element {
                           if (f) void runVoiceClone(f);
                         }}
                       />
-                      <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={cloneBusy} onClick={() => cloneFileRef.current?.click()}>
-                        {cloneBusy ? '复刻中…(约半分钟)' : '⬆ 选择录音/视频并开始复刻'}
-                      </button>
+                      {recState === 'recording' ? (
+                        <>
+                          <span style={{ color: '#d64545', fontWeight: 600, whiteSpace: 'nowrap' }}>● 录音中 {recSecs}s / 45s</span>
+                          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => stopRecording(false)}>
+                            ■ 完成并复刻
+                          </button>
+                          <button type="button" className={c('btn')} onClick={() => stopRecording(true)}>取消</button>
+                        </>
+                      ) : (
+                        <>
+                          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={cloneBusy} onClick={() => void startRecording()}>
+                            {cloneBusy ? '复刻中…(约半分钟)' : '🎙 直接录音复刻'}
+                          </button>
+                          <button type="button" className={c('btn')} disabled={cloneBusy} onClick={() => cloneFileRef.current?.click()}>
+                            ⬆ 或选择录音/视频文件
+                          </button>
+                        </>
+                      )}
                     </div>
+                    {recState === 'recording' ? (
+                      <div style={{ marginTop: 10, padding: '10px 14px', background: 'rgba(216, 88, 46, 0.07)', borderRadius: 8, lineHeight: 1.9, fontSize: 14 }}>
+                        对着麦克风,用平常说话的语速念:「大家好,我正在录制自己的声音样本。今天状态不错,我打算用自己的声音来做口播视频。念这段话的时候,保持平时说话的节奏和音量,吐字清晰、自然、放松就好。这段话念完大约二十秒,复刻出来的音色就会很接近我本人了。」
+                      </div>
+                    ) : null}
                     {clonedVoices.length ? (
                       <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {clonedVoices.map((v) => (
