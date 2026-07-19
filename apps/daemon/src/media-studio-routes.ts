@@ -868,11 +868,12 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         // 真·原片改口型(火山 Seedance 拦真人且要 4-6 分钟)——默认通道。
         const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
         if (!cfg.apiKey) return bad(res, 422, '还没配置千问(百炼)API Key(providers.qwenBailian)');
+        const qwenKey = cfg.apiKey;
         const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
         const toRemote = async (u: string): Promise<{ url: string; oss: boolean }> => {
           const abs = localAssetAbs(u);
           if (!abs) return { url: u, oss: false };
-          return { url: await dashscopeUpload(base, cfg.apiKey, abs, 'videoretalk'), oss: true };
+          return { url: await dashscopeUpload(base, qwenKey, abs, 'videoretalk'), oss: true };
         };
         const v = await toRemote(body.videoUrl);
         const a = await toRemote(body.audioUrl);
