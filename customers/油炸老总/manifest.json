@@ -15,7 +15,8 @@
     "cap.ai",
     "cap.image",
     "cap.handoff",
-    "cap.publish"
+    "cap.publish",
+    "cap.interaction"
   ],
   "notes": "合同=AI自媒体营销机器人(桌面版):内容平台 小红书图文/知乎/微博/百度知道,能力=自动发布+关键词检索+自动评论回复+AI文案改写,企业知识库。百度知道待 W12(article.baidu-zhidao 建好后加进 features)。刻意不含:公众号(article.wechat-mp,不在合同)、全部短视频(sv.*)、配音(cap.tts)、制作视频(cap.video)。"
 }

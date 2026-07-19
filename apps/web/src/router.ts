@@ -22,6 +22,7 @@ export type EntryHomeView =
   | 'studio-note'
   | 'studio-zhihu'
   | 'studio-weibo'
+  | 'interaction'
   | 'knowledge'
   | 'design-systems'
   | 'integrations';
@@ -126,6 +127,9 @@ export function parseRoute(pathname: string): Route {
     if (parts[1] === 'weibo') return { kind: 'home', view: 'studio-weibo' };
     return { kind: 'home', view: 'studio' };
   }
+  if (parts[0] === 'interaction') {
+    return { kind: 'home', view: 'interaction' };
+  }
   // 公司知识库 — 全局一级入口,对所有创作台生效(2026-07-08 用户拍板)。
   if (parts[0] === 'knowledge') {
     return { kind: 'home', view: 'knowledge' };
@@ -185,6 +189,7 @@ export function buildPath(route: Route): string {
     if (route.view === 'studio-note') return '/studio/note';
     if (route.view === 'studio-zhihu') return '/studio/zhihu';
     if (route.view === 'studio-weibo') return '/studio/weibo';
+    if (route.view === 'interaction') return '/interaction';
     if (route.view === 'knowledge') return '/knowledge';
     if (route.view === 'design-systems') return '/design-systems';
     if (route.view === 'integrations') return '/integrations';

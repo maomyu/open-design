@@ -1,0 +1,206 @@
+// 互动运营（W8 的 UI 侧）：自动评论回复——维护关键词匹配规则 + 对一条笔记预览命中/一键真发。
+// 与 od studio auto-reply / rules 同源同端点(UI/CLI 双轨)。读评论→匹配→拟人回复,受风控台账门控。
+// 平台先支持小红书(注入器已就绪);知乎/微博的评论执行适配在 W9/W10。
+import { useCallback, useEffect, useState } from 'react';
+import type { InteractionRule, AutoReplyResponse, RuleMatchMode, InteractionAction } from '@open-design/contracts';
+import { Icon } from './Icon';
+import { fetchPlatformAccounts } from '../providers/daemon';
+import {
+  fetchInteractionRules,
+  addInteractionRule,
+  updateInteractionRuleReq,
+  removeInteractionRule,
+  runAutoReply,
+} from '../providers/media-studio';
+import { studioToast, StudioToastHost } from './media-studio/StudioFeedback';
+import styles from './media-studio/MediaStudio.module.css';
+
+const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
+
+const PLATFORM = 'xiaohongshu';
+
+export function InteractionView(): JSX.Element {
+  const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([]);
+  const [account, setAccount] = useState<string>('');
+  const [rules, setRules] = useState<InteractionRule[]>([]);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState<'' | 'preview' | 'live'>('');
+  const [result, setResult] = useState<AutoReplyResponse | null>(null);
+
+  // 新增规则表单。
+  const [rName, setRName] = useState('');
+  const [rKw, setRKw] = useState('');
+  const [rReply, setRReply] = useState('');
+  const [rMode, setRMode] = useState<RuleMatchMode>('contains');
+  const [rAction, setRAction] = useState<InteractionAction>('reply');
+  const [rPriority, setRPriority] = useState('0');
+
+  const refreshRules = useCallback(async () => {
+    setRules(await fetchInteractionRules(PLATFORM, account || null));
+  }, [account]);
+
+  useEffect(() => {
+    void fetchPlatformAccounts().then((resp) => {
+      const xhs = resp?.platforms.find((p) => p.id === PLATFORM);
+      const list = (xhs?.accounts ?? []).map((a) => ({ id: a.id, name: a.name }));
+      setAccounts(list);
+      if (list[0] && !account) setAccount(list[0].name);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => { void refreshRules(); }, [refreshRules]);
+
+  async function preview(): Promise<void> {
+    if (!note.trim()) { studioToast.err('先填一条笔记链接'); return; }
+    setBusy('preview'); setResult(null);
+    const r = await runAutoReply({ platform: PLATFORM, account: account || null, noteRef: note.trim(), dryRun: true });
+    setBusy('');
+    if ('error' in r) { studioToast.err(r.error); return; }
+    setResult(r);
+    if (r.needsLogin) studioToast.err('未登录:去「账号」页扫码登录小红书后重试');
+    else studioToast.ok(`读到 ${r.read} 条评论,命中 ${r.matched.length} 条规则(预览,未外发)`);
+  }
+
+  async function runLive(): Promise<void> {
+    if (!note.trim()) { studioToast.err('先填一条笔记链接'); return; }
+    const n = result?.matched.length ?? 0;
+    const ok = window.confirm(
+      `将真的在「${account || '默认账号'}」下,对这条笔记里命中规则的评论发出回复(最多 3 条,逐条过风控)。\n` +
+      `${n ? `当前预览命中 ${n} 条。` : ''}这是外发公开评论,确定继续?`,
+    );
+    if (!ok) return;
+    setBusy('live'); setResult(null);
+    const r = await runAutoReply({ platform: PLATFORM, account: account || null, noteRef: note.trim(), dryRun: false, maxReplies: 3 });
+    setBusy('');
+    if ('error' in r) { studioToast.err(r.error); return; }
+    setResult(r);
+    if (r.needsLogin) { studioToast.err('未登录:去「账号」页扫码登录小红书后重试'); return; }
+    const sent = r.dispatched.filter((d) => d.jobId).length;
+    const blocked = r.dispatched.filter((d) => d.blocked).length;
+    studioToast.ok(`已派发 ${sent} 条回复${blocked ? `;${blocked} 条被风控拦` : ''}(在下方浏览器标签看拟人回复)`);
+  }
+
+  async function addRule(): Promise<void> {
+    const keywords = rKw.split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
+    if (!rName.trim() || !keywords.length || !rReply.trim()) { studioToast.err('规则名/关键词/回复文案都要填'); return; }
+    const r = await addInteractionRule({
+      platform: PLATFORM, accountId: account || null, name: rName.trim(), keywords,
+      replyTemplate: rReply, matchMode: rMode, action: rAction, priority: Number(rPriority) || 0,
+    });
+    if ('error' in r) { studioToast.err(r.error); return; }
+    setRName(''); setRKw(''); setRReply('');
+    studioToast.ok('规则已加');
+    void refreshRules();
+  }
+
+  async function toggleRule(rule: InteractionRule): Promise<void> {
+    await updateInteractionRuleReq(rule.id, { enabled: !rule.enabled });
+    void refreshRules();
+  }
+  async function delRule(id: string): Promise<void> {
+    if (!window.confirm('删除这条规则?')) return;
+    await removeInteractionRule(id);
+    void refreshRules();
+  }
+
+  return (
+    <div className={c('root')}>
+      <StudioToastHost />
+      <div className={c('head')}>
+        <h1 className={c('title')}>互动运营 · 自动评论回复</h1>
+        <span className={c('cardHint')}>
+          维护关键词规则 → 对一条笔记读评论、命中规则的拟人回复。受风控台账门控(单账号单日上限/冷却/静默时段)。
+          目前支持小红书;知乎/微博陆续接入。
+        </span>
+        <div className={c('row')} style={{ marginTop: 8 }}>
+          <span className={c('cardHint')}>账号:</span>
+          <select className={c('select')} value={account} onChange={(e) => setAccount(e.target.value)}>
+            {accounts.length === 0 ? <option value="">(去「账号」页登录小红书)</option> : null}
+            {accounts.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* ── 自动回复:对一条笔记预览/真发 ── */}
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          🤖 自动回复一条笔记
+          <span className={c('cardHint')}>填你自己笔记的链接(有评论的),先「预览」看命中,再「真发」逐条拟人回复。</span>
+        </div>
+        <div className={c('row')}>
+          <input
+            className={`${c('input')} ${c('grow')}`}
+            value={note}
+            placeholder="粘贴小红书笔记链接(分享链接,带 xsec_token 的完整链接最稳)"
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <button type="button" className={c('btn')} disabled={busy !== ''} onClick={() => void preview()}>
+            {busy === 'preview' ? '读评论中…' : '预览命中'}
+          </button>
+          <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={busy !== ''} onClick={() => void runLive()}>
+            {busy === 'live' ? '发送中…' : '真发'}
+          </button>
+        </div>
+        {result ? (
+          result.needsLogin ? (
+            <div className={c('cardHint')} style={{ color: '#b0342c', marginTop: 6 }}>未登录:去「账号」页扫码登录小红书后重试。</div>
+          ) : (
+            <div style={{ marginTop: 8 }}>
+              <div className={c('cardHint')}>读到 {result.read} 条评论,命中 {result.matched.length} 条规则{result.dispatched.length ? `;已派发 ${result.dispatched.filter((d) => d.jobId).length} 条` : '(预览,未外发)'}</div>
+              {result.matched.map((m, i) => {
+                const d = result.dispatched.find((x) => x.commentId === m.commentId);
+                const tag = d ? (d.jobId ? '已发' : `拦:${d.blocked}`) : '预览';
+                return (
+                  <div key={m.commentId + i} className={c('cardHint')} style={{ marginTop: 4 }}>
+                    <b>[{tag}]</b> @{m.author}「{m.commentText.slice(0, 24)}」→ [{m.ruleName}] {m.reply}
+                  </div>
+                );
+              })}
+              {result.matched.length === 0 ? <div className={c('cardHint')} style={{ marginTop: 4 }}>没有评论命中规则——去下面加/调规则,或换条评论多的笔记。</div> : null}
+            </div>
+          )
+        ) : null}
+      </div>
+
+      {/* ── 匹配规则维护 ── */}
+      <div className={c('card')}>
+        <div className={c('cardLabel')}>
+          🎯 匹配规则
+          <span className={c('cardHint')}>评论命中关键词就按模板回复。占位符 {'{author}'}=评论者、{'{keyword}'}=命中的词。优先级高者先匹配。</span>
+        </div>
+        {rules.length === 0 ? <div className={c('cardHint')}>(还没有规则,下面加一条)</div> : null}
+        {rules.map((r) => (
+          <div key={r.id} className={c('row')} style={{ alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap' }}>
+            <button type="button" className={c('btn')} title={r.enabled ? '点击停用' : '点击启用'} onClick={() => void toggleRule(r)}>
+              {r.enabled ? '● 启用' : '○ 停用'}
+            </button>
+            <span style={{ fontSize: 13 }}><b>P{r.priority}</b> {r.name} · {r.matchMode}(<span style={{ opacity: 0.75 }}>{r.keywords.join(' / ')}</span>) → {r.replyTemplate} · {r.action}</span>
+            <button type="button" className={c('btn')} onClick={() => void delRule(r.id)}><Icon name="close" size={12} /> 删</button>
+          </div>
+        ))}
+        {/* 新增规则 */}
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--od-border, #e5ded4)' }}>
+          <div className={c('row')} style={{ flexWrap: 'wrap', gap: 8 }}>
+            <input className={c('input')} style={{ width: 130 }} value={rName} placeholder="规则名" onChange={(e) => setRName(e.target.value)} />
+            <input className={`${c('input')} ${c('grow')}`} value={rKw} placeholder="关键词(逗号分隔),例:价格,多少钱,链接" onChange={(e) => setRKw(e.target.value)} />
+            <select className={c('select')} value={rMode} onChange={(e) => setRMode(e.target.value as RuleMatchMode)}>
+              <option value="contains">含关键词</option>
+              <option value="exact">完全等于</option>
+              <option value="regex">正则</option>
+            </select>
+          </div>
+          <div className={c('row')} style={{ flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            <input className={`${c('input')} ${c('grow')}`} value={rReply} placeholder="回复文案,可含 {author}/{keyword},例:@{author} 私信你啦～" onChange={(e) => setRReply(e.target.value)} />
+            <select className={c('select')} value={rAction} onChange={(e) => setRAction(e.target.value as InteractionAction)}>
+              <option value="reply">一级评论</option>
+              <option value="sub-reply">楼中楼</option>
+            </select>
+            <input className={c('input')} style={{ width: 70 }} value={rPriority} placeholder="优先级" onChange={(e) => setRPriority(e.target.value.replace(/[^\d-]/g, ''))} />
+            <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void addRule()}>加规则</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

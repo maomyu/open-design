@@ -26,6 +26,7 @@ export type EntryView =
   | 'studio-note'
   | 'studio-zhihu'
   | 'studio-weibo'
+  | 'interaction'
   | 'knowledge'
   | 'design-systems'
   | 'integrations';
@@ -141,6 +142,18 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             testId="entry-nav-studio-note"
           >
             <Icon name="image" size={18} />
+          </NavButton>
+        ) : null}
+        {/* 互动运营(W8):自动评论回复——命中关键词规则→拟人回复,受风控台账门控。 */}
+        {hasFeature(license, 'cap.interaction') ? (
+          <NavButton
+            active={view === 'interaction'}
+            ariaLabel="互动"
+            label="互动"
+            onClick={() => onViewChange('interaction')}
+            testId="entry-nav-interaction"
+          >
+            <Icon name="comment" size={18} />
           </NavButton>
         ) : null}
         {/* 知识库是公司级资产(2026-07-08 用户拍板):一级入口,一处维护、

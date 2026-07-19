@@ -34,7 +34,8 @@ export type FeatureId =
   | 'cap.tts'
   | 'cap.video'
   | 'cap.handoff'
-  | 'cap.publish';
+  | 'cap.publish'
+  | 'cap.interaction';
 
 export const ALL_FEATURE_IDS: readonly FeatureId[] = [
   'article.wechat-mp',
@@ -55,6 +56,7 @@ export const ALL_FEATURE_IDS: readonly FeatureId[] = [
   'cap.video',
   'cap.handoff',
   'cap.publish',
+  'cap.interaction',
 ];
 
 export function isFeatureId(v: unknown): v is FeatureId {

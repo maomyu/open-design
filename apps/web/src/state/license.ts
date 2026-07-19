@@ -88,6 +88,8 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
       return anyShortVideoPlatform(license);
     case 'studio-note':
       return hasFeature(license, 'note.xiaohongshu');
+    case 'interaction':
+      return hasFeature(license, 'cap.interaction');
     case 'knowledge':
       return hasAnyKnowledgeFeature([...license.features]); // 个人库或企业库任一在授权内
 
@@ -100,7 +102,7 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
   }
 }
 
-const VIEW_FALLBACK_ORDER = ['studio-create', 'studio', 'studio-video', 'studio-note', 'knowledge', 'accounts', 'integrations'];
+const VIEW_FALLBACK_ORDER = ['studio-create', 'studio', 'studio-video', 'studio-note', 'interaction', 'knowledge', 'accounts', 'integrations'];
 
 /** 未授权视图(直链/旧标签)落到第一个已授权模块。 */
 export function licensedViewOrFallback<T extends string>(view: T, license: LicenseInfo): T {

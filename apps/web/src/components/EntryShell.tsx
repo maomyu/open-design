@@ -89,6 +89,7 @@ import { ArticleStudioShell } from './media-studio/ArticleStudioShell';
 import { ShortVideoStudioShell } from './media-studio/ShortVideoStudioShell';
 import { NoteStudioView } from './media-studio/NoteStudioView';
 import { StudioCreateView } from './media-studio/StudioCreateView';
+import { InteractionView } from './InteractionView';
 import { KnowledgeView } from './media-studio/KnowledgeView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
@@ -670,6 +671,7 @@ export function EntryShell({
             {view === 'studio-weibo' ? <ArticleStudioShell initial="weibo" /> : null}
             {view === 'studio-video' ? <ShortVideoStudioShell /> : null}
             {view === 'studio-note' ? <NoteStudioView /> : null}
+            {view === 'interaction' ? <InteractionView /> : null}
             {view === 'knowledge' ? <KnowledgeView /> : null}
             {view === 'design-systems' ? (
               designSystemsLoading ? (

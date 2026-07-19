@@ -1193,6 +1193,73 @@ export function completeInteractionJob(jobId: string, ok: boolean, detail: strin
   }).catch(() => undefined);
 }
 
+// ── 互动运营 UI:匹配规则 CRUD + 自动回复(预览/真发) ──
+type IRule = import('@open-design/contracts').InteractionRule;
+
+export async function fetchInteractionRules(platform: string, account?: string | null): Promise<IRule[]> {
+  try {
+    const q = new URLSearchParams({ platform });
+    if (account !== undefined) q.set('account', account ?? '');
+    const resp = await fetch(`${ROOT}/interaction-rules?${q}`);
+    if (!resp.ok) return [];
+    const d = (await resp.json()) as { items?: IRule[] };
+    return Array.isArray(d.items) ? d.items : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function addInteractionRule(
+  body: import('@open-design/contracts').CreateInteractionRuleRequest,
+): Promise<IRule | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/interaction-rules`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, '加规则失败') };
+    return ((await resp.json()) as { rule: IRule }).rule;
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+export async function updateInteractionRuleReq(
+  id: string, patch: import('@open-design/contracts').UpdateInteractionRuleRequest,
+): Promise<IRule | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/interaction-rules/${encodeURIComponent(id)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, '改规则失败') };
+    return ((await resp.json()) as { rule: IRule }).rule;
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+export async function removeInteractionRule(id: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ROOT}/interaction-rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function runAutoReply(
+  body: import('@open-design/contracts').AutoReplyRequest,
+): Promise<import('@open-design/contracts').AutoReplyResponse | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/auto-reply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, '自动回复失败') };
+    return (await resp.json()) as import('@open-design/contracts').AutoReplyResponse;
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
 // ── 统一创作台「去创作」自动带入原素材（原文/原图/原视频直链）──
 // daemon /fetch-source 未接入时优雅降级(返回 error,创作台照常创作,不自动拉取)。
 export async function fetchSourceMaterial(url: string): Promise<{ text: string; images: string[]; title: string; mediaUrl: string; referer: string } | { error: string }> {
