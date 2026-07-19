@@ -239,6 +239,66 @@ function cleanUserAgent(): string {
     .join(" ");
 }
 
+/** UA 字符串里的 Chrome 大版本号(sec-ch-ua 品牌版本要与之自洽)。 */
+function chromeMajorVersion(): string {
+  return /Chrome\/(\d+)/.exec(app.userAgentFallback)?.[1] ?? "146";
+}
+
+// Electron 内嵌 Chromium 的 Client Hints(sec-ch-ua / navigator.userAgentData.brands)
+// 只报 "Chromium",缺真 Chrome 必有的 "Google Chrome" 品牌。UA 字符串写着 Chrome/<v> 但
+// Client Hints 对不上 → 微信视频号助手等据此识破内置浏览器,扫码后返回「没有可登录的视频号」
+// (2026-07-20 真机排查:UA 已清干净仍登不上,userAgentData.brands 只有 Chromium)。这里在
+// 网络层给 sec-ch-ua 系列请求头补齐 Google Chrome 品牌(服务端判定看这个,是主战场)。
+const clientHintsPatchedSessions = new WeakSet<Electron.Session>();
+function patchClientHintsHeaders(sess: Electron.Session): void {
+  if (clientHintsPatchedSessions.has(sess)) return;
+  clientHintsPatchedSessions.add(sess);
+  const major = chromeMajorVersion();
+  sess.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = details.requestHeaders;
+    for (const key of Object.keys(headers)) {
+      const lower = key.toLowerCase();
+      if (lower !== "sec-ch-ua" && lower !== "sec-ch-ua-full-version-list") continue;
+      const val = headers[key];
+      if (typeof val !== "string" || !/Chromium/.test(val) || /Google Chrome/.test(val)) continue;
+      // full-version-list 用完整版本号(复制 Chromium 段的),sec-ch-ua 用大版本号。
+      const ver =
+        lower === "sec-ch-ua-full-version-list"
+          ? /"Chromium";\s*v="([\d.]+)"/.exec(val)?.[1] ?? `${major}.0.0.0`
+          : major;
+      headers[key] = `${val}, "Google Chrome";v="${ver}"`;
+    }
+    callback({ requestHeaders: headers });
+  });
+}
+
+/** 注入页面上下文,把 navigator.userAgentData 也补上 Google Chrome 品牌(防页面 JS 二次
+ *  指纹;网络层已兜住服务端判定,这里是二道防线)。 */
+const CLIENT_HINTS_JS_PATCH = `(() => { try {
+  const uad = navigator.userAgentData;
+  if (!uad || uad.brands.some((b) => b.brand === 'Google Chrome')) return;
+  const major = (navigator.userAgent.match(/Chrome\\/(\\d+)/) || [])[1] || '146';
+  const full = (navigator.userAgent.match(/Chrome\\/([\\d.]+)/) || [])[1] || (major + '.0.0.0');
+  const brands = uad.brands.concat([{ brand: 'Google Chrome', version: major }]);
+  const fullList = [
+    { brand: 'Not-A.Brand', version: '24.0.0.0' },
+    { brand: 'Chromium', version: full },
+    { brand: 'Google Chrome', version: full },
+  ];
+  const patched = Object.create(Object.getPrototypeOf(uad));
+  Object.defineProperties(patched, {
+    brands: { get: () => brands, enumerable: true },
+    mobile: { get: () => uad.mobile, enumerable: true },
+    platform: { get: () => uad.platform, enumerable: true },
+    getHighEntropyValues: {
+      value: (hints) => uad.getHighEntropyValues(hints).then((v) => Object.assign({}, v, { brands, fullVersionList: fullList })),
+      enumerable: true,
+    },
+    toJSON: { value: () => ({ brands, mobile: uad.mobile, platform: uad.platform }), enumerable: true },
+  });
+  Object.defineProperty(navigator, 'userAgentData', { get: () => patched, configurable: true });
+} catch (e) { /* 不影响页面 */ } })();`;
+
 type ParsedOpenRequest = {
   partition: string;
   profileKey: string;
@@ -499,6 +559,14 @@ export function hardenWebviewEmbeddedBrowser(window: BrowserWindow): void {
     // 拒绝渲染登录二维码、只给"浏览器不支持"占位图),只清 session 不够。
     contents.session.setUserAgent(cleanUserAgent());
     contents.setUserAgent(cleanUserAgent());
+    // Client Hints 补齐 Google Chrome 品牌(见 patchClientHintsHeaders 注释):网络层改
+    // sec-ch-ua 请求头(服务端判定),JS 层在每次导航开始时注入覆盖 navigator.userAgentData。
+    patchClientHintsHeaders(contents.session);
+    const injectClientHints = (): void => {
+      contents.executeJavaScript(CLIENT_HINTS_JS_PATCH, true).catch(() => {});
+    };
+    contents.on("did-start-navigation", injectClientHints);
+    contents.on("dom-ready", injectClientHints);
     contents.setWindowOpenHandler(({ url: childUrl }) => {
       if (!isHttpUrl(childUrl)) return { action: "deny" };
       // 子窗不指定 partition 时继承 opener 会话——登录弹窗落同一档案。
