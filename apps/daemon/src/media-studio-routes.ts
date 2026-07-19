@@ -1103,7 +1103,27 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
 
   // ---- 成片库(2026-07-19):持久任务列表/删除 ----
   app.get('/api/media-studio/make-video/jobs', async (_req, res) => {
-    res.json({ jobs: await readLipJobs() });
+    const jobs = await readLipJobs();
+    // 回填:jobs.json 之前不存在时,把桶里已有的成片(lip-part/lipsync mp4)补录为
+    // 历史记录——老成片不丢(2026-07-19 用户拍板「制作的视频需要留存」)。
+    const known = new Set(jobs.map((j) => j.localUrl));
+    let changed = false;
+    try {
+      const dir = assetsDirFor('make-video');
+      for (const f of await readdir(dir)) {
+        if (!/^(lip-part-|lipsync-).*\.mp4$/.test(f)) continue;
+        const url = `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(f)}`;
+        if (known.has(url)) continue;
+        const st = await stat(path.join(dir, f));
+        jobs.push({ id: randomUUID(), taskIds: [], mode: 'video', provider: 'qwen', status: 'done', localUrl: url, createdAt: Math.round(st.mtimeMs), audioName: '历史成片' });
+        changed = true;
+      }
+    } catch { /* 桶不存在=无历史 */ }
+    if (changed) {
+      jobs.sort((a, b) => b.createdAt - a.createdAt);
+      await writeLipJobs(jobs);
+    }
+    res.json({ jobs });
   });
   app.delete('/api/media-studio/make-video/jobs/:id', async (req, res) => {
     const jobs = await readLipJobs();
@@ -1146,6 +1166,10 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         await writeFile(listFile, parts.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
         finalAbs = path.join(dir, `lipsync-${Date.now()}.mp4`);
         await runFf('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', finalAbs], eng.env as NodeJS.ProcessEnv);
+        // 清中间分段与清单(防止被成片库回填误录为独立成片)。
+        const { unlink } = await import('node:fs/promises');
+        for (const p of parts) { try { await unlink(p); } catch { /* ignore */ } }
+        try { await unlink(listFile); } catch { /* ignore */ }
       }
       const url = `${STUDIO_ASSET_URL_PREFIX}make-video/${encodeURIComponent(path.basename(finalAbs))}`;
       await patchLipJob(job.id, { status: 'done', localUrl: url });
