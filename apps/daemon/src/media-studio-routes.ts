@@ -857,7 +857,28 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       if (!cfg.apiKey) return bad(res, 422, '千问(百炼)API Key 未配置(providers.qwenBailian)');
       const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
       const abs = localAssetAbs(audioUrl);
-      const sampleUrl = abs ? await dashscopeUpload(base, cfg.apiKey, abs, 'voice-enrollment') : audioUrl;
+      // 样本预处理(2026-07-19 用户拍板):视频文件自动提取音轨;超长自动截前 45s;
+      // 统一规格化为单声道 22.05k wav。视频提取失败要报清楚;纯音频在 ffmpeg 不可用时
+      // 按原样上传(不比放宽前多一条失败路径)。
+      let sampleAbs = abs;
+      const isVideoSample = abs ? /\.(mp4|mov|m4v)$/i.test(abs) : false;
+      if (abs) {
+        try {
+          const eng = await resolveBakuanEngine(engCtx());
+          const env = eng.env as NodeJS.ProcessEnv;
+          const dur = await ffDuration(abs, env).catch(() => 0);
+          if (isVideoSample || dur > 46) {
+            const out = path.join(path.dirname(abs), `clone-sample-${Date.now()}.wav`);
+            await runFf('ffmpeg', ['-y', '-i', abs, '-t', '45', '-vn', '-ac', '1', '-ar', '22050', out], env);
+            const outDur = await ffDuration(out, env).catch(() => 0);
+            if (outDur < 3) return bad(res, 422, '样本里几乎没有声音(视频可能无音轨/静音)——换一段有清晰人声的录音或视频');
+            sampleAbs = out;
+          }
+        } catch (err) {
+          if (isVideoSample) return bad(res, 422, `视频样本处理失败(可能没有声音轨道):${err instanceof Error ? err.message.slice(0, 120) : String(err)}`);
+        }
+      }
+      const sampleUrl = sampleAbs ? await dashscopeUpload(base, cfg.apiKey, sampleAbs, 'voice-enrollment') : audioUrl;
       const resp = await fetch(`${base}/api/v1/services/audio/tts/customization`, {
         method: 'POST',
         headers: {

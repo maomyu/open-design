@@ -104,7 +104,7 @@ importers:
         specifier: 7.25.0
         version: 7.25.0
       ws:
-        specifier: ^8.21.1
+        specifier: 8.21.1
         version: 8.21.1
     devDependencies:
       '@types/better-sqlite3':
@@ -120,7 +120,7 @@ importers:
         specifier: 20.19.39
         version: 20.19.39
       '@types/ws':
-        specifier: ^8.18.1
+        specifier: 8.18.1
         version: 8.18.1
       esbuild:
         specifier: 0.28.0

@@ -344,7 +344,7 @@ export function MakeVideoView(): JSX.Element {
                   <div className={c('card')} style={{ marginTop: 8, borderColor: '#e8582e' }}>
                     <div className={c('cardLabel')}>
                       复刻我的声音
-                      <span className={c('cardHint')}>上传一段自己的录音(10 秒以上、清晰无杂音,正常语速说话),约半分钟出专属音色;复刻后长期保存在音色列表</span>
+                      <span className={c('cardHint')}>上传一段自己的录音或视频(自动提取声音;10 秒以上、清晰无杂音,超长自动截取前 45 秒),约半分钟出专属音色;复刻后长期保存在音色列表</span>
                     </div>
                     <div className={c('row')} style={{ gap: 8, alignItems: 'center' }}>
                       <input
@@ -357,7 +357,7 @@ export function MakeVideoView(): JSX.Element {
                       <input
                         ref={cloneFileRef}
                         type="file"
-                        accept="audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a"
+                        accept="audio/mpeg,audio/wav,audio/mp4,video/mp4,video/quicktime,.mp3,.wav,.m4a,.mp4,.mov"
                         style={{ display: 'none' }}
                         onChange={(e) => {
                           const f = e.target.files?.[0];
@@ -366,7 +366,7 @@ export function MakeVideoView(): JSX.Element {
                         }}
                       />
                       <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={cloneBusy} onClick={() => cloneFileRef.current?.click()}>
-                        {cloneBusy ? '复刻中…(约半分钟)' : '⬆ 选择录音并开始复刻'}
+                        {cloneBusy ? '复刻中…(约半分钟)' : '⬆ 选择录音/视频并开始复刻'}
                       </button>
                     </div>
                   </div>
