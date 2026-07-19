@@ -150,40 +150,51 @@ export function MakeVideoView(): JSX.Element {
     }
   }
 
+  // 会话自持不变量(2026-07-20 修「点录音立刻自动停」):计时器/停止只通过闭包作用
+  // 于本会话的 recorder,绝不经 recRef 碰别的会话;否则重复触发(如首次授权弹窗挂起时
+  // 连点两次)会泄漏一个永生 interval,其 45s 到点后每 500ms 杀掉当前任意新录音。
+  const recPendingRef = useRef(false);
   async function startRecording() {
+    if (recPendingRef.current || recRef.current) return;
+    recPendingRef.current = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (recRef.current) { stream.getTracks().forEach((t) => t.stop()); return; }
       const mime = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       const chunks: Blob[] = [];
       const startTs = Date.now();
+      let timerId = 0;
       mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      mr.onerror = () => { try { if (mr.state !== 'inactive') mr.stop(); } catch { /* ignore */ } };
       mr.onstop = () => {
-        const r = recRef.current;
-        recRef.current = null;
-        if (r) window.clearInterval(r.timer);
+        window.clearInterval(timerId);
         stream.getTracks().forEach((t) => t.stop());
-        setRecState('idle');
-        if (r?.cancelled) return;
+        const r = recRef.current;
+        const isCurrent = r?.mr === mr;
+        if (isCurrent) { recRef.current = null; setRecState('idle'); }
+        if (!isCurrent || r?.cancelled) return;
         const secs = (Date.now() - startTs) / 1000;
         const blob = new Blob(chunks, { type: mime || 'audio/webm' });
         if (secs < 10 || blob.size < 10_000) { studioToast.err('录音不足 10 秒——重录一段,把提示文案念完正好'); return; }
         void runVoiceClone(new File([blob], `现场录音-${Date.now()}.webm`, { type: blob.type }));
       };
-      const timer = window.setInterval(() => {
+      timerId = window.setInterval(() => {
         const elapsed = Math.floor((Date.now() - startTs) / 1000);
-        setRecSecs(elapsed);
+        if (recRef.current?.mr === mr) setRecSecs(elapsed);
         if (elapsed >= 45) {
-          const r = recRef.current;
-          if (r && r.mr.state === 'recording') r.mr.stop();
+          window.clearInterval(timerId);
+          try { if (mr.state === 'recording') mr.stop(); } catch { /* ignore */ }
         }
       }, 500);
-      recRef.current = { mr, stream, timer, startTs, cancelled: false };
+      recRef.current = { mr, stream, timer: timerId, startTs, cancelled: false };
       setRecSecs(0);
       setRecState('recording');
       mr.start();
     } catch {
       studioToast.err('无法访问麦克风——请允许本应用使用麦克风(系统设置→隐私与安全性→麦克风)');
+    } finally {
+      recPendingRef.current = false;
     }
   }
 
