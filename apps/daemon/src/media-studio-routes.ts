@@ -14,7 +14,8 @@
 //   GET/POST/PATCH/DELETE   /api/media-studio/:platform/topics[/:id]
 //   GET/POST/DELETE         /api/media-studio/:platform/snippets[/:id]
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { resolveBakuanEngine } from './media-studio/bakuan-engine.js';
 import path from 'node:path';
@@ -617,22 +618,44 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     if (file.includes('..') || file.includes(path.sep) || file.startsWith('.')) {
       return bad(res, 400, 'bad file name');
     }
-    // sendFile 而非 readFile+send(2026-07-19 用户报「成片在界面播不了」根因):
-    // HTML5 <video> 按 Range 分段拉流(期待 206),整包 200 在 Electron 下直接拒播;
-    // express sendFile 原生支持 Range/Accept-Ranges 且流式传输(大视频不占内存)。
-    res.setHeader(
-      'Content-Type',
-      /\.png$/i.test(file) ? 'image/png'
-        : /\.webp$/i.test(file) ? 'image/webp'
-          : /\.wav$/i.test(file) ? 'audio/wav'
-            : /\.mp3$/i.test(file) ? 'audio/mpeg'
-              : /\.mp4$/i.test(file) ? 'video/mp4'
-                : 'image/jpeg',
-    );
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    res.sendFile(path.join(dir, file), (err) => {
-      if (err && !res.headersSent) bad(res, 404, 'asset not found');
-    });
+    // 手写 Range 流(2026-07-19 用户报「成片在界面播不了」):HTML5 <video> 需要
+    // 206 分段响应,原 readFile+send 整包 200 被 Electron 拒播;而 express5 的
+    // res.sendFile 对含中文的绝对路径报 Not Found(encodeURI 往返坑,本机实锤)——
+    // 直接 fs stat+createReadStream 实现 Range,无库怪癖、大文件流式不占内存。
+    try {
+      const abs = path.join(dir, file);
+      const st = await stat(abs);
+      res.setHeader(
+        'Content-Type',
+        /\.png$/i.test(file) ? 'image/png'
+          : /\.webp$/i.test(file) ? 'image/webp'
+            : /\.wav$/i.test(file) ? 'audio/wav'
+              : /\.mp3$/i.test(file) ? 'audio/mpeg'
+                : /\.mp4$/i.test(file) ? 'video/mp4'
+                  : 'image/jpeg',
+      );
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('Accept-Ranges', 'bytes');
+      const range = String(req.headers.range ?? '');
+      const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (m && (m[1] || m[2])) {
+        let start = m[1] ? parseInt(m[1], 10) : Math.max(0, st.size - parseInt(m[2]!, 10));
+        let end = m[1] && m[2] ? Math.min(parseInt(m[2], 10), st.size - 1) : st.size - 1;
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= st.size) {
+          res.status(416).setHeader('Content-Range', `bytes */${st.size}`);
+          return res.end();
+        }
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${st.size}`);
+        res.setHeader('Content-Length', String(end - start + 1));
+        createReadStream(abs, { start, end }).pipe(res);
+        return;
+      }
+      res.setHeader('Content-Length', String(st.size));
+      createReadStream(abs).pipe(res);
+    } catch {
+      bad(res, 404, 'asset not found');
+    }
   });
 
   // ---- 版本历史（AI 覆盖前自动快照,可回退） ----
