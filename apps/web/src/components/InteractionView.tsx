@@ -13,6 +13,7 @@ import {
   runAutoReply,
 } from '../providers/media-studio';
 import { studioToast, StudioToastHost } from './media-studio/StudioFeedback';
+import { MonitorBoard } from './media-studio/MonitorBoard';
 import styles from './media-studio/MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -121,6 +122,9 @@ export function InteractionView(): JSX.Element {
           </select>
         </div>
       </div>
+
+      {/* ── 状态监控面板(W7):多账号健康看板,置顶一眼看清各号能不能发、发了多少 ── */}
+      <MonitorBoard />
 
       {/* ── 自动回复:对一条笔记预览/真发 ── */}
       <div className={c('card')}>

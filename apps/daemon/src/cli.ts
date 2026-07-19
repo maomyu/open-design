@@ -2400,7 +2400,10 @@ async function runStudio(args) {
   od studio login-check --account <名> [--platform xiaohongshu]              # 发起探测,等回登录/失效
   od studio login-status [--platform xiaohongshu] [--json]                    # 各账号最近登录态一览
   od studio alerts [--all] [--json]                                          # 登录失效告警(--all 含已消隐)
-  od studio alert-dismiss <alertId>                                          # 消隐一条告警`);
+  od studio alert-dismiss <alertId>                                          # 消隐一条告警
+
+【状态监控面板】(登录态 + 今日风控名额 + 今日互动战果,按平台分组)
+  od studio monitor [--platform xiaohongshu] [--json]                        # 多账号运营健康看板`);
     return;
   }
   const platform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'wechat-mp';
@@ -3278,6 +3281,24 @@ async function runStudio(args) {
     const resp = await fetch(`${root}/alerts/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
     if (!resp.ok) return fail(resp, 'alert-dismiss');
     console.log('已消隐');
+    return;
+  }
+
+  // ── 状态监控面板(W7):登录态 + 今日名额 + 今日战果,按平台分组 ──
+  if (sub === 'monitor') {
+    const q = typeof flags.platform === 'string' && flags.platform ? `?platform=${encodeURIComponent(platform)}` : '';
+    const resp = await fetch(`${root}/monitor${q}`);
+    if (!resp.ok) return fail(resp, 'monitor');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    if (!data.items.length) { console.log('(没有扫码登录账号——先在账号页添加并登录)'); return; }
+    let curP = '';
+    for (const it of data.items) {
+      if (it.platform !== curP) { curP = it.platform; console.log(`\n【${curP}】`); }
+      const login = it.login ? (it.login.state === 'logged-in' ? '● 已登录' : it.login.state === 'logged-out' ? '⚠ 已失效' : '○ 未定') : '○ 未检测';
+      const quota = `名额 ${it.quota.usedToday}/${it.quota.dailyCap}${it.quota.allowed ? '' : `(${it.quota.reason ?? '受限'})`}`;
+      console.log(`  ${login}  ${it.account}  ·  ${quota}  ·  今日 发${it.today.sent}/拦${it.today.blocked}/败${it.today.failed}`);
+    }
     return;
   }
 

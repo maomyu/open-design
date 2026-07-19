@@ -788,6 +788,38 @@ export interface MediaAlertListResponse {
   items: MediaAlert[];
 }
 
+// ── 状态监控面板(W7):每个账号一行——登录态 + 今日风控名额 + 今日互动战果 ──
+export interface MonitorQuota {
+  usedToday: number;
+  dailyCap: number;
+  /** 当前是否还能发(名额未满 + 不在冷却/静默)。 */
+  allowed: boolean;
+  /** 不允许时的原因(daily-cap / cooldown / quiet-hours)。 */
+  reason?: string;
+  /** 冷却拦截时还需等待的毫秒数。 */
+  retryAfterMs?: number;
+}
+export interface MonitorTodayCounts {
+  /** 今日成功外发(评论/楼中楼/私信)。 */
+  sent: number;
+  /** 今日被风控台账拦下。 */
+  blocked: number;
+  /** 今日执行失败(如找不到评论框/未登录)。 */
+  failed: number;
+}
+export interface MonitorAccount {
+  platform: MediaStudioPlatform;
+  account: string;
+  login: LoginStatusRecord | null;
+  quota: MonitorQuota;
+  today: MonitorTodayCounts;
+}
+export interface MonitorResponse {
+  items: MonitorAccount[];
+  /** 「今日」划天基准(UTC+8 当日 0 点的毫秒时间戳)——前端据此显示口径。 */
+  dayStartMs: number;
+}
+
 /** web 执行完回写终态（ok=false 时 detail 带失败原因，如「未登录」「找不到评论框」）。 */
 export interface StudioInteractionResultRequest {
   ok: boolean;

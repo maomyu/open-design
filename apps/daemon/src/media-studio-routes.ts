@@ -33,6 +33,7 @@ import type {
   UpdateMediaArticleRequest,
   UpdateMediaTopicRequest,
 } from '@open-design/contracts';
+import { MEDIA_PLATFORMS } from '@open-design/contracts';
 import type { PathDeps, RouteDeps } from './server-context.js';
 import { readAppConfig, platformAccountsForPlatform } from './app-config.js';
 import { resolveProviderConfig } from './media-config.js';
@@ -72,6 +73,8 @@ import type {
   CreateStudioInteractionRequest,
   CreateStudioCommentReadRequest,
   InteractionAction,
+  MonitorAccount,
+  MonitorResponse,
   StudioCollectPlatform,
   StudioCollectResultRequest,
   StudioCommentReadResultRequest,
@@ -113,6 +116,7 @@ import {
   deleteInteractionRule,
   setLoginStatus,
   listLoginStatus,
+  getLoginStatus,
   createAlert,
   listAlerts,
   dismissAlert,
@@ -1262,6 +1266,43 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   });
   app.post('/api/media-studio/alerts/:id/dismiss', (req, res) => {
     res.json({ ok: dismissAlert(db, req.params.id) });
+  });
+
+  // ── 状态监控面板(W7):每个扫码登录账号一行——登录态 + 今日风控名额 + 今日互动战果 ──
+  // 把 W1(风控台账)+W6(登录保活)+互动审计汇成一张运营健康看板;按平台分组。CLI/UI 双轨同源。
+  app.get('/api/media-studio/monitor', async (req, res) => {
+    try {
+      const policy = interactionPolicy();
+      const tz = policy.tzOffsetMinutes ?? 480; // 划天用 UTC+8
+      const now = Date.now();
+      const dayStartMs = Math.floor((now + tz * 60_000) / 86_400_000) * 86_400_000 - tz * 60_000;
+      const prefs = await readAppConfig(paths.RUNTIME_DATA_DIR);
+      const wantPlatform = typeof req.query.platform === 'string' && req.query.platform ? String(req.query.platform) : null;
+      // 只看扫码登录类平台(公众号是 API 凭证,不涉及登录保活/互动名额)。
+      const platforms = MEDIA_PLATFORMS.filter((p) => p.kind === 'sau-login' && (!wantPlatform || p.id === wantPlatform));
+      const items: MonitorAccount[] = [];
+      for (const p of platforms) {
+        for (const a of platformAccountsForPlatform(prefs, p.id)) {
+          const account = a.name; // 全链路以账号名为键(webview 分区/名额/登录态一致)
+          const q = peekInteractionQuota(db, p.id, account, policy);
+          const audit = listInteractions(db, { platform: p.id, accountId: account, limit: 500 }).filter((r) => r.createdAt >= dayStartMs);
+          items.push({
+            platform: p.id,
+            account,
+            login: getLoginStatus(db, p.id, account),
+            quota: { usedToday: q.usedToday, dailyCap: q.dailyCap, allowed: q.allowed, ...(q.reason ? { reason: q.reason } : {}), ...(q.retryAfterMs ? { retryAfterMs: q.retryAfterMs } : {}) },
+            today: {
+              sent: audit.filter((r) => r.status === 'done').length,
+              blocked: audit.filter((r) => r.status === 'blocked').length,
+              failed: audit.filter((r) => r.status === 'error').length,
+            },
+          });
+        }
+      }
+      res.json({ items, dayStartMs } satisfies MonitorResponse);
+    } catch (err) {
+      bad(res, 500, err instanceof Error ? err.message : String(err));
+    }
   });
 
   // 心跳保活:每 15 分钟对【已检测过的账号】重新校验一次(仅桌面在线时)。首检由账号页手动触发种下,

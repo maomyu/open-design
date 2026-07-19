@@ -1272,6 +1272,18 @@ export async function dismissMediaAlert(id: string): Promise<boolean> {
   }
 }
 
+// ── 状态监控面板(W7):多账号健康看板(登录态 + 今日名额 + 今日战果)──
+export async function fetchMonitor(platform?: string): Promise<import('@open-design/contracts').MonitorResponse> {
+  try {
+    const q = platform ? `?platform=${encodeURIComponent(platform)}` : '';
+    const resp = await fetch(`${ROOT}/monitor${q}`);
+    if (!resp.ok) return { items: [], dayStartMs: 0 };
+    return (await resp.json()) as import('@open-design/contracts').MonitorResponse;
+  } catch {
+    return { items: [], dayStartMs: 0 };
+  }
+}
+
 // ── 互动运营 UI:匹配规则 CRUD + 自动回复(预览/真发) ──
 type IRule = import('@open-design/contracts').InteractionRule;
 
