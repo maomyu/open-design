@@ -701,18 +701,24 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const provider = body.provider === 'volc' ? 'volc' : 'qwen';
     const prompt = String(body.prompt ?? '').trim();
     const text = String(body.text ?? '').trim();
-    if (!prompt) return bad(res, 400, '缺少音色描述(prompt)');
-    if (!text) return bad(res, 400, '缺少试听文本(text)');
+    // 描述只有火山 voice_design 必填(它靠提示词设计音色);千问通道可选——
+    // 不填=基底音色原声直出(qwen3-tts-flash),填了=instruct 塑形(2026-07-19 用户纠错)。
+    if (provider === 'volc' && !prompt) return bad(res, 400, '缺少音色描述(prompt)——火山音色设计靠它出声线');
+    if (!text) return bad(res, 400, '缺少口播文案(text)');
     try {
       if (provider === 'qwen') {
         const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
         if (!cfg.apiKey) return bad(res, 422, '还没配置千问(百炼)API Key——到「设置→接口与密钥」填 qwenBailian 后重试。');
         const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
         const voice = (body.voice ?? '').trim() || 'Ethan';
+        // 无描述 → flash 基底原声;有描述 → instruct 塑形。
+        const qwenPayload = prompt
+          ? { model: 'qwen3-tts-instruct-flash', input: { text: text.slice(0, 2000), voice, instructions: prompt.slice(0, 300) } }
+          : { model: 'qwen3-tts-flash', input: { text: text.slice(0, 2000), voice } };
         const resp = await fetch(`${base}/api/v1/services/aigc/multimodal-generation/generation`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-          body: JSON.stringify({ model: 'qwen3-tts-instruct-flash', input: { text: text.slice(0, 500), voice, instructions: prompt.slice(0, 300) } }),
+          body: JSON.stringify(qwenPayload),
           signal: AbortSignal.timeout(120_000),
         });
         const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
@@ -784,8 +790,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   app.post('/api/media-studio/voice-presets', async (req, res) => {
     const b = (req.body ?? {}) as { name?: string; provider?: string; voice?: string; prompt?: string; speakerId?: string };
     const provider = b.provider === 'volc' ? 'volc' : 'qwen';
-    const name = String(b.name ?? '').trim() || String(b.prompt ?? '').trim().slice(0, 12) || '未命名音色';
-    if (provider === 'qwen' && !String(b.prompt ?? '').trim()) return bad(res, 400, 'qwen 预设需要 prompt(音色描述)');
+    const name = String(b.name ?? '').trim() || String(b.prompt ?? '').trim().slice(0, 12) || String(b.voice ?? '').trim() || '未命名音色';
+    // qwen 预设:voice 或 prompt 有一即可(纯基底音色也是合法预设,2026-07-19 用户纠错)。
+    if (provider === 'qwen' && !String(b.prompt ?? '').trim() && !String(b.voice ?? '').trim()) return bad(res, 400, 'qwen 预设需要 voice(基底音色)或 prompt(音色描述)至少一项');
     if (provider === 'volc' && !/^S_/.test(String(b.speakerId ?? ''))) return bad(res, 400, 'volc 预设需要 speakerId(S_ 开头)');
     const presets = await readVoicePresets();
     const preset = {
@@ -1346,10 +1353,14 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           const cfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'qwenBailian');
           if (!cfg.apiKey) return bad(res, 422, '千问(百炼)API Key 未配置(providers.qwenBailian)');
           const base = (cfg.baseUrl || 'https://dashscope.aliyuncs.com').replace(/\/$/, '');
+          // 预设无描述=基底原声(flash);有描述=instruct 塑形。
+          const presetPrompt = (preset.prompt || '').trim();
           const r = await fetch(`${base}/api/v1/services/aigc/multimodal-generation/generation`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-            body: JSON.stringify({ model: 'qwen3-tts-instruct-flash', input: { text: text.slice(0, 2000), voice: preset.voice || 'Ethan', instructions: (preset.prompt || '').slice(0, 300) } }),
+            body: JSON.stringify(presetPrompt
+              ? { model: 'qwen3-tts-instruct-flash', input: { text: text.slice(0, 2000), voice: preset.voice || 'Ethan', instructions: presetPrompt.slice(0, 300) } }
+              : { model: 'qwen3-tts-flash', input: { text: text.slice(0, 2000), voice: preset.voice || 'Ethan' } }),
             signal: AbortSignal.timeout(120_000),
           });
           const d = (await r.json().catch(() => ({}))) as Record<string, any>;

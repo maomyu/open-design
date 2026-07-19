@@ -100,7 +100,8 @@ export function MakeVideoView(): JSX.Element {
   const [lipProvider, setLipProvider] = useState<'qwen' | 'volc'>('qwen');
 
   async function runVoiceDesign() {
-    if (!vdPrompt.trim()) { studioToast.err('先写音色描述(如:年轻女性,声音温柔,语速中等)'); return; }
+    // 描述只有火山通道必填(voice_design 靠它设计);千问不填=基底音色原声直出。
+    if (vdProvider === 'volc' && !vdPrompt.trim()) { studioToast.err('火山通道需要音色描述(voice_design 靠它出声线)'); return; }
     setVdBusy(true); setVdResult(null);
     try {
       const resp = await fetch('/api/media-studio/voice-design', {
@@ -208,7 +209,9 @@ export function MakeVideoView(): JSX.Element {
         <input
           className={c('input')}
           style={{ marginBottom: 8 }}
-          placeholder="音色描述,例:年轻女性,声音温柔有亲和力,语速中等偏慢,像闺蜜聊天"
+          placeholder={vdProvider === 'qwen'
+            ? '音色描述(可选)——不填=下面选的基底音色原声;填了在基底上塑形,例:像闺蜜聊天,语速偏慢'
+            : '音色描述(必填)——例:年轻女性,声音温柔有亲和力,语速中等偏慢'}
           value={vdPrompt}
           onChange={(e) => setVdPrompt(e.target.value)}
         />
