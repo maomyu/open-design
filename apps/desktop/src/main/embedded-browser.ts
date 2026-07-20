@@ -268,6 +268,17 @@ function patchClientHintsHeaders(sess: Electron.Session): void {
           : major;
       headers[key] = `${val}, "Google Chrome";v="${ver}"`;
     }
+    // 微信视频号助手(channels.weixin.qq.com)的 mmfinderassistant 接口校验 Referer 必须是
+    // 后台页 /platform。爆创 webview 登录时停在 login.html/根路径,发出的请求 Referer 是
+    // 根路径 → 微信拒(errCode 300334 "request failed") → 拉不到视频号列表 → 页面卡在
+    // 「没有可登录的视频号」死循环(2026-07-20 真机对照真Chrome抓出:同请求改 Referer=/platform
+    // 即 errCode:0 返回视频号)。把这类请求的 Referer 规范成 /platform 打破死循环。
+    if (/channels\.weixin\.qq\.com\/cgi-bin\/mmfinderassistant/i.test(details.url)) {
+      for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() === "referer") delete headers[key];
+      }
+      headers.Referer = "https://channels.weixin.qq.com/platform";
+    }
     callback({ requestHeaders: headers });
   });
 }
