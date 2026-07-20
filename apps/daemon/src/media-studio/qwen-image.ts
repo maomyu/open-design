@@ -155,6 +155,17 @@ export interface QwenImageResult {
  *  单一来源:风格提示词/禁字/专属负面词全部来自 contracts IMAGE_STYLE_PRESETS,
  *  组装函数 composeImagePrompt 也与前端「最终提示词预览」共用——所见即所发。
  *  daemon 仅保留 illustrated/clean 的兼容分支(下拉已移除,老稿/旧偏好可能还带)。 */
+/** 该风格是否允许画面出现文字——口径与风格禁字**同一份真源**:contracts
+ *  IMAGE_STYLE_PRESETS 的 noText(2026-07-20 用户报「手账风格提示词都带禁字」:
+ *  写作规则/生图组装曾各自硬编码"除大字报全禁",与风格表打架)。老稿兼容分支
+ *  (下拉已移除的 illustrated/clean):clean 禁、illustrated 允;未知 id 默认允。 */
+export function styleAllowsText(style: string | undefined): boolean {
+  if (!style || style === 'illustrated') return true;
+  if (style === 'clean') return false;
+  const preset = IMAGE_STYLE_PRESETS.find((s) => s.id === style);
+  return preset ? !preset.noText : true;
+}
+
 export function composeStylePrompt(style: string | undefined, prompt: string, character?: string): { fullPrompt: string; negative: string } {
   // 兼容分支:已移除的老风格照旧生效,不走共享表。
   if (style === 'illustrated') {

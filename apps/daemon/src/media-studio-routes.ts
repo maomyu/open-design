@@ -53,7 +53,7 @@ import {
   dajialaWebSearch,
 } from './media-studio/dajiala.js';
 import { TikhubError, tikhubTopicFeed } from './media-studio/tikhub.js';
-import { generateGeminiImageFallback, generateQwenImage, QwenImageError } from './media-studio/qwen-image.js';
+import { generateGeminiImageFallback, generateQwenImage, QwenImageError, styleAllowsText } from './media-studio/qwen-image.js';
 import { generateVolcImage, VolcImageError } from './media-studio/volc-image.js';
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
@@ -533,8 +533,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const prompt = composeImagePrompt(description, {
         context: paragraphCtx,
         articleTitle: article.title || article.topic || '',
-        // 「带文字」类风格(bigtext 大字报)允许画字,别用禁字条款顶掉风格。
-        allowText: body.style === 'bigtext',
+        // 文字策略跟引擎风格表同一份真源(大字报/手账/白板等允字风格,别用
+        // 禁字条款顶掉风格精髓)。
+        allowText: styleAllowsText(typeof body.style === 'string' ? body.style : undefined),
       });
       // 时间戳后加随机段：双候选并行请求会在同一毫秒落盘，纯 Date.now()
       // 会同名互相覆盖（一张图丢失 + 前端候选 key 重复）。

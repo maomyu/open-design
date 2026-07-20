@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { composeImagePrompt, imageMarkerContext } from '../src/media-studio/image-context.js';
+import { styleAllowsText } from '../src/media-studio/qwen-image.js';
 
 describe('imageMarkerContext', () => {
   it('returns the paragraph right above the marker, markdown stripped', () => {
@@ -92,5 +93,21 @@ describe('composeImagePrompt', () => {
     const p = composeImagePrompt('大字标题:断缴警告', { context: '段落内容', allowText: true });
     expect(p).toContain('主画面:大字标题:断缴警告');
     expect(p).not.toContain('不要出现任何可读文字');
+  });
+});
+
+describe('styleAllowsText (与引擎风格负面词同一份口径)', () => {
+  it('allows text for whiteboard/bigtext/journal/none, bans for noText presets', () => {
+    // 允字:手写/图解/标题是这些风格的精髓(2026-07-20 用户报手账被误禁字)。
+    expect(styleAllowsText('journal')).toBe(true);
+    expect(styleAllowsText('bigtext')).toBe(true);
+    expect(styleAllowsText('whiteboard')).toBe(true);
+    expect(styleAllowsText('none')).toBe(true);
+    expect(styleAllowsText(undefined)).toBe(true); // 引擎缺省=whiteboard
+    // 禁字:摄影/插画类,模型写中文易乱码。
+    expect(styleAllowsText('photo-film')).toBe(false);
+    expect(styleAllowsText('watercolor')).toBe(false);
+    expect(styleAllowsText('cute')).toBe(false);
+    expect(styleAllowsText('clean')).toBe(false);
   });
 });
