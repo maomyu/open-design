@@ -323,9 +323,13 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         browserCollect
         collectPlatforms={collectTargets}
         xhsContentType={effectiveXhsType}
-        /* 按当前所选源过滤候选(2026-07-18 用户拍板:小红书选题必须全部来自小红书):
-           只显示 本平台链接的 + 无链接的纯灵感题;其它平台/站外(新闻公众号)链接一律不出现。 */
-        topics={topics.filter((t) => { const o = topicOriginPlatform(t.url); return o === 'any' || o === source; })}
+        /* 小红书不走 AI 转题——采集的爆款直接「存为候选」(2026-07-20 用户拍板)。隐藏顶部
+           「AI 帮我选题」+ 每条爆款的 AI 入口,只留「存为候选」。其它平台仍可用 AI 转题。 */
+        hideAiTopic={source === 'xiaohongshu'}
+        /* 按当前所选源过滤候选(2026-07-18:小红书选题必须全部来自小红书):显示 本平台链接 + 无链接
+           灵感题 + url 格式不规范(other)的;只藏【明确是别平台】的链接。加 other 是因为采集回来的
+           爆款 url 有时不规范,被判 other 就看不到「存为候选」存进去的题(2026-07-20 用户报)。 */
+        topics={topics.filter((t) => { const o = topicOriginPlatform(t.url); return o === 'any' || o === source || o === 'other'; })}
         onAdd={async (draft) => {
           const created = await createStudioTopic(TOPIC_POOL, draft);
           if (created) setTopics((list) => [created, ...list]);
