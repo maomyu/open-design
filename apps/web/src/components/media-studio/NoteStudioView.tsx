@@ -745,7 +745,14 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                  列表过滤(2026-07-18 用户拍板):只显示 小红书链接的 + 无链接灵感题,站外/其它平台不出现。 */
               browserCollect
               collectPlatforms={['xiaohongshu']}
-              topics={topics.filter((t) => { const o = topicOriginPlatform(t.url); return o === 'any' || o === 'xiaohongshu'; })}
+              hideAiTopic
+              /* 候选只藏【明确是别平台链接】的(抖音/快手/B站/视频号/知乎/微博/百度);小红书链接、
+                 无链接灵感题、以及采集回来 url 格式不规范(识别为 other)的都要显示——否则「存为候选」
+                 存进去却看不到(2026-07-20 用户报)。 */
+              topics={topics.filter((t) => {
+                const o = topicOriginPlatform(t.url);
+                return o !== 'douyin' && o !== 'kuaishou' && o !== 'bilibili' && o !== 'channels' && o !== 'zhihu' && o !== 'weibo' && o !== 'baidu-zhidao';
+              })}
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);
                 if (created) setTopics((list) => [created, ...list]);

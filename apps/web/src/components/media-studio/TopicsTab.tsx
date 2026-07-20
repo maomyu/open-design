@@ -189,6 +189,8 @@ export interface TopicsTabProps {
   onWrite: (topic: MediaTopic) => void;
   /** picked = 用户勾选的优先参考；单篇「AI 转题」= note 空 + picked 一篇。 */
   onAiFind: (note: string, picked?: PickedHit[]) => void;
+  /** 隐藏「AI 帮我选题」入口——小红书等只走「存为候选」的平台(2026-07-20 用户:小红书不要 AI 转题)。 */
+  hideAiTopic?: boolean;
   /** 【提取文案仿写】拿到真实口播 transcript 后,直接建稿写一版可开拍的仿写口播稿(短视频台)。
    *  没传(如公众号)则回退到 onAiFind('topics') 老路。 */
   onRewriteToScript?: (title: string, transcript: string, sourceUrl: string, videoFile: string) => void;
@@ -226,7 +228,7 @@ export interface TopicsTabProps {
   renderTopicExpansion?: (topic: MediaTopic) => ReactNode;
 }
 
-export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, nativeFeed, onOpenLink, browserCollect = false, collectPlatforms, xhsContentType, expandedTopicId, renderTopicExpansion }: TopicsTabProps): JSX.Element {
+export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, onWrite, onAiFind, hideAiTopic = false, onRewriteToScript, onExtractNote, aiBusy, tikhubTargets, nativeFeed, onOpenLink, browserCollect = false, collectPlatforms, xhsContentType, expandedTopicId, renderTopicExpansion }: TopicsTabProps): JSX.Element {
   const license = useLicense();
   // 上次在该平台的选题搜索结果（切标签/重启后恢复，见文件顶 loadTopicSearch）。
   const restored = useMemo(() => loadTopicSearch(platform), [platform]);
@@ -861,7 +863,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               {feedBusy ? '组合扫描中…' : `开始找题（${enabledFeeds.size} 源）`}
             </button>
           )}
-          {hasFeature(license, 'cap.ai') ? (
+          {hasFeature(license, 'cap.ai') && !hideAiTopic ? (
             <button
               type="button"
               className={c('btn')}
@@ -1070,8 +1072,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     <td className={c('tdActions')}>
                       {/* 短视频台(onRewriteToScript):下原视频→ASR→口播稿仿写。
                           图文笔记台(onExtractNote):下原图进图集+取原文案→仿写成新图文笔记。
-                          其余(公众号等):AI 转题把原文转成差异化选题。 */}
-                      {browserCollect && onRewriteToScript ? (
+                          其余(公众号等):AI 转题把原文转成差异化选题。
+                          hideAiTopic(小红书):整条 AI 入口都不出,只留「存为候选」。 */}
+                      {hideAiTopic ? null : browserCollect && onRewriteToScript ? (
                         <button
                           type="button"
                           className={`${c('btn')} ${c('btnPrimary')}`}
@@ -1125,7 +1128,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       <div className={c('card')}>
         <div className={c('cardLabel')}>候选选题（{candidates.length}）</div>
         {candidates.length === 0 ? (
-          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : questionMode ? '还没有候选——用上面「搜相关问题」找到要答的问题,勾选后「AI 帮我选题」沉淀成候选;也可在下方手动添加。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
+          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : questionMode ? '还没有候选——用上面「搜相关问题」找到要答的问题,勾选后「AI 帮我选题」沉淀成候选;也可在下方手动添加。' : hideAiTopic ? '还没有候选——上面「真抓爆款」采集后,点「全部存为候选」或每条的「存为候选」进来;也可在下方手动添加。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
         ) : (
           <table className={c('table')}>
             <thead>
