@@ -97,7 +97,8 @@ export function EntryNavRail({ view, onViewChange }: Props) {
         {/* 功能授权裁剪(2026-07-11):未授权的模块导航不渲染——客户看不到
             没买的能力。无授权文件时 hasFeature 恒真(全功能)。 */}
         {/* 统一创作台(2026-07-18 用户拍板路线B):选平台+形态→选题→去创作就地展开→一稿多发。
-            与「文章/短视频/笔记」分入口并存,创作是统一动线入口。 */}
+            创作是视频+图文(笔记)的统一动线入口;短视频独立入口已移除(2026-07-20 用户拍板:
+            与创作重复)。「文章」(公众号/知乎/微博)不在创作覆盖内,保留独立入口。 */}
         {anyShortVideoPlatform(license) || hasFeature(license, 'note.xiaohongshu') ? (
           <NavButton
             active={view === 'studio-create'}
@@ -122,17 +123,8 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="edit" size={18} />
           </NavButton>
         ) : null}
-        {anyShortVideoPlatform(license) ? (
-          <NavButton
-            active={view === 'studio-video'}
-            ariaLabel="短视频"
-            label="短视频"
-            onClick={() => onViewChange('studio-video')}
-            testId="entry-nav-studio-video"
-          >
-            <Icon name="play" size={18} />
-          </NavButton>
-        ) : null}
+        {/* 「短视频」独立入口已移除(2026-07-20 用户拍板):统一创作台已覆盖视频形态,
+            此入口与之重复。studio-video 视图/路由保留(创作台就地展开+标签栏可回)。 */}
         {hasFeature(license, 'note.xiaohongshu') ? (
           <NavButton
             active={view === 'studio-note'}
