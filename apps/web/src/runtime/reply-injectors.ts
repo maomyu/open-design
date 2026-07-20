@@ -155,16 +155,25 @@ async function injectBaiduReply(
   if (loggedOut) return { ok: false, detail: '百度知道未登录——在账号页登录百度账号后重试' };
 
   // 展开评论区:有评论数的「评论(N)」都点开(楼中楼要在里面找目标评论);一级评论至少开一个框。
+  // 百度的按钮处理器【绑定偏晚】(页面水合后好几秒;真机教训同「我来答」):点太早没反应。
+  // 故循环:每轮点一遍 → 等 → 查评论区是否真渲染出来(sub-reply 看 .comment-item;一级看 textarea),
+  // 出来才继续,最多 6 轮(~14s)。
   say('展开评论区…');
-  await wvEval(wv, `(async () => {
-    const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
-    const btns=[...document.querySelectorAll('span.comment')].filter(b=>b.getBoundingClientRect().width>0);
-    const withN=btns.filter(b=>/评论\\s*\\(\\d+\\)/.test((b.textContent||'').trim()));
-    const targets=(${spec.action === 'sub-reply' ? 'withN' : '(withN.length?withN:btns)'}).slice(0,4);
-    for (const b of targets) { try { b.scrollIntoView({block:'center'}); b.click(); } catch(e){} await sleep(800); }
-    return true;
-  })()`);
-  await sleep(1500);
+  const expandedSel = spec.action === 'sub-reply' ? '.comment-area .comment-item' : '.comment-area textarea';
+  let expanded = false;
+  for (let round = 0; round < 6 && !expanded; round++) {
+    await wvEval(wv, `(async () => {
+      const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+      const btns=[...document.querySelectorAll('span.comment')].filter(b=>b.getBoundingClientRect().width>0);
+      const withN=btns.filter(b=>/评论\\s*\\(\\d+\\)/.test((b.textContent||'').trim()));
+      const targets=(${spec.action === 'sub-reply' ? 'withN' : '(withN.length?withN:btns)'}).slice(0,4);
+      for (const b of targets) { try { b.scrollIntoView({block:'center'}); b.click(); } catch(e){} await sleep(500); }
+      return targets.length;
+    })()`);
+    await sleep(1700);
+    expanded = Boolean(await wvEval<boolean>(wv, `Boolean(document.querySelector(${JSON.stringify(expandedSel)}))`));
+  }
+  if (!expanded) return { ok: false, detail: '评论区没展开(「评论」按钮点了没反应)——稍后重试' };
 
   if (spec.action === 'sub-reply') {
     // 定位目标评论(合成 id 同提取器公式)→ 点它的「回复」弹出专属输入框。
@@ -203,26 +212,55 @@ async function injectBaiduReply(
   await typeText(wv, spec.text.slice(0, 190), undefined, { slow: true }); // 百度知道评论上限 200 字
   await sleep(600);
 
-  // 发送:点与该输入框同一 mini-editor 区块里的「发表」(页面可能同时开着多个编辑器,不能全局点)。
+  // 发送:【必须点与该输入框同一编辑器区块里的「发表」】——页面常同时开着多个编辑器
+  // (顶部公共评论框也有一个「发表」),clickRealByText 全局找第一个会点错(实机踩过:回复
+  // 文本留在框里没发出去)。定位【输入框最近的编辑器 scope 内】的按钮坐标,直接真实鼠标点击。
   say('发表…');
-  const sent = await wvEval<{ x: number; y: number } | null>(wv, `(() => {
+  // 按钮定位(2026-07-20 实机第三轮校准):楼中楼编辑器在 .reply-comment-area 里,真按钮是
+  // <a.reply-comment-submit>(顶格评论框的是 .comment-action-wrap 里 .comment-action 的 <a>)。
+  // 【不能按文本找 div】——同文案的容器 div(comment-action-bar / reply-comment-action-bar)
+  // 会先命中,点它的中心=点在空处(实机踩过:文本留框里没发出)。优先精确 <a>,兜底取
+  // 【离输入框最近的、无子元素的】文本「发表」叶子节点。
+  const findSendPos = `(() => {
     const ta=document.querySelector(${JSON.stringify(taSel)});
     if (!ta) return null;
-    let scope=ta.closest('.comment-action-wrap') || ta.closest('.comment-area') || document;
-    const btn=[...scope.querySelectorAll('a,button,span,div')].find(e=>(e.textContent||'').trim()==='发表'&&e.getBoundingClientRect().width>0);
+    const scope=ta.closest('.reply-comment-area') || ta.closest('.comment-action-wrap') || ta.closest('.comment-area');
+    if (!scope) return null;
+    let btn=scope.querySelector('a.reply-comment-submit')
+      || scope.querySelector('.comment-action a')
+      || [...scope.querySelectorAll('a')].find(e=>(e.textContent||'').trim()==='发表'&&e.getBoundingClientRect().width>0);
+    if (!btn) {
+      const tr=ta.getBoundingClientRect();
+      const leaves=[...scope.querySelectorAll('span,div,button')].filter(e=>e.children.length===0&&(e.textContent||'').trim()==='发表'&&e.getBoundingClientRect().width>0);
+      leaves.sort((p,q)=>Math.abs(p.getBoundingClientRect().top-tr.top)-Math.abs(q.getBoundingClientRect().top-tr.top));
+      btn=leaves[0];
+    }
     if (!btn) return null;
     btn.scrollIntoView({block:'center'});
     const r=btn.getBoundingClientRect();
     return { x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
-  })()`);
-  if (!sent) return { ok: false, detail: '输入成功但没找到「发表」按钮' };
-  await sleep(400);
-  const clicked = await clickRealByText(wv, ['发表']);
-  if (!clicked) {
-    // clickRealByText 全局找第一个「发表」可能点错编辑器——坐标兜底点我们定位到的那个。
-    await wvEval(wv, `(() => { const ta=document.querySelector(${JSON.stringify(taSel)}); const scope=ta&&(ta.closest('.comment-action-wrap')||ta.closest('.comment-area')); const btn=scope&&[...scope.querySelectorAll('a,button,span,div')].find(e=>(e.textContent||'').trim()==='发表'); if(btn) btn.click(); return true; })()`);
+  })()`;
+  await wvEval(wv, findSendPos); // 先滚到中心
+  await sleep(500);
+  const sent = await wvEval<{ x: number; y: number } | null>(wv, findSendPos); // 稳定后重取坐标
+  if (!sent) return { ok: false, detail: '输入成功但没找到本编辑器的「发表」按钮' };
+  wv.sendInputEvent({ type: 'mouseMove', x: sent.x, y: sent.y });
+  await sleep(160);
+  wv.sendInputEvent({ type: 'mouseDown', x: sent.x, y: sent.y, button: 'left', clickCount: 1 });
+  await sleep(80);
+  wv.sendInputEvent({ type: 'mouseUp', x: sent.x, y: sent.y, button: 'left', clickCount: 1 });
+  await sleep(2000);
+  // 提交验证:发表成功后百度会清空输入框(常整个收起)。输入框还留着我们的文本=没发出去。
+  const leftover = await wvEval<boolean>(wv, `(() => { const ta=document.querySelector(${JSON.stringify(taSel)}); return Boolean(ta && ta.value && ta.value.length > 0); })()`);
+  if (leftover) {
+    // 补一击(处理器晚绑/首击落空),再验一次。
+    wv.sendInputEvent({ type: 'mouseDown', x: sent.x, y: sent.y, button: 'left', clickCount: 1 });
+    await sleep(80);
+    wv.sendInputEvent({ type: 'mouseUp', x: sent.x, y: sent.y, button: 'left', clickCount: 1 });
+    await sleep(2000);
+    const still = await wvEval<boolean>(wv, `(() => { const ta=document.querySelector(${JSON.stringify(taSel)}); return Boolean(ta && ta.value && ta.value.length > 0); })()`);
+    if (still) return { ok: false, detail: '点了「发表」但文本仍在输入框(未发出)——请在标签里手动点一下发表' };
   }
-  await sleep(1500);
   return { ok: true, detail: `已回复:${spec.text.slice(0, 20)}${spec.text.length > 20 ? '…' : ''}` };
 }
 
