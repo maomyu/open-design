@@ -2,7 +2,7 @@
 // 按 <!-- IMAGE_N --> 标注位置取上一个正文段落,生图提示词以此锚定段落内容。
 import { describe, expect, it } from 'vitest';
 
-import { composeImagePrompt, imageMarkerContext } from '../src/media-studio/image-context.js';
+import { composeImagePrompt, imageMarkerContext, stripNoTextClauses } from '../src/media-studio/image-context.js';
 import { styleAllowsText } from '../src/media-studio/qwen-image.js';
 
 describe('imageMarkerContext', () => {
@@ -93,6 +93,27 @@ describe('composeImagePrompt', () => {
     const p = composeImagePrompt('大字标题:断缴警告', { context: '段落内容', allowText: true });
     expect(p).toContain('主画面:大字标题:断缴警告');
     expect(p).not.toContain('不要出现任何可读文字');
+  });
+});
+
+describe('stripNoTextClauses (允字风格剥掉老稿描述里的禁字句)', () => {
+  it('removes trailing no-text clauses AI baked into old descriptions', () => {
+    // 2026-07-20 用户实测的真实样例。
+    expect(stripNoTextClauses('牛皮纸手账页贴两张纸条,平铺柔光,画面不含任何可读文字')).toBe('牛皮纸手账页贴两张纸条,平铺柔光');
+    expect(stripNoTextClauses('配色以牛皮黄为主,平铺柔光如扫描页面,干净克制不含任何文字')).toBe('配色以牛皮黄为主,平铺柔光如扫描页面');
+    expect(stripNoTextClauses('拼贴风,画面不要出现文字,暖色调')).toBe('拼贴风,暖色调');
+  });
+
+  it('keeps descriptions without ban clauses untouched', () => {
+    expect(stripNoTextClauses('手账页上有手写短词「加油」和贴纸')).toBe('手账页上有手写短词「加油」和贴纸');
+  });
+
+  it('composeImagePrompt strips the clause when allowText, keeps it otherwise', () => {
+    const withBan = '手账拼贴,画面不含任何可读文字';
+    expect(composeImagePrompt(withBan, { context: '段落', allowText: true })).not.toContain('不含任何可读文字');
+    expect(composeImagePrompt(withBan, { context: '段落', allowText: false })).toContain('不含任何可读文字');
+    // 无段落上下文时也剥(封面/重生成路径)。
+    expect(composeImagePrompt(withBan, { allowText: true })).toBe('手账拼贴');
   });
 });
 

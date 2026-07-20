@@ -17,6 +17,16 @@ function stripMarkdown(block: string): string {
     .trim();
 }
 
+/** 描述里的「禁字句」——老稿标注是在一刀切禁字时期由 AI 写的,句尾普遍带
+ *  「画面不含任何可读文字」;允字风格(手账/白板/大字报)生图时要把它剥掉,
+ *  否则和风格「可带手写字」当面矛盾(2026-07-20 用户实测指出)。
+ *  匹配整个逗号分段(如「干净克制不含任何文字」整段拿掉)。 */
+const NO_TEXT_CLAUSE = /[,，;；.。]?\s*[^,，;；.。]*不(?:含|要出现|得出现|出现)(?:任何)?(?:可读)?文字[^,，;；.。]*/g;
+
+export function stripNoTextClauses(description: string): string {
+  return description.replace(NO_TEXT_CLAUSE, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 /** 组发给生图模型的最终提示词(2026-07-20 用户反馈"提示词太少不细致,图与文章
  *  无关"):标注描述只是主画面,这里补上文章主题、所配段落依据和画面要求,拼成
  *  结构化分镜提示词——比单句描述细得多,画面强制锚定文章内容。风格词不在这里
@@ -25,13 +35,15 @@ export function composeImagePrompt(
   description: string,
   opts: { context?: string | null; articleTitle?: string; allowText?: boolean } = {},
 ): string {
+  // 允字风格:先剥掉描述里残留的禁字句(老稿/AI 回写),别让它顶掉风格精髓。
+  const desc = opts.allowText ? stripNoTextClauses(description) : description;
   const ctx = opts.context?.trim();
-  if (!ctx) return description;
+  if (!ctx) return desc;
   const title = opts.articleTitle?.trim();
   // 「带文字」类风格(如大字报)允许画字,禁字条款会跟风格打架——按 allowText 收放。
   const textRule = opts.allowText ? '' : ';画面中不要出现任何可读文字、水印或 logo';
   return [
-    `主画面:${description}`,
+    `主画面:${desc}`,
     title ? `文章主题:《${title}》——画面气质要与主题相符。` : '',
     `所配段落(画面的场景与主体必须来自这段内容):${ctx}`,
     `画面要求:细节丰富、有明确的视觉主体和景深层次,构图有主次,光线与氛围服务段落情绪;元素与所配段落强相关,不堆砌无关物件${textRule}。`,
