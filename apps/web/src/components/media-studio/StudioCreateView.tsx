@@ -1,7 +1,7 @@
 // 统一创作台(2026-07-18 用户拍板路线B;同日修正:选题平台【单选】+平台导航入口移除;
 // 再修正:选题平台区卡片化+AI 任务接 StudioAiPanel 实时进度,用户反馈"看不到智能体在干嘛")。
 // 唯一创作动线(2026-07-18 终版):顶部选好 平台+形态(=创作意图声明) → 候选点
-// 「去创作」一键直达(不二次询问)→ 嵌入台就地展开(零跳页)→ 发布步「一稿多发」。
+// 「去创作」一键直达(不二次询问)→ 嵌入台就地展开(零跳页)→ 发布步存草稿。
 // 平台 view/路由保留(跳转到达+标签栏可回),导航不再显示平台入口(与创作重复)。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MediaTopic } from '@open-design/contracts';
@@ -280,7 +280,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
           <span style={{ fontWeight: 700, fontSize: 13.5 }}>
             正在做:《{activeDraft.title.slice(0, 30) || '未命名'}》· {draftPlatLabel}
           </span>
-          <span className={c('cardHint')}>下面完成 文案/脚本→素材→发布;发布步可一稿多发</span>
+          <span className={c('cardHint')}>下面完成 文案/脚本→素材→发布</span>
           <span style={{ marginLeft: 'auto' }}>
             <button type="button" className={c('btn')} onClick={() => { setActiveDraft(null); void refreshTopics(); }}>
               ← 回选题(稿已自动保存)
@@ -306,7 +306,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       <StudioToastHost />
       <div className={c('head')}>
         <h1 className={c('title')}>创作</h1>
-        <span className={c('cardHint')}>选平台找灵感 → 选形态开写 → 完成后发布步可一稿多发到其他平台</span>
+        <span className={c('cardHint')}>选平台找灵感 → 选形态开写 → 完成后到发布步存草稿</span>
       </div>
 
       {/* 选题平台【单选】:卡片化(2026-07-18 用户反馈原 chip 裸排太乱)。

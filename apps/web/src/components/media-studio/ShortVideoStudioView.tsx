@@ -33,14 +33,13 @@ import {
   updateStudioArticle,
   uploadStudioCover,
   uploadStudioVideo,
-  distributeStudioArticle,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { buildStudioDraft } from './draft-builders';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
-import { hasFeature, hasShortVideoPlatform, useLicense } from '../../state/license';
+import { hasFeature, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
@@ -196,35 +195,6 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
       .catch(() => undefined);
   }, []);
   const [videoUploadBusy, setVideoUploadBusy] = useState(false);
-
-  // 一稿多发(PR3):目标平台 = 除本稿归属平台外的已授权平台;克隆后提示去对应入口发布。
-  const [distPicked, setDistPicked] = useState<Set<string>>(() => new Set());
-  const [distBusy, setDistBusy] = useState(false);
-  const [distResult, setDistResult] = useState('');
-  const distTargets = SAU_PLATFORMS.filter(
-    (p) => p.label !== svPlatformLabel && hasShortVideoPlatform(license, p.id),
-  );
-
-  async function distributeNow() {
-    if (!article || distPicked.size === 0) return;
-    await flushSave();
-    setDistBusy(true);
-    setDistResult('');
-    const r = await distributeStudioArticle(PLATFORM, article.id, [...distPicked]);
-    setDistBusy(false);
-    if ('error' in r) {
-      studioToast.err(r.error);
-      return;
-    }
-    const made = r.results.filter((x) => !x.reused).length;
-    const reused = r.results.length - made;
-    setDistResult(
-      `✅ 已就位:${r.results.map((x) => x.platform).join('、')}${reused ? `(${reused} 个此前已克隆,复用)` : ''}——切到对应平台入口即可看到这条,确认后发布。`,
-    );
-    studioToast.ok(`一稿多发完成:新克隆 ${made} 个${reused ? `,复用 ${reused} 个` : ''}`);
-    setDistPicked(new Set());
-    await refreshArticles();
-  }
 
   const [coverUploadBusy, setCoverUploadBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
@@ -1012,45 +982,6 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
               emptyCta('发布属于某个作品——先去「脚本」新建。')
             ) : (
               <>
-                {/* 一稿多发(统一创作台 PR3,2026-07-18):同一条内容克隆到其他平台——
-                    每个平台一份克隆稿(带 sourceArticleId),脚本/配音/成片全复制,
-                    到各平台入口按各自流程发布(发布确认合规铁律不变)。 */}
-                {distTargets.length > 0 ? (
-                  <div className={c('card')}>
-                    <div className={c('cardLabel')}>
-                      🚀 一稿多发
-                      <span className={c('cardHint')}>把这条(脚本/配音/成片一起)克隆到其他平台,免得每个平台重做一遍;克隆后到对应平台入口确认发布</span>
-                    </div>
-                    <div className={c('row')} style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                      {distTargets.map((p) => (
-                        <label key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 13 }}>
-                          <input
-                            type="checkbox"
-                            checked={distPicked.has(p.label)}
-                            onChange={() =>
-                              setDistPicked((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(p.label)) next.delete(p.label);
-                                else next.add(p.label);
-                                return next;
-                              })
-                            }
-                          />
-                          {p.label}
-                        </label>
-                      ))}
-                      <button
-                        type="button"
-                        className={`${c('btn')} ${c('btnPrimary')}`}
-                        disabled={distBusy || distPicked.size === 0}
-                        onClick={() => void distributeNow()}
-                      >
-                        {distBusy ? '克隆中…' : `克隆到所选平台(${distPicked.size})`}
-                      </button>
-                    </div>
-                    {distResult ? <div className={c('cardHint')} style={{ marginTop: 6 }}>{distResult}</div> : null}
-                  </div>
-                ) : null}
                 {/* 封面(可选):用户传一张封面图,一键存草稿时自动上传到抖音「设置封面」。
                     不传也能存草稿(抖音会用视频首帧)。 */}
                 <div className={c('card')}>
