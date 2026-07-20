@@ -15,6 +15,7 @@ import {
   importXhsNote,
   updateStudioArticle,
   fetchSourceMaterial,
+  downloadStudioVideo,
   downloadVideoByUrl,
   topicOriginPlatform,
 } from '../../providers/media-studio';
@@ -200,18 +201,40 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     setTopics((list) => list.map((t) => (t.id === topic.id ? { ...t, status: 'used' } : t)));
     setActiveDraft({ articleId: created.id, form: 'video', svId: target.svId as SauPlatformId, title: topic.title });
     // 原视频自动下载(2026-07-18 用户拍板):按链接取媒体直链→下原片→写 sourceVideoFile,
-    // 脚本步「对照原爆款」直接内嵌原视频播放器。后台异步,不阻塞进创作区(大文件耗时)。
+    // 右列「原视频」直接内嵌播放器。后台异步,不阻塞进创作区(大文件耗时)。
+    // 2026-07-20 用户实测"没成功也没显示":失败不再静默——原因写进
+    // extra.sourceVideoError(右列可见)+弹提示;拿不到直链时用 yt-dlp 按页面
+    // 链接兜底(B站等平台直链在单独的播放接口里)。
     if (topic.url) {
-      studioToast.info('正在后台下载原视频…(大文件稍等,完成后脚本步可对照播放)');
+      studioToast.info('正在后台下载原视频…(大文件稍等,完成后右侧「原视频」可对照播放)');
       void (async () => {
+        const fail = async (msg: string) => {
+          await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceVideoError: msg } });
+          studioToast.err(`原视频没下载成功:${msg}——右侧「原视频」有在线链接可对照`);
+        };
         const src = await fetchSourceMaterial(topic.url);
-        if ('error' in src || !src.mediaUrl) return;
-        const dl = await downloadVideoByUrl(src.mediaUrl, src.referer || topic.url, topic.title);
-        if ('error' in dl) return;
+        if ('error' in src) {
+          await fail(src.error);
+          return;
+        }
+        // 全文取长保旧:详情接口的文案比候选预览长才覆盖(短 desc 不倒退)。
+        const betterText = src.text && src.text.length > (topic.sourceContent ?? '').length ? src.text : '';
+        let dl: { file: string } | { error: string };
+        if (src.mediaUrl) {
+          dl = await downloadVideoByUrl(src.mediaUrl, src.referer || topic.url, topic.title);
+        } else {
+          // 无直链(常见:B站播放地址在单独接口)→ yt-dlp 按页面链接兜底。
+          dl = await downloadStudioVideo(topic.url);
+        }
+        if ('error' in dl) {
+          if (betterText) await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscript: betterText } });
+          await fail(dl.error);
+          return;
+        }
         await updateStudioArticle(TOPIC_POOL, created.id, {
-          extra: { sourceVideoFile: dl.file, ...(src.text ? { sourceTranscript: src.text } : {}) },
+          extra: { sourceVideoFile: dl.file, sourceVideoError: '', ...(betterText ? { sourceTranscript: betterText } : {}) },
         });
-        studioToast.ok('原视频已下载,脚本步「对照原爆款」可播放对照');
+        studioToast.ok('原视频已下载,右侧「原视频」可播放对照');
       })();
     }
   }

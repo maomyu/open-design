@@ -297,6 +297,24 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   const [previewTab, setPreviewTab] = useState<'draft' | 'video' | 'transcript'>('draft');
   const hasSourceMaterial = !!(str(extra.sourceTranscript) || str(extra.sourceVideoFile) || str(extra.sourceUrl));
   const sourceVideoUrl = useDownloadedVideoUrl(str(extra.sourceVideoFile));
+  // 原视频后台下载中(去创作触发):轮询等 sourceVideoFile/sourceVideoError 落稿,
+  // 到货即自动显示(2026-07-20 用户实测"下好了也没显示":此前只能手动刷新才看到)。
+  const sourceVideoPending = hasSourceMaterial && !str(extra.sourceVideoFile) && !str(extra.sourceVideoError);
+  useEffect(() => {
+    if (!sourceVideoPending || !article) return;
+    const id = article.id;
+    const timer = window.setInterval(() => {
+      if (pendingRef.current) return; // 用户正在编辑,别用轮询结果覆盖
+      void fetchStudioArticle(PLATFORM, id).then((a) => {
+        if (!a || articleRef.current?.id !== a.id || pendingRef.current) return;
+        const ex = (a.extra ?? {}) as Record<string, unknown>;
+        if (str(ex.sourceVideoFile) || str(ex.sourceVideoError)) {
+          setArticle((prev) => (prev && prev.id === a.id ? a : prev));
+        }
+      });
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [sourceVideoPending, article?.id]);
 
   // ---- 数据加载 ----
   // 按当前平台过滤单池:匹配 subPlatform;无 subPlatform 的旧作品归到抖音
@@ -1281,8 +1299,12 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                   ) : (
                     <div className={c('cardHint')}>⏳ 正在载入原视频…</div>
                   )
+                ) : str(extra.sourceVideoError) ? (
+                  <div className={c('cardHint')} style={{ color: '#9a4b00' }}>
+                    ⚠ 原视频没下载成功:{str(extra.sourceVideoError)}
+                  </div>
                 ) : (
-                  <div className={c('cardHint')}>原视频还没下载到本机——「去创作」后会自动后台下载,稍等刷新;也可先点下方链接在线看。</div>
+                  <div className={c('cardHint')}>⏳ 原视频正在后台下载…(大文件稍等,下好自动显示;也可先点下方链接在线看)</div>
                 )}
                 {str(extra.sourceUrl) ? (
                   <a href={str(extra.sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ marginTop: 8, display: 'inline-block' }}>看原视频 ↗</a>

@@ -14,6 +14,9 @@ chromadb>=0.5             # 素材向量库（RAG 召回）
 Pillow>=10.2              # 中文标题程序叠字
 opencv-python-headless>=4.9   # 版式/裁切校验（可选）
 
+# ── 原片下载 ──
+yt-dlp>=2025.1            # 爆款原视频下载兜底(B站等拿不到直链的平台;vendor wheels 随包离线装)
+
 # ── ASR（按最终选型二选一，先占位）──
 # volcengine-python-sdk    # 火山 ASR
 # openai                   # 兼容 whisper / 第三方 ASR

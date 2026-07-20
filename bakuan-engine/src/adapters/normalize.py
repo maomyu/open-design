@@ -118,9 +118,22 @@ def _deep_find_str(o, keys: tuple, _min: int = 20) -> str:
 
 
 def _deep_find_url(o) -> str:
-    """深挖首个可能是视频直链的 url（play_addr/download_addr/主播放地址下的 url_list）。"""
+    """深挖首个可能是视频直链的 url（play_addr/download_addr/主播放地址下的 url_list;
+    小红书 stream.h264[].master_url——h264 优先,Chromium/Electron 播不了 h265）。"""
     if isinstance(o, dict):
-        for k in ("play_addr", "download_addr", "main_mv_urls", "playUrl", "photoUrl", "mainMvUrls"):
+        # 小红书视频流(2026-07-20):video_info_v2.media.stream.{h264,h265,av1}[].master_url。
+        # 必须 h264 优先——内置浏览器(Chromium)不解 h265,拿错编码血亏一次下载。
+        stream = o.get("stream")
+        if isinstance(stream, dict):
+            for codec in ("h264", "h265", "av1"):
+                arr = stream.get(codec)
+                if isinstance(arr, list):
+                    for it in arr:
+                        if isinstance(it, dict):
+                            u = it.get("master_url") or (it.get("backup_urls") or [None])[0]
+                            if isinstance(u, str) and u.startswith("http"):
+                                return u
+        for k in ("play_addr", "download_addr", "main_mv_urls", "playUrl", "photoUrl", "mainMvUrls", "master_url"):
             v = o.get(k)
             if isinstance(v, dict):
                 ul = v.get("url_list") or v.get("UrlList")

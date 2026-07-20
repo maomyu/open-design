@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Callable
 
@@ -253,6 +254,20 @@ class TikHubClient:
             ("/api/v1/xiaohongshu/app_v2/get_image_note_detail", {"note_id": note_id}),
             ("/api/v1/xiaohongshu/app_v2/get_video_note_detail", {"note_id": note_id}),
         ]
+        def _has_video_stream(n: dict) -> bool:
+            """视频贴是否带可下载的流(video_info_v2/video 下有 stream/master_url)。"""
+            for vk in ("video_info_v2", "video_info", "video"):
+                v = n.get(vk)
+                if isinstance(v, dict) and json.dumps(v, ensure_ascii=False).find("master_url") >= 0:
+                    return True
+            return False
+
+        # 视频贴的坑(2026-07-20 实测定位):图文端点对【视频】笔记也会精确命中
+        # (id 对得上),但返回体没有视频流字段——此前级联在②就停,导致视频贴永远
+        # 拿不到直链、原片下载静默失败。改为:命中但发现是视频贴且无流时,继续
+        # 试后面的视频端点;视频端点也命中(仍然严格校验 id,不吃推荐流)且带流
+        # 就用它,否则退回先命中的那份(至少文案/封面是对的)。
+        fallback: dict = {}
         for path, params in attempts:
             name = path.rsplit("/", 1)[-1]
             try:
@@ -262,10 +277,17 @@ class TikHubClient:
                 continue
             rid = _nid(n)
             if n and rid and (note_id in rid or rid in note_id):
+                if str(n.get("type") or "") == "video" and not _has_video_stream(n):
+                    logger.info(f"小红书详情命中本条({name})但视频贴无流,继续找视频端点")
+                    if not fallback:
+                        fallback = n
+                    continue
                 logger.info(f"小红书详情命中本条({name})")
                 return n
             logger.warning(f"小红书详情 {name} 返回非本条(得到 {rid or '空'}),试下一端点")
-        return {}
+        if fallback:
+            logger.info("小红书详情仅命中无流版本,原样返回(文案/封面可用,原片下载不可用)")
+        return fallback
 
     def fetch_account_videos(self, platform: str, ref: str, *, count: int = 20) -> list[dict]:
         """抓指定账号自己的近期作品。ref 可为主页链接或作者ID(抖音sec_uid/B站mid)。
