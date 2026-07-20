@@ -1185,10 +1185,24 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     res.json({ read: flat.length, matched, dispatched } satisfies AutoReplyResponse);
   });
 
-  // ---- 登录态保活 + 失效告警 + 扫码补登（W6）----
+  // ---- 登录态保活 + 失效告警 + 扫码补登（W6;2026-07-20 改后台静默探测）----
   // 登录态在桌面端 webview 分区里,daemon 够不着,故校验跑桌面端。心跳/手动建 login-check job →
-  // 桌面端打开平台主站看登录标记 → 回 loggedIn → 这里落 media_login_status;掉线翻转产告警。
+  // 桌面端【主进程静默读该分区 cookie 票据(+可选服务端验)】判登录态(不开网页、不跳转)→ 回写。
   const loginCheckBus = createLoginCheckBus();
+
+  // 全量扫描:对【所有已绑定账号】各建一个 login-check job(不再只覆盖"检测过一次"的)。
+  // 静默探测很轻(主进程读 cookie,不联网或只打一个轻接口),故可覆盖全量 + 勤刷。桌面端没连时空转。
+  const sweepLoginChecks = async (): Promise<void> => {
+    if (loginCheckBus.subscriberCount() === 0) return; // 没有桌面端执行侧,建了也没人跑
+    try {
+      const prefs = await readAppConfig(paths.RUNTIME_DATA_DIR);
+      for (const p of MEDIA_PLATFORMS.filter((m) => m.kind === 'sau-login')) {
+        for (const a of platformAccountsForPlatform(prefs, p.id)) {
+          try { loginCheckBus.create({ platform: p.id, account: a.name }); } catch { /* 并发/离线忽略 */ }
+        }
+      }
+    } catch { /* 配置读失败,下轮再来 */ }
+  };
 
   app.post('/api/media-studio/login-check', (req, res) => {
     const b = (req.body ?? {}) as { platform?: string; account?: string };
@@ -1209,6 +1223,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     const unsubscribe = loginCheckBus.subscribe((job) => res.write(`event: job\ndata: ${JSON.stringify(job)}\n\n`));
     const keepalive = setInterval(() => res.write(': keepalive\n\n'), 30_000);
     req.on('close', () => { clearInterval(keepalive); unsubscribe(); });
+    // 桌面端一连上就先扫一轮所有账号——开 app 即自动刷新登录态,用户不用手点。
+    setTimeout(() => { void sweepLoginChecks(); }, 1500);
   });
 
   app.post('/api/media-studio/login-check/:id/claim', (req, res) => {
@@ -1227,15 +1243,23 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
 
   // 桌面端回写探测结果:落登录状态;从"已登录→已失效"翻转时产一条告警引导补登。
   app.post('/api/media-studio/login-check/:id/result', (req, res) => {
-    const b = (req.body ?? {}) as { loggedIn?: boolean; detail?: string };
+    const b = (req.body ?? {}) as { loggedIn?: boolean; state?: string; detail?: string };
     const job = loginCheckBus.get(req.params.id);
     if (!job) return bad(res, 404, 'job not found');
-    const loggedIn = b.loggedIn === true;
+    // 新链路传 state('logged-in'|'logged-out'|'unknown');老链路只传 loggedIn 布尔。
+    const state: 'logged-in' | 'logged-out' | 'unknown' =
+      b.state === 'logged-in' || b.state === 'logged-out' || b.state === 'unknown'
+        ? b.state
+        : b.loggedIn === true ? 'logged-in' : 'logged-out';
     const detail = String(b.detail ?? '');
-    loginCheckBus.setResult(req.params.id, loggedIn, detail);
-    const flip = setLoginStatus(db, job.platform, job.account, loggedIn ? 'logged-in' : 'logged-out', detail || null);
-    if (flip.flippedToLoggedOut) {
-      createAlert(db, { kind: 'login-expired', platform: job.platform, account: job.account, message: `「${job.account}」的${job.platform}登录已失效,请去账号页扫码补登。` });
+    loginCheckBus.setResult(req.params.id, state === 'logged-in', detail);
+    // unknown = 探不出(页面没标记/探测不可用):【不改判】,保留上次已知态。这是"已登录却被
+    // 标红失效"误报的根因修复——绝不因为没探到标记就翻成 logged-out。
+    if (state !== 'unknown') {
+      const flip = setLoginStatus(db, job.platform, job.account, state, detail || null);
+      if (flip.flippedToLoggedOut) {
+        createAlert(db, { kind: 'login-expired', platform: job.platform, account: job.account, message: `「${job.account}」的${job.platform}登录已失效,请去账号页扫码补登。` });
+      }
     }
     res.json({ job: loginCheckBus.get(req.params.id) });
   });
@@ -1306,14 +1330,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     }
   });
 
-  // 心跳保活:每 15 分钟对【已检测过的账号】重新校验一次(仅桌面在线时)。首检由账号页手动触发种下,
-  // 之后自动保鲜;掉线由 /result 翻转产告警。用 unref 定时器,不挡进程退出。
-  const heartbeat = setInterval(() => {
-    if (loginCheckBus.subscriberCount() === 0) return;
-    for (const s of listLoginStatus(db)) {
-      try { loginCheckBus.create({ platform: s.platform, account: s.account }); } catch { /* 忽略并发/离线 */ }
-    }
-  }, 15 * 60_000);
+  // 心跳保活:每 5 分钟对【所有已绑定账号】静默校验一轮(桌面在线时)。不用手动首检种下、
+  // 不用用户主动登录;掉线由 /result 翻转产告警。静默探测很轻,故比老的 15 分钟更勤。unref 不挡退出。
+  const heartbeat = setInterval(() => { void sweepLoginChecks(); }, 5 * 60_000);
   if (typeof heartbeat.unref === 'function') heartbeat.unref();
 
   // ---- 读评论派发桥（读一条笔记的评论树 → 桌面端应用内标签执行，不耗互动配额）----

@@ -1,4 +1,4 @@
-import { BrowserWindow, app, ipcMain, session, webContents } from "electron";
+import { BrowserWindow, app, ipcMain, net, session, webContents } from "electron";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -377,6 +377,129 @@ export function registerEmbeddedBrowserCookieBridge(): void {
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : String(err) };
     }
+  });
+}
+
+// ── 登录态静默探测(2026-07-20 用户拍板:检测不许跳标签/网址,要能后台自动轮询)──
+// 完全在主进程做,不开 webview、不导航:①读该 平台×账号 登录分区的 cookie,判【登录票据 cookie】
+// 是否在(登录必有票据,登出/失效会被清)——这是决定线,直接修掉"已登录却报失效"的误报根因;
+// ②票据在时,对能可靠判定的平台(知乎)带 cookie 发一个轻量接口真问服务端,把"票据还在但被服务端
+// 踢下线"也纠出来。接口失败/超时/不支持的平台,一律以"票据在=登录"为准——【绝不因网络抖动误报失效】。
+const LOGIN_PROBE_IPC_CHANNEL = "od:browser:probe-login";
+
+/** 各平台登录票据 cookie(存在且非空≈登录)。登出/被踢会被平台清掉。 */
+const LOGIN_TICKET_COOKIES: Record<string, string[]> = {
+  xiaohongshu: ["web_session", "web_sessionid"],
+  zhihu: ["z_c0"],
+  weibo: ["SUB", "SUBP"],
+  "baidu-zhidao": ["BDUSS"],
+};
+
+/** 可带 cookie 后台验证的平台端点:返回 true=在线 / false=已失效 / null=判不了(不改判)。 */
+type LoginVerify = (sess: Electron.Session) => Promise<boolean | null>;
+const LOGIN_VERIFIERS: Record<string, LoginVerify> = {
+  // 知乎:/api/v4/me 带 cookie → 200+含 id/name=在线;401=已失效;其它=判不了。
+  zhihu: async (sess) => {
+    const r = await httpGetWithSession(sess, "https://www.zhihu.com/api/v4/me", {
+      Referer: "https://www.zhihu.com/",
+      "x-requested-with": "fetch",
+    });
+    if (r.status === 401 || r.status === 403) return false;
+    if (r.status === 200 && /"(id|url_token|name)"\s*:/.test(r.body)) return true;
+    return null;
+  },
+};
+
+/** Electron net.request(走 Chromium 网络栈,自动带该 session 分区的 cookie)+ 6s 超时。 */
+function httpGetWithSession(
+  sess: Electron.Session,
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (status: number, body: string): void => {
+      if (done) return;
+      done = true;
+      resolve({ status, body });
+    };
+    try {
+      const req = net.request({ method: "GET", url, session: sess, useSessionCookies: true });
+      req.setHeader(
+        "User-Agent",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+      );
+      for (const [k, v] of Object.entries(headers)) req.setHeader(k, v);
+      const timer = setTimeout(() => finish(0, ""), 6000);
+      let body = "";
+      req.on("response", (res) => {
+        res.on("data", (chunk: Buffer) => {
+          if (body.length < 20000) body += chunk.toString("utf8");
+        });
+        res.on("end", () => {
+          clearTimeout(timer);
+          finish(res.statusCode ?? 0, body);
+        });
+        res.on("error", () => {
+          clearTimeout(timer);
+          finish(0, "");
+        });
+      });
+      req.on("error", () => {
+        clearTimeout(timer);
+        finish(0, "");
+      });
+      req.end();
+    } catch {
+      finish(0, "");
+    }
+  });
+}
+
+/**
+ * 静默探测某 平台×账号 的登录态。返回 state:'logged-in' | 'logged-out' | 'unknown'。
+ * unknown = 分区不存在/没有该平台票据规则/异常,交由上层"保留上次已知态、不误报"。
+ */
+export async function probeLoginForPartition(
+  platform: string,
+  account: string,
+): Promise<{ state: "logged-in" | "logged-out" | "unknown"; detail: string }> {
+  const plat = sanitizeProfileSegment(platform);
+  const acct = sanitizeProfileSegment(account) ?? "main";
+  if (plat == null) return { state: "unknown", detail: "invalid platform" };
+  const tickets = LOGIN_TICKET_COOKIES[plat];
+  if (!tickets) return { state: "unknown", detail: "该平台暂无登录票据规则" };
+  const partition = `${PARTITION_PREFIX}${plat}-${acct}`;
+  try {
+    const sess = session.fromPartition(partition);
+    const cookies = await sess.cookies.get({});
+    const hasTicket = cookies.some((c) => tickets.includes(c.name) && (c.value ?? "").length > 0);
+    if (!hasTicket) return { state: "logged-out", detail: "登录票据 cookie 不在(未登录或已登出)" };
+    // 票据在 → 尝试服务端验证(能判失效才判;判不了/网络抖动一律保持 logged-in)。
+    const verify = LOGIN_VERIFIERS[plat];
+    if (verify) {
+      try {
+        const ok = await verify(sess);
+        if (ok === false) return { state: "logged-out", detail: "票据在但服务端已踢下线,需重新登录" };
+        // ok === true 或 null 都落 logged-in(true=已验证在线;null=判不了但票据在)。
+      } catch {
+        /* 验证异常不改判 */
+      }
+    }
+    return { state: "logged-in", detail: "登录中(cookie 票据有效)" };
+  } catch (err) {
+    return { state: "unknown", detail: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export function registerEmbeddedBrowserLoginProbeBridge(): void {
+  ipcMain.removeHandler(LOGIN_PROBE_IPC_CHANNEL);
+  ipcMain.handle(LOGIN_PROBE_IPC_CHANNEL, async (_event, raw: unknown) => {
+    if (!isRecord(raw)) return { ok: false, reason: "invalid probe-login request" };
+    const platform = typeof raw.platform === "string" ? raw.platform : "";
+    const account = typeof raw.account === "string" ? raw.account : "main";
+    const r = await probeLoginForPartition(platform, account);
+    return { ok: true, state: r.state, detail: r.detail };
   });
 }
 

@@ -7,6 +7,8 @@ import type {
   OpenDesignHostSetFileInputRequest,
   OpenDesignHostExportCookiesRequest,
   OpenDesignHostExportCookiesResult,
+  OpenDesignHostProbeLoginRequest,
+  OpenDesignHostProbeLoginResult,
   OpenDesignHostFailure,
   OpenDesignHostProjectImportResult,
   OpenDesignHostProjectReplaceWorkingDirResult,
@@ -255,6 +257,24 @@ const browser = {
         isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
           ? result.reason
           : 'cookie export failed';
+      return failure(reason);
+    } catch (error) {
+      return failure(reasonFromError(error));
+    }
+  },
+  // 登录态静默探测:主进程读该分区 cookie 票据(+可选服务端验)判断,不开网页、不跳转。
+  // 给账号页/心跳轮询用,替代"开可见标签导航到平台主站"的老探测。
+  probeLogin: async (request: OpenDesignHostProbeLoginRequest): Promise<OpenDesignHostProbeLoginResult> => {
+    try {
+      const result = await ipcRenderer.invoke('od:browser:probe-login', request);
+      if (isRecord(result) && result.ok === true && typeof result.state === 'string') {
+        const state = result.state === 'logged-in' || result.state === 'logged-out' ? result.state : 'unknown';
+        return { ok: true, state, ...(typeof result.detail === 'string' ? { detail: result.detail } : {}) };
+      }
+      const reason =
+        isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
+          ? result.reason
+          : 'probe-login failed';
       return failure(reason);
     } catch (error) {
       return failure(reasonFromError(error));

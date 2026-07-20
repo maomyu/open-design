@@ -1229,9 +1229,16 @@ export function reportLoginCheckProgress(jobId: string, message: string): void {
 /** 探测结果回写:daemon 据此落 media_login_status,从已登录翻转到失效时产告警。
  *  返回 promise:调用方 await 本次落库后再 complete(否则 complete 先到会把 job 置终态,
  *  job.loggedIn 被终态守卫丢弃 → CLI/UI 读到「未定」)。 */
-export function postLoginCheckResult(jobId: string, loggedIn: boolean, detail: string): Promise<void> {
+/** 回写登录探测结果。state:'logged-in'|'logged-out'|'unknown'——unknown 由 daemon 判为"不改判"
+ *  (保留上次已知态,绝不把"探不到标记"误当"已失效")。兼容旧签名(布尔)。 */
+export function postLoginCheckResult(
+  jobId: string,
+  result: boolean | 'logged-in' | 'logged-out' | 'unknown',
+  detail: string,
+): Promise<void> {
+  const state = typeof result === 'boolean' ? (result ? 'logged-in' : 'logged-out') : result;
   return fetch(`${ROOT}/login-check/${encodeURIComponent(jobId)}/result`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loggedIn, detail }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state, loggedIn: state === 'logged-in', detail }),
   }).then(() => undefined).catch(() => undefined);
 }
 

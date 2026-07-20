@@ -231,6 +231,18 @@ export type OpenDesignHostExportCookiesResult =
   | { ok: true; cookieFile: string; count: number }
   | OpenDesignHostFailure;
 
+export type OpenDesignHostProbeLoginRequest = {
+  /** 平台 id + 账号,定位登录分区。 */
+  platform: string;
+  account: string;
+};
+
+/** 静默登录态探测结果:主进程读分区 cookie 票据(+可选服务端验)判断,不开网页、不跳转。
+ *  state:logged-in=登录中 / logged-out=已失效 / unknown=判不了(上层保留上次已知态,不误报)。 */
+export type OpenDesignHostProbeLoginResult =
+  | { ok: true; state: "logged-in" | "logged-out" | "unknown"; detail?: string }
+  | OpenDesignHostFailure;
+
 export type OpenDesignHostBridge = {
   // Optional capability: hosts older than the embedded-browser feature do
   // not expose it, and the renderer falls back to its non-embedded path.
@@ -240,6 +252,8 @@ export type OpenDesignHostBridge = {
     setFileInput?(request: OpenDesignHostSetFileInputRequest): Promise<OpenDesignHostActionResult>;
     /** Optional (newer hosts): 导出该平台登录分区的 cookie 给下载器带真实会话。 */
     exportCookies?(request: OpenDesignHostExportCookiesRequest): Promise<OpenDesignHostExportCookiesResult>;
+    /** Optional (newer hosts): 静默探测登录态(读分区 cookie 票据 + 可选服务端验),不开网页/不跳转。 */
+    probeLogin?(request: OpenDesignHostProbeLoginRequest): Promise<OpenDesignHostProbeLoginResult>;
   };
   client: OpenDesignHostClient;
   pdf: {
