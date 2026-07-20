@@ -274,8 +274,11 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     }
     return { time_window: radarWindow, rules };
   };
-  // 采集页数(1-4):每页约 12 条候选。默认 1 页;想多看爆款可调大(会多爬几页,稍慢)。
-  const [radarPages, setRadarPages] = useState(1);
+  // 问题模式:百度知道(问答平台)——采集的是「相关问题」不是爆款视频,文案/筛选控件全套换。
+  const questionMode = (collectPlatforms ?? []).includes('baidu-zhidao');
+  // 采集页数(1-4):每页约 12 条候选(问题模式每页约 10 个问题)。问题模式默认 3 页(用户拍板:
+  // 多翻几页);其余默认 1 页,想多看可调大(会多爬几页,稍慢)。
+  const [radarPages, setRadarPages] = useState(questionMode ? 3 : 1);
 
   // ── 真抓爆款·直接采集(纯可视化,不经 AI 智能体)：点一下 → 内置浏览器【当前选中平台】可见
   //    采集 → 引擎按爆款筛选评分 → 选题候选直接进「候选选题」表。选抖音就只抓抖音。 ──
@@ -307,8 +310,8 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     if (collectTargets.includes('baidu-zhidao')) {
       setCollectBusy(true);
       try {
-        setBaokuanStatus(`正在用内置浏览器搜百度知道相关问题「${kw}」…(桌面端标签可见,约半分钟)`);
-        const created = await createStudioCollect({ keyword: kw, platforms: ['baidu-zhidao'], per: 20, pages: radarPages });
+        setBaokuanStatus(`正在用内置浏览器搜百度知道相关问题「${kw}」(翻 ${radarPages} 页)…(桌面端标签可见,约${radarPages * 15}秒)`);
+        const created = await createStudioCollect({ keyword: kw, platforms: ['baidu-zhidao'], per: radarPages * 10 + 5, pages: radarPages });
         if ('error' in created) { setBaokuanStatus(''); studioToast.err(created.error); return; }
         const job = await waitStudioCollectDone(created.jobId, (line) => setBaokuanStatus(`百度知道:${line}`));
         const items = (job?.results ?? []).flatMap((r) => r.items ?? []);
@@ -677,9 +680,11 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     <>
       <div className={c('card')}>
         <div className={c('cardLabel')}>
-          {browserCollect ? `真抓爆款 · ${collectSource} 直采` : '找热点 · 组合选题雷达'}
+          {questionMode ? '找相关问题 · 内置浏览器直采' : browserCollect ? `真抓爆款 · ${collectSource} 直采` : '找热点 · 组合选题雷达'}
           <span className={c('cardHint')}>
-            {browserCollect
+            {questionMode
+              ? '填方向关键词 → 点「搜相关问题」→ 内置浏览器搜百度知道,列出问题(标题+回答数+链接)。选题=问题,「去创作」=为它写回答'
+              : browserCollect
               ? `选平台 + 填方向 + 勾爆款筛选 → 点「真抓爆款」→ ${collectSource} 直采真实爆款(带粉丝/点赞/评论)、按标准评分列出,十几秒出`
               : aiOnly
                 ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出'
@@ -725,7 +730,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           <div className={c('row')}>
             <span className={c('cardHint')}>
               采集平台：{collectTargets.map((p) => (COLLECT_PLATFORM_LABEL[p] ?? p)).join('、') || '（请在上方选平台）'}
-              {collectTargets.includes('channels')
+              {questionMode
+                ? '（内置浏览器直采：搜相关问题当选题；撞到百度安全验证会停在浏览器标签等你完成,过完自动继续）'
+                : collectTargets.includes('channels')
                 ? '（视频号走极致数据直采：按点赞热度筛爆款，无需登录；下载自动解密还原可播视频）'
                 : '（TikHub 直采：秒出真实爆款，带粉丝/点赞/评论，无需登录/扫码；选哪个平台就只抓哪个）'}
             </span>
@@ -822,10 +829,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}
               disabled={collectBusy || !!collectMsg || !direction.trim()}
-              title={`用 ${collectSource} 接口直采【当前选中平台】真实爆款(带粉丝/点赞/评论),按爆款筛选评分列出。十几秒出,不用开浏览器、不用登录/扫码。选哪个平台就只抓哪个。`}
+              title={questionMode
+                ? `内置浏览器搜百度知道相关问题(翻 ${radarPages} 页,约 ${radarPages * 10} 个)。撞到百度安全验证会停在浏览器标签等你完成。`
+                : `用 ${collectSource} 接口直采【当前选中平台】真实爆款(带粉丝/点赞/评论),按爆款筛选评分列出。十几秒出,不用开浏览器、不用登录/扫码。选哪个平台就只抓哪个。`}
               onClick={() => void runDirectCollect()}
             >
-              <Icon name="sparkles" size={14} /> {collectBusy || collectMsg ? '采集评分中…' : `真抓爆款(${collectSource} 直采)`}
+              <Icon name="sparkles" size={14} /> {collectBusy || collectMsg ? (questionMode ? '搜索中…' : '采集评分中…') : questionMode ? '搜相关问题(浏览器直采)' : `真抓爆款(${collectSource} 直采)`}
             </button>
           ) : (
             <button
@@ -842,7 +851,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               type="button"
               className={c('btn')}
               disabled={aiBusy}
-              onClick={() => onAiFind((direction.trim() + (browserCollect ? buildRadarNote() : '')).trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
+              onClick={() => onAiFind((direction.trim() + (browserCollect && !questionMode ? buildRadarNote() : '')).trim(), pickedHits.size > 0 ? toPicked([...pickedHits.values()]) : undefined)}
               title={
                 aiBusy
                   ? '有 AI 任务正在运行——等它结束（或在底部面板中止）再发起'
@@ -861,8 +870,28 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           ) : null}
         </div>
         {/* 🎯 爆款筛选：短视频专属(时间窗+播放/点赞规则,喂给爆款雷达采集+评分)。文章台
-            (公众号走极致了/知乎走登录态直取/微博走 TikHub)不是视频指标,不显示。 */}
-        {browserCollect ? (
+            (公众号走极致了/知乎走登录态直取/微博走 TikHub)不是视频指标,不显示。
+            问题模式(百度知道)只留【翻页数】——播放/点赞那套对问答不适用(UI 与实际功能对齐)。 */}
+        {browserCollect && questionMode ? (
+        <div className={c('row')} style={{ flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <span className={c('cardHint')}>翻页数：</span>
+          <select
+            className={c('input')}
+            value={radarPages}
+            onChange={(e) => setRadarPages(Number(e.target.value))}
+            title="搜索翻页数——每页约 10 个问题。翻得多问题多,稍慢"
+            style={{ width: 'auto', minWidth: 72 }}
+          >
+            <option value={1}>1 页(约10个)</option>
+            <option value={2}>2 页(约20个)</option>
+            <option value={3}>3 页(约30个)</option>
+            <option value={4}>4 页(约40个)</option>
+          </select>
+          <span className={c('cardHint')} style={{ opacity: 0.6 }}>
+            已自动过滤广告/推广条目
+          </span>
+        </div>
+        ) : browserCollect ? (
         <div className={c('row')} style={{ flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
           <span className={c('cardHint')}>🎯 爆款筛选：</span>
           <select
@@ -1069,7 +1098,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       <div className={c('card')}>
         <div className={c('cardLabel')}>候选选题（{candidates.length}）</div>
         {candidates.length === 0 ? (
-          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
+          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : questionMode ? '还没有候选——用上面「搜相关问题」找到要答的问题,勾选后「AI 帮我选题」沉淀成候选;也可在下方手动添加。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
         ) : (
           <table className={c('table')}>
             <thead>

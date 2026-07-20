@@ -234,21 +234,24 @@ export const EXTRACTORS: Record<StudioCollectPlatform, string> = {
     return out;
   })()`,
   // 百度知道:搜索结果每条=一个问答,标题链接指向 /question/<id>.html。抓问题标题 + 链接
-  // (回答时导航到它)+ 尽力抓回答数(comments 复用)。选择器真机(app webview)校准过后再定。
+  // (回答时导航到它)+ 尽力抓回答数(comments 复用)。真机校准过(军队文职 10 条一次命中)。
+  // 广告过滤(2026-07-20 用户拍板):①链接必须是 zhidao.baidu.com/question/<数字>(站外/
+  // 营销落地页不收);②所在卡片带 广告/推广/商业推广 标记的跳过;③http 归一成 https(少一跳)。
   'baidu-zhidao': `(() => {
     const out = [], seen = new Set();
     document.querySelectorAll('a[href*="/question/"]').forEach((a) => {
       const href = a.href || '';
-      const m = href.match(/\\/question\\/([0-9a-zA-Z]+)/);
-      if (!m) return;
+      const m = href.match(/^https?:\\/\\/zhidao\\.baidu\\.com\\/question\\/(\\d+)/);
+      if (!m) return;                                        // 站外/非纯数字 id(营销页)不收
       const id = m[1]; if (seen.has(id)) return;
       const title = (a.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 90);
       if (!title || title.length < 4) return;
       const card = a.closest('.dl, dl, .list-inner > *, li, article') || a.parentElement;
       const meta = (card && card.textContent) || '';
+      if (/广告|商业推广|\\b推广\\b/.test(meta.slice(0, 400))) return;   // 广告卡整条跳过
       const ans = (meta.match(/(\\d+)\\s*个?回答/) || [])[1] || '';
       seen.add(id);
-      out.push({ content_id: id, title, url: href, likes: '', comments: ans, plays: '', author: '', publish_time: 0 });
+      out.push({ content_id: id, title, url: 'https://zhidao.baidu.com/question/' + id + '.html', likes: '', comments: ans, plays: '', author: '', publish_time: 0 });
     });
     return out;
   })()`,
