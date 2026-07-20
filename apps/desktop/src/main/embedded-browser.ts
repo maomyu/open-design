@@ -302,21 +302,11 @@ export function openEmbeddedBrowserProfile(raw: unknown): EmbeddedBrowserOpenRes
     event.preventDefault();
   });
 
-  // Login flows (扫码/OAuth) open child windows; allow them inside the
-  // same partition, deny everything non-http.
+  // 一律不弹子窗口(2026-07-20 用户拍板:所有打开都留在当前窗口内)——
+  // 登录弹窗/target=_blank 改为本窗口原地导航,同一分区登录态不丢。
   window.webContents.setWindowOpenHandler(({ url: childUrl }) => {
-    if (!isHttpUrl(childUrl)) return { action: "deny" };
-    return {
-      action: "allow",
-      overrideBrowserWindowOptions: {
-        webPreferences: {
-          contextIsolation: true,
-          nodeIntegration: false,
-          partition,
-          sandbox: true,
-        },
-      },
-    };
+    if (isHttpUrl(childUrl)) void window.webContents.loadURL(childUrl);
+    return { action: "deny" };
   });
 
   window.on("closed", () => {
@@ -499,9 +489,11 @@ export function hardenWebviewEmbeddedBrowser(window: BrowserWindow): void {
     contents.session.setUserAgent(cleanUserAgent());
     contents.setUserAgent(cleanUserAgent());
     contents.setWindowOpenHandler(({ url: childUrl }) => {
-      if (!isHttpUrl(childUrl)) return { action: "deny" };
-      // 子窗不指定 partition 时继承 opener 会话——登录弹窗落同一档案。
-      return { action: "allow" };
+      // 一律不弹独立窗口(2026-07-20 用户拍板:所有打开都留在标签内)——
+      // window.open/target=_blank 的目标改为【本 webview 原地导航】。同一分区,
+      // 登录态不丢;登录完成后站点自己的回跳会把页面带回去。非 http 直接吞掉。
+      if (isHttpUrl(childUrl)) void contents.loadURL(childUrl);
+      return { action: "deny" };
     });
     const partitionOf = pendingWebviewPartitions.shift();
     // 登录态持久化(2026-07-14 用户报"每次点登录都要重新登"、"重编译后账号失效"):
