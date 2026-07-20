@@ -10329,7 +10329,7 @@ export async function startServer({
         const s2 = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
         const parsed = JSON.parse(s2);
         if (!parsed.error) {
-          return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url });
+          return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url, source: 'engine' });
         }
         engineErr = String(parsed.error);
         // 平台链接且引擎明确报错(已删/链接不完整/缺 key)→ 网页降级对平台站也抓不到
@@ -10340,7 +10340,10 @@ export async function startServer({
     }
     try {
       const g = await fetchGenericWebText(url);
-      return res.json({ text: g.text, images: [], title: g.title, mediaUrl: '', referer: url });
+      // source:'web' = 通用网页抓正文兜底。平台链接(小红书等)走到这里通常是引擎
+      // 失败+登录墙/404 页,文本多为站壳垃圾——调用方靠这个标记决定要不要采信
+      // (2026-07-20 实测:失效笔记的 404 页文本反而更长,会把正常文案覆盖成垃圾)。
+      return res.json({ text: g.text, images: [], title: g.title, mediaUrl: '', referer: url, source: 'web' });
     } catch (err) {
       const webErr = String(err && err.message ? err.message : err);
       return res.status(422).json({ error: engineErr ? `取原素材失败:${engineErr};按网页抓正文也失败:${webErr}` : `取原素材失败:${webErr}` });

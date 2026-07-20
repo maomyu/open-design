@@ -217,8 +217,9 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
           await fail(src.error);
           return;
         }
-        // 全文取长保旧:详情接口的文案比候选预览长才覆盖(短 desc 不倒退)。
-        const betterText = src.text && src.text.length > (topic.sourceContent ?? '').length ? src.text : '';
+        // 全文取长保旧:引擎详情接口的文案比候选预览长才覆盖(短 desc 不倒退)。
+        // 网页兜底(source='web')的平台链接文本是失效页/登录墙站壳,绝不采信。
+        const betterText = src.source === 'engine' && src.text && src.text.length > (topic.sourceContent ?? '').length ? src.text : '';
         let dl: { file: string } | { error: string };
         if (src.mediaUrl) {
           dl = await downloadVideoByUrl(src.mediaUrl, src.referer || topic.url, topic.title);

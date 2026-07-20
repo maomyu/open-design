@@ -15,7 +15,6 @@ import type {
 } from '@open-design/contracts';
 import { IMAGE_RATIO_OPTIONS, IMAGE_STYLE_PRESETS } from '@open-design/contracts';
 import { ImageStyleSamples } from './ImageStyleSamples';
-import { FinalPromptPreview } from './FinalPromptPreview';
 import { Icon } from '../Icon';
 import {
   createStudioAiTask,
@@ -41,6 +40,7 @@ import { hasFeature, useLicense } from '../../state/license';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
+import { FinalPromptPreview } from './FinalPromptPreview';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
@@ -122,32 +122,46 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   const [previewTab, setPreviewTab] = useState<'draft' | 'source' | 'refs'>('draft');
   // 取原素材(url-only 候选补回原文案/原图)。
   const [fetchingSource, setFetchingSource] = useState(false);
-  const fetchSourceNow = async (url: string) => {
+  const fetchSourceNow = async (url: string, opts?: { quiet?: boolean }) => {
     if (!article) return;
     setFetchingSource(true);
     const r = await fetchSourceMaterial(url);
     if ('error' in r) {
       // 拉取失败(常见:AI 选题引用的新闻/公众号链接已过期)不阻断创作——明确告知可直接写。
-      studioToast.err(`原素材拉取失败:${r.error}。不影响创作——可直接点「AI 写笔记」按标题+知识库写`);
+      // 静默补拉(已有预览文案,只是尝试升级全文)失败不打扰:预览还在,创作不受影响。
+      if (!opts?.quiet) studioToast.err(`原素材拉取失败:${r.error}。不影响创作——可直接点「AI 写笔记」按标题+知识库写`);
       setFetchingSource(false);
       return;
     }
     // 原图存进【参考素材区】extra.sourceImages,不直接进图集(2026-07-18 用户拍板:
     // 别人的原图是参考,不能当自己成品直接发——防盗图;想用点参考图上的「+加入图集」)。
+    // 已有参考图就不重复下载(全文补拉会对已有图的稿再跑一次,别攒重复资产)。
+    const prevExtra = (articleRef.current?.extra ?? {}) as Record<string, unknown>;
+    const hadImgs = Array.isArray(prevExtra.sourceImages) && prevExtra.sourceImages.length > 0;
     let imageUrls: string[] = [];
-    if (r.images.length > 0) {
+    if (r.images.length > 0 && !hadImgs) {
       const imp = await importXhsNote(article.id, r.text, r.images);
       if (!('error' in imp)) imageUrls = imp.imageUrls;
     }
-    // 重新拉取时若接口只返回图没返回文(或反之),别用空值覆盖已取到的原文案/原图。
-    const prevContent = str((articleRef.current?.extra as Record<string, unknown> | undefined)?.sourceContent);
-    await updateStudioArticle(PLATFORM, article.id, { extra: { sourceContent: r.text || prevContent, ...(imageUrls.length ? { sourceImages: imageUrls } : {}) } });
+    // 文案取长保旧(2026-07-20 用户反馈"小红书原文不完整"):候选自带的常是搜索接口的
+    // 截断预览,这里按链接取回全文后只有【更长】才覆盖——接口偶尔回空/回短绝不倒退。
+    // 平台链接走到网页兜底(source='web')= 失效/登录墙站壳文本,绝不拿来覆盖
+    // (新闻/公众号等站外链接的网页正文才是真内容,不受此限)。
+    const prevContent = str(prevExtra.sourceContent);
+    const junkWebText = r.source === 'web' && topicOriginPlatform(url) !== 'other';
+    const nextContent = !junkWebText && r.text && r.text.length > prevContent.length ? r.text : prevContent;
+    await updateStudioArticle(PLATFORM, article.id, { extra: { sourceContent: nextContent, ...(imageUrls.length ? { sourceImages: imageUrls } : {}) } });
     const fresh = await fetchStudioArticle(PLATFORM, article.id);
     if (fresh) setArticle(fresh);
     setFetchingSource(false);
-    studioToast.ok(imageUrls.length
-      ? `已取回原素材:原文案+${imageUrls.length}张原图 ✓(右侧「原文」「参考图」)`
-      : '已取回原文案 ✓(右侧「原文」;该来源无原图,如公众号/新闻页)');
+    const grew = nextContent.length > prevContent.length;
+    if (imageUrls.length) {
+      studioToast.ok(`已取回原素材:原文案+${imageUrls.length}张原图 ✓(右侧「原文」「参考图」)`);
+    } else if (grew) {
+      studioToast.ok('已取回完整原文案 ✓(右侧「原文」)');
+    } else if (!opts?.quiet) {
+      studioToast.ok('已取回原文案 ✓(右侧「原文」;该来源无原图,如公众号/新闻页)');
+    }
   };
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -247,20 +261,20 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   }, [article?.id]);
 
   // 自动取原素材(2026-07-18 用户反馈"去创作后看不到原文/原图"):选中的稿有原文链接
-  // 但还没原文案/原图 → 自动按链接抓一次(不用手点「取原素材」)。每篇只自动抓一次。
+  // 就自动按链接抓一次全文(不用手点「取原素材」)。每篇只自动抓一次。
+  // 2026-07-20 用户反馈"小红书原文不完整"后不再因「已有文案」跳过——候选随搜索
+  // 结果带回的文案是截断预览,必须补拉全文;fetchSourceNow 取长保旧,已有内容时
+  // 静默升级(quiet),不打扰。
   const autoFetchedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const a = article;
     if (!a) return;
     const ex = a.extra as Record<string, unknown>;
     const url = typeof ex.sourceUrl === 'string' ? ex.sourceUrl : '';
-    const hasContent = typeof ex.sourceContent === 'string' && ex.sourceContent;
-    const hasImgs = Array.isArray(ex.sourceImages) && ex.sourceImages.length > 0;
-    // 文案+原图都齐了才跳过;缺任一(常见:真抓爆款自带文案但图数组为空)就自动补拉
-    // (2026-07-18 用户反馈:去创作要自动把原文案+素材图都拉回来,别只拉到文案缺图)。
-    if (!url || (hasContent && hasImgs) || fetchingSource || autoFetchedRef.current.has(a.id)) return;
+    const hasContent = typeof ex.sourceContent === 'string' && !!ex.sourceContent;
+    if (!url || fetchingSource || autoFetchedRef.current.has(a.id)) return;
     autoFetchedRef.current.add(a.id);
-    void fetchSourceNow(url);
+    void fetchSourceNow(url, { quiet: hasContent });
   }, [article?.id]);
 
   useEffect(() => {
@@ -781,6 +795,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                     <span className={c('cardHint')}>原素材拉好后点这里：先调研 → 按原文+知识库风格仿写出稿（标题/正文/标签/图集建议）→ 清 AI 腔</span>
                   </div>
                   <div className={c('row')}>
+                    <FinalPromptPreview style={refImage ? '' : galleryStyle} description={galleryPrompt} />
                     <button
                       type="button"
                       className={`${c('btn')} ${c('btnPrimary')}`}
@@ -1078,7 +1093,6 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                     </select>
                   </div>
                   <ImageStyleSamples value={refImage ? '' : galleryStyle} onSelect={onStyleAxisSelect} />
-                  <FinalPromptPreview style={refImage ? '' : galleryStyle} description={galleryPrompt} />
                   <div className={c('row')}>
                     <input
                       className={`${c('input')} ${c('grow')}`}
