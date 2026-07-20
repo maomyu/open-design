@@ -10,8 +10,11 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
-# override=True：项目 .env 为准，避免 shell 里陈旧的同名环境变量（如旧 Key）覆盖
-load_dotenv(override=True)
+# override=False：已注入的环境变量（daemon 从「媒体设置」读用户配的 key 注入）优先，
+# .env 只补它没有的键。此前 override=True 会用出厂 .env 的【空值】反噬 daemon 注入的真 key
+# ——客户机上 TikHub/dajiala/ARK 全被空 .env 洗掉、视频号静默采 0(2026-07-20 审计撞出)。
+# dev 机没有注入环境变量，.env 里的真 key 照常加载，不受影响。
+load_dotenv(override=False)
 
 
 def _env(key: str, default: str = "") -> str:

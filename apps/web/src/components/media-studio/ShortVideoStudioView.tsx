@@ -697,6 +697,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
               onAdd={async (draft) => {
                 const created = await createStudioTopic(PLATFORM, draft);
                 if (created) setTopics((list) => [created, ...list]);
+                return Boolean(created);
               }}
               onDelete={async (id) => {
                 if (await deleteStudioTopic(PLATFORM, id)) setTopics((list) => list.filter((t) => t.id !== id));

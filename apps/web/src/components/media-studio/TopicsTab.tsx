@@ -182,7 +182,8 @@ export interface TopicsTabProps {
   /** 公众号模式：候选只能由「AI 帮我选题」产出——隐藏手动添加与热榜「存为候选」。 */
   aiOnly?: boolean;
   topics: MediaTopic[];
-  onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string; sourceContent?: string; sourceImages?: string[] }) => Promise<void>;
+  /** 返回是否真的存成功(false=后端拒/网络错)——存为候选据此决定是否标「已存」,失败不置灰、可重试。 */
+  onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string; sourceContent?: string; sourceImages?: string[] }) => Promise<boolean>;
   onDelete: (id: string) => Promise<void>;
   onWrite: (topic: MediaTopic) => void;
   /** picked = 用户勾选的优先参考；单篇「AI 转题」= note 空 + picked 一篇。 */
@@ -609,7 +610,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     signals.length >= 2 ? `⭐ ${signals.map((s) => SIGNAL_LABEL[s].replace(/^\S+\s/, '')).join('+')}` : SIGNAL_LABEL[signals[0] ?? 'trending'];
 
   async function saveHit(hit: MediaTopicHit) {
-    await onAdd({
+    // 只有真存成功才标「已存」置灰(2026-07-20 审计撞出:此前无条件置灰,后端拒/网络错时
+    // 假成功——候选没入库、按钮永久置灰且持久化到 localStorage,用户再也存不了这条)。
+    const ok = await onAdd({
       title: hit.title,
       source: hit.account,
       ...(hit.url ? { url: hit.url } : {}),
@@ -618,7 +621,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       ...(hit.sourceContent ? { sourceContent: hit.sourceContent } : {}),
       ...(hit.sourceImages && hit.sourceImages.length > 0 ? { sourceImages: hit.sourceImages } : {}),
     });
-    setSavedHitUrls((prev) => new Set(prev).add(hit.url || hit.title));
+    if (ok) {
+      setSavedHitUrls((prev) => new Set(prev).add(hit.url || hit.title));
+      studioToast.ok('已存为候选 ✓（下方「候选选题」可见）');
+    } else {
+      studioToast.err('存候选失败——请确认爆创后台在运行,稍后重试(这条没被占用,可再点)');
+    }
   }
 
   async function submit() {
@@ -999,7 +1007,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         >
                           <Icon name="sparkles" size={13} /> 提取图文仿写
                         </button>
-                      ) : (
+                      ) : browserCollect ? null : (
+                        // 统一创作台(StudioCreateView:browserCollect 但不传仿写回调)的爆款列表
+                        // 只留「存为候选」,不出「AI 转题」(2026-07-20 用户拍板)。公众号/微博/知乎
+                        // (非 browserCollect 的 aiOnly 台)照旧保留 AI 转题——那是它们唯一的逐条动作。
                         <button
                           type="button"
                           className={c('btn')}

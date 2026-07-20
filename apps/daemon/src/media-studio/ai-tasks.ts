@@ -354,6 +354,19 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     const tone = String(input.note ? '' : extra.tone ?? '') || '真诚口播';
     const duration = String(extra.duration ?? '') || '30s';
     const targetPlatform = String(extra.targetPlatform ?? '') || '抖音';
+    // 原视频口播文案(ASR)+ 原文正文一并作参考(2026-07-20 审计+用户拍板:写文案务必参考
+    // 知识库+原文+原视频文案)。knowledgeBlock 已管知识库;这里补 extra 里的原素材。
+    // 与「一步到位仿写」塞进 note 的【原口播文案】去重——note 已带就不再注入,免两份原稿打架。
+    const origTranscript = String(extra.sourceTranscript ?? '').trim();
+    const origContent = String(extra.sourceContent ?? '').trim();
+    const noteHasOrigin = /原口播文案|原视频文案|原文参考/.test(note);
+    const originRef = !noteHasOrigin && (origTranscript || origContent)
+      ? [
+          '## 原视频/原文参考（学它的结构、钩子与信息点，绝不照抄原句、不搬它的品牌与产品）',
+          origTranscript ? `【原视频口播文案】\n${origTranscript.slice(0, 2000)}` : '',
+          origContent && origContent !== origTranscript ? `【原文/简介】\n${origContent.slice(0, 1500)}` : '',
+        ].filter(Boolean).join('\n')
+      : '';
     return {
       title: `AI 写脚本 · ${article.title || article.topic || '未命名'}`,
       prompt: [
@@ -364,6 +377,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         note.trim() ? `补充要求：${note.trim()}` : '',
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
+        originRef,
         (input.knowledge?.length ?? 0) > 0
           ? '## 产品纪律（硬性）：脚本主角必须是知识库里的自家产品/品牌，卖点从知识库取材；参考的爆款只借结构钩子，其它品牌名一律不出现。'
           : '',

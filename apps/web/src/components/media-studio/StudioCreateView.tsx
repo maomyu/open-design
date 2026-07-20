@@ -215,9 +215,24 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
           await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceVideoError: tidy(msg) } });
           studioToast.err(`原视频没下载成功:${tidy(msg)}——右侧「原视频」有在线链接可对照`);
         };
+        // 视频号:选题 url 是 dajiala 视频 CDN 直链 + #odk=解密key(TikHub 没有 channels
+        // 详情端点)。取源(fetchSourceMaterial)不认它、会 403 早退,永远到不了能 WASM 解密
+        // 下载的 #odk 路径——直接走 downloadStudioVideo(内部认 #odk),跳过取源(2026-07-20 审计)。
+        if (/#odk=|channels\.weixin|finder\.video/i.test(topic.url)) {
+          const dl = await downloadStudioVideo(topic.url);
+          if ('error' in dl) { await fail(dl.error); return; }
+          await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceVideoFile: dl.file, sourceVideoError: '' } });
+          studioToast.ok('原视频已下载,右侧「原视频」可播放对照');
+          return;
+        }
         const src = await fetchSourceMaterial(topic.url);
+        // 取源失败不再硬早退(2026-07-20 审计:抖音/快手直链偶尔取不到详情,B站本就无直链)——
+        // 回退 yt-dlp 按页面链接兜底下载;兜底也失败才如实报错。
         if ('error' in src) {
-          await fail(src.error);
+          const dl = await downloadStudioVideo(topic.url);
+          if ('error' in dl) { await fail(src.error); return; }
+          await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceVideoFile: dl.file, sourceVideoError: '' } });
+          studioToast.ok('原视频已下载(用兜底下载器),右侧「原视频」可播放对照');
           return;
         }
         // 全文取长保旧:引擎详情接口的文案比候选预览长才覆盖(短 desc 不倒退)。
@@ -233,6 +248,8 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         let dl: { file: string } | { error: string };
         if (src.mediaUrl) {
           dl = await downloadVideoByUrl(src.mediaUrl, src.referer || topic.url, topic.title);
+          // 直链常短命/403(抖音/快手 CDN 防盗链)——坏了回退 yt-dlp 兜底,别硬失败(2026-07-20 审计)。
+          if ('error' in dl) dl = await downloadStudioVideo(topic.url);
         } else {
           // 无直链(常见:B站播放地址在单独接口)→ yt-dlp 按页面链接兜底。
           dl = await downloadStudioVideo(topic.url);
@@ -358,6 +375,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         onAdd={async (draft) => {
           const created = await createStudioTopic(TOPIC_POOL, draft);
           if (created) setTopics((list) => [created, ...list]);
+          return Boolean(created);
         }}
         onDelete={async (id) => {
           if (await deleteStudioTopic(TOPIC_POOL, id)) setTopics((list) => list.filter((t) => t.id !== id));

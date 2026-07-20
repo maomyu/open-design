@@ -9655,10 +9655,18 @@ export async function startServer({
   // 打通,导致"key 配了仍采 0 条"。每次调用现读,配完即生效无需重启)。
   async function bakuanKeysEnv(): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
-    for (const [pid, envName] of [["tikhub", "TIKHUB_API_KEY"], ["dajiala", "DAJIALA_API_KEY"], ["volcengine", "ARK_API_KEY"]] as const) {
+    // 一个 provider 可注入多个 env 名:引擎 settings.py 读 DAJIALA_KEY,而历史注入名是
+    // DAJIALA_API_KEY——名字对不上导致视频号在客户机静默采 0(2026-07-20 审计撞出;TikHub/ARK
+    // 名字本就一致)。两个名字都注入,兼容引擎与其它消费者(wechat-mp-publish 用 DAJIALA_API_KEY)。
+    const providers: Array<readonly [string, readonly string[]]> = [
+      ["tikhub", ["TIKHUB_API_KEY"]],
+      ["dajiala", ["DAJIALA_KEY", "DAJIALA_API_KEY"]],
+      ["volcengine", ["ARK_API_KEY"]],
+    ];
+    for (const [pid, envNames] of providers) {
       try {
         const k = await readStoredProviderKey(PROJECT_ROOT, pid);
-        if (k.apiKey) out[envName] = k.apiKey;
+        if (k.apiKey) for (const envName of envNames) out[envName] = k.apiKey;
       } catch { /* 单个 provider 读失败不影响其余 */ }
     }
     return out;
@@ -10248,6 +10256,16 @@ export async function startServer({
         return res.status(422).json({
           error: '还没配置 TikHub key——真抓爆款的数据源是 TikHub(api.tikhub.io)。到「设置 → 接口与密钥」填入 TikHub API Key 后重试。',
         });
+      }
+      // 视频号(channels)走极致数据(dajiala),不走 TikHub。缺 dajiala key 时此前静默采 0
+      // 且无提示(2026-07-20 审计撞出)——含视频号就前置校验,缺钥匙明说,别让用户以为"没爆款"。
+      if (/视频号|channels/.test(platforms)) {
+        const dk = await readStoredProviderKey(PROJECT_ROOT, 'dajiala');
+        if (!dk.apiKey && dk.source === 'unset' && !(process.env.DAJIALA_KEY ?? process.env.DAJIALA_API_KEY ?? '').trim()) {
+          return res.status(422).json({
+            error: '选了视频号但还没配置极致数据(dajiala)key——视频号的爆款数据源是极致数据,不走 TikHub。到「设置 → 接口与密钥」填入 dajiala key 后重试;或先只采其它平台。',
+          });
+        }
       }
     }
     let eng;
