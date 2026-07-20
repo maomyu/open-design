@@ -328,9 +328,16 @@ async function injectZhihuReply(
   if (!edSel) return { ok: false, detail: '评论输入框没出现(编辑器未唤起)' };
   if (!(await focusByClick(wv, edSel))) return { ok: false, detail: '评论输入框聚焦失败' };
 
-  say('拟人输入回复…');
-  await typeText(wv, spec.text, undefined, { slow: true });
-  await sleep(600);
+  say('输入回复…');
+  // 知乎评论=DraftJS(React 富文本):只认 beforeInput,typeText 的 per-char `char` 事件【不落字】
+  // (2026-07-20 实机确认:发布按钮一直灰着)。改用 execCommand('insertText')——DraftJS 收到
+  // 合成 beforeInput 正常落字、按钮转可用。typeText 兜底(极端情况)。
+  const typed = await wvEval<boolean>(
+    wv,
+    `(() => { try { const ed=document.querySelector('[data-od-target="1"]'); if(ed&&ed.focus) ed.focus(); return document.execCommand('insertText', false, ${JSON.stringify(spec.text)}); } catch(e){ return false; } })()`,
+  );
+  if (!typed) await typeText(wv, spec.text, undefined, { slow: true });
+  await sleep(800);
 
   // 发布:取【离目标编辑器最近的】可用「发布」按钮(顶部添加评论框也有一个,不能全局点第一个)。
   say('发布…');
@@ -338,7 +345,8 @@ async function injectZhihuReply(
     const ed=document.querySelector('[data-od-target="1"]');
     if (!ed) return null;
     const er=ed.getBoundingClientRect();
-    const btns=[...document.querySelectorAll('button')].filter(b=>(b.textContent||'').trim()==='发布'&&!b.disabled&&b.getBoundingClientRect().width>0);
+    const norm=(s)=>(s||'').replace(/[\\u200b-\\u200d\\ufeff]/g,'').trim();  // 知乎按钮文本常带零宽字符
+    const btns=[...document.querySelectorAll('button')].filter(b=>norm(b.textContent)==='发布'&&!b.disabled&&b.getBoundingClientRect().width>0);
     if (!btns.length) return null;
     btns.sort((p,q)=>Math.abs(p.getBoundingClientRect().top-er.top)-Math.abs(q.getBoundingClientRect().top-er.top));
     const b=btns[0]; b.scrollIntoView({block:'center'});
