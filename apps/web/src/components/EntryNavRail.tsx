@@ -123,19 +123,9 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="edit" size={18} />
           </NavButton>
         ) : null}
-        {/* 「短视频」独立入口已移除(2026-07-20 用户拍板):统一创作台已覆盖视频形态,
-            此入口与之重复。studio-video 视图/路由保留(创作台就地展开+标签栏可回)。 */}
-        {hasFeature(license, 'note.xiaohongshu') ? (
-          <NavButton
-            active={view === 'studio-note'}
-            ariaLabel="笔记"
-            label="笔记"
-            onClick={() => onViewChange('studio-note')}
-            testId="entry-nav-studio-note"
-          >
-            <Icon name="image" size={18} />
-          </NavButton>
-        ) : null}
+        {/* 「短视频」「笔记」独立入口均已移除(2026-07-20 用户拍板):统一创作台已覆盖视频/
+            图文(笔记)形态,此二入口与之重复。studio-video/studio-note 视图/路由保留(创作台
+            就地展开 + 标签栏可回)。文章(公众号/知乎/微博)不在创作台覆盖内,保留独立入口。 */}
         {/* 互动运营(W8):自动评论回复——命中关键词规则→拟人回复,受风控台账门控。 */}
         {hasFeature(license, 'cap.interaction') ? (
           <NavButton
