@@ -10329,7 +10329,7 @@ export async function startServer({
         const s2 = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
         const parsed = JSON.parse(s2);
         if (!parsed.error) {
-          return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url, source: 'engine' });
+          return res.json({ text: parsed.text || '', images: Array.isArray(parsed.images) ? parsed.images : [], title: parsed.title || '', mediaUrl: parsed.mediaUrl || '', referer: parsed.referer || url, source: 'engine', noteType: parsed.noteType === 'image' ? 'image' : 'video' });
         }
         engineErr = String(parsed.error);
         // 平台链接且引擎明确报错(已删/链接不完整/缺 key)→ 网页降级对平台站也抓不到

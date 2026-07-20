@@ -1248,16 +1248,16 @@ export async function distributeStudioArticle(
 /** 按链接取单条原素材(2026-07-18):AI 选题/旧候选只带 url 时,创作区一键补回原文案+原图。
  *  source:'engine'=平台详情接口取到(可信正文);'web'=通用网页抓取兜底——平台链接
  *  走到 web 多半是失效/登录墙的站壳文本,别拿去覆盖已有文案。 */
-export async function fetchSourceMaterial(url: string): Promise<{ text: string; images: string[]; title: string; mediaUrl: string; referer: string; source: 'engine' | 'web' } | { error: string }> {
+export async function fetchSourceMaterial(url: string): Promise<{ text: string; images: string[]; title: string; mediaUrl: string; referer: string; source: 'engine' | 'web'; noteType: 'video' | 'image' } | { error: string }> {
   try {
     const resp = await fetch(`${ROOT}/fetch-source`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
     });
-    const d = (await resp.json().catch(() => ({}))) as { text?: string; images?: string[]; title?: string; mediaUrl?: string; referer?: string; source?: string; error?: string };
+    const d = (await resp.json().catch(() => ({}))) as { text?: string; images?: string[]; title?: string; mediaUrl?: string; referer?: string; source?: string; noteType?: string; error?: string };
     if (!resp.ok) return { error: d.error ?? `取原素材失败(${resp.status})` };
-    return { text: d.text ?? '', images: Array.isArray(d.images) ? d.images : [], title: d.title ?? '', mediaUrl: d.mediaUrl ?? '', referer: d.referer ?? url, source: d.source === 'web' ? 'web' : 'engine' };
+    return { text: d.text ?? '', images: Array.isArray(d.images) ? d.images : [], title: d.title ?? '', mediaUrl: d.mediaUrl ?? '', referer: d.referer ?? url, source: d.source === 'web' ? 'web' : 'engine', noteType: d.noteType === 'image' ? 'image' : 'video' };
   } catch {
     return { error: '连不上本地服务(daemon)' };
   }

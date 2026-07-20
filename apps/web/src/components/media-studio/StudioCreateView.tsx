@@ -208,9 +208,12 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     if (topic.url) {
       studioToast.info('正在后台下载原视频…(大文件稍等,完成后右侧「原视频」可对照播放)');
       void (async () => {
+        // yt-dlp 的报错带一大段"去 github 提 issue"技术话术,剪成人话。
+        const tidy = (msg: string) =>
+          msg.replace(/^ERROR:\s*/i, '').replace(/[;,]?\s*please report this issue[\s\S]*/i, '').replace(/No video formats found!?/i, '没有可下载的视频格式').trim();
         const fail = async (msg: string) => {
-          await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceVideoError: msg } });
-          studioToast.err(`原视频没下载成功:${msg}——右侧「原视频」有在线链接可对照`);
+          await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceVideoError: tidy(msg) } });
+          studioToast.err(`原视频没下载成功:${tidy(msg)}——右侧「原视频」有在线链接可对照`);
         };
         const src = await fetchSourceMaterial(topic.url);
         if ('error' in src) {
@@ -220,6 +223,13 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         // 全文取长保旧:引擎详情接口的文案比候选预览长才覆盖(短 desc 不倒退)。
         // 网页兜底(source='web')的平台链接文本是失效页/登录墙站壳,绝不采信。
         const betterText = src.source === 'engine' && src.text && src.text.length > (topic.sourceContent ?? '').length ? src.text : '';
+        // 图文贴没有视频(2026-07-20 用户实测:候选列表混着图文贴,点了只会得到
+        // yt-dlp 吓人报错)——直说是图文、给切形态指引,不再瞎跑下载。
+        if (src.source === 'engine' && src.noteType === 'image') {
+          if (betterText) await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscript: betterText } });
+          await fail('这条候选是图文笔记,本来就没有视频。想用它创作:回选题把小红书形态切成「图文」再点去创作');
+          return;
+        }
         let dl: { file: string } | { error: string };
         if (src.mediaUrl) {
           dl = await downloadVideoByUrl(src.mediaUrl, src.referer || topic.url, topic.title);
