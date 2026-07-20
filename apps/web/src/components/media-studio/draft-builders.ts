@@ -143,10 +143,11 @@ export async function buildStudioDraft(target: string, article: MediaArticle): P
       };
     case 'baidu-zhidao': {
       // 百度知道=在问题下写回答:标题其实是"问题"(定位用),正文=回答内容(带图走 segments,
-      // 与知乎同构)。目标问题 URL 由注入器从 article 源带走(见 browser-draft.injectBaiduZhidao)。
+      // 与知乎同构)。目标问题 URL 建稿时存 extra.sourceUrl,这里递给注入器(targetUrl)先导航过去。
       const ids = assetArticleIdsOf(article.bodyMd + '\n' + article.coverSource, article.id);
       const maps = await Promise.all(ids.map((id) => fetchStudioAssetPaths(article.platform, id)));
       const byUrl = new Map(maps.flat().map((a) => [a.url, a.absPath]));
+      const sourceUrl = typeof extra.sourceUrl === 'string' ? extra.sourceUrl.trim() : '';
       return {
         platform: target,
         kind: 'article',
@@ -155,6 +156,7 @@ export async function buildStudioDraft(target: string, article: MediaArticle): P
         tags: [],
         filePaths: [],
         segments: zhihuSegmentsOf(article.bodyMd, byUrl),
+        ...(sourceUrl ? { targetUrl: sourceUrl } : {}),
       };
     }
     case 'note': {

@@ -313,6 +313,8 @@ export function BaiduZhidaoStudioView(): JSX.Element {
     await flushSave();
     const created = await createStudioArticle(PLATFORM, {
       ...(topic ? { title: topic.title, topic: topic.title, fromTopicId: topic.id } : {}),
+      // 百度知道:选题=目标问题,把问题 URL 随稿带走——发布(回答注入)时导航到它。
+      ...(topic?.url ? { extra: { sourceUrl: topic.url } } : {}),
     });
     if (!created) {
       studioToast.err('新建失败——稍后重试');

@@ -29,6 +29,8 @@ export interface DraftPayload {
   segments?: Array<{ type: 'text'; text: string } | { type: 'image'; path: string }>;
   /** article 专用:封面图本机绝对路径(知乎「添加文章封面」区)。 */
   coverPath?: string;
+  /** 目标页 URL(百度知道=要回答的问题页):注入前先导航到它,而不是停在平台默认发布页。 */
+  targetUrl?: string;
   /** 一键发布(2026-07-10 用户拍板+二次确认授权):填稿后真实点击平台的
    *  「发布/发送」按钮直发。缺省 false=只填到发送前一步(草稿/发布框)。 */
   autoPublish?: boolean;
@@ -1218,52 +1220,96 @@ async function injectShipinhao(wv: DraftWebview, draft: DraftPayload, progress: 
   };
 }
 
-// 百度知道回答注入(B段/W14):在【问题页】点开「写回答」→ 富文本回答框写入回答内容。
-// 百度知道的"发布"=在相关问题下写回答,不是发独立文章。目标问题 URL 由上游 handoff 导航带来
-// (面板停在某个问题页),这里只负责点开回答框 + 写入。选择器为首版最佳猜测,完整校准在真机
-// (登录百度账号后)完成——与小红书 W3/W4 一样,注入选择器必须实机对准。
+// 百度知道回答注入(W12-B):导航到目标问题页 → 真实点击「我来答」→ UEditor 写入回答。
+// 百度知道的"发布"=在相关问题下写回答,不是发独立文章。2026-07-20 真机(鱼尾15 账号)校准:
+//   · 「我来答」在 .wgt-replyer-line,【必须真实鼠标点击】(isTrusted;JS click 不触发编辑器实例化);
+//   · 点击后 UEditor 实例化进 #answer-editor:iframe#ueditor_0(同源,body contenteditable),
+//     页面暴露 window.UE.instants —— setContent(html) 写入最稳(getContent 可读回验证);
+//   · 提交按钮 = #answer-editor .new-editor-deliver-btn(「提交回答」,提交即公开发布,不自动点);
+//   · 登录态是异步水合的:静态首帧顶栏挂「登录」链接≠未登录,须等水合后再判。
 async function injectBaiduZhidao(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
-  if (await isLoginWall(wv)) {
-    return { ok: false, detail: '百度知道还没登录——在面板里登录百度账号后再点一次「一键存草稿」' };
+  // 目标问题页:建稿时从选题带来(extra.sourceUrl→draft.targetUrl)。没带则要求面板已停在问题页。
+  const onQuestionPage = async (): Promise<boolean> =>
+    Boolean(await wvEval<boolean>(wv, `/\\/question\\//.test(location.pathname)`));
+  if (draft.targetUrl && /\/question\//.test(draft.targetUrl)) {
+    progress('1/4 打开目标问题页…');
+    await wvEval(wv, `location.href = ${JSON.stringify(draft.targetUrl)}`);
+    await sleep(4500);
   }
-  progress('1/3 点开「写回答」…');
-  // 点问题页的「写回答/我来答」入口(按可见文本找;真机校准后可换精确选择器)。
-  await wv
-    .executeJavaScript(
-      `(() => { for (const el of document.querySelectorAll('a,button,span,div')) { const t=(el.textContent||'').trim(); if ((t==='写回答'||t==='我来答'||t==='回答问题'||t==='回答') && el.getBoundingClientRect().width>0) { el.click(); return true; } } return false; })()`,
-    )
-    .catch(() => false);
-  await sleep(1800);
-  progress('2/3 写入回答…');
-  // 百度知道回答富文本框(UEditor 系或 contenteditable)——首版多选择器兜底,真机校准后收敛。
-  const BZ_EDITOR = '.edui-editor-body [contenteditable="true"], .answer-editor [contenteditable="true"], .rich-text-container [contenteditable="true"], textarea.answer-textarea, [contenteditable="true"]';
-  const ready = await waitFor(wv, BZ_EDITOR, 20_000);
-  if (!ready) {
-    return { ok: false, detail: '百度知道回答框没等到——请把面板停在某个「问题」页并点开「写回答」(回答框选择器待真机校准)' };
+  if (!(await onQuestionPage())) {
+    return { ok: false, detail: '不在问题页——从「选题」选一个问题建稿(问题链接会随稿带上),或在面板里先打开要回答的问题' };
   }
-  let bodyOk = false;
-  const focused = await focusByClick(wv, BZ_EDITOR);
-  if (focused) {
-    await clearFieldByKeys(wv);
-    const segments = draft.segments?.length ? draft.segments : [{ type: 'text' as const, text: draft.body }];
-    for (const seg of segments) {
-      if (seg.type === 'text') {
-        // 富文本段:markdown→HTML 一次粘贴(复用知乎渲染,回答排版基本一致)。
-        const html = markdownToZhihuHtml(seg.text);
-        if (await pasteHtmlAtCursor(wv, html, seg.text.replace(/[#*>`]/g, ''))) bodyOk = true;
-        await sleep(500);
-      }
-      // 图片段:百度知道回答插图的 file input 真机校准后再补(首版先只灌文本)。
-    }
-    if (!bodyOk) bodyOk = await typeIntoField(wv, BZ_EDITOR, draft.body.slice(0, 4000));
+  // 登录判定:等水合(顶栏用户名异步渲染),再看是否仍挂着可见「登录」链接。
+  progress('1/4 等页面就绪…');
+  await waitFor(wv, '.wgt-replyer-line', 20_000);
+  await sleep(2500);
+  const loggedOut = await wvEval<boolean>(
+    wv,
+    `(() => { const a=[...document.querySelectorAll('a')].find(x=>{const t=(x.textContent||'').trim(); const r=x.getBoundingClientRect(); return t==='登录'&&r.width>0&&r.top<80;}); return Boolean(a); })()`,
+  );
+  if (loggedOut) {
+    return { ok: false, detail: '百度知道还没登录——在面板里登录百度账号后再点一次' };
   }
-  progress('3/3 回答已写入(核对后在页面点「发布回答」提交)');
-  return {
-    ok: bodyOk,
-    detail: bodyOk
-      ? '回答已写入回答框——核对后在页面点「发布回答」提交(首版,选择器可能需真机微调)'
-      : '回答写入失败——请在页面手动粘贴(回答框选择器待真机校准)',
-  };
+  progress('2/4 点开「我来答」…');
+  // 已有编辑器(重复注入)就不用再点;否则真实鼠标点击(JS click 无效,反爬认 isTrusted)。
+  // 【必须点 .wgt-replyer-line 里那个】——页面顶部另有同文案的滚动锚点(span.smooth),点了不
+  // 实例化编辑器;真机校准确认答题入口是 replyer-line 内的按钮。
+  const hasEditor = async (): Promise<boolean> =>
+    Boolean(await wvEval<boolean>(wv, `Boolean(document.querySelector('#ueditor_0'))`));
+  // 页面 JS 绑定入口按钮的时机偏晚(水合后几秒),点太早=没反应。故【循环点击】:
+  // 每轮 定位→滚到中心→稳定→真点→等 2.5s 看编辑器出没出,最多 6 轮(~20s)。
+  const REPLYER_BTN_POS = `(() => {
+    const line = document.querySelector('.wgt-replyer-line');
+    if (!line) return null;
+    const btn = [...line.querySelectorAll('*')].find((e) => {
+      const t = (e.textContent || '').trim();
+      return /我来答|写回答/.test(t) && t.length <= 6 && e.getBoundingClientRect().width > 0;
+    }) || line;
+    btn.scrollIntoView({ block: 'center' });
+    const r = btn.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`;
+  for (let round = 0; round < 6 && !(await hasEditor()); round++) {
+    await wvEval(wv, REPLYER_BTN_POS); // 先滚到中心
+    await sleep(650);
+    const pos = await wvEval<{ x: number; y: number } | null>(wv, REPLYER_BTN_POS); // 稳定后重取坐标
+    if (!pos) { await sleep(1200); continue; }
+    await humanClickAt(wv, pos.x, pos.y);
+    await sleep(2500);
+  }
+  if (!(await hasEditor())) {
+    return { ok: false, detail: '回答编辑器没打开——手动点一下页面上的「我来答」再重试' };
+  }
+  progress('3/4 写入回答…');
+  // UEditor 官方 API 写入(同源):setContent(html) → getContent 回读验证。markdown→HTML 复用知乎渲染。
+  const textMd = (draft.segments?.length ? draft.segments : [{ type: 'text' as const, text: draft.body }])
+    .filter((s): s is { type: 'text'; text: string } => s.type === 'text')
+    .map((s) => s.text)
+    .join('\n\n');
+  const html = markdownToZhihuHtml(textMd);
+  const wrote = await wvEval<boolean>(
+    wv,
+    `(() => { try {
+      const ue = window.UE; if (!ue || !ue.instants) return false;
+      const keys = Object.keys(ue.instants); if (!keys.length) return false;
+      const inst = ue.instants[keys[0]];
+      inst.setContent(${JSON.stringify(html)});
+      return (inst.getContent() || '').length > 0;
+    } catch (e) { return false; } })()`,
+  );
+  if (!wrote) {
+    // 兜底:直接写 iframe body(同源;UEditor 提交时从 iframe DOM 取内容)。
+    const fallback = await wvEval<boolean>(
+      wv,
+      `(() => { try {
+        const f = document.querySelector('#ueditor_0'); const b = f && f.contentDocument && f.contentDocument.body;
+        if (!b) return false; b.innerHTML = ${JSON.stringify(html)}; return true;
+      } catch (e) { return false; } })()`,
+    );
+    if (!fallback) return { ok: false, detail: '回答写入失败——可手动把内容粘进回答框' };
+  }
+  progress('4/4 回答已写入——核对后点「提交回答」发布');
+  return { ok: true, detail: '回答已写进编辑框(未提交)——在页面核对后点「提交回答」即公开发布' };
 }
 
 const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgress) => Promise<DraftResult>> = {

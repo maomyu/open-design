@@ -60,10 +60,12 @@ export const LOGIN_PROBE: Record<string, string> = {
     '.woo-avatar-img, [class*="Avatar"], a[href*="/u/"], .gn_name',
     ['登录', '立即登录', '登录/注册'],
   ),
-  // 百度知道(百度账号):已登录顶栏有用户名/头像、个人中心链接(i.baidu.com);未登录是"登录"按钮。
+  // 百度知道(百度账号):已登录顶栏有用户名(#loginUserName / 顶栏用户名链接)。
+  // 实机教训(2026-07-20):不能用 [class*=user] img 这种宽选择器——知道首页右侧「优秀答主/
+  // 认证用户」板块全是 user 系 class + 头像,未登录也命中=误报已登录。只认顶栏级精确标记。
   'baidu-zhidao': buildProbe(
-    '.user-name, .s-top-username, .userinfo, a[href*="i.baidu.com"], [class*="user" i] img',
-    ['登录', '登录/注册'],
+    '#loginUserName, .user-name a[href*="baidu.com"], a[href*="passport.baidu.com/center"], #user .username',
+    ['登录', '登录/注册', '立即登录'],
   ),
 };
 
