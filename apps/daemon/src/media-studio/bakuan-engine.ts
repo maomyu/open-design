@@ -239,14 +239,15 @@ async function mergeBundledEnvPreservingRuntime(bundledEnv: string, runtimeEnv: 
   } catch { /* 合并失败宁可不动 runtime .env,也不能拿出厂文件覆盖用户配置 */ }
 }
 
-async function resyncEngineSourceIfStale(ctx: EngineContext, engineDir: string): Promise<void> {
+// 返回 true = 因 requirements 变化删除了 .venv(调用方须立即重新 provision)。
+async function resyncEngineSourceIfStale(ctx: EngineContext, engineDir: string): Promise<boolean> {
   const resourceRoot = ctx.resourceRoot;
-  if (!resourceRoot) return;
+  if (!resourceRoot) return false;
   const want = bundledEngineSourceStamp(resourceRoot);
-  if (!want) return;
+  if (!want) return false;
   let have = '';
   try { have = await fs.promises.readFile(path.join(engineDir, '.od-engine-src-stamp'), 'utf8'); } catch { /* 无戳=旧版本 */ }
-  if (have.trim() === want) return; // 已是最新
+  if (have.trim() === want) return false; // 已是最新
 
   const bundledEngine = path.join(resourceRoot, 'bakuan-engine');
   // requirements 变了没?变了要重装依赖(删 venv → 下次 ensure 触发完整 provision)。
@@ -279,6 +280,7 @@ async function resyncEngineSourceIfStale(ctx: EngineContext, engineDir: string):
     await fs.promises.rm(path.join(engineDir, '.venv'), { recursive: true, force: true }).catch(() => {});
   }
   await writeEngineSourceStamp(resourceRoot, engineDir);
+  return reqChanged; // 是否删了 venv → 调用方需立即补 provision(否则 venv 缺失到下次调用才重建)
 }
 
 /** 解压自带 lark-cli 二进制到 engine-runtime/lark-cli(飞书数据中心用)。幂等(extractTarOnce 按
@@ -306,10 +308,25 @@ export function ensureBakuanEngineProvisioned(ctx: EngineContext): Promise<void>
   const engineDir = engineDirFor(ctx);
   if (fs.existsSync(handleFor(ctx, engineDir).python)) {
     // 已 provision:①同步源码(引擎升级随 app 更新到达)②补 lark-cli(老用户从无 lark-cli 版本升级)。
+    // resync 若因 requirements 变化删了 .venv,必须【本次就】接着 provision——否则 venv 缺失
+    // 一直悬到下一次引擎调用才重建,客户升级后第一步操作直接报「引擎未就绪」(2026-07-20 真机撞出)。
     return Promise.all([
       resyncEngineSourceIfStale(ctx, engineDir),
       ensureLarkCli(ctx),
-    ]).then(() => undefined).catch((err) => {
+    ]).then(([venvWiped]) => {
+      if (venvWiped && !fs.existsSync(handleFor(ctx, engineDir).python)) {
+        if (!provisionPromise) {
+          lastProvisionError = null;
+          provisionPromise = provision(ctx, engineDir).catch((err) => {
+            provisionPromise = null;
+            lastProvisionError = err instanceof Error ? err.message : String(err);
+            throw err;
+          });
+        }
+        return provisionPromise;
+      }
+      return undefined;
+    }).catch((err) => {
       console.warn('[bakuan-engine] 源码同步/lark-cli 补全失败(继续):', err instanceof Error ? err.message : String(err));
     });
   }
