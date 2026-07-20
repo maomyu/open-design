@@ -662,6 +662,21 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     setSavedHitUrls((prev) => new Set(prev).add(hit.url || hit.title));
   }
 
+  // 一键把采集到的爆款【全部直接存为候选】——小红书等平台不想每条走 AI 转题,采完直接进候选表
+  // (2026-07-20 用户:小红书不需要 AI 转题,直接存为候选就行)。只存还没存过的。
+  const [savingAll, setSavingAll] = useState(false);
+  async function saveAllHits() {
+    setSavingAll(true);
+    let n = 0;
+    for (const hit of hits) {
+      if (savedHitUrls.has(hit.url || hit.title)) continue;
+      await saveHit(hit);
+      n += 1;
+    }
+    setSavingAll(false);
+    studioToast.ok(n > 0 ? `已把 ${n} 条爆款直接存为候选——去「候选」里勾选开写` : '这批都已存为候选了');
+  }
+
   async function submit() {
     if (!canAdd) return;
     await onAdd({
@@ -990,7 +1005,19 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                 <th>标题</th>
                 <th>{tikhubTargets ? '账号' : '公众号'}</th>
                 <th>数据</th>
-                <th />
+                <th>
+                  {!aiOnly && hits.some((h) => !savedHitUrls.has(h.url || h.title)) ? (
+                    <button
+                      type="button"
+                      className={`${c('btn')} ${c('btnPrimary')}`}
+                      disabled={savingAll}
+                      title="把下面所有爆款【直接存为候选】——不走 AI 转题,采完就进候选表"
+                      onClick={() => void saveAllHits()}
+                    >
+                      {savingAll ? '存入中…' : '全部存为候选'}
+                    </button>
+                  ) : null}
+                </th>
               </tr>
             </thead>
             <tbody>
