@@ -77,9 +77,13 @@ function loadSource(allowed: string[]): string {
 export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) => void }): JSX.Element {
   const license = useLicense();
   const allowedSources = useMemo(() => SOURCE_DEFS.filter((s) => s.licensed(license)), [license]);
+  // 小红书是否含【视频形态】:未授权短视频(如油炸总合同=小红书图文)时只出图文,不给视频切换。
+  const allowXhsVideo = hasShortVideoPlatform(license, 'xiaohongshu');
   // 数据源【单选】(2026-07-18 用户拍板:创作时逐个平台选题,不混采)。chip 切换,记忆上次。
   const [source, setSource] = useState<string>(() => loadSource(allowedSources.map((s) => s.id)));
   const [xhsType, setXhsType] = useState<'image' | 'video'>('image');
+  // 未授权视频形态时锁死图文(防 localStorage/历史态残留成 video)。
+  const effectiveXhsType = allowXhsVideo ? xhsType : 'image';
   const [topics, setTopics] = useState<MediaTopic[]>([]);
   // AI 任务走 StudioAiPanel(与各平台台同款):实时流式输出/工具步骤/可中止,
   // 用户反馈"只显示执行中看不到进度"——薄版轮询已废弃。
@@ -220,7 +224,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
 
   /** 一键直达:按顶部已选的 平台+形态 直接建稿进创作区(用户拍板:意图已声明,不二次询问)。 */
   async function startCreate(topic: MediaTopic) {
-    if (source === 'xiaohongshu' && xhsType === 'image') {
+    if (source === 'xiaohongshu' && effectiveXhsType === 'image') {
       await writeAsNote(topic);
       return;
     }
@@ -294,7 +298,8 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
               {s.label}
             </button>
           ))}
-          {source === 'xiaohongshu' ? (
+          {/* 内容形态切换仅在【授权了小红书视频】时出现;否则合同=图文,无需切换(锁图文)。 */}
+          {source === 'xiaohongshu' && allowXhsVideo ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
               <span className={c('cardHint')}>内容形态</span>
               {(['image', 'video'] as const).map((tpe) => (
@@ -317,7 +322,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         platform={TOPIC_POOL}
         browserCollect
         collectPlatforms={collectTargets}
-        xhsContentType={xhsType}
+        xhsContentType={effectiveXhsType}
         /* 按当前所选源过滤候选(2026-07-18 用户拍板:小红书选题必须全部来自小红书):
            只显示 本平台链接的 + 无链接的纯灵感题;其它平台/站外(新闻公众号)链接一律不出现。 */
         topics={topics.filter((t) => { const o = topicOriginPlatform(t.url); return o === 'any' || o === source; })}
