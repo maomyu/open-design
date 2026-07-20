@@ -108,10 +108,9 @@ function timeLabel(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 【提取文案仿写·素材卡】仿写建稿时把原视频 + 提取的口播文案带到脚本页,一眼对照着改。
- *  原视频用 blob 播放(绕开 od:// 的 Range 透传问题);文案可一键复制。仅当本稿是「提取仿写」
- *  来的(extra 里有 sourceTranscript/sourceVideoFile)才显示。 */
-function SourceMaterialCard({ videoFile, transcript, sourceUrl }: { videoFile: string; transcript: string; sourceUrl: string }): JSX.Element | null {
+/** 下载到本机的原视频 → blob URL(绕开 od:// 的 Range 透传问题;组件卸载自动回收)。
+ *  供右侧预览列「原视频」tab 用(2026-07-20 用户拍板:对照素材参考笔记卡收进右列)。 */
+function useDownloadedVideoUrl(videoFile: string): string | null {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!videoFile) { setVideoUrl(null); return; }
@@ -124,58 +123,7 @@ function SourceMaterialCard({ videoFile, transcript, sourceUrl }: { videoFile: s
     });
     return () => { alive = false; if (revoke) revoke(); };
   }, [videoFile]);
-  if (!videoFile && !transcript && !sourceUrl) return null;
-  // 只有原文链接(候选带来的):给看原视频入口+引导,不空白。
-  if (!videoFile && !transcript) {
-    return (
-      <div className={c('card')}>
-        <div className={c('cardLabel')}>
-          对照原爆款
-          <span className={c('cardHint')}>本稿来自选题候选——可打开原视频对照;要把原视频下载进来+提取口播文案仿写,去「创作」选题页爆款列表用「提取文案仿写」</span>
-        </div>
-        <a href={sourceUrl} target="_blank" rel="noreferrer" className={c('link')}>看原视频 ↗</a>
-      </div>
-    );
-  }
-  return (
-    <div className={c('card')}>
-      <div className={c('cardLabel')}>
-        对照原爆款(仿写素材)
-        <span className={c('cardHint')}>下载的原视频 + 提取的口播文案——AI 已按你的风格仿写,可对照着微调</span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 260px) 1fr', gap: 14, alignItems: 'start' }}>
-        <div>
-          {videoFile ? (
-            videoUrl ? (
-              <video src={videoUrl} controls playsInline style={{ width: '100%', maxHeight: '48vh', borderRadius: 10, background: '#000' }} />
-            ) : (
-              <div style={{ width: '100%', aspectRatio: '9 / 16', maxHeight: '48vh', borderRadius: 10, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 13, gap: 8 }}>
-                <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.25)', borderTopColor: '#fff', display: 'inline-block', animation: 'od-spin 0.8s linear infinite' }} />
-                正在载入视频…
-              </div>
-            )
-          ) : (
-            <div className={c('cardHint')}>（无原视频）</div>
-          )}
-          {sourceUrl ? (
-            <a href={sourceUrl} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ display: 'inline-block', marginTop: 6, fontSize: 11.5 }}>看原视频 ↗</a>
-          ) : null}
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span className={c('cardHint')}>提取的原口播文案（{transcript.replace(/\s+/g, '').length} 字）</span>
-            {transcript ? (
-              <button type="button" className={c('btn')} onClick={() => { void navigator.clipboard?.writeText(transcript); studioToast.ok('原文案已复制'); }}>复制原文案</button>
-            ) : null}
-          </div>
-          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13.5, lineHeight: 1.7, background: 'var(--od-surface-muted, #f6f6f7)', borderRadius: 10, padding: 12, maxHeight: '48vh', overflow: 'auto' }}>
-            {transcript || '（无口播文案）'}
-          </div>
-        </div>
-      </div>
-      <style>{'@keyframes od-spin{to{transform:rotate(360deg)}}'}</style>
-    </div>
-  );
+  return videoUrl;
 }
 
 /** 下一个 hh:mm 时点（今天已过就取明天），datetime-local 值格式。 */
@@ -345,6 +293,10 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   const audioUrl = str(extra.audioUrl);
   const videoPath = str(extra.videoPath);
   const tags = str(extra.tags);
+  // 右列预览 tab(2026-07-20 用户拍板:对照原爆款参考笔记卡收进右列,脚本区还给创作)。
+  const [previewTab, setPreviewTab] = useState<'draft' | 'video' | 'transcript'>('draft');
+  const hasSourceMaterial = !!(str(extra.sourceTranscript) || str(extra.sourceVideoFile) || str(extra.sourceUrl));
+  const sourceVideoUrl = useDownloadedVideoUrl(str(extra.sourceVideoFile));
 
   // ---- 数据加载 ----
   // 按当前平台过滤单池:匹配 subPlatform;无 subPlatform 的旧作品归到抖音
@@ -817,15 +769,8 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
               emptyCta('还没有作品。从「选题」挑一个开始，或新建一个空白作品。')
             ) : (
               <>
-                {/* 「提取文案仿写」来的稿:原视频+原口播文案摆在脚本页顶部对照;
-                    候选「去创作」来的稿(只有 sourceUrl)也显示看原视频入口(2026-07-18)。 */}
-                {str(extra.sourceTranscript) || str(extra.sourceVideoFile) || str(extra.sourceUrl) ? (
-                  <SourceMaterialCard
-                    videoFile={str(extra.sourceVideoFile)}
-                    transcript={str(extra.sourceTranscript)}
-                    sourceUrl={str(extra.sourceUrl)}
-                  />
-                ) : null}
+                {/* 对照原爆款已收进右侧预览列「原视频/原文案」tab(2026-07-20 用户拍板:
+                    参考笔记卡布局,脚本区还给创作,不再整块压在顶部)。 */}
                 {hasFeature(license, 'cap.ai') ? (
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
@@ -1306,9 +1251,63 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
 
         {article && tab !== 'topics' && tab !== 'list' ? (
           <div className={c('previewCol')}>
-            <span className={c('previewTag')}>
-              <Icon name="eye" size={13} /> 作品卡（发布时的样子）
-            </span>
+            {/* 预览 tab(2026-07-20 用户拍板:参考笔记卡):作品卡(发布样子)/原视频/原文案
+                ——对照原爆款素材收进右列,脚本区专注创作。无原素材时只有作品卡,不出 chips。 */}
+            {hasSourceMaterial ? (
+              <div className={c('row')} style={{ gap: 6, marginBottom: 8 }}>
+                {([['draft', '📱 作品卡'], ['video', '🎬 原视频'], ['transcript', '📄 原文案']] as const).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`${c('articleSwitchBtn')}${previewTab === id ? ` ${c('articleSwitchBtnActive')}` : ''}`}
+                    style={{ fontSize: 12 }}
+                    onClick={() => setPreviewTab(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span className={c('previewTag')}>
+                <Icon name="eye" size={13} /> 作品卡（发布时的样子）
+              </span>
+            )}
+            {hasSourceMaterial && previewTab === 'video' ? (
+              <div className={c('videoCard')}>
+                {str(extra.sourceVideoFile) ? (
+                  sourceVideoUrl ? (
+                    // eslint-disable-next-line jsx-a11y/media-has-caption
+                    <video src={sourceVideoUrl} controls playsInline style={{ width: '100%', maxHeight: '56vh', borderRadius: 10, background: '#000' }} />
+                  ) : (
+                    <div className={c('cardHint')}>⏳ 正在载入原视频…</div>
+                  )
+                ) : (
+                  <div className={c('cardHint')}>原视频还没下载到本机——「去创作」后会自动后台下载,稍等刷新;也可先点下方链接在线看。</div>
+                )}
+                {str(extra.sourceUrl) ? (
+                  <a href={str(extra.sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ marginTop: 8, display: 'inline-block' }}>看原视频 ↗</a>
+                ) : null}
+              </div>
+            ) : hasSourceMaterial && previewTab === 'transcript' ? (
+              <div className={c('videoCard')}>
+                {str(extra.sourceTranscript) ? (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span className={c('cardHint')}>原口播/文案（{str(extra.sourceTranscript).replace(/\s+/g, '').length} 字）</span>
+                      <button type="button" className={c('btn')} onClick={() => { void navigator.clipboard?.writeText(str(extra.sourceTranscript)); studioToast.ok('原文案已复制'); }}>复制</button>
+                    </div>
+                    <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.7, maxHeight: '60vh', overflow: 'auto' }}>
+                      {str(extra.sourceTranscript)}
+                    </div>
+                  </>
+                ) : (
+                  <div className={c('cardHint')}>没有原文案——原视频下载完成后会自动带回;或去「创作」选题页用「提取文案仿写」。</div>
+                )}
+                {str(extra.sourceUrl) ? (
+                  <a href={str(extra.sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ marginTop: 8, display: 'inline-block' }}>看原文 ↗</a>
+                ) : null}
+              </div>
+            ) : (
             <div className={c('videoCard')}>
               <div className={c('videoCardTitle')}>{article.title || '（还没有标题）'}</div>
               <div className={c('videoCardMeta')}>
@@ -1332,6 +1331,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
               ) : null}
               <div className={c('videoCardMeta')}>{videoPath ? `成片：${videoPath.split('/').pop()}` : '成片：未就绪'}</div>
             </div>
+            )}
           </div>
         ) : null}
       </div>
