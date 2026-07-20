@@ -1799,7 +1799,9 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const knowledgeItems = listKnowledge(db, platform)
         .filter((k) => !k.accountId || k.accountId === (accountId ?? ''))
         .slice(0, 6)
-        .map((k) => ({ name: k.name, contentMd: k.contentMd.slice(0, 2000) }));
+        // category 必须带上——否则 knowledgeBlock 按分类给的角色指引(人设/观点/口播风格/金句/资质
+        // 背书)全塌成「其他资料」,写作 AI 用不上分类用途(2026-07-20 审计发现)。
+        .map((k) => ({ name: k.name, contentMd: k.contentMd.slice(0, 2000), ...(k.category ? { category: k.category } : {}) }));
 
       const composed = await composeStudioAiTask({
         kind,

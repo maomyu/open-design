@@ -319,6 +319,10 @@ export interface CreateMediaTopicRequest {
   source?: string;
   url?: string;
   heat?: string;
+  /** 采集时抓到的原文案(存候选→去创作时带走,免再抓一遍,2026-07-20)。 */
+  sourceContent?: string;
+  /** 采集时抓到的原图直链(有序;去创作时下载进图集)。 */
+  sourceImages?: string[];
 }
 export interface UpdateMediaTopicRequest {
   title?: string;

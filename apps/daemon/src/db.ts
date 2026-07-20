@@ -246,6 +246,8 @@ function migrate(db: SqliteDb): void {
       url TEXT NOT NULL DEFAULT '',
       heat TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'candidate',
+      source_content TEXT NOT NULL DEFAULT '',
+      source_images TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_media_topics_platform
@@ -388,6 +390,14 @@ function migrate(db: SqliteDb): void {
   const knowledgeCols = db.prepare(`PRAGMA table_info(media_knowledge)`).all() as DbRow[];
   if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'category')) {
     db.exec(`ALTER TABLE media_knowledge ADD COLUMN category TEXT`);
+  }
+  // 选题候选带上采集时抓到的原文案/原图(2026-07-20 用户报:存候选→去创作丢原素材)。存量库补列。
+  const topicCols = db.prepare(`PRAGMA table_info(media_topics)`).all() as DbRow[];
+  if (topicCols.length > 0 && !topicCols.some((c: DbRow) => c.name === 'source_content')) {
+    db.exec(`ALTER TABLE media_topics ADD COLUMN source_content TEXT NOT NULL DEFAULT ''`);
+  }
+  if (topicCols.length > 0 && !topicCols.some((c: DbRow) => c.name === 'source_images')) {
+    db.exec(`ALTER TABLE media_topics ADD COLUMN source_images TEXT NOT NULL DEFAULT ''`);
   }
   // 知识库升级为公司级全局资产(2026-07-08 用户拍板):对所有创作台生效,不再
   // 按平台隔离。历史上按平台挂载的条目归并到 'global'(幂等,归并后零行更新)。

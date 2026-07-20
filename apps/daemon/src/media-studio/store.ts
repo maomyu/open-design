@@ -232,6 +232,8 @@ function topicFromRow(r: Row): MediaTopic {
     heat: str(r.heat),
     status: (str(r.status) || 'candidate') as MediaTopic['status'],
     createdAt: numOrNull(r.created_at) ?? 0,
+    ...(str(r.source_content) ? { sourceContent: str(r.source_content) } : {}),
+    ...((() => { try { const a = JSON.parse(str(r.source_images) || '[]'); return Array.isArray(a) && a.length ? { sourceImages: a.filter((u: unknown): u is string => typeof u === 'string') } : {}; } catch { return {}; } })()),
   };
 }
 
@@ -248,10 +250,13 @@ export function createTopic(
   input: CreateMediaTopicRequest,
 ): MediaTopic {
   const id = randomUUID();
+  const srcImages = Array.isArray(input.sourceImages) && input.sourceImages.length
+    ? JSON.stringify(input.sourceImages.filter((u): u is string => typeof u === 'string'))
+    : '';
   db.prepare(
-    `INSERT INTO media_topics (id, platform, title, angle, source, url, heat, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', ?)`,
-  ).run(id, platform, input.title, str(input.angle), str(input.source), str(input.url), str(input.heat), Date.now());
+    `INSERT INTO media_topics (id, platform, title, angle, source, url, heat, status, source_content, source_images, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', ?, ?, ?)`,
+  ).run(id, platform, input.title, str(input.angle), str(input.source), str(input.url), str(input.heat), str(input.sourceContent), srcImages, Date.now());
   const row = db.prepare(`SELECT * FROM media_topics WHERE id = ?`).get(id) as Row;
   return topicFromRow(row);
 }

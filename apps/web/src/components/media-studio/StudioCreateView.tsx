@@ -44,7 +44,9 @@ function loadActiveDraft(): ActiveDraft | null {
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
 /** 选题池与短视频台共享(short-video):创作台采的爆款/候选,各平台台也看得到。 */
-const TOPIC_POOL = 'short-video';
+// 选题/建稿的存储池:有短视频授权走 short-video 池;仅图文(如油炸总=小红书图文)走 note 池——
+// 否则 short-video 池被 sv.* 授权拦截,「存为候选」403 存不进去(2026-07-20 实测:候选存不成功的根因)。
+const SV_POOL_PLATFORMS = ['douyin', 'kuaishou', 'tencent', 'bilibili', 'xiaohongshu'] as const;
 const SOURCES_KEY = 'open-design:studio:create:sources';
 
 /** 数据源目录:id=引擎采集平台 id(视频号=channels 走极致数据),按授权过滤。 */
@@ -76,6 +78,7 @@ function loadSource(allowed: string[]): string {
 
 export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) => void }): JSX.Element {
   const license = useLicense();
+  const TOPIC_POOL = SV_POOL_PLATFORMS.some((p) => hasShortVideoPlatform(license, p)) ? 'short-video' : 'note';
   const allowedSources = useMemo(() => SOURCE_DEFS.filter((s) => s.licensed(license)), [license]);
   // 小红书是否含【视频形态】:未授权短视频(如油炸总合同=小红书图文)时只出图文,不给视频切换。
   const allowXhsVideo = hasShortVideoPlatform(license, 'xiaohongshu');
@@ -323,9 +326,10 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         browserCollect
         collectPlatforms={collectTargets}
         xhsContentType={effectiveXhsType}
-        /* 小红书不走 AI 转题——采集的爆款直接「存为候选」(2026-07-20 用户拍板)。隐藏顶部
-           「AI 帮我选题」+ 每条爆款的 AI 入口,只留「存为候选」。其它平台仍可用 AI 转题。 */
-        hideAiTopic={source === 'xiaohongshu'}
+        /* 统一创作台(短视频/图文)一律不走 AI 转题——采集的爆款直接「存为候选」(2026-07-20 用户:
+           无论哪个平台,爆款列表移除 AI 转题,只留存为候选)。隐藏顶部「AI 帮我选题」+ 每条爆款的
+           AI 入口,只留「存为候选」(逐条 + 全部)。 */
+        hideAiTopic
         /* 按当前所选源过滤候选(2026-07-18:小红书选题必须全部来自小红书):显示 本平台链接 + 无链接
            灵感题 + url 格式不规范(other)的;只藏【明确是别平台】的链接。加 other 是因为采集回来的
            爆款 url 有时不规范,被判 other 就看不到「存为候选」存进去的题(2026-07-20 用户报)。 */
