@@ -113,13 +113,17 @@ async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
     );
   }
 
-  // 1) 解压 python 运行时 + ffmpeg 到可写目录（app 内是 opaque tar，绕开 codesign deep 校验）。
+  // 1) 解压 python 运行时到可写目录（app 内是 opaque tar，绕开 codesign deep 校验）。
   await extractTarOnce(path.join(resourceRoot, 'python-runtime.tar.gz'), runtimeRoot, bundledPython);
-  await extractTarOnce(
-    path.join(resourceRoot, 'ffmpeg.tar.gz'),
-    runtimeRoot,
-    path.join(runtimeRoot, 'ffmpeg', 'ffmpeg'),
-  );
+  // ffmpeg 只有 ASR 抽音频 / yt-dlp 合流(短视频下载)要——不是所有客户版都带(如仅图文/文章/
+  // 互动的定制包)。缺失就跳过,不阻断 radar 评分/封面等核心 provision。
+  if (fs.existsSync(path.join(resourceRoot, 'ffmpeg.tar.gz'))) {
+    await extractTarOnce(
+      path.join(resourceRoot, 'ffmpeg.tar.gz'),
+      runtimeRoot,
+      path.join(runtimeRoot, 'ffmpeg', 'ffmpeg'),
+    );
+  }
 
   // 2) 源码复制到可写目录（含 .env）。venv 若残留（上次 provision 中断）先清掉。
   await fs.promises.mkdir(path.dirname(engineDir), { recursive: true });

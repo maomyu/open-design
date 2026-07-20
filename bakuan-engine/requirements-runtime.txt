@@ -1,0 +1,14 @@
+# 精简运行时依赖(油炸老总客户版):只装 radar 评分 + 封面(cap.image)实际要的轻量包。
+# 刻意不含:chromadb(RAG 向量库,src/rag/recall.py 内懒加载,缺失自动降级为空召回)、
+# opencv-python-headless(src 里无 import cv2,纯占位)——两者是 wheels 体积大头,客户用不到。
+requests>=2.31
+httpx>=0.27
+python-dotenv>=1.0
+pydantic>=2.6
+APScheduler>=3.10
+tenacity>=8.2
+SQLAlchemy>=2.0
+Pillow>=10.2
+loguru>=0.7
+tqdm>=4.66
+truststore>=0.10
