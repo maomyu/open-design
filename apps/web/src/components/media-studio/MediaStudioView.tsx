@@ -457,7 +457,7 @@ export function MediaStudioView(): JSX.Element {
 
   // ---- AI 任务（每步的智能体动作） ----
   const startAiTask = useCallback(
-    async (kind: StudioAiTaskKind, input?: { note?: string; articleType?: string; wordCount?: string; imageCount?: string; picked?: PickedHit[] }) => {
+    async (kind: StudioAiTaskKind, input?: { note?: string; articleType?: string; wordCount?: string; imageCount?: string; imageStyle?: string; picked?: PickedHit[] }) => {
       await flushSave();
       const current = articleRef.current;
       const created = await createStudioAiTask(PLATFORM, {
@@ -468,6 +468,7 @@ export function MediaStudioView(): JSX.Element {
           ...(input?.articleType ? { articleType: input.articleType } : {}),
           ...(input?.wordCount ? { wordCount: input.wordCount } : {}),
           ...(input?.imageCount != null && input.imageCount !== '' ? { imageCount: input.imageCount } : {}),
+          ...(input?.imageStyle ? { imageStyle: input.imageStyle } : {}),
           ...(input?.picked && input.picked.length > 0 ? { picked: input.picked } : {}),
           ...(current?.accountId ? { accountId: current.accountId } : {}),
         },
@@ -556,7 +557,7 @@ export function MediaStudioView(): JSX.Element {
       setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
       // 从选题过来 = 意图明确就是要写这篇——直接开写，不用再点一次。
       studioToast.ok('已建稿，AI 开始写作（右上角可看进度）');
-      void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount, imageCount: aiImageCount });
+      void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount, imageCount: aiImageCount, imageStyle: imgStyle });
     } else {
       studioToast.ok('已新建文章');
     }
@@ -862,10 +863,19 @@ export function MediaStudioView(): JSX.Element {
                 </option>
               ))}
             </select>
+            {/* 配图风格写作时就选定(2026-07-20 用户拍板):与封面/配图 tab 同一份状态,
+                写作提示词按它写标注描述,到封面/配图直接生图不用再选。 */}
+            <select className={c('select')} value={imgStyle} title="配图风格——写作时选定,AI 按此风格写封面与配图描述;封面/配图步直接生图" onChange={(e) => setImgStyle(e.target.value)}>
+              {IMAGE_STYLE_PRESETS.map((st) => (
+                <option key={st.id} value={st.id}>
+                  风格·{st.label}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}
-              onClick={() => void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount, imageCount: aiImageCount })}
+              onClick={() => void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount, imageCount: aiImageCount, imageStyle: imgStyle })}
             >
               <Icon name="sparkles" size={14} /> AI 写一版
             </button>

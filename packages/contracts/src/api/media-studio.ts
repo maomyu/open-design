@@ -431,6 +431,9 @@ export interface StudioAiTaskRequest {
     wordCount?: string;
     /** write: 正文配图位数量（2026-07-20 拍板:缺省最多 3 个;指定则严格按指定,'0'=不配图）. */
     imageCount?: string;
+    /** write: 配图风格预设 id（IMAGE_STYLE_PRESETS;2026-07-20 拍板:写作时就选定,
+     *  封面与配图位描述按该风格的视觉语言写,到封面/配图步直接生图）. */
+    imageStyle?: string;
     /** 绑定账号 id（写作按人设写）. */
     accountId?: string;
     /** topics: 用户勾选的优先参考文章（AI 优先围绕它们深挖出题）. */

@@ -23,16 +23,18 @@ function stripMarkdown(block: string): string {
  *  写(style 预设单独传引擎,避免与用户选的风格打架)。 */
 export function composeImagePrompt(
   description: string,
-  opts: { context?: string | null; articleTitle?: string } = {},
+  opts: { context?: string | null; articleTitle?: string; allowText?: boolean } = {},
 ): string {
   const ctx = opts.context?.trim();
   if (!ctx) return description;
   const title = opts.articleTitle?.trim();
+  // 「带文字」类风格(如大字报)允许画字,禁字条款会跟风格打架——按 allowText 收放。
+  const textRule = opts.allowText ? '' : ';画面中不要出现任何可读文字、水印或 logo';
   return [
     `主画面:${description}`,
     title ? `文章主题:《${title}》——画面气质要与主题相符。` : '',
     `所配段落(画面的场景与主体必须来自这段内容):${ctx}`,
-    '画面要求:细节丰富、有明确的视觉主体和景深层次,构图有主次,光线与氛围服务段落情绪;元素与所配段落强相关,不堆砌无关物件;画面中不要出现任何可读文字、水印或 logo。',
+    `画面要求:细节丰富、有明确的视觉主体和景深层次,构图有主次,光线与氛围服务段落情绪;元素与所配段落强相关,不堆砌无关物件${textRule}。`,
   ]
     .filter(Boolean)
     .join('\n');

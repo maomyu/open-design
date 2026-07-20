@@ -533,6 +533,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const prompt = composeImagePrompt(description, {
         context: paragraphCtx,
         articleTitle: article.title || article.topic || '',
+        // 「带文字」类风格(bigtext 大字报)允许画字,别用禁字条款顶掉风格。
+        allowText: body.style === 'bigtext',
       });
       // 时间戳后加随机段：双候选并行请求会在同一毫秒落盘，纯 Date.now()
       // 会同名互相覆盖（一张图丢失 + 前端候选 key 重复）。
@@ -1825,6 +1827,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         articleType: String(body.input?.articleType ?? ''),
         ...(body.input?.wordCount ? { wordCount: String(body.input.wordCount) } : {}),
         ...(body.input?.imageCount != null && body.input.imageCount !== '' ? { imageCount: String(body.input.imageCount) } : {}),
+        ...(body.input?.imageStyle ? { imageStyle: String(body.input.imageStyle) } : {}),
         ...(Array.isArray(body.input?.picked) && body.input.picked.length > 0
           ? { picked: body.input.picked.slice(0, 8) }
           : {}),

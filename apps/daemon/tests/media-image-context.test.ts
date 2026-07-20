@@ -87,4 +87,10 @@ describe('composeImagePrompt', () => {
     expect(p).toContain('画面要求');
     expect(p).toContain('不要出现任何可读文字');
   });
+
+  it('drops the no-text clause for text-allowed styles (bigtext)', () => {
+    const p = composeImagePrompt('大字标题:断缴警告', { context: '段落内容', allowText: true });
+    expect(p).toContain('主画面:大字标题:断缴警告');
+    expect(p).not.toContain('不要出现任何可读文字');
+  });
 });
