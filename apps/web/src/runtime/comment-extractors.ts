@@ -6,11 +6,13 @@
 // 单测。选择器对真实页面易漂移，改版时优先只调 EXTRACTORS 里的 querySelector，不动外层运行时。
 import type { CommentNode } from '@open-design/contracts';
 
-export type CommentPlatform = 'xiaohongshu';
+export type CommentPlatform = 'xiaohongshu' | 'baidu-zhidao';
 
 /** 评论页登录墙特征文案（命中则判未登录，交由上层引导扫码补登）。 */
 export const COMMENT_LOGIN_WALL: Record<CommentPlatform, string[]> = {
   xiaohongshu: ['登录后查看', '扫码登录', '手机号登录', '登录后可查看更多'],
+  // 百度知道问题页公开可读(读评论不吃登录墙);发评论才要登录,由注入器自判。
+  'baidu-zhidao': [],
 };
 
 /**
@@ -39,6 +41,7 @@ export function buildNoteUrl(platform: CommentPlatform, ref: string): string {
   if (/^https?:\/\//i.test(r)) return r;
   if (!r) return '';
   if (platform === 'xiaohongshu') return `https://www.xiaohongshu.com/explore/${encodeURIComponent(r)}`;
+  if (platform === 'baidu-zhidao') return `https://zhidao.baidu.com/question/${encodeURIComponent(r)}.html`;
   return r;
 }
 
@@ -103,6 +106,42 @@ export const COMMENT_EXTRACTORS: Record<CommentPlatform, string> = {
       const subs = p.querySelectorAll('.reply-container .comment-item, .sub-comment .comment-item, .sub-comments .comment-item');
       subs.forEach((s) => { const sn = readItem(s); if (sn) node.subReplies.push(sn); });
       out.push(node);
+    });
+    return out;
+  })()`,
+  // 百度知道问题页(2026-07-20 真机校准):评论挂在【每条回答】下,默认折叠——须先点各回答
+  // 页脚的「评论(N)」(span.comment)展开,评论区才渲染。展开后结构:
+  //   .comment-area(每回答一个,无评论时带 .no-comment)
+  //     └ .comment-body .comment-entry .comment-item
+  //         ├ .details          作者 + 日期("ghnjik  2025-11-11 14:28")
+  //         ├ .comment-content  正文
+  //         └ .operation-con    赞/回复/举报
+  // 无 data-id → 合成 id(作者+正文,与回复注入器同公式,两侧才能对上)。异步 IIFE:
+  // executeJavaScript 会等 Promise,预算内(约 5s)只展开【带评论数】的按钮再读。
+  'baidu-zhidao': `(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const synthId = (author, text) => 'c_' + (author + '_' + text).replace(/\\s+/g, '').slice(0, 24);
+    // ① 展开有评论的回答(「评论(N)」才点;纯「评论」=0 条,点了也是空)。
+    // 上层 evalJs 超时 6s:最多展开 4 个(4×800ms+1200ms≈4.4s),留读取余量。
+    const btns = [...document.querySelectorAll('span.comment')].filter((b) => /评论\\s*\\(\\d+\\)/.test((b.textContent || '').trim()) && b.getBoundingClientRect().width > 0);
+    for (const b of btns.slice(0, 4)) {
+      try { b.scrollIntoView({ block: 'center' }); b.click(); } catch (e) {}
+      await sleep(800);
+    }
+    await sleep(1200);
+    // ② 读所有已展开评论区的评论条。
+    const out = [], seen = new Set();
+    document.querySelectorAll('.comment-area .comment-item').forEach((it) => {
+      const details = (it.querySelector('.details') && it.querySelector('.details').innerText || '').trim();
+      const text = (it.querySelector('.comment-content') && it.querySelector('.comment-content').innerText || '').trim().slice(0, 500);
+      if (!text) return;
+      // .details = "作者名   2025-11-11 14:28" —— 日期起始处切开。
+      const dm = details.match(/(\\d{4}-\\d{2}-\\d{2}[^]*)$/);
+      const time = dm ? dm[1].trim().slice(0, 30) : '';
+      const author = (dm ? details.slice(0, dm.index) : details).trim().slice(0, 40);
+      const id = synthId(author, text);
+      if (seen.has(id)) return; seen.add(id);
+      out.push({ id, author, text, likes: 0, ...(time ? { time } : {}), subReplies: [] });
     });
     return out;
   })()`,

@@ -1,9 +1,10 @@
 // 互动运营（W8 的 UI 侧）：自动评论回复——维护关键词匹配规则 + 对一条笔记预览命中/一键真发。
 // 与 od studio auto-reply / rules 同源同端点(UI/CLI 双轨)。读评论→匹配→拟人回复,受风控台账门控。
-// 平台先支持小红书(注入器已就绪);知乎/微博的评论执行适配在 W9/W10。
+// 平台:小红书(W3/W4)+ 百度知道(W14,问题页回答下的评论);知乎/微博的评论执行适配在 W9/W10。
 import { useCallback, useEffect, useState } from 'react';
 import type { InteractionRule, AutoReplyResponse, RuleMatchMode, InteractionAction } from '@open-design/contracts';
 import { Icon } from './Icon';
+import { hasFeature, useLicense } from '../state/license';
 import { fetchPlatformAccounts } from '../providers/daemon';
 import {
   fetchInteractionRules,
@@ -21,9 +22,19 @@ import styles from './media-studio/MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
-const PLATFORM = 'xiaohongshu';
+/** 互动支持的平台(注入器已接入的);按授权过滤后展示。 */
+const INTERACTION_PLATFORMS: Array<{ id: string; label: string; noteNoun: string; licensed: (has: (f: 'note.xiaohongshu' | 'article.baidu-zhidao') => boolean) => boolean }> = [
+  { id: 'xiaohongshu', label: '小红书', noteNoun: '笔记', licensed: (has) => has('note.xiaohongshu') },
+  { id: 'baidu-zhidao', label: '百度知道', noteNoun: '问题', licensed: (has) => has('article.baidu-zhidao') },
+];
 
 export function InteractionView(): JSX.Element {
+  const license = useLicense();
+  const platforms = INTERACTION_PLATFORMS.filter((p) => p.licensed((f) => hasFeature(license, f)));
+  const [platform, setPlatform] = useState<string>(() => platforms[0]?.id ?? 'xiaohongshu');
+  const PLATFORM = platforms.some((p) => p.id === platform) ? platform : (platforms[0]?.id ?? 'xiaohongshu');
+  const platformDef = INTERACTION_PLATFORMS.find((p) => p.id === PLATFORM) ?? INTERACTION_PLATFORMS[0]!;
+  const noteNoun = platformDef.noteNoun; // 笔记(小红书) / 问题(百度知道)
   const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([]);
   const [account, setAccount] = useState<string>('');
   const [rules, setRules] = useState<InteractionRule[]>([]);
@@ -31,15 +42,17 @@ export function InteractionView(): JSX.Element {
   const [busy, setBusy] = useState<'' | 'preview' | 'live'>('');
   const [result, setResult] = useState<AutoReplyResponse | null>(null);
 
-  // 笔记选择器(免手动贴链接):来源下拉「我的笔记 / 采集池」+ 点选即填 note。
+  // 笔记/问题选择器(免手动贴链接):来源下拉「我的笔记 / 采集池」+ 点选即填 note。
+  // 「我的笔记」抓取仅小红书有(主页笔记);百度知道只有「采集池」(检索到的问题)。
   const [noteSource, setNoteSource] = useState<'mine' | 'pool'>('mine');
+  const effectiveNoteSource = PLATFORM === 'xiaohongshu' ? noteSource : 'pool';
   const [noteOptions, setNoteOptions] = useState<Array<{ title: string; url: string; meta?: string }>>([]);
   const [notesBusy, setNotesBusy] = useState(false);
 
   const loadNotes = useCallback(async (src: 'mine' | 'pool') => {
     setNotesBusy(true);
     setNoteOptions([]);
-    if (src === 'mine') {
+    if (src === 'mine' && PLATFORM === 'xiaohongshu') {
       const r = await fetchMyNotes(PLATFORM, account || null);
       setNotesBusy(false);
       if ('error' in r) { studioToast.err(r.error); return; }
@@ -47,16 +60,16 @@ export function InteractionView(): JSX.Element {
       setNoteOptions(r.notes.map((n) => ({ title: n.title, url: n.url, ...(n.likeText ? { meta: `♡ ${n.likeText}` } : {}) })));
       if (r.notes.length === 0) studioToast.err('没抓到已发笔记(可能主页还没笔记,或需在浏览器里滚动加载)');
     } else {
-      // 采集池:选题里带链接的小红书爆款(可去它评论区引流)。
-      const topics = (await fetchStudioTopics('short-video')) ?? [];
+      // 采集池:选题里带链接的本平台内容(小红书=爆款笔记;百度知道=检索到的问题)。
+      const topics = (await fetchStudioTopics(PLATFORM === 'baidu-zhidao' ? 'baidu-zhidao' : 'short-video')) ?? [];
       setNotesBusy(false);
       const opts = topics
         .filter((t) => t.url && topicOriginPlatform(t.url) === PLATFORM)
         .map((t) => ({ title: t.title, url: t.url, ...(t.heat ? { meta: t.heat } : {}) }));
       setNoteOptions(opts);
-      if (opts.length === 0) studioToast.err('采集池里暂无小红书笔记——先去创作台采集爆款');
+      if (opts.length === 0) studioToast.err(PLATFORM === 'baidu-zhidao' ? '采集池里暂无百度知道问题——先去「文章→百度知道→选题」搜相关问题并沉淀成候选' : '采集池里暂无小红书笔记——先去创作台采集爆款');
     }
-  }, [account]);
+  }, [account, PLATFORM]);
 
   // 新增规则表单。
   const [rName, setRName] = useState('');
@@ -70,34 +83,36 @@ export function InteractionView(): JSX.Element {
     setRules(await fetchInteractionRules(PLATFORM, account || null));
   }, [account]);
 
+  // 切平台重拉账号(各平台账号独立);顺带清掉上个平台的选中笔记/结果。
   useEffect(() => {
     void fetchPlatformAccounts().then((resp) => {
-      const xhs = resp?.platforms.find((p) => p.id === PLATFORM);
-      const list = (xhs?.accounts ?? []).map((a) => ({ id: a.id, name: a.name }));
+      const plat = resp?.platforms.find((p) => p.id === PLATFORM);
+      const list = (plat?.accounts ?? []).map((a) => ({ id: a.id, name: a.name }));
       setAccounts(list);
-      if (list[0] && !account) setAccount(list[0].name);
+      setAccount(list[0]?.name ?? '');
     });
+    setNote(''); setNoteOptions([]); setResult(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [PLATFORM]);
 
   useEffect(() => { void refreshRules(); }, [refreshRules]);
 
   async function preview(): Promise<void> {
-    if (!note.trim()) { studioToast.err('先填一条笔记链接'); return; }
+    if (!note.trim()) { studioToast.err(`先填一条${noteNoun}链接`); return; }
     setBusy('preview'); setResult(null);
     const r = await runAutoReply({ platform: PLATFORM, account: account || null, noteRef: note.trim(), dryRun: true });
     setBusy('');
     if ('error' in r) { studioToast.err(r.error); return; }
     setResult(r);
-    if (r.needsLogin) studioToast.err('未登录:去「账号」页扫码登录小红书后重试');
+    if (r.needsLogin) studioToast.err(`未登录:去「账号」页登录${platformDef.label}后重试`);
     else studioToast.ok(`读到 ${r.read} 条评论,命中 ${r.matched.length} 条规则(预览,未外发)`);
   }
 
   async function runLive(): Promise<void> {
-    if (!note.trim()) { studioToast.err('先填一条笔记链接'); return; }
+    if (!note.trim()) { studioToast.err(`先填一条${noteNoun}链接`); return; }
     const n = result?.matched.length ?? 0;
     const ok = window.confirm(
-      `将真的在「${account || '默认账号'}」下,对这条笔记里命中规则的评论发出回复(最多 3 条,逐条过风控)。\n` +
+      `将真的在「${account || '默认账号'}」下,对这条${noteNoun}里命中规则的评论发出回复(最多 3 条,逐条过风控)。\n` +
       `${n ? `当前预览命中 ${n} 条。` : ''}这是外发公开评论,确定继续?`,
     );
     if (!ok) return;
@@ -106,7 +121,7 @@ export function InteractionView(): JSX.Element {
     setBusy('');
     if ('error' in r) { studioToast.err(r.error); return; }
     setResult(r);
-    if (r.needsLogin) { studioToast.err('未登录:去「账号」页扫码登录小红书后重试'); return; }
+    if (r.needsLogin) { studioToast.err(`未登录:去「账号」页登录${platformDef.label}后重试`); return; }
     const sent = r.dispatched.filter((d) => d.jobId).length;
     const blocked = r.dispatched.filter((d) => d.blocked).length;
     studioToast.ok(`已派发 ${sent} 条回复${blocked ? `;${blocked} 条被风控拦` : ''}(在下方浏览器标签看拟人回复)`);
@@ -141,13 +156,30 @@ export function InteractionView(): JSX.Element {
       <div className={c('head')}>
         <h1 className={c('title')}>互动运营 · 自动评论回复</h1>
         <span className={c('cardHint')}>
-          维护关键词规则 → 对一条笔记读评论、命中规则的拟人回复。受风控台账门控(单账号单日上限/冷却/静默时段)。
-          目前支持小红书;知乎/微博陆续接入。
+          维护关键词规则 → 对一条{noteNoun}读评论、命中规则的拟人回复。受风控台账门控(单账号单日上限/冷却/静默时段)。
+          支持小红书 / 百度知道;知乎/微博陆续接入。
         </span>
-        <div className={c('row')} style={{ marginTop: 8 }}>
+        <div className={c('row')} style={{ marginTop: 8, flexWrap: 'wrap', gap: 8 }}>
+          {platforms.length > 1 ? (
+            <>
+              <span className={c('cardHint')}>平台:</span>
+              {platforms.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`${c('chip')}${p.id === PLATFORM ? ` ${c('chipBlue')}` : ''}`}
+                  style={{ cursor: 'pointer', border: 'none' }}
+                  aria-pressed={p.id === PLATFORM}
+                  onClick={() => setPlatform(p.id)}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </>
+          ) : null}
           <span className={c('cardHint')}>账号:</span>
           <select className={c('select')} value={account} onChange={(e) => setAccount(e.target.value)}>
-            {accounts.length === 0 ? <option value="">(去「账号」页登录小红书)</option> : null}
+            {accounts.length === 0 ? <option value="">(去「账号」页登录{platformDef.label})</option> : null}
             {accounts.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
           </select>
         </div>
@@ -159,21 +191,22 @@ export function InteractionView(): JSX.Element {
       {/* ── 自动回复:对一条笔记预览/真发 ── */}
       <div className={c('card')}>
         <div className={c('cardLabel')}>
-          🤖 自动回复一条笔记
-          <span className={c('cardHint')}>下拉选来源 → 点一条笔记(免手动复制链接)→ 先「预览」看命中,再「真发」逐条拟人回复。</span>
+          🤖 自动回复一条{noteNoun}
+          <span className={c('cardHint')}>下拉选来源 → 点一条{noteNoun}(免手动复制链接)→ 先「预览」看命中,再「真发」逐条拟人回复。</span>
         </div>
-        {/* 笔记选择器:来源切换(我的笔记 / 采集池)+ 点选即填,不用手动贴链接。 */}
+        {/* 笔记/问题选择器:来源切换 + 点选即填,不用手动贴链接。百度知道只有「采集池」(检索到的问题)。 */}
         <div className={c('row')} style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span className={c('cardHint')}>选笔记:</span>
+          <span className={c('cardHint')}>选{noteNoun}:</span>
           <select
             className={c('select')}
-            value={noteSource}
+            value={effectiveNoteSource}
+            disabled={PLATFORM !== 'xiaohongshu'}
             onChange={(e) => { const s = e.target.value as 'mine' | 'pool'; setNoteSource(s); void loadNotes(s); }}
           >
-            <option value="mine">我的笔记(回复自己评论)</option>
-            <option value="pool">采集池(去别人爆款下引流)</option>
+            {PLATFORM === 'xiaohongshu' ? <option value="mine">我的笔记(回复自己评论)</option> : null}
+            <option value="pool">{PLATFORM === 'baidu-zhidao' ? '采集池(检索到的问题)' : '采集池(去别人爆款下引流)'}</option>
           </select>
-          <button type="button" className={c('btn')} disabled={notesBusy} onClick={() => void loadNotes(noteSource)}>
+          <button type="button" className={c('btn')} disabled={notesBusy} onClick={() => void loadNotes(effectiveNoteSource)}>
             <Icon name={notesBusy ? 'spinner' : 'refresh'} size={12} /> {notesBusy ? '抓取中…' : '拉取/刷新'}
           </button>
         </div>
@@ -194,13 +227,13 @@ export function InteractionView(): JSX.Element {
             ))}
           </div>
         ) : (
-          <div className={c('cardHint')} style={{ marginTop: 6 }}>点「拉取/刷新」加载{noteSource === 'mine' ? '你的已发笔记' : '采集池笔记'};也可在下面手动粘贴链接。</div>
+          <div className={c('cardHint')} style={{ marginTop: 6 }}>点「拉取/刷新」加载{effectiveNoteSource === 'mine' ? '你的已发笔记' : PLATFORM === 'baidu-zhidao' ? '采集池里的问题' : '采集池笔记'};也可在下面手动粘贴链接。</div>
         )}
         <div className={c('row')} style={{ marginTop: 6 }}>
           <input
             className={`${c('input')} ${c('grow')}`}
             value={note}
-            placeholder="或手动粘贴小红书笔记链接(带 xsec_token 的完整链接最稳)"
+            placeholder={PLATFORM === 'baidu-zhidao' ? '或手动粘贴百度知道问题链接(zhidao.baidu.com/question/…)' : '或手动粘贴小红书笔记链接(带 xsec_token 的完整链接最稳)'}
             onChange={(e) => setNote(e.target.value)}
           />
           <button type="button" className={c('btn')} disabled={busy !== ''} onClick={() => void preview()}>
@@ -212,7 +245,7 @@ export function InteractionView(): JSX.Element {
         </div>
         {result ? (
           result.needsLogin ? (
-            <div className={c('cardHint')} style={{ color: '#b0342c', marginTop: 6 }}>未登录:去「账号」页扫码登录小红书后重试。</div>
+            <div className={c('cardHint')} style={{ color: '#b0342c', marginTop: 6 }}>未登录:去「账号」页登录{platformDef.label}后重试。</div>
           ) : (
             <div style={{ marginTop: 8 }}>
               <div className={c('cardHint')}>读到 {result.read} 条评论,命中 {result.matched.length} 条规则{result.dispatched.length ? `;已派发 ${result.dispatched.filter((d) => d.jobId).length} 条` : '(预览,未外发)'}</div>
@@ -225,7 +258,7 @@ export function InteractionView(): JSX.Element {
                   </div>
                 );
               })}
-              {result.matched.length === 0 ? <div className={c('cardHint')} style={{ marginTop: 4 }}>没有评论命中规则——去下面加/调规则,或换条评论多的笔记。</div> : null}
+              {result.matched.length === 0 ? <div className={c('cardHint')} style={{ marginTop: 4 }}>没有评论命中规则——去下面加/调规则,或换条评论多的{noteNoun}。</div> : null}
             </div>
           )
         ) : null}
