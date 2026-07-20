@@ -6,13 +6,17 @@
 // 单测。选择器对真实页面易漂移，改版时优先只调 EXTRACTORS 里的 querySelector，不动外层运行时。
 import type { CommentNode } from '@open-design/contracts';
 
-export type CommentPlatform = 'xiaohongshu' | 'baidu-zhidao';
+export type CommentPlatform = 'xiaohongshu' | 'baidu-zhidao' | 'zhihu' | 'weibo';
 
 /** 评论页登录墙特征文案（命中则判未登录，交由上层引导扫码补登）。 */
 export const COMMENT_LOGIN_WALL: Record<CommentPlatform, string[]> = {
   xiaohongshu: ['登录后查看', '扫码登录', '手机号登录', '登录后可查看更多'],
   // 百度知道问题页公开可读(读评论不吃登录墙);发评论才要登录,由注入器自判。
   'baidu-zhidao': [],
+  // 知乎回答页公开可读(未登录顶多弹登录浮层);发评论才要登录,注入器自判。
+  zhihu: [],
+  // 微博未登录基本什么都看不了。
+  weibo: ['立即登录', '注册'],
 };
 
 /**
@@ -42,6 +46,7 @@ export function buildNoteUrl(platform: CommentPlatform, ref: string): string {
   if (!r) return '';
   if (platform === 'xiaohongshu') return `https://www.xiaohongshu.com/explore/${encodeURIComponent(r)}`;
   if (platform === 'baidu-zhidao') return `https://zhidao.baidu.com/question/${encodeURIComponent(r)}.html`;
+  // 知乎(问题+回答两段 id)/微博(uid+bid 两段)拼不出规范 URL,ref 应传完整链接;裸 id 原样返回。
   return r;
 }
 
@@ -142,6 +147,59 @@ export const COMMENT_EXTRACTORS: Record<CommentPlatform, string> = {
       const id = synthId(author, text);
       if (seen.has(id)) return; seen.add(id);
       out.push({ id, author, text, likes: 0, ...(time ? { time } : {}), subReplies: [] });
+    });
+    return out;
+  })()`,
+  // 知乎回答页(2026-07-20 实机校准):评论默认收起,先点「N 条评论」按钮展开(变「收起评论」),
+  // 评论条=div[data-id](自带真实评论 id!),正文=.CommentContent,作者=条内 a[href*=/people/]
+  // (头像链接可能无文本,兜底取正文前第一段短文本)。异步 IIFE,预算贴上层 6s 超时。
+  zhihu: `(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const expandBtn = [...document.querySelectorAll('button')].find((b) => /\\d+\\s*条评论/.test((b.textContent || '').trim()) && b.getBoundingClientRect().width > 0);
+    if (expandBtn) { try { expandBtn.scrollIntoView({ block: 'center' }); expandBtn.click(); } catch (e) {} await sleep(2500); }
+    const out = [], seen = new Set();
+    document.querySelectorAll('div[data-id]').forEach((it) => {
+      const content = it.querySelector('.CommentContent');
+      if (!content) return;                                  // data-id 的非评论节点跳过
+      const text = (content.innerText || '').trim().slice(0, 500);
+      if (!text) return;
+      let author = '';
+      const pa = [...it.querySelectorAll('a')].find((a) => /\\/people\\/|\\/org\\//.test(a.getAttribute('href') || '') && (a.textContent || '').trim());
+      if (pa) author = (pa.textContent || '').trim().slice(0, 40);
+      if (!author) {
+        const leaf = [...it.querySelectorAll('span,div,b')].find((e) => e.children.length === 0 && (e.textContent || '').trim() && (e.textContent || '').trim().length <= 20 && !content.contains(e));
+        author = leaf ? (leaf.textContent || '').trim().slice(0, 40) : '';
+      }
+      const id = it.getAttribute('data-id') || '';
+      if (!id || seen.has(id)) return; seen.add(id);
+      const tm = ((it.textContent || '').match(/\\d{2}-\\d{2}|\\d+ ?(分钟|小时|天)前|昨天|刚刚/) || [])[0] || '';
+      out.push({ id, author, text, likes: 0, ...(tm ? { time: tm } : {}), subReplies: [] });
+    });
+    return out;
+  })()`,
+  // 微博帖子详情页(2026-07-20 实机校准):评论直接渲染(无需展开),评论条=div.item1
+  // (内层还有 .item1in,按【顶层 item1】去重)。innerText 逐行:第1行=作者名,随后
+  // 【以冒号打头】的行=评论正文(如「:完全不会…」),再后是「日期 来自X」「点赞数」。
+  // 作者优先取条内首个 /u/ 用户链接文本(最稳),兜底第1行。无 data-id → 合成 id
+  // (与回复注入器 parseWeiboItem 同公式,两侧对得上)。
+  weibo: `(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    await sleep(800);
+    const synthId = (author, text) => 'c_' + (author + '_' + text).replace(/\\s+/g, '').slice(0, 24);
+    const out = [], seen = new Set();
+    [...document.querySelectorAll('div.item1')].forEach((it) => {
+      if (it.parentElement && it.parentElement.closest('div.item1')) return;   // 只取顶层
+      const lines = (it.innerText || '').split('\\n').map((s) => s.trim()).filter(Boolean);
+      if (lines.length < 2) return;
+      const ua = [...it.querySelectorAll('a')].find((a) => /\\/u\\//.test(a.getAttribute('href') || '') && (a.textContent || '').trim());
+      const author = ((ua && ua.textContent) || lines[0] || '').trim().slice(0, 40);
+      const textLine = lines.find((l) => /^[:：]/.test(l)) || '';
+      const text = textLine.replace(/^[:：]\\s*/, '').trim().slice(0, 500);
+      if (!author || !text) return;
+      const id = synthId(author, text);
+      if (seen.has(id)) return; seen.add(id);
+      const tm = ((it.innerText || '').match(/\\d{1,2}-\\d{1,2}(?:[- ]\\d{1,2}:\\d{2})?|\\d+ ?(分钟|小时|天)前|今天|昨天/) || [])[0] || '';
+      out.push({ id, author, text, likes: 0, ...(tm ? { time: tm } : {}), subReplies: [] });
     });
     return out;
   })()`,

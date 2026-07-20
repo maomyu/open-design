@@ -23,9 +23,12 @@ import styles from './media-studio/MediaStudio.module.css';
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
 
 /** 互动支持的平台(注入器已接入的);按授权过滤后展示。 */
-const INTERACTION_PLATFORMS: Array<{ id: string; label: string; noteNoun: string; licensed: (has: (f: 'note.xiaohongshu' | 'article.baidu-zhidao') => boolean) => boolean }> = [
+type InteractionFeature = 'note.xiaohongshu' | 'article.baidu-zhidao' | 'article.zhihu' | 'article.weibo';
+const INTERACTION_PLATFORMS: Array<{ id: string; label: string; noteNoun: string; licensed: (has: (f: InteractionFeature) => boolean) => boolean }> = [
   { id: 'xiaohongshu', label: '小红书', noteNoun: '笔记', licensed: (has) => has('note.xiaohongshu') },
   { id: 'baidu-zhidao', label: '百度知道', noteNoun: '问题', licensed: (has) => has('article.baidu-zhidao') },
+  { id: 'zhihu', label: '知乎', noteNoun: '回答', licensed: (has) => has('article.zhihu') },
+  { id: 'weibo', label: '微博', noteNoun: '帖子', licensed: (has) => has('article.weibo') },
 ];
 
 export function InteractionView(): JSX.Element {
@@ -60,16 +63,25 @@ export function InteractionView(): JSX.Element {
       setNoteOptions(r.notes.map((n) => ({ title: n.title, url: n.url, ...(n.likeText ? { meta: `♡ ${n.likeText}` } : {}) })));
       if (r.notes.length === 0) studioToast.err('没抓到已发笔记(可能主页还没笔记,或需在浏览器里滚动加载)');
     } else {
-      // 采集池:选题里带链接的本平台内容(小红书=爆款笔记;百度知道=检索到的问题)。
-      const topics = (await fetchStudioTopics(PLATFORM === 'baidu-zhidao' ? 'baidu-zhidao' : 'short-video')) ?? [];
+      // 采集池:选题里带链接的本平台内容(小红书=爆款笔记;百度知道=问题;知乎/微博=文章台选题)。
+      // 各平台选题池 key:小红书爆款在 short-video 池;文章类平台各用自己的 platform 池。
+      const pool = PLATFORM === 'xiaohongshu' ? 'short-video' : PLATFORM;
+      const topics = (await fetchStudioTopics(pool)) ?? [];
       setNotesBusy(false);
       const opts = topics
         .filter((t) => t.url && topicOriginPlatform(t.url) === PLATFORM)
         .map((t) => ({ title: t.title, url: t.url, ...(t.heat ? { meta: t.heat } : {}) }));
       setNoteOptions(opts);
-      if (opts.length === 0) studioToast.err(PLATFORM === 'baidu-zhidao' ? '采集池里暂无百度知道问题——先去「文章→百度知道→选题」搜相关问题并沉淀成候选' : '采集池里暂无小红书笔记——先去创作台采集爆款');
+      if (opts.length === 0) {
+        const hint = PLATFORM === 'baidu-zhidao'
+          ? '采集池里暂无百度知道问题——先去「文章→百度知道→选题」搜相关问题'
+          : PLATFORM === 'xiaohongshu'
+          ? '采集池里暂无小红书笔记——先去创作台采集爆款'
+          : `采集池里暂无${platformDef.label}内容——先去「文章→${platformDef.label}→选题」找热点;也可在下面手动粘贴链接`;
+        studioToast.err(hint);
+      }
     }
-  }, [account, PLATFORM]);
+  }, [account, PLATFORM, platformDef.label]);
 
   // 新增规则表单。
   const [rName, setRName] = useState('');

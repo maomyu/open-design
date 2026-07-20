@@ -1439,6 +1439,8 @@ export function topicOriginPlatform(url?: string | null): string {
   if (/bilibili\.com|b23\.tv/.test(u)) return 'bilibili';
   if (/channels\.weixin\.qq\.com/.test(u)) return 'channels';
   if (/zhidao\.baidu\.com/.test(u)) return 'baidu-zhidao';
+  if (/zhihu\.com/.test(u)) return 'zhihu';
+  if (/weibo\.com|weibo\.cn/.test(u)) return 'weibo';
   return 'other';
 }
 

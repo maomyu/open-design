@@ -264,9 +264,181 @@ async function injectBaiduReply(
   return { ok: true, detail: `已回复:${spec.text.slice(0, 20)}${spec.text.length > 20 ? '…' : ''}` };
 }
 
+/**
+ * 知乎评论回复(W9,2026-07-20 打包实例实机校准)。回答页评论默认收起:点「N 条评论」展开
+ * (变「收起评论」)→ 评论条 div[data-id](真实评论 id)→ 楼中楼:点条内「回复」按钮弹出
+ * DraftJS 编辑器(.public-DraftEditor-content,新弹的是【最后一个】)→ 拟人键入 → 点「发布」
+ * (取离该编辑器最近的,页面常同时有顶部添加评论框)。一级评论:顶部「添加评论」框。
+ */
+async function injectZhihuReply(
+  wv: DraftWebview,
+  spec: ReplyInjectSpec,
+  say: (m: string) => void,
+): Promise<ReplyInjectResult> {
+  const pageRef = spec.action === 'sub-reply' ? (spec.noteRef ?? '') : spec.targetRef;
+  const url = buildNoteUrl('zhihu', pageRef);
+  if (url) {
+    say('打开回答页…');
+    await wvEval(wv, `location.href = ${JSON.stringify(url)}`);
+    await ready(wv);
+    await sleep(2000);
+  }
+  const loggedOut = await wvEval<boolean>(
+    wv,
+    `(() => { const a=[...document.querySelectorAll('button,a')].find(x=>{const t=(x.textContent||'').trim(); const r=x.getBoundingClientRect(); return (t==='登录'||t==='登录/注册')&&r.width>0&&r.top<80;}); return Boolean(a); })()`,
+  );
+  if (loggedOut) return { ok: false, detail: '知乎未登录——在账号页登录知乎后重试' };
+
+  // 展开评论(处理器可能晚绑:循环点到评论条真渲染,最多 5 轮)。
+  say('展开评论区…');
+  let expanded = false;
+  for (let round = 0; round < 5 && !expanded; round++) {
+    await wvEval(wv, `(() => { const b=[...document.querySelectorAll('button')].find(x=>/\\d+\\s*条评论/.test((x.textContent||'').trim())&&x.getBoundingClientRect().width>0); if(b){ b.scrollIntoView({block:'center'}); b.click(); } return true; })()`);
+    await sleep(1800);
+    expanded = Boolean(await wvEval<boolean>(wv, `Boolean([...document.querySelectorAll('div[data-id]')].find(d=>d.querySelector('.CommentContent')))`));
+  }
+
+  if (spec.action === 'sub-reply') {
+    if (!expanded) return { ok: false, detail: '评论区没展开(「条评论」按钮点了没反应)——稍后重试' };
+    say('定位目标评论,点开「回复」…');
+    const opened = await wvEval<boolean>(wv, `(() => {
+      const it=[...document.querySelectorAll('div[data-id]')].find(d=>d.getAttribute('data-id')===${JSON.stringify(spec.targetRef)});
+      if (!it) return false;
+      const btn=[...it.querySelectorAll('button')].find(b=>(b.textContent||'').trim().indexOf('回复')>=0);
+      if (!btn) return false;
+      it.scrollIntoView({block:'center'}); btn.click(); return true;
+    })()`);
+    if (!opened) return { ok: false, detail: '没找到目标评论的「回复」入口(评论可能翻页在后面或已删除)' };
+    await sleep(1800);
+  } else {
+    // 一级评论:点「添加评论」唤起顶部评论框。
+    await clickRealByText(wv, ['添加评论', '​添加评论', '写下你的评论']);
+    await sleep(1200);
+  }
+
+  // 聚焦编辑器:楼中楼=最后一个可见 DraftJS 编辑器(新弹的);一级=第一个。
+  say('点开输入框…');
+  const edSel = await wvEval<string | null>(wv, `(() => {
+    const eds=[...document.querySelectorAll('.public-DraftEditor-content')].filter(e=>e.getBoundingClientRect().height>0);
+    if (!eds.length) return null;
+    const t=${spec.action === 'sub-reply' ? 'eds[eds.length-1]' : 'eds[0]'};
+    t.setAttribute('data-od-target','1');
+    return '[data-od-target="1"]';
+  })()`);
+  if (!edSel) return { ok: false, detail: '评论输入框没出现(编辑器未唤起)' };
+  if (!(await focusByClick(wv, edSel))) return { ok: false, detail: '评论输入框聚焦失败' };
+
+  say('拟人输入回复…');
+  await typeText(wv, spec.text, undefined, { slow: true });
+  await sleep(600);
+
+  // 发布:取【离目标编辑器最近的】可用「发布」按钮(顶部添加评论框也有一个,不能全局点第一个)。
+  say('发布…');
+  const pos = await wvEval<{ x: number; y: number } | null>(wv, `(() => {
+    const ed=document.querySelector('[data-od-target="1"]');
+    if (!ed) return null;
+    const er=ed.getBoundingClientRect();
+    const btns=[...document.querySelectorAll('button')].filter(b=>(b.textContent||'').trim()==='发布'&&!b.disabled&&b.getBoundingClientRect().width>0);
+    if (!btns.length) return null;
+    btns.sort((p,q)=>Math.abs(p.getBoundingClientRect().top-er.top)-Math.abs(q.getBoundingClientRect().top-er.top));
+    const b=btns[0]; b.scrollIntoView({block:'center'});
+    const r=b.getBoundingClientRect();
+    return { x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
+  })()`);
+  if (!pos) return { ok: false, detail: '输入成功但没找到可用的「发布」按钮' };
+  wv.sendInputEvent({ type: 'mouseMove', x: pos.x, y: pos.y });
+  await sleep(150);
+  wv.sendInputEvent({ type: 'mouseDown', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+  await sleep(80);
+  wv.sendInputEvent({ type: 'mouseUp', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+  await sleep(2000);
+  // 提交验证:发布成功后编辑器清空/收起。
+  const leftover = await wvEval<boolean>(wv, `(() => { const ed=document.querySelector('[data-od-target="1"]'); return Boolean(ed && (ed.innerText||'').trim().length>0); })()`);
+  if (leftover) return { ok: false, detail: '点了「发布」但文本仍在输入框(未发出)——请在标签里手动点一下发布' };
+  return { ok: true, detail: `已回复:${spec.text.slice(0, 20)}${spec.text.length > 20 ? '…' : ''}` };
+}
+
+/**
+ * 微博评论回复(W10,2026-07-20 打包实例实机校准)。帖子详情页评论直接渲染(div.item1,
+ * 文本「作者名:内容」)。v1 简化:楼中楼不去 hover 找逐条「回复」入口(悬浮才出现,易碎),
+ * 而是按微博惯例在【主评论框】发「回复@作者:内容」——展示效果与原生回复一致。
+ * 主评论框 textarea[placeholder*=评论],发送=框附近文本「评论/发送/发布」的可用按钮。
+ */
+async function injectWeiboReply(
+  wv: DraftWebview,
+  spec: ReplyInjectSpec,
+  say: (m: string) => void,
+): Promise<ReplyInjectResult> {
+  const pageRef = spec.action === 'sub-reply' ? (spec.noteRef ?? '') : spec.targetRef;
+  const url = buildNoteUrl('weibo', pageRef);
+  if (url) {
+    say('打开帖子页…');
+    await wvEval(wv, `location.href = ${JSON.stringify(url)}`);
+    await ready(wv);
+    await sleep(2000);
+  }
+  if (await loginWalled(wv, 'weibo')) return { ok: false, detail: '微博未登录——在账号页登录微博后重试' };
+
+  // 楼中楼:按合成 id 找到目标评论拿作者名,回复文案带「回复@作者:」前缀(微博惯例)。
+  // 解析与 comment-extractors.weibo 完全同步(作者=首个 /u/ 链接或第1行;正文=冒号行)。
+  let text = spec.text;
+  if (spec.action === 'sub-reply') {
+    const author = await wvEval<string | null>(wv, `(() => {
+      const synthId=(a,t)=>'c_'+(a+'_'+t).replace(/\\s+/g,'').slice(0,24);
+      for (const it of document.querySelectorAll('div.item1')) {
+        if (it.parentElement && it.parentElement.closest('div.item1')) continue;
+        const lines=(it.innerText||'').split('\\n').map(s=>s.trim()).filter(Boolean);
+        if (lines.length<2) continue;
+        const ua=[...it.querySelectorAll('a')].find(a=>/\\/u\\//.test(a.getAttribute('href')||'')&&(a.textContent||'').trim());
+        const a=((ua&&ua.textContent)||lines[0]||'').trim().slice(0,40);
+        const tl=lines.find(l=>/^[:：]/.test(l))||'';
+        const t=tl.replace(/^[:：]\\s*/,'').trim().slice(0,500);
+        if (a && t && synthId(a,t)===${JSON.stringify(spec.targetRef)}) { it.scrollIntoView({block:'center'}); return a; }
+      }
+      return null;
+    })()`);
+    if (!author) return { ok: false, detail: '没找到目标评论(可能翻页在后面或已删除)' };
+    text = `回复@${author}:${spec.text}`;
+  }
+
+  say('点开评论框…');
+  const TA = 'textarea[placeholder*="评论"], textarea';
+  if (!(await focusByClick(wv, TA))) return { ok: false, detail: '评论输入框没找到(帖子页可能没加载完)' };
+
+  say('拟人输入回复…');
+  await typeText(wv, text.slice(0, 140), undefined, { slow: true }); // 微博评论上限 140 字
+  await sleep(600);
+
+  say('发送…');
+  const pos = await wvEval<{ x: number; y: number } | null>(wv, `(() => {
+    const ta=document.querySelector('textarea[placeholder*="评论"]') || document.querySelector('textarea');
+    if (!ta) return null;
+    // 从输入框向上走 5 层找同区块内可用的发送按钮(评论/发送/发布)。
+    let scope=ta;
+    for (let i=0;i<5&&scope;i++) {
+      const btn=[...scope.querySelectorAll('button')].find(b=>{const t=(b.textContent||'').trim(); return (t==='评论'||t==='发送'||t==='发布')&&!b.disabled&&b.getBoundingClientRect().width>0;});
+      if (btn) { btn.scrollIntoView({block:'center'}); const r=btn.getBoundingClientRect(); return { x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) }; }
+      scope=scope.parentElement;
+    }
+    return null;
+  })()`);
+  if (!pos) return { ok: false, detail: '输入成功但没找到可用的发送按钮' };
+  wv.sendInputEvent({ type: 'mouseMove', x: pos.x, y: pos.y });
+  await sleep(150);
+  wv.sendInputEvent({ type: 'mouseDown', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+  await sleep(80);
+  wv.sendInputEvent({ type: 'mouseUp', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
+  await sleep(2000);
+  const leftover = await wvEval<boolean>(wv, `(() => { const ta=document.querySelector('textarea[placeholder*="评论"]') || document.querySelector('textarea'); return Boolean(ta && ta.value && ta.value.length>0); })()`);
+  if (leftover) return { ok: false, detail: '点了发送但文本仍在输入框(未发出)——请在标签里手动点一下发送' };
+  return { ok: true, detail: `已回复:${text.slice(0, 20)}${text.length > 20 ? '…' : ''}` };
+}
+
 const INJECTORS: Record<string, (wv: DraftWebview, spec: ReplyInjectSpec, say: (m: string) => void) => Promise<ReplyInjectResult>> = {
   xiaohongshu: injectXhsReply,
   'baidu-zhidao': injectBaiduReply,
+  zhihu: injectZhihuReply,
+  weibo: injectWeiboReply,
 };
 
 export function replyInjectionSupported(platform: string): boolean {
@@ -281,7 +453,7 @@ export async function runReplyInjection(
 ): Promise<ReplyInjectResult> {
   if (!wv) return { ok: false, detail: '面板 webview 未就绪' };
   const fn = INJECTORS[spec.platform];
-  if (!fn) return { ok: false, detail: `「${spec.platform}」的自动回复暂未接入(当前支持小红书/百度知道)` };
+  if (!fn) return { ok: false, detail: `「${spec.platform}」的自动回复暂未接入(当前支持小红书/百度知道/知乎/微博)` };
   try {
     return await fn(wv, spec, say);
   } catch (err) {
