@@ -66,6 +66,9 @@ function timeLabel(ts: number): string {
 
 export function ZhihuStudioView(): JSX.Element {
   const license = useLicense();
+  // 「从公众号导入」仅当客户买了公众号(article.wechat-mp)才显示——本客户没有公众号功能,
+  // 克隆自公众号台的这个入口要隐藏(2026-07-20 用户报"没有公众号却出现导入")。
+  const canImportWechat = hasFeature(license, 'article.wechat-mp');
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<ZhihuTab>('write');
@@ -411,9 +414,11 @@ export function ZhihuStudioView(): JSX.Element {
           </div>
         ) : null}
         <div className={c('row')} style={{ justifyContent: 'center' }}>
+        {canImportWechat ? (
         <button type="button" className={c('btn')} onClick={() => { setImportOpen((v) => !v); if (!importList) void fetchStudioArticles('wechat-mp').then(setImportList); }}>
           <Icon name="import" size={14} /> 从公众号导入
         </button>
+        ) : null}
         <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void handleCreateArticle()}>
           <Icon name="plus" size={14} /> 新建文章
         </button>
@@ -550,9 +555,11 @@ export function ZhihuStudioView(): JSX.Element {
                     标题
                     <span className={c('cardHint')}>知乎标题上限 100 字</span>
                     <span className={c('headSpacer')} />
+                    {canImportWechat ? (
                     <button type="button" className={c('btn')} onClick={() => { setImportOpen((v) => !v); if (!importList) void fetchStudioArticles('wechat-mp').then(setImportList); }}>
                       <Icon name="import" size={13} /> 从公众号导入
                     </button>
+                    ) : null}
                   </div>
                   {importOpen ? (
                     <div className={c('records')}>
