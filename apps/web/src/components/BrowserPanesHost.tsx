@@ -133,6 +133,10 @@ async function runCollect(
         for (const f of document.querySelectorAll('iframe')) {
           if (/captcha|secsdk/i.test(f.getAttribute('src') || '') && vis(f)) return true;
         }
+        // 百度系:整页跳到 wappass.baidu.com 安全验证(滑块拼图)——按 URL + 页面标志判(2026-07-20
+        // 百度知道检索实机撞上)。整页跳转不存在"常驻隐藏容器"误报问题,可放心按 URL 判。
+        if (/wappass\\.baidu\\.com/.test(location.href)) return true;
+        if (/百度安全验证/.test((document.body && document.body.innerText || '').slice(0, 200))) return true;
         return false;
       } catch (e) { return false; } })()`,
       3000,

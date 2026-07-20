@@ -11,6 +11,8 @@ import {
   type TopicFeedKind,
   fetchTikhubFeed,
   collectScoreTopics,
+  createStudioCollect,
+  waitStudioCollectDone,
   downloadStudioVideo,
   downloadVideoByUrl,
   extractScriptFromVideo,
@@ -300,6 +302,42 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     const kw = direction.trim();
     if (!kw) { studioToast.err('先在上面填「方向/领域关键词」'); return; }
     if (collectTargets.length === 0) { studioToast.err('该平台暂不支持真抓爆款——请切到抖音/小红书/快手/B站/视频号'); return; }
+    // 百度知道走【内置浏览器采集】(2026-07-20 用户拍板:不走 TikHub):搜相关问题,列出
+    // 「问题标题+回答数+链接」当选题;选题即目标问题,写作=给它写回答。
+    if (collectTargets.includes('baidu-zhidao')) {
+      setCollectBusy(true);
+      try {
+        setBaokuanStatus(`正在用内置浏览器搜百度知道相关问题「${kw}」…(桌面端标签可见,约半分钟)`);
+        const created = await createStudioCollect({ keyword: kw, platforms: ['baidu-zhidao'], per: 20, pages: radarPages });
+        if ('error' in created) { setBaokuanStatus(''); studioToast.err(created.error); return; }
+        const job = await waitStudioCollectDone(created.jobId, (line) => setBaokuanStatus(`百度知道:${line}`));
+        const items = (job?.results ?? []).flatMap((r) => r.items ?? []);
+        const hitList: MediaTopicHit[] = items
+          .filter((it) => String(it.title ?? '').trim())
+          .map((it) => ({
+            title: String(it.title ?? '').trim(),
+            url: String(it.url ?? ''),
+            account: '百度知道',
+            publishedAt: '',
+            signals: ['realtime'] as MediaTopicHit['signals'],
+            readNum: null,
+            zanNum: null,
+            hot: it.comments ? `${it.comments} 个回答` : null,
+            desc: '相关问题——「去创作」即为它写回答',
+          }));
+        latestBaokuanHitsByPlat[baokuanPlatKey] = hitList;
+        window.dispatchEvent(new CustomEvent<{ plat: string; hits: MediaTopicHit[] }>(BAOKUAN_HITS_EVENT, { detail: { plat: baokuanPlatKey, hits: hitList } }));
+        setHits(hitList);
+        setBaokuanStatus('');
+        setCollectTier('');
+        if (hitList.length === 0) studioToast.info('没搜到相关问题——换个关键词试试(需要桌面端在运行)。');
+        else studioToast.ok(`搜到 ${hitList.length} 个相关问题。勾选想答的,「AI 帮我选题」生成回答选题。`);
+      } finally {
+        setCollectBusy(false);
+        setBaokuanStatus('');
+      }
+      return;
+    }
     setCollectBusy(true);
     try {
       // 【TikHub 直采】不再开内置浏览器逐平台搜(慢、要登录、撞验证码、DOM 易改版),直接给
