@@ -20,6 +20,8 @@ export interface ReplyInjectSpec {
   targetRef: string;
   /** 楼中楼:要打开的笔记 URL(targetRef 为父评论 id)。一级评论省略即用 targetRef 当页面。 */
   noteRef?: string;
+  /** 目标评论者昵称(读评论时已知)。楼中楼用来 @提及,免在页面靠 id 重找(微博评论顺序会变)。 */
+  authorName?: string;
   text: string;
 }
 
@@ -326,18 +328,32 @@ async function injectZhihuReply(
     return '[data-od-target="1"]';
   })()`);
   if (!edSel) return { ok: false, detail: '评论输入框没出现(编辑器未唤起)' };
-  if (!(await focusByClick(wv, edSel))) return { ok: false, detail: '评论输入框聚焦失败' };
 
   say('输入回复…');
   // 知乎评论=DraftJS(React 富文本):只认 beforeInput,typeText 的 per-char `char` 事件【不落字】
-  // (2026-07-20 实机确认:发布按钮一直灰着)。改用 execCommand('insertText')——DraftJS 收到
-  // 合成 beforeInput 正常落字、按钮转可用。typeText 兜底(极端情况)。
-  const typed = await wvEval<boolean>(
-    wv,
-    `(() => { try { const ed=document.querySelector('[data-od-target="1"]'); if(ed&&ed.focus) ed.focus(); return document.execCommand('insertText', false, ${JSON.stringify(spec.text)}); } catch(e){ return false; } })()`,
-  );
-  if (!typed) await typeText(wv, spec.text, undefined, { slow: true });
-  await sleep(800);
+  // (2026-07-20 实机确认:发布按钮一直灰着)。用 Selection API 在编辑器内放真实光标 +
+  // execCommand('insertText')——DraftJS 收到合成 beforeInput 正常落字、按钮转可用(实机验证过
+  // 这条路稳:比"靠真实点击落光标"更可靠,不受点击落点/焦点被收走影响)。
+  const insertScript = `(() => { try {
+    const ed = document.querySelector('[data-od-target="1"]');
+    if (!ed) return false;
+    ed.focus();
+    const range = document.createRange(); range.selectNodeContents(ed); range.collapse(false);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    document.execCommand('insertText', false, ${JSON.stringify(spec.text)});
+    return (ed.innerText || '').trim().length > 0;
+  } catch (e) { return false; } })()`;
+  let hasText = Boolean(await wvEval<boolean>(wv, insertScript));
+  await sleep(500);
+  if (!hasText) {
+    // 兜底:真实点击聚焦后再走一次 typeText(极端主题下 Selection 被 React 重置)。
+    await focusByClick(wv, edSel);
+    await sleep(300);
+    hasText = Boolean(await wvEval<boolean>(wv, insertScript));
+    if (!hasText) { await typeText(wv, spec.text, undefined, { slow: true }); }
+    await sleep(500);
+  }
+  await sleep(600);
 
   // 发布:取【离目标编辑器最近的】可用「发布」按钮(顶部添加评论框也有一个,不能全局点第一个)。
   say('发布…');
@@ -387,25 +403,30 @@ async function injectWeiboReply(
   }
   if (await loginWalled(wv, 'weibo')) return { ok: false, detail: '微博未登录——在账号页登录微博后重试' };
 
-  // 楼中楼:按合成 id 找到目标评论拿作者名,回复文案带「回复@作者:」前缀(微博惯例)。
-  // 解析与 comment-extractors.weibo 完全同步(作者=首个 /u/ 链接或第1行;正文=冒号行)。
+  // 楼中楼:回复文案带「回复@作者:」前缀(微博惯例;@提及会通知到对方,等价原生楼中楼)。
+  // 作者名【由 daemon 从读评论时带来】(spec.authorName)——不再在页面靠 synthId 重找那条评论:
+  // 微博评论顺序在"读"与"回"两次加载间会变,重找极不稳(实机踩坑:read 13 条但回复时找不到)。
+  // authorName 缺失(老链路)才退回页面重找。
   let text = spec.text;
   if (spec.action === 'sub-reply') {
-    const author = await wvEval<string | null>(wv, `(() => {
-      const synthId=(a,t)=>'c_'+(a+'_'+t).replace(/\\s+/g,'').slice(0,24);
-      for (const it of document.querySelectorAll('div.item1')) {
-        if (it.parentElement && it.parentElement.closest('div.item1')) continue;
-        const lines=(it.innerText||'').split('\\n').map(s=>s.trim()).filter(Boolean);
-        if (lines.length<2) continue;
-        const ua=[...it.querySelectorAll('a')].find(a=>/\\/u\\//.test(a.getAttribute('href')||'')&&(a.textContent||'').trim());
-        const a=((ua&&ua.textContent)||lines[0]||'').trim().slice(0,40);
-        const tl=lines.find(l=>/^[:：]/.test(l))||'';
-        const t=tl.replace(/^[:：]\\s*/,'').trim().slice(0,500);
-        if (a && t && synthId(a,t)===${JSON.stringify(spec.targetRef)}) { it.scrollIntoView({block:'center'}); return a; }
-      }
-      return null;
-    })()`);
-    if (!author) return { ok: false, detail: '没找到目标评论(可能翻页在后面或已删除)' };
+    let author = (spec.authorName ?? '').trim();
+    if (!author) {
+      author = (await wvEval<string | null>(wv, `(() => {
+        const synthId=(a,t)=>'c_'+(a+'_'+t).replace(/\\s+/g,'').slice(0,24);
+        for (const it of document.querySelectorAll('div.item1')) {
+          if (it.parentElement && it.parentElement.closest('div.item1')) continue;
+          const lines=(it.innerText||'').split('\\n').map(s=>s.trim()).filter(Boolean);
+          if (lines.length<2) continue;
+          const ua=[...it.querySelectorAll('a')].find(a=>/\\/u\\//.test(a.getAttribute('href')||'')&&(a.textContent||'').trim());
+          const a=((ua&&ua.textContent)||lines[0]||'').trim().slice(0,40);
+          const tl=lines.find(l=>/^[:：]/.test(l))||'';
+          const t=tl.replace(/^[:：]\\s*/,'').trim().slice(0,500);
+          if (a && t && synthId(a,t)===${JSON.stringify(spec.targetRef)}) return a;
+        }
+        return null;
+      })()`)) ?? '';
+    }
+    if (!author) return { ok: false, detail: '拿不到目标评论者昵称(重新读一次评论再回复)' };
     text = `回复@${author}:${spec.text}`;
   }
 
@@ -413,9 +434,15 @@ async function injectWeiboReply(
   const TA = 'textarea[placeholder*="评论"], textarea';
   if (!(await focusByClick(wv, TA))) return { ok: false, detail: '评论输入框没找到(帖子页可能没加载完)' };
 
-  say('拟人输入回复…');
-  await typeText(wv, text.slice(0, 140), undefined, { slow: true }); // 微博评论上限 140 字
+  say('输入回复…');
+  // 微博评论框=原生 textarea(React 受控):execCommand insertText 触发 input 事件、React 更新
+  // 状态、发送按钮转可用(2026-07-20 实机验证)。typeText 兜底。上限 140 字。
+  const capped = text.slice(0, 140);
+  await wvEval(wv, `document.execCommand('insertText', false, ${JSON.stringify(capped)})`);
   await sleep(600);
+  const hasText = Boolean(await wvEval<boolean>(wv, `(() => { const ta=document.querySelector('textarea[placeholder*="评论"]')||document.querySelector('textarea'); return Boolean(ta && ta.value && ta.value.trim().length>0); })()`));
+  if (!hasText) { await typeText(wv, capped, undefined, { slow: true }); await sleep(400); }
+  await sleep(400);
 
   say('发送…');
   const pos = await wvEval<{ x: number; y: number } | null>(wv, `(() => {

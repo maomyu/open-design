@@ -102,6 +102,7 @@ export function createInteractionBus(now: () => number = Date.now): InteractionB
         action: req.action,
         targetRef: req.targetRef,
         ...(req.noteRef ? { noteRef: req.noteRef } : {}),
+        ...(req.authorName ? { authorName: req.authorName } : {}),
         text: req.text,
         status: 'pending',
         progress: [],

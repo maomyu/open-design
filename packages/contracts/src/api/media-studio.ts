@@ -662,6 +662,9 @@ export interface StudioInteractionJob {
   /** 要打开的页面（笔记/帖子 URL）。楼中楼时与 targetRef(父评论 id)分离:先打开 noteRef 再在页内
    *  定位父评论。一级评论/省略时执行器用 targetRef 当页面。 */
   noteRef?: string;
+  /** 目标评论者昵称（读评论时已知）。楼中楼注入器用来定位/@提及,省去在页面里靠 id 重找一遍
+   *  （微博等评论顺序在两次加载间会变,重找不稳）。 */
+  authorName?: string;
   text: string;
   status: StudioInteractionStatus;
   progress: string[];
@@ -677,6 +680,8 @@ export interface CreateStudioInteractionRequest {
   targetRef: string;
   /** 楼中楼:要打开的笔记 URL(与 targetRef=父评论 id 分离)。一级评论省略即用 targetRef 当页面。 */
   noteRef?: string;
+  /** 目标评论者昵称(读评论时已知,楼中楼注入器定位/@提及用)。 */
+  authorName?: string;
   text: string;
 }
 

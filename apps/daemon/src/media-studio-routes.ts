@@ -1175,7 +1175,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       }
       try {
         const targetRef = item.action === 'reply' ? noteRef : item.commentId;
-        const job = interactionBus.create({ platform, account, action: item.action, targetRef, noteRef, text: item.reply });
+        const job = interactionBus.create({ platform, account, action: item.action, targetRef, noteRef, ...(item.author ? { authorName: item.author } : {}), text: item.reply });
         dispatched.push({ ...item, jobId: job.id });
         sent += 1;
       } catch (err) {

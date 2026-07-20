@@ -38,6 +38,8 @@ export interface InteractPaneSpec {
   targetRef: string;
   /** 楼中楼:要打开的笔记 URL(targetRef 为父评论 id)。 */
   noteRef?: string;
+  /** 目标评论者昵称(读评论时已知,楼中楼定位/@提及用,免在页面重找)。 */
+  authorName?: string;
   text: string;
 }
 

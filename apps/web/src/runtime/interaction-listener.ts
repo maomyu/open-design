@@ -36,6 +36,7 @@ export async function executeInteraction(job: StudioInteractionJob): Promise<voi
       action: job.action,
       targetRef: job.targetRef,
       ...(job.noteRef ? { noteRef: job.noteRef } : {}),
+      ...(job.authorName ? { authorName: job.authorName } : {}),
       text: job.text,
     },
   });
