@@ -976,7 +976,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                     <td className={c('tdActions')}>
                       {/* 短视频台(onRewriteToScript):下原视频→ASR→口播稿仿写。
                           图文笔记台(onExtractNote):下原图进图集+取原文案→仿写成新图文笔记。
-                          其余(公众号等):AI 转题把原文转成差异化选题。 */}
+                          统一创作台(browserCollect 无提取回调):不给 AI 转题——模仿爆款
+                          =存为候选→直接创作(自动拉原始文案+素材),转题是多余步骤
+                          (2026-07-20 用户拍板:短视频创作相关平台都不要 AI 转题)。
+                          其余(公众号/知乎等文章源):AI 转题把原文转成差异化选题。 */}
                       {browserCollect && onRewriteToScript ? (
                         <button
                           type="button"
@@ -999,7 +1002,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         >
                           <Icon name="sparkles" size={13} /> 提取图文仿写
                         </button>
-                      ) : (
+                      ) : browserCollect ? null : (
                         <button
                           type="button"
                           className={c('btn')}
