@@ -869,6 +869,46 @@ export interface StudioCommentReadResultRequest {
   detail?: string;
 }
 
+// ── 「我的笔记」抓取(桌面端读账号主页已发笔记,给互动回复当笔记选择器,免手动贴链接)──
+export interface StudioNoteCard {
+  noteId: string;
+  title: string;
+  /** 带 xsec_token 的完整笔记链接(读评论/互动直用)——列表点选即填,不用手动复制。 */
+  url: string;
+  /** 卡片上能拿到的计数文本(尽力而为,通常是点赞;评论数不一定暴露)。 */
+  likeText?: string;
+}
+export interface StudioMyNotesJob {
+  id: string;
+  platform: MediaStudioPlatform;
+  account: string | null;
+  status: StudioInteractionStatus;
+  progress: string[];
+  notes: StudioNoteCard[];
+  /** 页面判为未登录（交由上层引导扫码补登）。 */
+  needsLogin?: boolean;
+  detail?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface CreateStudioMyNotesRequest {
+  platform: MediaStudioPlatform;
+  account?: string | null;
+}
+export interface StudioMyNotesJobResponse {
+  job: StudioMyNotesJob;
+}
+export interface StudioMyNotesWaitResponse {
+  job: StudioMyNotesJob;
+  cursor: number;
+}
+export interface StudioMyNotesResultRequest {
+  notes: StudioNoteCard[];
+  needsLogin?: boolean;
+  ok: boolean;
+  detail?: string;
+}
+
 /** 一条评论（可含楼中楼子回复）。互动执行器读评论树 → 关键词匹配 → 自动回复的输入。 */
 export interface CommentNode {
   /** 评论 id（页面能拿到则用真 id，否则用 作者+文本 前缀合成，仅供去重/回复定位）。 */

@@ -48,6 +48,13 @@ export interface LoginCheckPaneSpec {
   account: string;
 }
 
+/** 「我的笔记」抓取载荷:面板进账号主页抓已发笔记(带 xsec_token 链接),回写 daemon my-notes job。 */
+export interface MyNotesPaneSpec {
+  jobId: string;
+  platform: string;
+  account: string;
+}
+
 export interface BrowserPaneRequest {
   platform: string;
   account: string;
@@ -64,6 +71,8 @@ export interface BrowserPaneRequest {
   interact?: InteractPaneSpec;
   /** 登录态探测:面板打开平台主站后判登录态,回写 login-check job(一次性)。 */
   loginCheck?: LoginCheckPaneSpec;
+  /** 「我的笔记」抓取:面板进账号主页抓已发笔记,回写 my-notes job(一次性)。 */
+  myNotes?: MyNotesPaneSpec;
   /** 「边播边抓」下载:面板导航到 url(视频页)、抓 <video> 直链后回报(一次性)。 */
   grab?: { grabId: string };
 }

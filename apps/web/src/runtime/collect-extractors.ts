@@ -147,7 +147,10 @@ export const EXTRACTORS: Record<StudioCollectPlatform, string> = {
       const author = (card.querySelector('.author .name, .name, .user-name')?.innerText || '').trim();
       if (!title) return;
       seen.add(id);
-      out.push({ content_id: id, title, url: 'https://www.xiaohongshu.com/explore/' + id, likes: (likeEl?.innerText || '0').trim(), author });
+      // 保留卡片链接自带的 xsec_token(a.href 是绝对地址、含 token)——直连 /explore/<id> 无 token
+      // 会撞小红书反爬(错误 300031),读评论/互动都要它。缺 token 才回退裸链。
+      const full = a.href && /xsec_token=/.test(a.href) ? a.href : 'https://www.xiaohongshu.com/explore/' + id;
+      out.push({ content_id: id, title, url: full, likes: (likeEl?.innerText || '0').trim(), author });
     });
     return out;
   })()`,

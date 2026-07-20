@@ -15,6 +15,7 @@ import { executeCollect } from './collect-listener';
 import { executeRead } from './comment-read-listener';
 import { executeInteraction } from './interaction-listener';
 import { executeCheck } from './login-check-listener';
+import { executeMyNotes } from './my-notes-listener';
 
 const EVENTS_URL = '/api/media-studio/desktop-jobs/events';
 
@@ -32,6 +33,7 @@ export function startDesktopJobsListener(): () => void {
         case 'comment-read': void executeRead(job as never); break;
         case 'interaction': void executeInteraction(job as never); break;
         case 'login-check': void executeCheck(job as never); break;
+        case 'my-notes': void executeMyNotes(job as never); break;
         default: break; // 未知类型丢弃(向后兼容:daemon 新增类型时旧客户不炸)
       }
     } catch {

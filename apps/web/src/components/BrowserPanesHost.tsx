@@ -31,14 +31,16 @@ import {
   type CommentReadPaneSpec,
   type InteractPaneSpec,
   type LoginCheckPaneSpec,
+  type MyNotesPaneSpec,
 } from '../runtime/browser-panes';
 import { runDraftInjection, humanSearch, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
 import { runReplyInjection } from '../runtime/reply-injectors';
 import { CARD_PROBE_SEL, EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, PLATFORM_HOMEPAGE, SEARCH_BY_TYPING, buildSearchUrl } from '../runtime/collect-extractors';
 import { COMMENT_EXTRACTORS, COMMENT_LOGIN_WALL, buildNoteUrl, type CommentPlatform } from '../runtime/comment-extractors';
 import { LOGIN_HOME, LOGIN_PROBE, parseLoginProbe } from '../runtime/login-markers';
-import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress, reportInteractionProgress, completeInteractionJob, reportLoginCheckProgress, postLoginCheckResult, completeLoginCheckJob } from '../providers/media-studio';
-import type { CommentNode, StudioCollectItem } from '@open-design/contracts';
+import { MY_NOTES_HOME, SELF_PROFILE_FINDER, MY_NOTES_EXTRACTOR } from '../runtime/my-notes-extractor';
+import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress, reportInteractionProgress, completeInteractionJob, reportLoginCheckProgress, postLoginCheckResult, completeLoginCheckJob, reportMyNotesProgress, postMyNotesResult, completeMyNotesJob } from '../providers/media-studio';
+import type { CommentNode, StudioCollectItem, StudioNoteCard } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -366,8 +368,9 @@ async function runInteraction(
 async function runLoginCheck(el: DraftWebview | null, spec: LoginCheckPaneSpec): Promise<void> {
   const { jobId, platform } = spec;
   const say = (t: string) => reportLoginCheckProgress(jobId, t);
-  const finish = (loggedIn: boolean, detail: string) => {
-    postLoginCheckResult(jobId, loggedIn, detail);
+  // 先 await result 落库再 complete——否则竞态下 complete 先到,job.loggedIn 被终态守卫丢弃。
+  const finish = async (loggedIn: boolean, detail: string): Promise<void> => {
+    await postLoginCheckResult(jobId, loggedIn, detail);
     completeLoginCheckJob(jobId, true, detail);
   };
   const probe = LOGIN_PROBE[platform];
@@ -399,7 +402,63 @@ async function runLoginCheck(el: DraftWebview | null, spec: LoginCheckPaneSpec):
   if (result === 'unknown') { say('登录态无法确定(页面未出现登录/头像标记),本次不改判'); return finish(false, 'unknown'); }
   const loggedIn = result === 'logged-in';
   say(loggedIn ? '仍在登录中 ✓' : '登录已失效——请在本标签扫码补登');
-  finish(loggedIn, loggedIn ? '仍登录' : '登录失效,标签已停在登录页可扫码补登');
+  await finish(loggedIn, loggedIn ? '仍登录' : '登录失效,标签已停在登录页可扫码补登');
+}
+
+/**
+ * 在本面板 webview 里抓账号自己主页的已发笔记(给互动回复当选择器),回写 my-notes job。
+ * 主站进 → 找本人主页链接 → 进主页 → 滚动加载 → 抓笔记卡(带 xsec_token 链接)。
+ * 只读幂等,和 login-check 一样【不吃 isCancelled】,启动即跑到底并回写终态,避免卡 running。
+ */
+async function runMyNotes(el: DraftWebview | null, spec: MyNotesPaneSpec): Promise<void> {
+  const { jobId, platform } = spec;
+  const say = (t: string) => reportMyNotesProgress(jobId, t);
+  // 先 await result 落库,再 complete——否则 complete 先到会把 job 置终态,notes 被终态守卫丢弃。
+  const finish = async (notes: StudioNoteCard[], needsLogin: boolean, detail: string): Promise<void> => {
+    await postMyNotesResult(jobId, notes, needsLogin);
+    completeMyNotesJob(jobId, true, detail);
+  };
+  const home = MY_NOTES_HOME[platform];
+  if (!el || !home) return finish([], false, '该平台暂不支持「我的笔记」抓取');
+  const evalJs = async (js: string, timeoutMs = 4000): Promise<unknown> => {
+    try {
+      return await Promise.race([
+        el.executeJavaScript(js),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+      ]);
+    } catch { return undefined; }
+  };
+  const waitReady = async () => {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const s = await evalJs('document.readyState', 2000);
+      if (s === 'complete' || s === 'interactive') break;
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    await new Promise((r) => setTimeout(r, 1200)); // 等 __INITIAL_STATE__ 注水
+  };
+  say('打开主站…');
+  await evalJs(`location.href = ${JSON.stringify(home)}`, 4000);
+  await waitReady();
+  // 找本人主页链接;找不到=未登录。
+  const profileUrl = String((await evalJs(SELF_PROFILE_FINDER, 4000)) || '');
+  if (!profileUrl) return finish([], true, '未登录:请先在账号页扫码登录');
+  say('进个人主页,读已发笔记…');
+  await evalJs(`location.href = ${JSON.stringify(profileUrl)}`, 4000);
+  await waitReady();
+  // 笔记是【客户端异步】拉进 __INITIAL_STATE__ 的(不是首屏 SSR),所以【滚动+重试直到拿到】,
+  // 而不是固定等——固定等短了会提取到空、长了又慢。滚动还能把更多笔记灌进状态(拿得更全)。
+  let notes: StudioNoteCard[] = [];
+  const exDeadline = Date.now() + 24_000;
+  for (let i = 0; Date.now() < exDeadline; i++) {
+    await evalJs('window.scrollTo(0, document.body.scrollHeight)', 2000);
+    await new Promise((r) => setTimeout(r, 1000));
+    const raw = await evalJs(MY_NOTES_EXTRACTOR, 6000);
+    notes = Array.isArray(raw) ? (raw as StudioNoteCard[]) : [];
+    if (notes.length > 0 && i >= 2) break; // 拿到且至少滚 3 轮(尽量多),再收
+  }
+  say(`读到 ${notes.length} 条已发笔记`);
+  await finish(notes, false, `读到 ${notes.length} 条`);
 }
 
 interface PaneSpec {
@@ -424,6 +483,9 @@ interface PaneSpec {
   /** 登录态探测载荷:打开平台主站后判登录态,seq 递增触发。 */
   loginCheck?: LoginCheckPaneSpec;
   loginCheckSeq?: number;
+  /** 「我的笔记」抓取载荷:进账号主页抓已发笔记,seq 递增触发。 */
+  myNotes?: MyNotesPaneSpec;
+  myNotesSeq?: number;
   /** 「边播边抓」下载:导航到视频页、抓 <video> 直链后回报,seq 递增触发。 */
   grab?: { grabId: string };
   grabSeq?: number;
@@ -489,6 +551,13 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
                 : p,
             );
           }
+          if (req.myNotes) {
+            return list.map((p) =>
+              p.key === key
+                ? { ...p, myNotes: req.myNotes!, myNotesSeq: (p.myNotesSeq ?? 0) + 1 }
+                : p,
+            );
+          }
           if (!req.draft) return list;
           return list.map((p) =>
             p.key === key
@@ -509,6 +578,7 @@ export function BrowserPanesHost({ route }: { route: Route }): JSX.Element | nul
             ...(req.readComments ? { readComments: req.readComments, readCommentsSeq: 1 } : {}),
             ...(req.interact ? { interact: req.interact, interactSeq: 1 } : {}),
             ...(req.loginCheck ? { loginCheck: req.loginCheck, loginCheckSeq: 1 } : {}),
+            ...(req.myNotes ? { myNotes: req.myNotes, myNotesSeq: 1 } : {}),
             ...(req.grab ? { grab: req.grab, grabSeq: 1 } : {}),
           },
         ];
@@ -762,6 +832,23 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
     return () => { cancelled = true; window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec.loginCheckSeq]);
+
+  // 「我的笔记」抓取:后台在【本标签 webview】进账号主页抓已发笔记,回写 my-notes job。
+  // 【不】切前台(用户在互动页点的选择器,别拽走视图);只读幂等,启动即跑到底(同 login-check)。
+  const ranMyNotesRef = useRef(0);
+  useEffect(() => {
+    const seq = spec.myNotesSeq ?? 0;
+    if (!spec.myNotes || seq === 0 || seq === ranMyNotesRef.current) return;
+    const mnSpec = spec.myNotes;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      ranMyNotesRef.current = seq;
+      void runMyNotes(ref.current as unknown as DraftWebview | null, mnSpec);
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec.myNotesSeq]);
 
   // 「边播边抓」下载:导航到视频页 → 播放触发加载 → 抓 <video> 直链(或页面里的 mp4)→ 回报。
   const ranGrabRef = useRef(0);

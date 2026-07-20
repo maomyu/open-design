@@ -11,6 +11,9 @@ import {
   updateInteractionRuleReq,
   removeInteractionRule,
   runAutoReply,
+  fetchMyNotes,
+  fetchStudioTopics,
+  topicOriginPlatform,
 } from '../providers/media-studio';
 import { studioToast, StudioToastHost } from './media-studio/StudioFeedback';
 import { MonitorBoard } from './media-studio/MonitorBoard';
@@ -27,6 +30,33 @@ export function InteractionView(): JSX.Element {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState<'' | 'preview' | 'live'>('');
   const [result, setResult] = useState<AutoReplyResponse | null>(null);
+
+  // 笔记选择器(免手动贴链接):来源下拉「我的笔记 / 采集池」+ 点选即填 note。
+  const [noteSource, setNoteSource] = useState<'mine' | 'pool'>('mine');
+  const [noteOptions, setNoteOptions] = useState<Array<{ title: string; url: string; meta?: string }>>([]);
+  const [notesBusy, setNotesBusy] = useState(false);
+
+  const loadNotes = useCallback(async (src: 'mine' | 'pool') => {
+    setNotesBusy(true);
+    setNoteOptions([]);
+    if (src === 'mine') {
+      const r = await fetchMyNotes(PLATFORM, account || null);
+      setNotesBusy(false);
+      if ('error' in r) { studioToast.err(r.error); return; }
+      if (r.needsLogin) { studioToast.err('未登录:去「账号」页扫码登录小红书后重试'); return; }
+      setNoteOptions(r.notes.map((n) => ({ title: n.title, url: n.url, ...(n.likeText ? { meta: `♡ ${n.likeText}` } : {}) })));
+      if (r.notes.length === 0) studioToast.err('没抓到已发笔记(可能主页还没笔记,或需在浏览器里滚动加载)');
+    } else {
+      // 采集池:选题里带链接的小红书爆款(可去它评论区引流)。
+      const topics = (await fetchStudioTopics('short-video')) ?? [];
+      setNotesBusy(false);
+      const opts = topics
+        .filter((t) => t.url && topicOriginPlatform(t.url) === PLATFORM)
+        .map((t) => ({ title: t.title, url: t.url, ...(t.heat ? { meta: t.heat } : {}) }));
+      setNoteOptions(opts);
+      if (opts.length === 0) studioToast.err('采集池里暂无小红书笔记——先去创作台采集爆款');
+    }
+  }, [account]);
 
   // 新增规则表单。
   const [rName, setRName] = useState('');
@@ -130,13 +160,47 @@ export function InteractionView(): JSX.Element {
       <div className={c('card')}>
         <div className={c('cardLabel')}>
           🤖 自动回复一条笔记
-          <span className={c('cardHint')}>填你自己笔记的链接(有评论的),先「预览」看命中,再「真发」逐条拟人回复。</span>
+          <span className={c('cardHint')}>下拉选来源 → 点一条笔记(免手动复制链接)→ 先「预览」看命中,再「真发」逐条拟人回复。</span>
         </div>
-        <div className={c('row')}>
+        {/* 笔记选择器:来源切换(我的笔记 / 采集池)+ 点选即填,不用手动贴链接。 */}
+        <div className={c('row')} style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span className={c('cardHint')}>选笔记:</span>
+          <select
+            className={c('select')}
+            value={noteSource}
+            onChange={(e) => { const s = e.target.value as 'mine' | 'pool'; setNoteSource(s); void loadNotes(s); }}
+          >
+            <option value="mine">我的笔记(回复自己评论)</option>
+            <option value="pool">采集池(去别人爆款下引流)</option>
+          </select>
+          <button type="button" className={c('btn')} disabled={notesBusy} onClick={() => void loadNotes(noteSource)}>
+            <Icon name={notesBusy ? 'spinner' : 'refresh'} size={12} /> {notesBusy ? '抓取中…' : '拉取/刷新'}
+          </button>
+        </div>
+        {noteOptions.length > 0 ? (
+          <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid var(--od-border, #e5ded4)', borderRadius: 8, padding: 4, marginTop: 6 }}>
+            {noteOptions.map((o) => (
+              <button
+                key={o.url}
+                type="button"
+                className={c('btn')}
+                style={{ display: 'flex', width: '100%', textAlign: 'left', justifyContent: 'space-between', gap: 8, marginBottom: 2, background: note === o.url ? 'rgba(232,88,46,0.12)' : undefined }}
+                onClick={() => setNote(o.url)}
+                title={o.url}
+              >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{note === o.url ? '✓ ' : ''}{o.title || '(无标题)'}</span>
+                {o.meta ? <span className={c('cardHint')} style={{ flex: '0 0 auto' }}>{o.meta}</span> : null}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className={c('cardHint')} style={{ marginTop: 6 }}>点「拉取/刷新」加载{noteSource === 'mine' ? '你的已发笔记' : '采集池笔记'};也可在下面手动粘贴链接。</div>
+        )}
+        <div className={c('row')} style={{ marginTop: 6 }}>
           <input
             className={`${c('input')} ${c('grow')}`}
             value={note}
-            placeholder="粘贴小红书笔记链接(分享链接,带 xsec_token 的完整链接最稳)"
+            placeholder="或手动粘贴小红书笔记链接(带 xsec_token 的完整链接最稳)"
             onChange={(e) => setNote(e.target.value)}
           />
           <button type="button" className={c('btn')} disabled={busy !== ''} onClick={() => void preview()}>

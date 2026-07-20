@@ -1226,11 +1226,13 @@ export function reportLoginCheckProgress(jobId: string, message: string): void {
   }).catch(() => undefined);
 }
 
-/** 探测结果回写:daemon 据此落 media_login_status,从已登录翻转到失效时产告警。 */
-export function postLoginCheckResult(jobId: string, loggedIn: boolean, detail: string): void {
-  void fetch(`${ROOT}/login-check/${encodeURIComponent(jobId)}/result`, {
+/** 探测结果回写:daemon 据此落 media_login_status,从已登录翻转到失效时产告警。
+ *  返回 promise:调用方 await 本次落库后再 complete(否则 complete 先到会把 job 置终态,
+ *  job.loggedIn 被终态守卫丢弃 → CLI/UI 读到「未定」)。 */
+export function postLoginCheckResult(jobId: string, loggedIn: boolean, detail: string): Promise<void> {
+  return fetch(`${ROOT}/login-check/${encodeURIComponent(jobId)}/result`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loggedIn, detail }),
-  }).catch(() => undefined);
+  }).then(() => undefined).catch(() => undefined);
 }
 
 export function completeLoginCheckJob(jobId: string, ok: boolean, detail: string): void {
@@ -1281,6 +1283,65 @@ export async function fetchMonitor(platform?: string): Promise<import('@open-des
     return (await resp.json()) as import('@open-design/contracts').MonitorResponse;
   } catch {
     return { items: [], dayStartMs: 0 };
+  }
+}
+
+// ── 「我的笔记」抓取(互动回复的笔记选择器,免手动贴链接)──
+type MyNotesJobT = import('@open-design/contracts').StudioMyNotesJob;
+type NoteCardT = import('@open-design/contracts').StudioNoteCard;
+
+export async function claimMyNotesJob(jobId: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${ROOT}/my-notes/${encodeURIComponent(jobId)}/claim`, { method: 'POST' });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+export function reportMyNotesProgress(jobId: string, message: string): void {
+  void fetch(`${ROOT}/my-notes/${encodeURIComponent(jobId)}/progress`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }),
+  }).catch(() => undefined);
+}
+// 返回 promise:调用方必须【await 本次 result 落库后再 complete】,否则两个 fire-and-forget
+// fetch 竞态,complete 先到会把 job 置终态,随后的 setResult 撞终态守卫被丢弃 → notes 丢失。
+export function postMyNotesResult(jobId: string, notes: NoteCardT[], needsLogin: boolean): Promise<void> {
+  return fetch(`${ROOT}/my-notes/${encodeURIComponent(jobId)}/result`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes, needsLogin, ok: true }),
+  }).then(() => undefined).catch(() => undefined);
+}
+export function completeMyNotesJob(jobId: string, ok: boolean, detail: string): void {
+  void fetch(`${ROOT}/my-notes/${encodeURIComponent(jobId)}/complete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok, detail }),
+  }).catch(() => undefined);
+}
+
+/** UI:抓某账号自己的已发笔记(派发桌面端探测 → 长轮询回结果)。桌面离线/超时返回 error。 */
+export async function fetchMyNotes(
+  platform: string,
+  account: string | null,
+): Promise<{ notes: NoteCardT[]; needsLogin?: boolean } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/my-notes`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account }),
+    });
+    if (resp.status === 409) return { error: '桌面端未连接——抓「我的笔记」需要 social-auto 桌面应用在运行' };
+    if (!resp.ok) return { error: await errorMessage(resp, '抓我的笔记失败') };
+    const { job } = (await resp.json()) as { job: MyNotesJobT };
+    const deadline = Date.now() + 150_000; // 前台化 + 两段 SPA 加载,给足时间
+    let cursor = 0;
+    while (Date.now() < deadline) {
+      const w = await fetch(`${ROOT}/my-notes/${encodeURIComponent(job.id)}/wait?since=${cursor}&timeoutMs=20000`).catch(() => null);
+      if (!w || !w.ok) break;
+      const snap = (await w.json()) as { job: MyNotesJobT; cursor: number };
+      cursor = snap.cursor ?? cursor;
+      if (snap.job.status === 'done' || snap.job.status === 'error') {
+        return { notes: snap.job.notes ?? [], ...(snap.job.needsLogin ? { needsLogin: true as const } : {}) };
+      }
+    }
+    return { error: '抓取超时(桌面端可能没在跑)' };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
   }
 }
 

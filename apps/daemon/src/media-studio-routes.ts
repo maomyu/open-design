@@ -62,6 +62,7 @@ import { createCollectBus, COLLECT_PLATFORMS, CollectError, isCollectPlatform } 
 import { createInteractionBus, InteractionError } from './media-studio/interaction-jobs.js';
 import { createCommentReadBus, CommentReadError } from './media-studio/comment-read-jobs.js';
 import { createLoginCheckBus, LoginCheckError } from './media-studio/login-check-jobs.js';
+import { createMyNotesBus, MyNotesError } from './media-studio/my-notes-jobs.js';
 import { DEFAULT_INTERACTION_POLICY } from './media-studio/interaction-quota.js';
 import { matchInteractionRule } from './media-studio/interaction-rules.js';
 import type {
@@ -1396,10 +1397,68 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     res.json(snap);
   });
 
+  // ── 「我的笔记」抓取桥(桌面端读账号主页已发笔记 → 互动回复的笔记选择器,免手动贴链接)──
+  const myNotesBus = createMyNotesBus();
+
+  app.post('/api/media-studio/my-notes', (req, res) => {
+    const b = (req.body ?? {}) as { platform?: string; account?: string | null };
+    const platform = String(b.platform ?? '').trim();
+    if (!platform) return bad(res, 400, '缺少 platform');
+    try {
+      res.json({ job: myNotesBus.create({ platform, account: b.account ?? null }) });
+    } catch (err) {
+      if (err instanceof MyNotesError) return bad(res, 409, err.message);
+      bad(res, 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.post('/api/media-studio/my-notes/:id/claim', (req, res) => {
+    const job = myNotesBus.claim(req.params.id);
+    if (!job) { const e = myNotesBus.get(req.params.id); return e ? bad(res, 409, `job 已被认领(${e.status})`) : bad(res, 404, 'job not found'); }
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/my-notes/:id/progress', (req, res) => {
+    const message = String((req.body ?? {}).message ?? '').trim();
+    if (!message) return bad(res, 400, '缺少 message');
+    const job = myNotesBus.progress(req.params.id, message);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/my-notes/:id/result', (req, res) => {
+    const b = (req.body ?? {}) as { notes?: unknown; needsLogin?: boolean };
+    const notes = Array.isArray(b.notes) ? (b.notes as import('@open-design/contracts').StudioNoteCard[]) : [];
+    const job = myNotesBus.setResult(req.params.id, notes, b.needsLogin === true);
+    if (!job) return bad(res, 404, 'job not found or terminal');
+    res.json({ job });
+  });
+
+  app.post('/api/media-studio/my-notes/:id/complete', (req, res) => {
+    const b = (req.body ?? {}) as { ok?: boolean; detail?: string };
+    const job = myNotesBus.complete(req.params.id, b.ok === true, String(b.detail ?? ''));
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/my-notes/:id', (req, res) => {
+    const job = myNotesBus.get(req.params.id);
+    if (!job) return bad(res, 404, 'job not found');
+    res.json({ job });
+  });
+
+  app.get('/api/media-studio/my-notes/:id/wait', async (req, res) => {
+    const since = Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : 0;
+    const timeoutMs = Number.isFinite(Number(req.query.timeoutMs)) ? Number(req.query.timeoutMs) : 25_000;
+    const snap = await myNotesBus.wait(req.params.id, since, timeoutMs);
+    if (!snap) return bad(res, 404, 'job not found');
+    res.json(snap);
+  });
+
   // ── 桌面端派发任务【合流】SSE(单连接多路复用)──
-  // 5 类需桌面端执行的派发任务(handoff/采集/读评论/互动/登录态校验)原各开一条 SSE,dev 代理
-  // 是 HTTP/1.1、同源并发连接上限 6,5 条常驻 SSE + 记忆面板等会撑爆导致【所有】派发都收不到。
-  // 这里把 5 条总线的 pending/新建事件打上 kind 标签并到一条流,web 侧只开这一条 EventSource。
+  // 6 类需桌面端执行的派发任务(handoff/采集/读评论/互动/登录态校验/我的笔记)原本各开一条 SSE,dev
+  // 代理是 HTTP/1.1、同源并发连接上限 6,多条常驻 SSE + 记忆面板等会撑爆导致【所有】派发都收不到。
+  // 这里把各总线的 pending/新建事件打上 kind 标签并到一条流,web 侧只开这一条 EventSource。
   // 各类【单独的 /xxx/events】仍保留(CLI/兼容),但桌面 web 只用本合流端点。
   app.get('/api/media-studio/desktop-jobs/events', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
@@ -1412,6 +1471,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       commentReadBus.subscribe((job) => emit('comment-read', job)),
       interactionBus.subscribe((job) => emit('interaction', job)),
       loginCheckBus.subscribe((job) => emit('login-check', job)),
+      myNotesBus.subscribe((job) => emit('my-notes', job)),
     ];
     const keepalive = setInterval(() => res.write(': keepalive\n\n'), 30_000);
     req.on('close', () => { clearInterval(keepalive); for (const u of unsubs) u(); });

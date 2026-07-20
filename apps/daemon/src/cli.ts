@@ -2403,7 +2403,10 @@ async function runStudio(args) {
   od studio alert-dismiss <alertId>                                          # 消隐一条告警
 
 【状态监控面板】(登录态 + 今日风控名额 + 今日互动战果,按平台分组)
-  od studio monitor [--platform xiaohongshu] [--json]                        # 多账号运营健康看板`);
+  od studio monitor [--platform xiaohongshu] [--json]                        # 多账号运营健康看板
+
+【我的笔记】(互动回复的笔记选择器,免手动贴链接;需桌面端在运行)
+  od studio my-notes --account <名> [--platform xiaohongshu] [--json]         # 抓账号已发笔记(带 xsec_token 链接)`);
     return;
   }
   const platform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'wechat-mp';
@@ -3300,6 +3303,35 @@ async function runStudio(args) {
       console.log(`  ${login}  ${it.account}  ·  ${quota}  ·  今日 发${it.today.sent}/拦${it.today.blocked}/败${it.today.failed}`);
     }
     return;
+  }
+
+  // ── 「我的笔记」抓取(互动回复的笔记选择器,免手动贴链接;需桌面端在运行)──
+  if (sub === 'my-notes') {
+    const mnPlatform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'xiaohongshu';
+    const account = typeof flags.account === 'string' && flags.account ? flags.account : (rest.find((a) => a && !a.startsWith('--')) ?? '');
+    if (!account) { console.error('用法: od studio my-notes --account <账号名> [--platform xiaohongshu]'); process.exit(2); }
+    const resp = await fetch(`${root}/my-notes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: mnPlatform, account }) });
+    if (resp.status === 409) { console.error('桌面端未连接——抓「我的笔记」需要 social-auto 桌面应用在运行'); process.exit(3); }
+    if (!resp.ok) return fail(resp, 'my-notes');
+    const { job } = await resp.json();
+    const deadline = Date.now() + 90_000; let cursor = 0;
+    while (Date.now() < deadline) {
+      const w = await fetch(`${root}/my-notes/${encodeURIComponent(job.id)}/wait?since=${cursor}&timeoutMs=20000`).catch(() => null);
+      if (!w || !w.ok) break;
+      const snap = await w.json();
+      for (const line of snap?.job?.progress ?? []) if (!flags.json) console.log(`  · ${line}`);
+      cursor = snap?.cursor ?? cursor;
+      const st = snap?.job?.status;
+      if (st === 'done' || st === 'error') {
+        if (flags.json) return out({ job: { ...snap.job, progress: undefined } });
+        if (snap.job.needsLogin) { console.log('未登录:请在桌面端账号页扫码登录后重试'); return; }
+        const notes = snap.job.notes ?? [];
+        console.log(`读到 ${notes.length} 条已发笔记:`);
+        for (const n of notes) console.log(`  · ${n.title}  ${n.url}`);
+        return;
+      }
+    }
+    console.error('抓取超时(桌面端可能没在跑)'); process.exit(1);
   }
 
   console.error(`unknown studio subcommand: ${sub} (try: od studio --help)`);
