@@ -12,6 +12,8 @@
 import { useEffect, useState } from 'react';
 import {
   MEDIA_PLATFORMS,
+  articleFeatureOf,
+  svFeatureOf,
   type AccountProfileView,
   type MediaPlatformDef,
   type LoginStatusRecord,
@@ -20,6 +22,7 @@ import {
 import { useI18n } from '../i18n';
 import { Icon } from './Icon';
 import { Toast } from './Toast';
+import { hasFeature, useLicense, type LicenseInfo } from '../state/license';
 import {
   fetchPlatformAccounts,
   savePlatformAccount,
@@ -36,6 +39,21 @@ import './AccountsView.css';
 import './PluginEditView.css';
 
 const loginKey = (platform: string, account: string): string => `${platform}::${account}`;
+
+/**
+ * 该平台是否在授权内——决定账号页是否显示它的卡片。授权任一能力(文章/短视频/小红书图文)即显示;
+ * 客户没买的平台(如油炸总合同外的 公众号/抖音/快手/B站/视频号)不出现,免得对着一堆用不上的号。
+ * 无授权文件(全功能/开发)时全显示。
+ */
+function isAccountPlatformLicensed(license: LicenseInfo, platformId: string): boolean {
+  if (license.features === null) return true;
+  const af = articleFeatureOf(platformId);
+  if (af && hasFeature(license, af)) return true;
+  const sf = svFeatureOf(platformId);
+  if (sf && hasFeature(license, sf)) return true;
+  if (platformId === 'xiaohongshu' && hasFeature(license, 'note.xiaohongshu')) return true;
+  return false;
+}
 
 /** 登录态相对时间(刚刚/几分钟前/几小时前/几天前)——账号页状态芯片用。 */
 function agoText(ts: number): string {
@@ -76,6 +94,9 @@ const PLATFORM_LOGIN_URLS: Record<string, string> = {
 
 export function AccountsView() {
   const { t } = useI18n();
+  const license = useLicense();
+  // 只显示授权内的平台(客户没买的不出现)。无授权文件=全功能=全显示。
+  const platforms = MEDIA_PLATFORMS.filter((p) => isAccountPlatformLicensed(license, p.id));
   const [byPlatform, setByPlatform] = useState<Record<string, AccountProfileView[]>>({});
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
@@ -215,7 +236,7 @@ export function AccountsView() {
         <div className="plugins-view__empty">{t('pluginsView.loading')}</div>
       ) : (
         <div className="accounts-view__platforms">
-          {MEDIA_PLATFORMS.map((platform) => (
+          {platforms.map((platform) => (
             <PlatformCard
               key={platform.id}
               platform={platform}
