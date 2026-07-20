@@ -1334,6 +1334,12 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   // 不用用户主动登录;掉线由 /result 翻转产告警。静默探测很轻,故比老的 15 分钟更勤。unref 不挡退出。
   const heartbeat = setInterval(() => { void sweepLoginChecks(); }, 5 * 60_000);
   if (typeof heartbeat.unref === 'function') heartbeat.unref();
+  // 开机早期补扫:桌面端 SSE 连上会触发一次 on-connect 扫描,但首帧连接偶有竞态(重连/未就绪)。
+  // 额外在启动后 6/20/45s 各补一轮(subscriberCount 为 0 时自动空转),保证"开 app 很快自动刷新"。
+  for (const delay of [6_000, 20_000, 45_000]) {
+    const t = setTimeout(() => { void sweepLoginChecks(); }, delay);
+    if (typeof t.unref === 'function') t.unref();
+  }
 
   // ---- 读评论派发桥（读一条笔记的评论树 → 桌面端应用内标签执行，不耗互动配额）----
   // 与 collect 同构。互动执行器「先读评论→关键词匹配→自动回复」的读环节；也可 CLI 单独触发看评论。
