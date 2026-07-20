@@ -35,6 +35,7 @@ import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type Stu
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { CoverGenerator } from './MediaStudioView';
+import { ImageStyleUpfront } from './ImageStyleUpfront';
 import { zhihuPreviewDoc } from './zhihu-preview';
 import { loadPreferredImageModel } from './image-model-pref';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
@@ -71,15 +72,20 @@ export function BaiduZhidaoStudioView(): JSX.Element {
   const [articles, setArticles] = useState<MediaArticleSummary[] | null>(null);
   const [article, setArticle] = useState<MediaArticle | null>(null);
   const [tab, setTab] = useState<ZhihuTab>('write');
-  // 统一配图风格(与公众号台同模式):CoverGenerator 受控,记忆偏好+移除风格兜底。
-  const [imgStyle, setImgStyleRaw] = useState(() => {
-    const v = loadStudioPref('baidu-zhidao-image-style', 'whiteboard');
-    return IMAGE_STYLE_PRESETS.some((st) => st.id === v) ? v : 'whiteboard';
-  });
-  const setImgStyle = (v: string) => {
-    setImgStyleRaw(v);
-    saveStudioPref('baidu-zhidao-image-style', v, 'whiteboard');
-  };
+  // 封面/正文配图风格【按文章存】(article.extra):写作前分开选定,AI 写配图提示词按它来、
+  // 封面/配图生图也用它。切文章时从 extra 同步。
+  const [coverStyle, setCoverStyleRaw] = useState('bigtext');
+  const [imageStyle, setImageStyleRaw] = useState('whiteboard');
+  useEffect(() => {
+    const ex = (article?.extra ?? {}) as Record<string, unknown>;
+    const pick = (v: unknown, dflt: string) =>
+      typeof v === 'string' && IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : dflt;
+    setCoverStyleRaw(pick(ex.coverStyle, 'bigtext'));
+    setImageStyleRaw(pick(ex.imageStyle, 'whiteboard'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [article?.id]);
+  const setCoverStyle = (v: string) => { setCoverStyleRaw(v); void editArticle({ extra: { coverStyle: v } }); };
+  const setImageStyle = (v: string) => { setImageStyleRaw(v); void editArticle({ extra: { imageStyle: v } }); };
   // 授权裁剪后的 tab 回落。
   useEffect(() => {
     if ((tab === 'cover' || tab === 'images') && !hasFeature(license, 'cap.image')) setTab('write');
@@ -302,7 +308,7 @@ export function BaiduZhidaoStudioView(): JSX.Element {
     if (!article || !desc.trim()) return;
     setImageBusy(true);
     setImageNotice(null);
-    const result = await generateArticleImage(PLATFORM, article.id, { description: desc.trim(), style: 'none', model: loadPreferredImageModel(), ratio: '4:3' });
+    const result = await generateArticleImage(PLATFORM, article.id, { description: desc.trim(), style: imageStyle, model: loadPreferredImageModel(), ratio: '4:3' });
     setImageBusy(false);
     if ('error' in result) {
       setImageNotice(result.error);
@@ -551,8 +557,9 @@ export function BaiduZhidaoStudioView(): JSX.Element {
               emptyCta('先新建一篇文章，或从「选题」一键开写。')
             ) : (
               <>
-                <div className={c('card')}>
-                  <div className={c('cardLabel')}>
+                <ImageStyleUpfront coverStyle={coverStyle} imageStyle={imageStyle} onCoverChange={setCoverStyle} onImageChange={setImageStyle} />
+                <div className={c("card")}>
+                  <div className={c("cardLabel")}>
                     标题
                     <span className={c('cardHint')}>知乎标题上限 100 字</span>
                     <span className={c('headSpacer')} />
@@ -696,8 +703,8 @@ export function BaiduZhidaoStudioView(): JSX.Element {
                 <div className={c('cardLabel')}>生成封面</div>
                 <CoverGenerator
                   initialDescription={article.title}
-                  style={imgStyle}
-                  onStyleChange={setImgStyle}
+                  style={coverStyle}
+                  onStyleChange={setCoverStyle}
                   busy={coverGenBusy}
                   onGenerate={(desc, style, ref, model) => void generateCover(desc, style, ref, model)}
                   onUploadReference={async (file) => {

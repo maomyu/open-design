@@ -12,7 +12,45 @@
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { MediaArticle, StudioAiTaskKind } from '@open-design/contracts';
+import { IMAGE_STYLE_PRESETS, type MediaArticle, type StudioAiTaskKind } from '@open-design/contracts';
+
+// 各配图风格对应的【画面内容取向】——喂给写作 AI,让它标注配图位时写出贴合所选风格的画面,
+// 而不是一律写成信息图/示意图(2026-07-20 用户:配图/封面风格要在写作时就定,提示词才对得上)。
+const STYLE_CONTENT_HINT: Record<string, string> = {
+  whiteboard: '可图解的概念/流程/清单/对比,画面是能手绘板书化的结构',
+  candid: '真实自然的生活或工作场景,有具体人物状态+环境细节(如「在书桌前对着资料专注备考」),不是摆拍、不是图表',
+  bigtext: '一句短而有冲击力的中文标题为画面绝对主体,其余留白',
+  'photo-film': '有生活氛围的实拍场景/人物/静物,自然光,故事感',
+  'photo-magazine': '高级杂志感的人物或静物,讲究构图与留白',
+  minimal: '大量留白 + 一个核心元素/符号,克制',
+  'flat-info': '图标化的分区信息或数据可视化,一屏说清一件事',
+  threed: '一个居中的立体主体物,干净背景',
+  guochao: '国潮新中式主体(器物/人物/纹样)',
+  journal: '手账拼贴:照片+便签+胶带的随手记版面',
+  watercolor: '水彩清新的主体,通透留白',
+  cute: 'Q 版可爱主体,贴纸感',
+  oil: '油画质感的主体场景',
+  none: '(未选模板,自由发挥、自己定画面)',
+};
+
+function styleLabel(id: string): string {
+  return IMAGE_STYLE_PRESETS.find((s) => s.id === id)?.label ?? id;
+}
+
+/** 写作时用户已选的封面/配图风格(存 article.extra.coverStyle/imageStyle),组装成给写作 AI 的
+ *  画面取向指引。未选时给合理默认:封面=大字报带文字,配图=白板手绘。 */
+function imageStyleGuidance(article: MediaArticle): string {
+  const extra = (article.extra ?? {}) as Record<string, unknown>;
+  const coverId = typeof extra.coverStyle === 'string' && extra.coverStyle ? extra.coverStyle : 'bigtext';
+  const imageId = typeof extra.imageStyle === 'string' && extra.imageStyle ? extra.imageStyle : 'whiteboard';
+  const coverHint = STYLE_CONTENT_HINT[coverId] ?? '贴合该风格的画面主体';
+  const imageHint = STYLE_CONTENT_HINT[imageId] ?? '贴合该风格的画面主体';
+  return (
+    `- 本文【封面风格=${styleLabel(coverId)}】、【正文配图风格=${styleLabel(imageId)}】(用户已在写作页选定)。` +
+    `IMAGE_COVER 的画面内容按封面风格来:${coverHint};IMAGE_N 的画面内容按配图风格来:${imageHint}。` +
+    `仍然只写【画面内容】、不写画风词(插画/手绘/摄影/3D 等由风格模板生图时注入),但画面取向必须贴合这两个风格。`
+  );
+}
 
 const WORKBENCH_DIR = path.join(
   process.env.OD_WORKBENCH_DIR || path.join(os.homedir(), '.open-design', 'workbenches'),
@@ -280,6 +318,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '- 第 1 张是封面：大字观点/清单结论，一眼有信息量；',
         '- 后续每张一个要点。',
         '- 每条只写【画面内容】(主体/构图/信息),**禁止写画风词**(插画/手绘/摄影/水彩/3D/卡通等)——画风由图集页的风格模板在生图时动态注入,描述里写了画风会和用户选的风格打架。',
+        imageStyleGuidance(article),
         '## 交付',
         `1. 正文存临时文件 /tmp/studio-note-${article.id.slice(0, 8)}.md（纯正文，不含标题/标签/图集建议）；`,
         `2. \`od studio set ${article.id} --platform ${article.platform} --body-file /tmp/studio-note-${article.id.slice(0, 8)}.md --title "<≤20字标题>" --digest "<一句话简介>" --tags "标签1,标签2"\`；`,
@@ -364,7 +403,8 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '- **标题必须重新拟**（选题原句只是方向描述，不是成品标题），**严格 ≤21 个中文字符**（微信硬限 64 字节，超出 `od studio set` 会直接报错拒收）。写完标题先数一遍字数再用。',
         '- **摘要（digest）必须交付**：一句话卖点（≤100 字），说清「读者能得到什么」，吸引点开——不要复述标题、不要写「本文介绍了……」。',
         '- **正文不写大标题**（标题单独走 title 字段），从导语/首段直接开始。',
-        '- 按写作方法论在正文里标注配图位：`<!-- IMAGE_N: 具体场景描述, 4:3 -->`（封面 `<!-- IMAGE_COVER: 描述, 16:9 -->` 放最前）。描述只写画面内容,**禁止包含画风词**(插画/手绘/摄影/3D等)——画风由配图页的统一风格在生图时动态注入。',
+        '- 按写作方法论在正文里标注配图位：`<!-- IMAGE_N: 具体场景描述, 4:3 -->`（封面 `<!-- IMAGE_COVER: 描述, 16:9 -->` 放最前）。',
+        imageStyleGuidance(article),
         '- markdown 只用 `##`/`###` 小节、`**加粗**`、`>` 引用、`1.`/`-` 列表。',
         method ? `## 方法论（贝拉爆文方法论，策略层）\n${method}` : '',
         writer ? `## 文章类型写法（${writerSkill}，落笔层）\n${writer}` : '（工作台写作技能文件缺失——按公众号最佳实践写。）',
