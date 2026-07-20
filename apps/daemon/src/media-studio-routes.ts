@@ -93,6 +93,7 @@ import {
   updateTopic,
   setKnowledgeFeishuRef,
 } from './media-studio/store.js';
+import { imageMarkerContext } from './media-studio/image-context.js';
 import { fontSizesFromExtra, renderWechatHtml, WECHAT_SKINS } from './media-studio/wechat-render.js';
 import { publishWechatDraft, WechatPublishError } from './media-studio/wechat-publish.js';
 
@@ -525,6 +526,13 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const dir = assetsDirFor(article.id);
       await mkdir(dir, { recursive: true });
       const marker = typeof body.marker === 'string' && body.marker ? body.marker : null;
+      // 段落上下文增强(2026-07-20 用户反馈"配图与所在段落无关"):标注描述常太
+      // 简短,按 marker 定位它在正文里的位置,把上一个段落拼进提示词当场景依据
+      // ——不管描述写得好坏,画面都锚定所配段落;老稿子不重写也立即受益。
+      const paragraphCtx = marker ? imageMarkerContext(article.bodyMd, marker) : null;
+      const prompt = paragraphCtx
+        ? `${description}。画面必须贴合这段文章内容(以下为场景与主体依据;画面中不要出现任何可读文字):${paragraphCtx}`
+        : description;
       // 时间戳后加随机段：双候选并行请求会在同一毫秒落盘，纯 Date.now()
       // 会同名互相覆盖（一张图丢失 + 前端候选 key 重复）。
       const baseName = `img-${(marker ?? 'x').replace(/[^\w-]/g, '')}-${Date.now()}-${randomUUID().slice(0, 6)}`;
@@ -559,7 +567,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         const volcCfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine').catch(() => ({} as { model?: string }));
         const volcModel = requestedModel || volcCfg.model || '';
         finalPath = await generateVolcImage({
-          prompt: description,
+          prompt,
           outFile: path.join(dir, baseName),
           ...(body.style ? { style: body.style } : {}),
           ...(body.ratio ? { ratio: body.ratio } : {}),
@@ -572,7 +580,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       } else {
         try {
           const result = await generateQwenImage({
-            prompt: description,
+            prompt,
             outFile: path.join(dir, baseName),
             ...(body.style ? { style: body.style } : {}),
             ...(body.ratio ? { ratio: body.ratio } : {}),
@@ -589,7 +597,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           const geminiKey = (keys.GEMINI_API_KEY ?? '').trim();
           if (!(err instanceof QwenImageError) || !geminiKey) throw err;
           finalPath = await generateGeminiImageFallback({
-            prompt: description,
+            prompt,
             outFile: path.join(dir, `${baseName}.png`),
             ...(body.ratio ? { ratio: body.ratio } : {}),
             env: keys,
