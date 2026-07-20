@@ -429,6 +429,8 @@ export interface StudioAiTaskRequest {
     articleType?: string;
     /** write: 目标字数档位（如 "1500-2000"）. */
     wordCount?: string;
+    /** write: 正文配图位数量（2026-07-20 拍板:缺省最多 3 个;指定则严格按指定,'0'=不配图）. */
+    imageCount?: string;
     /** 绑定账号 id（写作按人设写）. */
     accountId?: string;
     /** topics: 用户勾选的优先参考文章（AI 优先围绕它们深挖出题）. */

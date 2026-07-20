@@ -234,6 +234,8 @@ export function MediaStudioView(): JSX.Element {
   const aiAnchorRef = useRef<HTMLDivElement | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [aiWordCount, setAiWordCount] = useState(() => loadStudioPref('wordcount:wechat-mp', '1500-2000'));
+  // 配图数量(2026-07-20 用户拍板:缺省最多 3 张,可指定;'0'=不配图,''=自动≤3)。
+  const [aiImageCount, setAiImageCount] = useState(() => loadStudioPref('imgcount:wechat-mp', ''));
   const [reviseNote, setReviseNote] = useState('');
   const [imageBusy, setImageBusy] = useState<string | null>(null);
   const [snippetDraft, setSnippetDraft] = useState<{ slot: 'header' | 'footer'; name: string } | null>(null);
@@ -455,7 +457,7 @@ export function MediaStudioView(): JSX.Element {
 
   // ---- AI 任务（每步的智能体动作） ----
   const startAiTask = useCallback(
-    async (kind: StudioAiTaskKind, input?: { note?: string; articleType?: string; wordCount?: string; picked?: PickedHit[] }) => {
+    async (kind: StudioAiTaskKind, input?: { note?: string; articleType?: string; wordCount?: string; imageCount?: string; picked?: PickedHit[] }) => {
       await flushSave();
       const current = articleRef.current;
       const created = await createStudioAiTask(PLATFORM, {
@@ -465,6 +467,7 @@ export function MediaStudioView(): JSX.Element {
           ...(input?.note ? { note: input.note } : {}),
           ...(input?.articleType ? { articleType: input.articleType } : {}),
           ...(input?.wordCount ? { wordCount: input.wordCount } : {}),
+          ...(input?.imageCount != null && input.imageCount !== '' ? { imageCount: input.imageCount } : {}),
           ...(input?.picked && input.picked.length > 0 ? { picked: input.picked } : {}),
           ...(current?.accountId ? { accountId: current.accountId } : {}),
         },
@@ -553,7 +556,7 @@ export function MediaStudioView(): JSX.Element {
       setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
       // 从选题过来 = 意图明确就是要写这篇——直接开写，不用再点一次。
       studioToast.ok('已建稿，AI 开始写作（右上角可看进度）');
-      void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount });
+      void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount, imageCount: aiImageCount });
     } else {
       studioToast.ok('已新建文章');
     }
@@ -850,10 +853,19 @@ export function MediaStudioView(): JSX.Element {
                 </option>
               ))}
             </select>
+            <select className={c('select')} value={aiImageCount} title="正文配图数量(封面另算)——不指定时 AI 自行斟酌但最多 3 张" onChange={(e) => { setAiImageCount(e.target.value); saveStudioPref('imgcount:wechat-mp', e.target.value, ''); }}>
+              <option value="">配图·自动(≤3)</option>
+              <option value="0">不配图</option>
+              {['1', '2', '3', '4', '5'].map((n) => (
+                <option key={n} value={n}>
+                  配图 {n} 张
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}
-              onClick={() => void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount })}
+              onClick={() => void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount, imageCount: aiImageCount })}
             >
               <Icon name="sparkles" size={14} /> AI 写一版
             </button>

@@ -17,6 +17,27 @@ function stripMarkdown(block: string): string {
     .trim();
 }
 
+/** 组发给生图模型的最终提示词(2026-07-20 用户反馈"提示词太少不细致,图与文章
+ *  无关"):标注描述只是主画面,这里补上文章主题、所配段落依据和画面要求,拼成
+ *  结构化分镜提示词——比单句描述细得多,画面强制锚定文章内容。风格词不在这里
+ *  写(style 预设单独传引擎,避免与用户选的风格打架)。 */
+export function composeImagePrompt(
+  description: string,
+  opts: { context?: string | null; articleTitle?: string } = {},
+): string {
+  const ctx = opts.context?.trim();
+  if (!ctx) return description;
+  const title = opts.articleTitle?.trim();
+  return [
+    `主画面:${description}`,
+    title ? `文章主题:《${title}》——画面气质要与主题相符。` : '',
+    `所配段落(画面的场景与主体必须来自这段内容):${ctx}`,
+    '画面要求:细节丰富、有明确的视觉主体和景深层次,构图有主次,光线与氛围服务段落情绪;元素与所配段落强相关,不堆砌无关物件;画面中不要出现任何可读文字、水印或 logo。',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 /**
  * 找到 `<!-- IMAGE_<marker>` 标注,返回它上方最近的正文段落(可带最近的小节
  * 标题做主题提示),没有可用上下文返回 null。约定:标注紧跟在要配图的段落后面

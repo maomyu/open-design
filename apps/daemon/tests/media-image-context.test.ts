@@ -2,7 +2,7 @@
 // 按 <!-- IMAGE_N --> 标注位置取上一个正文段落,生图提示词以此锚定段落内容。
 import { describe, expect, it } from 'vitest';
 
-import { imageMarkerContext } from '../src/media-studio/image-context.js';
+import { composeImagePrompt, imageMarkerContext } from '../src/media-studio/image-context.js';
 
 describe('imageMarkerContext', () => {
   it('returns the paragraph right above the marker, markdown stripped', () => {
@@ -66,5 +66,25 @@ describe('imageMarkerContext', () => {
   it('returns null when marker missing or nothing precedes it (cover at top)', () => {
     expect(imageMarkerContext('没有标注的正文', '1')).toBeNull();
     expect(imageMarkerContext('<!-- IMAGE_COVER: 封面, 16:9 -->\n\n正文', 'COVER')).toBeNull();
+  });
+});
+
+describe('composeImagePrompt', () => {
+  it('passes description through untouched when there is no paragraph context', () => {
+    expect(composeImagePrompt('一只手插社保卡', {})).toBe('一只手插社保卡');
+    expect(composeImagePrompt('一只手插社保卡', { context: '  ', articleTitle: '标题' })).toBe('一只手插社保卡');
+  });
+
+  it('builds a structured storyboard prompt with theme, paragraph anchor and requirements', () => {
+    const p = composeImagePrompt('一只手把社保卡插回读卡器', {
+      context: '所在小节:断缴的代价。社保断缴后购房资格清零',
+      articleTitle: '社保断缴的五个坑',
+    });
+    expect(p).toContain('主画面:一只手把社保卡插回读卡器');
+    expect(p).toContain('文章主题:《社保断缴的五个坑》');
+    expect(p).toContain('所配段落');
+    expect(p).toContain('社保断缴后购房资格清零');
+    expect(p).toContain('画面要求');
+    expect(p).toContain('不要出现任何可读文字');
   });
 });
