@@ -148,7 +148,7 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
   if (record.kind === 'entry') {
     // 知乎/微博并入「文章」入口(2026-07-10 用户拍板):历史独立 view 标签
     // 归一为 studio,平台切换现在是外壳内部状态,不再有独立标签。
-    const view = record.view === 'studio-zhihu' || record.view === 'studio-weibo' ? 'studio' : record.view;
+    const view = record.view === 'studio-zhihu' || record.view === 'studio-weibo' || record.view === 'studio-baidu-zhidao' ? 'studio' : record.view;
     // 'home' 不在白名单:主页对话框已下线,历史存下的主页 tab 直接丢弃。
     if (
       view === 'projects'
@@ -827,6 +827,7 @@ function displayTabFor(
     'studio-note': '笔记',
     'studio-zhihu': '文章',
     'studio-weibo': '文章',
+    'studio-baidu-zhidao': '文章',
     interaction: '互动',
     knowledge: '知识库',
     'design-systems': t('entry.navDesignSystems'),
@@ -845,6 +846,7 @@ function displayTabFor(
     'studio-note': 'image',
     'studio-zhihu': 'pencil',
     'studio-weibo': 'send',
+    'studio-baidu-zhidao': 'pencil',
     interaction: 'comment',
     knowledge: 'layers-filled',
     'design-systems': 'blocks',

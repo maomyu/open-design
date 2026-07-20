@@ -142,6 +142,7 @@ export const BROWSER_PLATFORM_TITLES: Record<string, string> = {
   shipinhao: '视频号',
   zhihu: '知乎',
   weibo: '微博',
+  'baidu-zhidao': '百度知道',
 };
 
 /**

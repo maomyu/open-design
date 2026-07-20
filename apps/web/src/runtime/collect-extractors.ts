@@ -21,6 +21,8 @@ export const INFINITE_SCROLL: Record<StudioCollectPlatform, boolean> = {
   douyin: true,
   bilibili: false,
   kuaishou: true,
+  // 百度知道搜索是分页(pn 翻页),不是无限滚动。
+  'baidu-zhidao': false,
 };
 
 export const LOGIN_WALL: Record<StudioCollectPlatform, string[]> = {
@@ -28,6 +30,8 @@ export const LOGIN_WALL: Record<StudioCollectPlatform, string[]> = {
   douyin: ['登录后可查看', '扫码登录', '验证码登录'],
   bilibili: [],
   kuaishou: ['扫码登录后', '请先登录'],
+  // 百度知道搜索公开可看,一般无登录墙(真机校准若有再补)。
+  'baidu-zhidao': [],
 };
 
 /** 需要【真·模拟人输入】搜索的平台：从首页进 → 在搜索框逐字符敲入关键词 → 回车,走完整
@@ -40,6 +44,8 @@ export const SEARCH_BY_TYPING: Record<StudioCollectPlatform, boolean> = {
   douyin: true,
   bilibili: false,
   kuaishou: true,
+  // 百度知道直连搜索页即可(公开搜索,反爬温和);真机若被拦再改拟人输入。
+  'baidu-zhidao': false,
 };
 
 /** 拟人输入的平台首页(从这里开始敲搜索框)。无首页项的平台→直接进【搜索结果页】再在框里搜。
@@ -98,6 +104,10 @@ export function buildSearchUrl(
   if (platform === 'xiaohongshu') {
     const xhsSort = params.order === 'latest' ? 'time_descending' : params.order === 'comprehensive' ? 'general' : 'popularity_descending';
     return `https://www.xiaohongshu.com/search_result?keyword=${kw}&sort=${xhsSort}`;
+  }
+  if (platform === 'baidu-zhidao') {
+    // 百度知道搜索:pn = (页-1)*10 翻页;找相关问题去写回答。
+    return `https://zhidao.baidu.com/search?word=${kw}&pn=${(page - 1) * 10}`;
   }
   // kuaishou
   return `https://www.kuaishou.com/search/video?searchKey=${kw}`;
@@ -220,6 +230,25 @@ export const EXTRACTORS: Record<StudioCollectPlatform, string> = {
       const id = 'ks_' + title.replace(/[^\\w一-龥]/g, '').slice(0, 20) + likes;
       if (seen.has(id)) return; seen.add(id);
       out.push({ content_id: id, title, likes, author, url: '' });
+    });
+    return out;
+  })()`,
+  // 百度知道:搜索结果每条=一个问答,标题链接指向 /question/<id>.html。抓问题标题 + 链接
+  // (回答时导航到它)+ 尽力抓回答数(comments 复用)。选择器真机(app webview)校准过后再定。
+  'baidu-zhidao': `(() => {
+    const out = [], seen = new Set();
+    document.querySelectorAll('a[href*="/question/"]').forEach((a) => {
+      const href = a.href || '';
+      const m = href.match(/\\/question\\/([0-9a-zA-Z]+)/);
+      if (!m) return;
+      const id = m[1]; if (seen.has(id)) return;
+      const title = (a.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 90);
+      if (!title || title.length < 4) return;
+      const card = a.closest('.dl, dl, .list-inner > *, li, article') || a.parentElement;
+      const meta = (card && card.textContent) || '';
+      const ans = (meta.match(/(\\d+)\\s*个?回答/) || [])[1] || '';
+      seen.add(id);
+      out.push({ content_id: id, title, url: href, likes: '', comments: ans, plays: '', author: '', publish_time: 0 });
     });
     return out;
   })()`,

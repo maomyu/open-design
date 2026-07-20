@@ -513,7 +513,7 @@ export interface StudioAiTaskResponse {
 }
 
 /** 浏览器注入发布可用的平台（桌面端 webview 注入器白名单）。 */
-export type StudioHandoffPlatform = 'zhihu' | 'weibo' | 'xiaohongshu' | 'douyin' | 'kuaishou';
+export type StudioHandoffPlatform = 'zhihu' | 'weibo' | 'xiaohongshu' | 'douyin' | 'kuaishou' | 'baidu-zhidao';
 
 export type StudioHandoffStatus = 'pending' | 'claimed' | 'running' | 'done' | 'error';
 
@@ -566,7 +566,7 @@ export interface StudioHandoffCompleteRequest {
 // → web 在【应用内标签】打开各平台搜索页、executeJavaScript 抓真实爆款卡片 →
 // progress 回写进度 → complete 回传采集到的条目 JSON → 调用方 wait 长轮询取。
 // 登录态在桌面端 webview 分区里（daemon 够不着），所以采集必须跑在桌面端标签。
-export type StudioCollectPlatform = 'xiaohongshu' | 'douyin' | 'bilibili' | 'kuaishou';
+export type StudioCollectPlatform = 'xiaohongshu' | 'douyin' | 'bilibili' | 'kuaishou' | 'baidu-zhidao';
 
 export type StudioCollectStatus = 'pending' | 'claimed' | 'running' | 'done' | 'error';
 

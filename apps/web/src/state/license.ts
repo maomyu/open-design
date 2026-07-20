@@ -80,6 +80,7 @@ export function isViewLicensed(view: string, license: LicenseInfo): boolean {
     case 'studio':
     case 'studio-zhihu':
     case 'studio-weibo':
+    case 'studio-baidu-zhidao':
       return anyArticlePlatform(license);
     case 'studio-create':
       // 统一创作台:短视频任一平台 或 小红书图文授权即可进。

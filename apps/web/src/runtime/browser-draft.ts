@@ -1218,6 +1218,54 @@ async function injectShipinhao(wv: DraftWebview, draft: DraftPayload, progress: 
   };
 }
 
+// 百度知道回答注入(B段/W14):在【问题页】点开「写回答」→ 富文本回答框写入回答内容。
+// 百度知道的"发布"=在相关问题下写回答,不是发独立文章。目标问题 URL 由上游 handoff 导航带来
+// (面板停在某个问题页),这里只负责点开回答框 + 写入。选择器为首版最佳猜测,完整校准在真机
+// (登录百度账号后)完成——与小红书 W3/W4 一样,注入选择器必须实机对准。
+async function injectBaiduZhidao(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
+  if (await isLoginWall(wv)) {
+    return { ok: false, detail: '百度知道还没登录——在面板里登录百度账号后再点一次「一键存草稿」' };
+  }
+  progress('1/3 点开「写回答」…');
+  // 点问题页的「写回答/我来答」入口(按可见文本找;真机校准后可换精确选择器)。
+  await wv
+    .executeJavaScript(
+      `(() => { for (const el of document.querySelectorAll('a,button,span,div')) { const t=(el.textContent||'').trim(); if ((t==='写回答'||t==='我来答'||t==='回答问题'||t==='回答') && el.getBoundingClientRect().width>0) { el.click(); return true; } } return false; })()`,
+    )
+    .catch(() => false);
+  await sleep(1800);
+  progress('2/3 写入回答…');
+  // 百度知道回答富文本框(UEditor 系或 contenteditable)——首版多选择器兜底,真机校准后收敛。
+  const BZ_EDITOR = '.edui-editor-body [contenteditable="true"], .answer-editor [contenteditable="true"], .rich-text-container [contenteditable="true"], textarea.answer-textarea, [contenteditable="true"]';
+  const ready = await waitFor(wv, BZ_EDITOR, 20_000);
+  if (!ready) {
+    return { ok: false, detail: '百度知道回答框没等到——请把面板停在某个「问题」页并点开「写回答」(回答框选择器待真机校准)' };
+  }
+  let bodyOk = false;
+  const focused = await focusByClick(wv, BZ_EDITOR);
+  if (focused) {
+    await clearFieldByKeys(wv);
+    const segments = draft.segments?.length ? draft.segments : [{ type: 'text' as const, text: draft.body }];
+    for (const seg of segments) {
+      if (seg.type === 'text') {
+        // 富文本段:markdown→HTML 一次粘贴(复用知乎渲染,回答排版基本一致)。
+        const html = markdownToZhihuHtml(seg.text);
+        if (await pasteHtmlAtCursor(wv, html, seg.text.replace(/[#*>`]/g, ''))) bodyOk = true;
+        await sleep(500);
+      }
+      // 图片段:百度知道回答插图的 file input 真机校准后再补(首版先只灌文本)。
+    }
+    if (!bodyOk) bodyOk = await typeIntoField(wv, BZ_EDITOR, draft.body.slice(0, 4000));
+  }
+  progress('3/3 回答已写入(核对后在页面点「发布回答」提交)');
+  return {
+    ok: bodyOk,
+    detail: bodyOk
+      ? '回答已写入回答框——核对后在页面点「发布回答」提交(首版,选择器可能需真机微调)'
+      : '回答写入失败——请在页面手动粘贴(回答框选择器待真机校准)',
+  };
+}
+
 const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgress) => Promise<DraftResult>> = {
   xiaohongshu: injectXiaohongshu,
   douyin: injectDouyin,
@@ -1225,6 +1273,7 @@ const ADAPTERS: Record<string, (wv: DraftWebview, d: DraftPayload, p: DraftProgr
   bilibili: injectBilibili,
   zhihu: injectZhihu,
   weibo: injectWeibo,
+  'baidu-zhidao': injectBaiduZhidao,
   // 视频号:内容平台 id 叫 shipinhao,短视频台/sau 发布链叫 tencent——两个键都指同一后台。
   tencent: injectShipinhao,
   shipinhao: injectShipinhao,
@@ -1236,6 +1285,7 @@ export function draftInjectionSupported(platform: string): boolean {
 
 const DRAFT_PLATFORM_LABEL: Record<string, string> = {
   xiaohongshu: '小红书', douyin: '抖音', kuaishou: '快手', bilibili: 'B站', zhihu: '知乎', weibo: '微博',
+  'baidu-zhidao': '百度知道',
   tencent: '视频号', shipinhao: '视频号',
 };
 // 各平台发布页 URL(与 daemon media-studio/browser.ts 对齐):登录成功后导回这里再注入。
@@ -1246,6 +1296,8 @@ const DRAFT_PUBLISH_URL: Record<string, string> = {
   bilibili: 'https://member.bilibili.com/platform/upload/video/frame',
   zhihu: 'https://zhuanlan.zhihu.com/write',
   weibo: 'https://weibo.com',
+  // 百度知道无固定"写"页(答案在具体问题下),登录/兜底用主站;真发时导航到目标问题页。
+  'baidu-zhidao': 'https://zhidao.baidu.com/',
   tencent: 'https://channels.weixin.qq.com/platform/post/create',
   shipinhao: 'https://channels.weixin.qq.com/platform/post/create',
 };

@@ -26,6 +26,7 @@ export type EntryView =
   | 'studio-note'
   | 'studio-zhihu'
   | 'studio-weibo'
+  | 'studio-baidu-zhidao'
   | 'interaction'
   | 'knowledge'
   | 'design-systems'
@@ -114,7 +115,7 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             收进一个入口,内部平台切换(短视频/笔记是别的形态,各自独立)。 */}
         {anyArticlePlatform(license) ? (
           <NavButton
-            active={view === 'studio' || view === 'studio-zhihu' || view === 'studio-weibo'}
+            active={view === 'studio' || view === 'studio-zhihu' || view === 'studio-weibo' || view === 'studio-baidu-zhidao'}
             ariaLabel="文章"
             label="文章"
             onClick={() => onViewChange('studio')}

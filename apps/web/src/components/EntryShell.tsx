@@ -669,6 +669,7 @@ export function EntryShell({
             {view === 'studio' ? <ArticleStudioShell /> : null}
             {view === 'studio-zhihu' ? <ArticleStudioShell initial="zhihu" /> : null}
             {view === 'studio-weibo' ? <ArticleStudioShell initial="weibo" /> : null}
+            {view === 'studio-baidu-zhidao' ? <ArticleStudioShell initial="baiduZhidao" /> : null}
             {view === 'studio-video' ? <ShortVideoStudioShell /> : null}
             {view === 'studio-note' ? <NoteStudioView /> : null}
             {view === 'interaction' ? <InteractionView /> : null}

@@ -90,6 +90,7 @@ const PLATFORM_LOGIN_URLS: Record<string, string> = {
   'wechat-mp': 'https://mp.weixin.qq.com/',
   zhihu: 'https://www.zhihu.com/',
   weibo: 'https://weibo.com/',
+  'baidu-zhidao': 'https://zhidao.baidu.com/',
 };
 
 export function AccountsView() {

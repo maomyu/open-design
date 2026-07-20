@@ -14,6 +14,7 @@ export type FeatureId =
   | 'article.wechat-mp'
   | 'article.zhihu'
   | 'article.weibo'
+  | 'article.baidu-zhidao'
   // 短视频平台
   | 'sv.douyin'
   | 'sv.kuaishou'
@@ -41,6 +42,7 @@ export const ALL_FEATURE_IDS: readonly FeatureId[] = [
   'article.wechat-mp',
   'article.zhihu',
   'article.weibo',
+  'article.baidu-zhidao',
   'sv.douyin',
   'sv.kuaishou',
   'sv.shipinhao',
@@ -124,6 +126,7 @@ export function articleFeatureOf(platform: string): FeatureId | null {
   if (platform === 'wechat-mp') return 'article.wechat-mp';
   if (platform === 'zhihu') return 'article.zhihu';
   if (platform === 'weibo') return 'article.weibo';
+  if (platform === 'baidu-zhidao') return 'article.baidu-zhidao';
   return null;
 }
 
@@ -144,6 +147,7 @@ export function svFeatureOf(sauPlatform: string): FeatureId | null {
 export function handoffTargetFeatures(target: string): FeatureId[] {
   if (target === 'zhihu') return ['article.zhihu'];
   if (target === 'weibo') return ['article.weibo'];
+  if (target === 'baidu-zhidao') return ['article.baidu-zhidao'];
   if (target === 'douyin') return ['sv.douyin'];
   if (target === 'kuaishou') return ['sv.kuaishou'];
   if (target === 'xiaohongshu') return ['note.xiaohongshu', 'sv.xiaohongshu'];

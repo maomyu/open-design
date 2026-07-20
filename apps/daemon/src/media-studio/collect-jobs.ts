@@ -25,6 +25,7 @@ export const COLLECT_PLATFORMS: readonly StudioCollectPlatform[] = [
   'douyin',
   'bilibili',
   'kuaishou',
+  'baidu-zhidao',
 ];
 
 export function isCollectPlatform(v: unknown): v is StudioCollectPlatform {

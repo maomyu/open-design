@@ -24,6 +24,9 @@ export const PLATFORM_PUBLISH_URLS: Record<string, { label: string; url: string 
   tencent: { label: '视频号 · 发表动态', url: 'https://channels.weixin.qq.com/platform/post/create' },
   zhihu: { label: '知乎 · 写文章', url: 'https://zhuanlan.zhihu.com/write' },
   weibo: { label: '微博 · 发布', url: 'https://weibo.com' },
+  // 百度知道发布=在具体问题下写回答(目标问题 URL 由选题/检索带来,注入时导航到它);
+  // 这里的固定 URL 只作登录/兜底入口。
+  'baidu-zhidao': { label: '百度知道', url: 'https://zhidao.baidu.com/' },
   'wechat-mp': { label: '公众号后台', url: 'https://mp.weixin.qq.com' },
 };
 

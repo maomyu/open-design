@@ -22,6 +22,7 @@ export type EntryHomeView =
   | 'studio-note'
   | 'studio-zhihu'
   | 'studio-weibo'
+  | 'studio-baidu-zhidao'
   | 'interaction'
   | 'knowledge'
   | 'design-systems'
@@ -125,6 +126,7 @@ export function parseRoute(pathname: string): Route {
     if (parts[1] === 'note') return { kind: 'home', view: 'studio-note' };
     if (parts[1] === 'zhihu') return { kind: 'home', view: 'studio-zhihu' };
     if (parts[1] === 'weibo') return { kind: 'home', view: 'studio-weibo' };
+    if (parts[1] === 'baidu-zhidao') return { kind: 'home', view: 'studio-baidu-zhidao' };
     return { kind: 'home', view: 'studio' };
   }
   if (parts[0] === 'interaction') {
@@ -189,6 +191,7 @@ export function buildPath(route: Route): string {
     if (route.view === 'studio-note') return '/studio/note';
     if (route.view === 'studio-zhihu') return '/studio/zhihu';
     if (route.view === 'studio-weibo') return '/studio/weibo';
+    if (route.view === 'studio-baidu-zhidao') return '/studio/baidu-zhidao';
     if (route.view === 'interaction') return '/interaction';
     if (route.view === 'knowledge') return '/knowledge';
     if (route.view === 'design-systems') return '/design-systems';

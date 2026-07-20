@@ -13,6 +13,7 @@ export const LOGIN_HOME: Record<string, string> = {
   xiaohongshu: 'https://www.xiaohongshu.com/explore',
   zhihu: 'https://www.zhihu.com/',
   weibo: 'https://weibo.com/',
+  'baidu-zhidao': 'https://zhidao.baidu.com/',
 };
 
 // 通用探测脚本:各平台 DOM 不同,但「可见登录按钮=未登录 / 头像·主页链接=已登录」是共性。
@@ -58,6 +59,11 @@ export const LOGIN_PROBE: Record<string, string> = {
   weibo: buildProbe(
     '.woo-avatar-img, [class*="Avatar"], a[href*="/u/"], .gn_name',
     ['登录', '立即登录', '登录/注册'],
+  ),
+  // 百度知道(百度账号):已登录顶栏有用户名/头像、个人中心链接(i.baidu.com);未登录是"登录"按钮。
+  'baidu-zhidao': buildProbe(
+    '.user-name, .s-top-username, .userinfo, a[href*="i.baidu.com"], [class*="user" i] img',
+    ['登录', '登录/注册'],
   ),
 };
 

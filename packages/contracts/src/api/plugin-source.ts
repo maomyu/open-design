@@ -227,7 +227,8 @@ export type MediaPlatformId =
   | 'bilibili'
   | 'shipinhao'
   | 'zhihu'
-  | 'weibo';
+  | 'weibo'
+  | 'baidu-zhidao';
 
 export interface MediaPlatformCredentialKeyDef {
   name: string;
@@ -273,6 +274,9 @@ export const MEDIA_PLATFORMS: MediaPlatformDef[] = [
   { id: 'zhihu', title: '知乎', kind: 'sau-login', supports: ['article'] },
   // 微博(2026-07-10 用户拍板):独立创作台,安全交接发布;账号名即浏览器档案名。
   { id: 'weibo', title: '微博', kind: 'sau-login', supports: ['article'] },
+  // 百度知道(2026-07-20 用户拍板 W12):问答平台,发布=在相关问题下写回答;检索走内置浏览器
+  // 抓取(不走 TikHub);账号名即浏览器档案名。
+  { id: 'baidu-zhidao', title: '百度知道', kind: 'sau-login', supports: ['article'] },
 ];
 
 export function mediaPlatformDef(id: string): MediaPlatformDef | null {

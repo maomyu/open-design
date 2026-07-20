@@ -141,6 +141,22 @@ export async function buildStudioDraft(target: string, article: MediaArticle): P
         tags: [],
         filePaths: [],
       };
+    case 'baidu-zhidao': {
+      // 百度知道=在问题下写回答:标题其实是"问题"(定位用),正文=回答内容(带图走 segments,
+      // 与知乎同构)。目标问题 URL 由注入器从 article 源带走(见 browser-draft.injectBaiduZhidao)。
+      const ids = assetArticleIdsOf(article.bodyMd + '\n' + article.coverSource, article.id);
+      const maps = await Promise.all(ids.map((id) => fetchStudioAssetPaths(article.platform, id)));
+      const byUrl = new Map(maps.flat().map((a) => [a.url, a.absPath]));
+      return {
+        platform: target,
+        kind: 'article',
+        title: article.title,
+        body: plainTextBody(article.bodyMd),
+        tags: [],
+        filePaths: [],
+        segments: zhihuSegmentsOf(article.bodyMd, byUrl),
+      };
+    }
     case 'note': {
       // 图集 URL(有序)→本机绝对路径:CDP 注入 file input 用。
       const noteImages = Array.isArray(extra.noteImages)
