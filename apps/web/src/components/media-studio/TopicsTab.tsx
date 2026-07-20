@@ -725,6 +725,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             ))}
           </div>
         ) : tikhubTargets ? (
+          <>
           <div className={c('row')}>
             <span className={c('cardHint')}>选题平台（数据从该平台自己的接口来）：</span>
             {tikhubTargets.map((t) => (
@@ -742,6 +743,20 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               </button>
             ))}
           </div>
+          {/* 热榜与关键词无关(全站今日最热),单独一行——不和下面的「搜」放一起(2026-07-20 用户)。 */}
+          <div className={c('row')} style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+            <span className={c('cardHint')}>看{tikhubTargetLabel}全站在热什么（免填词，与下面关键词无关）：</span>
+            <button
+              type="button"
+              className={`${c('btn')} ${c('btnPrimary')}`}
+              disabled={feedBusy}
+              title={`拉取${tikhubTargetLabel}官方热榜——今天平台上最热的话题，不用填关键词`}
+              onClick={() => void runTikhub('hot')}
+            >
+              {feedBusy ? '拉取中…' : `${tikhubTargetLabel}热榜`}
+            </button>
+          </div>
+          </>
         ) : null}
         {browserCollect ? (
           <div className={c('row')}>
@@ -821,26 +836,15 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               ))}
             </>
           ) : tikhubTargets ? (
-            <>
-              <button
-                type="button"
-                className={`${c('btn')} ${c('btnPrimary')}`}
-                disabled={feedBusy}
-                title={`拉取${tikhubTargetLabel}官方热榜——今天平台上最热的话题`}
-                onClick={() => void runTikhub('hot')}
-              >
-                {feedBusy ? '拉取中…' : `${tikhubTargetLabel}热榜`}
-              </button>
-              <button
-                type="button"
-                className={c('btn')}
-                disabled={feedBusy || !direction.trim()}
-                title={`用关键词在${tikhubTargetLabel}站内搜索爆款内容`}
-                onClick={() => void runTikhub('search')}
-              >
-                搜{tikhubTargetLabel}
-              </button>
-            </>
+            <button
+              type="button"
+              className={`${c('btn')} ${c('btnPrimary')}`}
+              disabled={feedBusy || !direction.trim()}
+              title={`用左边的关键词在${tikhubTargetLabel}站内搜索爆款内容`}
+              onClick={() => void runTikhub('search')}
+            >
+              {feedBusy ? '搜索中…' : `搜${tikhubTargetLabel}`}
+            </button>
           ) : browserCollect ? (
             <button
               type="button"

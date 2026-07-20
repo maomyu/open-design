@@ -37,6 +37,29 @@ function styleLabel(id: string): string {
   return IMAGE_STYLE_PRESETS.find((s) => s.id === id)?.label ?? id;
 }
 
+/** AI 选题拉热点数据的指令——【必须按平台取对应源,绝不混平台】(2026-07-20 用户报:知乎下面搜出
+ *  公众号文章)。radar/web-search/hot-search 走的是大家来=公众号生态,只能给公众号用;知乎/微博/
+ *  小红书/抖音/快手用各自的 TikHub 平台源(tikhub-feed,带 target),百度知道等无爆款源的直接判断。 */
+function topicDataSourceStep(platform: string): string {
+  const TIKHUB_TARGETS = new Set(['zhihu', 'weibo', 'xiaohongshu', 'douyin', 'kuaishou']);
+  if (TIKHUB_TARGETS.has(platform)) {
+    return (
+      `   \`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${platform}/topics/tikhub-feed" -H 'Content-Type: application/json' -d '{"target":"${platform}","mode":"search","keyword":"<方向关键词>"}'\`\n` +
+      `   （拉的是【${platform} 平台自己】的爆款内容、带真实互动数据;想看全站热榜把 mode 换成 "hot"、不用关键词。` +
+      `接口失败/没配 Key 就直接基于方向判断,别空转。**⚠️ 选题与参考内容必须全部来自 ${platform} 本平台,绝不能引入公众号/其它平台的文章。**）`
+    );
+  }
+  if (platform === 'wechat-mp') {
+    return (
+      `   \`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${platform}/topics/radar" -H 'Content-Type: application/json' -d '{"keyword":"<方向关键词>"}'\`\n` +
+      '   （⭐双信号=最强选题；🔥爆款=流量验证；🔍搜一搜=搜索需求。接口失败就直接基于方向做判断，别空转重试。）'
+    );
+  }
+  // 其它平台(如百度知道):没有对应的爆款接口,直接用你的检索工具找【本平台】相关内容判断——
+  // 【不要】去拉公众号雷达(那是公众号生态,与本平台无关)。
+  return '   用你的检索工具找【本平台】相关的高质量内容做参考,基于方向和账号人设判断产出选题——⚠️ 不要拉公众号雷达/引入公众号文章,选题必须贴合本平台。';
+}
+
 /** 写作时用户已选的封面/配图风格(存 article.extra.coverStyle/imageStyle),组装成给写作 AI 的
  *  画面取向指引。未选时给合理默认:封面=大字报带文字,配图=白板手绘。 */
 function imageStyleGuidance(article: MediaArticle): string {
@@ -216,10 +239,9 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         knowledgeBlock(input.knowledge),
         '## 怎么做',
         picked.length > 0
-          ? `1. **先处理上面用户勾选的优先参考**（抓原文→差异化出题）；需要补充背景再拉热点：`
-          : '1. 先拉双信号热点数据：',
-        `   \`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${platform}/topics/radar" -H 'Content-Type: application/json' -d '{"keyword":"<方向关键词>"}'\``,
-        '   （⭐双信号=最强选题；🔥爆款=流量验证；🔍搜一搜=搜索需求。接口失败就直接基于方向做判断，别空转重试。）',
+          ? `1. **先处理上面用户勾选的优先参考**（抓原文→差异化出题）；需要补充背景再拉本平台热点：`
+          : '1. 先拉【本平台】热点数据（不同平台走不同源，绝不混平台）：',
+        topicDataSourceStep(platform),
         isConvert
           ? '2. 每篇勾选文章转化出 **1-2 个差异化选题**（写给谁/解决什么痛点/落脚点明确），总数控制在勾选篇数的 2 倍以内。'
           : '2. 结合热点数据把方向细化成 **3-5 个具体选题**：每个都要有明确的切入角度（写给谁/解决什么痛点/落脚点），不要泛泛的大话题。',
