@@ -2385,7 +2385,7 @@ async function runStudio(args) {
 
 【发布】
   od studio publish <id> --account <accountId>               # 公众号→草稿箱(API 直发)
-  od studio handoff <id> --target zhihu|weibo|xiaohongshu|douyin|kuaishou
+  od studio handoff <id> --target zhihu|weibo|xiaohongshu|douyin|kuaishou|bilibili|tencent(视频号)
      [--account 账号名] [--auto 直发] [--no-wait] [--timeout 秒=300]
      # 浏览器注入发布:需 爆创 桌面应用在运行(登录态在桌面端);缺省填到发送前一步
   od studio publishes <id> · mark-published <id> [--label 平台名]   # 发布记录 · 手动补记
@@ -3114,7 +3114,7 @@ async function runStudio(args) {
     const id = bare[1];
     const target = typeof flags.target === 'string' ? flags.target.trim() : '';
     if (!id || !target) {
-      console.error('Usage: od studio handoff <文章id> --target zhihu|weibo|xiaohongshu|douyin|kuaishou [--account 名] [--auto] [--no-wait] [--timeout 秒=300]');
+      console.error('Usage: od studio handoff <文章id> --target zhihu|weibo|xiaohongshu|douyin|kuaishou|bilibili|tencent(视频号) [--account 名] [--auto] [--no-wait] [--timeout 秒=300]');
       process.exit(2);
     }
     const createResp = await fetch(`${root}/handoff`, {

@@ -28,6 +28,8 @@ export const HANDOFF_PLATFORMS: readonly StudioHandoffPlatform[] = [
   'xiaohongshu',
   'douyin',
   'kuaishou',
+  'bilibili',
+  'tencent',
 ];
 
 export function isHandoffPlatform(v: unknown): v is StudioHandoffPlatform {

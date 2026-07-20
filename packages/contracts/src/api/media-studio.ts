@@ -486,7 +486,7 @@ export interface VoicePreset {
 }
 
 /** 浏览器注入发布可用的平台（桌面端 webview 注入器白名单）。 */
-export type StudioHandoffPlatform = 'zhihu' | 'weibo' | 'xiaohongshu' | 'douyin' | 'kuaishou';
+export type StudioHandoffPlatform = 'zhihu' | 'weibo' | 'xiaohongshu' | 'douyin' | 'kuaishou' | 'bilibili' | 'tencent';
 
 export type StudioHandoffStatus = 'pending' | 'claimed' | 'running' | 'done' | 'error';
 
