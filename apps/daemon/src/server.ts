@@ -9927,7 +9927,20 @@ export async function startServer({
   // 飞书数据中心·界面回流统一 spawn:把 payload 写临时文件,调引擎 scripts/datacenter.py <cmd>,
   // 解析 stdout 首个 { 起的 JSON。块1 知识库双写 / 块2 成品复盘回写 / 块3 监控配置共用这一个通道
   // (同 radar-score:LARK_PROFILE=baochuang-client 写进客户自己的 base;失败抛错,由各端点兜底)。
-  async function runDatacenterCli(subcommand: string, payload: unknown = {}): Promise<any> {
+  // 串行化闸门:lark-cli 并发跑会抢共享 auth/identity 状态(实测批量推飞书时,
+  // 3 个并发进程有 2 个报「ok:false, identity:…」解析失败)。用 promise 链把所有
+  // 飞书 CLI 调用排队——一次只跑一个 datacenter.py,彻底避开并发冲突。
+  let feishuCliChain: Promise<unknown> = Promise.resolve();
+  function runDatacenterCli(subcommand: string, payload: unknown = {}): Promise<any> {
+    const run = feishuCliChain.catch(() => undefined).then(() => runDatacenterCliRaw(subcommand, payload));
+    // 链只跟踪「完成」不传播失败/结果,免得一次失败卡死后续 + 免未处理 rejection。
+    feishuCliChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+  async function runDatacenterCliRaw(subcommand: string, payload: unknown = {}): Promise<any> {
     const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
     const tmpFile = path.join(os.tmpdir(), `bc-dc-${process.pid}-${Date.now()}.json`);
     await fs.promises.writeFile(tmpFile, JSON.stringify(payload ?? {}), 'utf8');
@@ -9947,7 +9960,6 @@ export async function startServer({
     } finally {
       try { await fs.promises.unlink(tmpFile); } catch { /* ignore */ }
     }
-    return out;
   }
 
   // ── 块3:监控配置库 + 系统配置表 界面 CRUD(飞书数据中心;引擎定时任务读监控配置库,

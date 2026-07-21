@@ -158,6 +158,19 @@ export function DataCenterView(): JSX.Element {
     void load(activeKey);
   }, [activeKey, load]);
 
+  // 进页面就并行拉全表计数,左侧列表一开就显真实条数(不用逐个点开才更新)。
+  useEffect(() => {
+    let alive = true;
+    void Promise.all(
+      DATACENTER_TABLES.map(async (t) => [t.key, (await fetchDatacenterRecords(t.key)).length] as const),
+    ).then((pairs) => {
+      if (alive) setCounts((c) => ({ ...Object.fromEntries(pairs), ...c }));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const editableFields = table.fields.filter(isEditable);
 
   async function submitForm() {
