@@ -143,6 +143,48 @@
   margin-bottom: 12px;
 }
 
+/* 使用说明(可折叠) */
+.usage {
+  margin-bottom: 12px;
+  border: 1px solid var(--bg-accent, rgba(216, 84, 47, 0.18));
+  background: var(--bg-accent, rgba(216, 84, 47, 0.05));
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.usageSummary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-accent, #b5451f);
+  user-select: none;
+  list-style: none;
+}
+.usageSummary::-webkit-details-marker {
+  display: none;
+}
+.usageBody {
+  font-size: 12.5px;
+  line-height: 1.7;
+  opacity: 0.82;
+  margin-top: 8px;
+}
+
+/* 多选勾选组 */
+.checkGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 4px 0;
+}
+.checkItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 /* 表格视图 */
 .tableScroll {
   overflow-x: auto;

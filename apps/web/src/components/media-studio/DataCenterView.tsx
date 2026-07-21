@@ -41,10 +41,13 @@ function displayValue(f: DatacenterField, v: unknown): string {
   return String(v);
 }
 
-/** 记录字段值 → 表单输入初值(multi_select 数组拼成顿号串,checkbox 保持布尔)。 */
-function toFormValue(f: DatacenterField, v: unknown): string | boolean {
+type FormValue = string | boolean | string[];
+type FormState = Record<string, FormValue>;
+
+/** 记录字段值 → 表单初值(multi_select 保持数组、checkbox 布尔、其余字符串)。 */
+function toFormValue(f: DatacenterField, v: unknown): FormValue {
   if (f.type === 'checkbox') return v === true;
-  if (f.type === 'multi_select') return Array.isArray(v) ? v.join('、') : v ? String(v) : '';
+  if (f.type === 'multi_select') return Array.isArray(v) ? v.map((x) => String(x)) : v ? [String(v)] : [];
   if (v === undefined || v === null) return '';
   if (f.type === 'datetime') {
     const n = typeof v === 'number' ? v : Number(v);
@@ -53,24 +56,29 @@ function toFormValue(f: DatacenterField, v: unknown): string | boolean {
   return String(v);
 }
 
-type FormState = Record<string, string | boolean>;
-
 function initialForm(table: DatacenterTable, record?: DatacenterRecord): FormState {
   const form: FormState = {};
   for (const f of table.fields) {
     if (!isEditable(f)) continue;
-    form[f.name] = record ? toFormValue(f, record.fields[f.name]) : f.type === 'checkbox' ? false : '';
+    form[f.name] = record
+      ? toFormValue(f, record.fields[f.name])
+      : f.type === 'checkbox'
+        ? false
+        : f.type === 'multi_select'
+          ? []
+          : '';
   }
   return form;
 }
 
-/** 表单 → 提交的 fields(字符串直接给 daemon,由 daemon 按 schema 收敛类型)。 */
+/** 表单 → 提交的 fields(多选给数组、勾选给布尔、其余字符串;daemon 再按 schema 收敛)。 */
 function formToFields(table: DatacenterTable, form: FormState): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   for (const f of table.fields) {
     if (!isEditable(f)) continue;
     const raw = form[f.name];
     if (f.type === 'checkbox') fields[f.name] = raw === true;
+    else if (f.type === 'multi_select') fields[f.name] = Array.isArray(raw) ? raw : [];
     else fields[f.name] = typeof raw === 'string' ? raw : '';
   }
   return fields;
@@ -82,52 +90,59 @@ function FieldInput({
   onChange,
 }: {
   field: DatacenterField;
-  value: string | boolean;
-  onChange: (v: string | boolean) => void;
+  value: FormValue;
+  onChange: (v: FormValue) => void;
 }): JSX.Element {
   if (field.type === 'checkbox') {
     return (
-      <input
-        type="checkbox"
-        checked={value === true}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{ marginTop: 6 }}
-      />
+      <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} style={{ marginTop: 6 }} />
     );
   }
-  const strVal = typeof value === 'string' ? value : '';
-  if (field.type === 'number') {
+  // 单选 → 下拉(固定选项;现值不在选项里也补进去防丢)
+  if (field.type === 'single_select' && field.options && field.options.length) {
+    const cur = typeof value === 'string' ? value : '';
+    const opts = !cur || field.options.includes(cur) ? field.options : [cur, ...field.options];
     return (
-      <input
-        className={styles.input}
-        type="number"
-        value={strVal}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <select className={styles.input} value={cur} onChange={(e) => onChange(e.target.value)}>
+        <option value="">— 请选择 —</option>
+        {opts.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
     );
+  }
+  // 多选 → 勾选组(固定选项,可多选)
+  if (field.type === 'multi_select' && field.options && field.options.length) {
+    const arr = Array.isArray(value) ? value : [];
+    const toggle = (o: string) => onChange(arr.includes(o) ? arr.filter((x) => x !== o) : [...arr, o]);
+    return (
+      <div className={styles.checkGroup}>
+        {field.options.map((o) => (
+          <label key={o} className={styles.checkItem}>
+            <input type="checkbox" checked={arr.includes(o)} onChange={() => toggle(o)} />
+            {o}
+          </label>
+        ))}
+      </div>
+    );
+  }
+  const strVal = typeof value === 'string' ? value : Array.isArray(value) ? value.join('、') : '';
+  if (field.type === 'number') {
+    return <input className={styles.input} type="number" value={strVal} onChange={(e) => onChange(e.target.value)} />;
   }
   if (field.type === 'text' && LONG_TEXT.test(field.name)) {
     return <textarea className={styles.textarea} value={strVal} onChange={(e) => onChange(e.target.value)} />;
   }
-  const listId = field.options && field.options.length ? `dc-opts-${field.name}` : undefined;
   return (
-    <>
-      <input
-        className={styles.input}
-        type="text"
-        value={strVal}
-        list={listId}
-        placeholder={field.type === 'multi_select' ? '多个用「、」或逗号分隔' : undefined}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      {listId ? (
-        <datalist id={listId}>
-          {field.options!.map((o) => (
-            <option key={o} value={o} />
-          ))}
-        </datalist>
-      ) : null}
-    </>
+    <input
+      className={styles.input}
+      type="text"
+      value={strVal}
+      placeholder={field.type === 'multi_select' ? '多个用「、」分隔' : undefined}
+      onChange={(e) => onChange(e.target.value)}
+    />
   );
 }
 
@@ -280,6 +295,12 @@ export function DataCenterView(): JSX.Element {
           </div>
           <p className={styles.desc}>{table.desc}</p>
 
+          {/* 使用说明:每张表干嘛的 + 怎么填/怎么产生 + 界面联动 */}
+          <details className={styles.usage} open>
+            <summary className={styles.usageSummary}>💡 使用说明</summary>
+            <div className={styles.usageBody}>{table.usage}</div>
+          </details>
+
           {isUser ? (
             <div className={styles.toolbar}>
               <button
@@ -297,9 +318,7 @@ export function DataCenterView(): JSX.Element {
             </div>
           ) : (
             <div className={styles.readonlyHint}>
-              📥 此表数据由引擎自动产出,从你的飞书只读拉取展示。想更新数据去对应操作:
-              「爆款原始库 / 今日选题池」← 采集选题(搜爆款);「成品内容审核库」← 存草稿点「标记完成」;
-              「发布复盘库」← 发布后点「复盘」;「爆点拆解库」← AI 拆解。写回飞书后,回这里刷新即见。
+              📥 只读表——数据由引擎产出、从你飞书拉取展示(怎么产生见上方「使用说明」)。切到别的表再切回即刷新最新。
             </div>
           )}
 

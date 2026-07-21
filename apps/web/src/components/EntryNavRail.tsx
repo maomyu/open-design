@@ -200,17 +200,8 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             插件流水线,项目由 AI 任务自动管理)。路由仍保留 ——
             /automations、/design-systems、/plugins、/projects 直链可达;
             要恢复入口把 NavButton 加回来即可。 */}
-        {hasFeature(license, 'integrations') ? (
-          <NavButton
-            active={view === 'integrations'}
-            ariaLabel={t('entry.navIntegrations')}
-            label={t('entry.navIntegrations')}
-            onClick={() => onViewChange('integrations')}
-            testId="entry-nav-integrations"
-          >
-            <Icon name="link" size={18} />
-          </NavButton>
-        ) : null}
+        {/* 「集成」入口已关闭(2026-07-21 用户拍板:目前用不到)。直链 /integrations 仍可达;
+            要恢复把 NavButton 加回来、条件用 hasFeature(license, 'integrations') 即可。 */}
       </div>
       {/* 「最近」项目列表已移除(2026-07-09 用户拍板"不需要了")——项目
           入口走导航「项目」页;要恢复参考 git 历史加回 recent 区块。 */}
