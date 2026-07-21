@@ -8200,10 +8200,11 @@ async function runDatacenter(args) {
       process.exit(3);
     }
   };
-  const readFields = () => {
+  const readFields = async () => {
     let raw = '';
     if (typeof flags['fields-file'] === 'string' && flags['fields-file']) {
       const p = String(flags['fields-file']);
+      const fs = await import('node:fs');
       raw = p === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(p, 'utf8');
     } else if (typeof flags.fields === 'string') {
       raw = flags.fields;
@@ -8249,7 +8250,7 @@ async function runDatacenter(args) {
     return;
   }
   if (sub === 'add') {
-    const fields = readFields();
+    const fields = await readFields();
     const resp = await doFetch(dcUrl(`/${encodeURIComponent(table)}/records`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -8266,7 +8267,7 @@ async function runDatacenter(args) {
       console.error('缺少 --id <记录id>');
       process.exit(2);
     }
-    const fields = readFields();
+    const fields = await readFields();
     const resp = await doFetch(dcUrl(`/${encodeURIComponent(table)}/records/${encodeURIComponent(String(flags.id))}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
