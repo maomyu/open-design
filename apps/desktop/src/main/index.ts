@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { BrowserWindow, Menu, app, shell, type MenuItemConstructorOptions } from "electron";
@@ -307,6 +307,40 @@ async function registerDesktopAuthWithDaemon(
   return false;
 }
 
+/**
+ * Dev-mode browser-state isolation (tools-dev only).
+ *
+ * Packaged builds pin Electron `userData` to `<namespaceRoot>/user-data` in
+ * apps/packaged/src/launch.ts (`applyPackagedElectronPathOverrides`), so every
+ * customer package already gets its OWN cookie vault, session partitions, and
+ * cache. Dev (tools-dev) never relocated userData, so ALL packages fell back to
+ * the shared Electron default (`~/Library/Application Support/Electron`) and
+ * cross-contaminated logins: a 视频号/WeChat session logged in under one
+ * namespace got re-injected into a different package's webview on the next dev
+ * launch — both the `browser-cookie-vault/` (via `app.getPath("userData")`) and
+ * the Chromium `Partitions/` (via sessionData) were shared.
+ *
+ * Scope dev userData by namespace so dev matches packaged: each namespace is a
+ * fully isolated browser profile, and a login under one package can never leak
+ * into another. Best-effort and MUST run before `app.whenReady` / any session
+ * creation. No-op when packaged (the launcher already relocated userData).
+ */
+function isolateDevUserDataByNamespace(runtime: SidecarRuntimeContext<SidecarStamp>): void {
+  if (app.isPackaged) return; // packaged: launch.ts already pinned a namespace-scoped userData
+  const namespace = runtime.namespace?.trim();
+  if (!namespace) return; // nothing to scope by — leave the shared default untouched
+  try {
+    const userData = join(app.getPath("userData"), "namespaces", namespace);
+    const sessionData = join(userData, "session");
+    // setPath requires the target to exist; mkdir sessionData also creates userData.
+    mkdirSync(sessionData, { recursive: true });
+    app.setPath("userData", userData);
+    app.setPath("sessionData", sessionData);
+  } catch (error) {
+    console.warn("[open-design desktop] dev userData namespace isolation skipped:", error);
+  }
+}
+
 export async function runDesktopMain(
   runtime: SidecarRuntimeContext<SidecarStamp>,
   options: DesktopMainOptions = {},
@@ -319,6 +353,13 @@ export async function runDesktopMain(
   // apps/packaged/src/logging.ts; both must stay in sync until the
   // helper is promoted to a shared workspace package.
   attachDesktopProcessErrorFilter();
+
+  // Dev (tools-dev) otherwise shares ONE Electron userData across every customer
+  // package, leaking WeChat/视频号 logins between packages via the shared cookie
+  // vault + Partitions. Scope it by namespace so dev is isolated like packaged.
+  // Packaged builds are a no-op here (launcher already relocated userData). Must
+  // precede app.whenReady and any session access below.
+  isolateDevUserDataByNamespace(runtime);
 
   // dev (tools-dev) enters here without a prior `whenReady` — so this
   // is where the `--lang` switch actually lands. In packaged builds
