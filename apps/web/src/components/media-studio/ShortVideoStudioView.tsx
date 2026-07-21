@@ -1,7 +1,7 @@
 // 短视频创作台 — spec: specs/current/media-studio.md
 //
 // 把 short-video-copy 总控 + 五个平台发布插件（抖音/小红书/快手/B站/视频号）
-// 的能力抽象成一个可视化工作台：选题 → 脚本 → 配音（可选）→ 成片 → 多平台发布。
+// 的能力抽象成一个可视化工作台：选题 → 脚本 → 上传成片 → 多平台发布(配音已移除)。
 // 数据/发布是确定性直调（大家来、火山 TTS、sau CLI），创意环节 AI 参与
 // （AI 写脚本/按建议改），全部落进共享的文章实体（platform: short-video）。
 //
@@ -29,7 +29,6 @@ import {
   fetchStudioTopics,
   lintStudioArticle,
   type StudioLintHit,
-  synthesizeStudioTts,
   updateStudioArticle,
   uploadStudioCover,
   uploadStudioVideo,
@@ -52,7 +51,7 @@ const PLATFORM = 'short-video';
 const LAST_ARTICLE_KEY = 'open-design:studio:last-video-article';
 
 // 知识库已升级为左侧导航一级入口(/knowledge,全创作台共用),不再是台内 tab。
-type VideoTab = 'topics' | 'script' | 'voice' | 'video' | 'publish' | 'list';
+type VideoTab = 'topics' | 'script' | 'video' | 'publish' | 'list';
 
 const SAU_PLATFORMS: Array<{ id: SauPlatformId; label: string }> = [
   { id: 'douyin', label: '抖音' },
@@ -158,7 +157,7 @@ function ScriptTimeline({ bodyMd }: { bodyMd: string }): JSX.Element | null {
 }
 
 // entryMode='embedded'(2026-07-18 单页创作流):内嵌统一创作台——隐藏台头/选题步,
-// 只露 脚本→配音→上传→发布,选中创作台指定的稿(articleId)。
+// 只露 脚本→上传→发布,选中创作台指定的稿(articleId)。
 export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full', articleId }: { platform?: SauPlatformId; entryMode?: 'full' | 'embedded'; articleId?: string } = {}): JSX.Element {
   const embedded = entryMode === 'embedded';
   const license = useLicense();
@@ -180,20 +179,6 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   const aiAnchorRef = useRef<HTMLDivElement | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [reviseNote, setReviseNote] = useState('');
-  const [ttsBusy, setTtsBusy] = useState(false);
-  // 试听音色：preview 音频独立存放，绝不覆盖正式配音。
-  const [voicePreviewUrl, setVoicePreviewUrl] = useState('');
-  const [voicePreviewBusy, setVoicePreviewBusy] = useState(false);
-  // 音色预设(2026-07-19):「制作视频→音色设计」保存的音色,配音时选用。
-  // '' = 不用预设(原火山复刻音色链路,行为不变)。
-  const [voicePresets, setVoicePresets] = useState<Array<{ id: string; name: string; provider: string; speakerId?: string }>>([]);
-  const [voicePresetId, setVoicePresetId] = useState('');
-  useEffect(() => {
-    void fetch('/api/media-studio/voice-presets')
-      .then((r) => (r.ok ? r.json() : { presets: [] }))
-      .then((d: { presets?: Array<{ id: string; name: string; provider: string; speakerId?: string }> }) => setVoicePresets(d.presets ?? []))
-      .catch(() => undefined);
-  }, []);
   const [videoUploadBusy, setVideoUploadBusy] = useState(false);
 
   const [coverUploadBusy, setCoverUploadBusy] = useState(false);
@@ -216,7 +201,6 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   const pendingRef = useRef<{ id: string; patch: UpdateMediaArticleRequest } | null>(null);
 
   const extra = (article?.extra ?? {}) as Record<string, unknown>;
-  const audioUrl = str(extra.audioUrl);
   const videoPath = str(extra.videoPath);
   const tags = str(extra.tags);
   // 右列预览 tab(2026-07-20 用户拍板:对照原爆款参考笔记卡收进右列,脚本区还给创作)。
@@ -513,26 +497,6 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
     await selectArticle(list[0]?.id ?? null);
   }
 
-  // ---- 配音 ----
-  async function handleTts() {
-    if (!article || ttsBusy) return;
-    await flushSave();
-    setTtsBusy(true);
-    setNotice(null);
-    const voice = str(extra.voice);
-    const result = await synthesizeStudioTts(PLATFORM, article.id, {
-      ...(voice ? { voice } : {}),
-      ...(voicePresetId ? { presetId: voicePresetId } : {}),
-    });
-    setTtsBusy(false);
-    if (result.error) {
-      setNotice({ ok: false, text: result.error });
-      return;
-    }
-    if (result.article) setArticle(result.article);
-    setNotice({ ok: true, text: '配音已生成，下面直接试听' });
-  }
-
   // ---- 发布 ----
   // 自动发布(sau 矩阵直传)已下线(2026-07-09 用户拍板):抖音等平台只走
   // 「带稿开后台 → 人工存草稿/发布」。daemon 端点与 od CLI 保留可恢复。
@@ -549,7 +513,6 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   const stepDone: Record<VideoTab, boolean> = {
     topics: visibleTopics.some((t) => t.status === 'used'),
     script: Boolean(article && article.title.trim() && article.bodyMd.trim()),
-    voice: Boolean(audioUrl),
     video: Boolean(videoPath.trim()),
     publish: article?.status === 'published',
     list: false,
@@ -558,10 +521,8 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   const TABS: Array<{ id: VideoTab; label: string; step: string; optional?: boolean }> = [
     ...(embedded ? [] : ([{ id: 'topics', label: '选题', step: '1' }] as const)),
     { id: 'script', label: '脚本', step: '2' },
-    // 授权裁剪:配音跟 cap.tts、成片(视频生成)跟 cap.video。客户口播自己拍不生视频时,
-    // 授权不含 cap.tts/cap.video → 这两步自动隐藏,只留 选题→脚本→发布。
-    ...(hasFeature(license, 'cap.tts') ? ([{ id: 'voice', label: '配音', step: '3', optional: true }] as const) : []),
-    // 「上传」=客户把自己剪好的成品视频传上来(不是AI生成);发布时自动带上文案+视频。始终保留。
+    // 配音步已移除(2026-07-21 用户拍板:短视频创作不需要配音——客户口播自己拍/已有成片)。
+    // 「上传」=客户把自己剪好的成品视频传上来(不是AI生成);发布时自动带上文案+视频。
     { id: 'video', label: '上传', step: '4' },
     { id: 'publish', label: '发布', step: '5' },
   ].map((t, i): { id: VideoTab; label: string; step: string; optional?: boolean } => ({ ...t, id: t.id as VideoTab, step: String(i + 1) })); // 裁剪后步骤号顺序化(1,2,3…不跳号)
@@ -820,94 +781,8 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                   }}
                 />
                 <div className={c('row')}>
-                  <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => setTab('voice')}>
-                    下一步：配音（可选） <Icon name="chevron-right" size={14} />
-                  </button>
-                </div>
-              </>
-            )
-          ) : null}
-
-          {tab === 'voice' ? (
-            !article ? (
-              emptyCta('配音属于某个作品——先去「脚本」新建。')
-            ) : (
-              <>
-                <div className={c('card')}>
-                  <div className={c('cardLabel')}>
-                    配音 · 可选
-                    <span className={c('cardHint')}>用口播脚本直接合成；可选「音色设计」保存的音色预设，或直接填火山复刻音色 ID</span>
-                  </div>
-                  <div className={c('row')}>
-                    <select
-                      className={c('select')}
-                      value={voicePresetId}
-                      title="音色预设——在「制作视频→音色设计」里设计并保存"
-                      onChange={(e) => setVoicePresetId(e.target.value)}
-                    >
-                      <option value="">默认链路(音色 ID/解说1号)</option>
-                      {voicePresets.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          🎙 {p.name}（{p.provider === 'qwen' ? '千问' : '火山'}）
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className={`${c('input')} ${c('grow')}`}
-                      value={str(extra.voice)}
-                      placeholder="音色 ID（可选，默认 S_M46v4EJ42 解说1号）"
-                      disabled={!!voicePresetId}
-                      onChange={(e) => editArticle({ extra: { voice: e.target.value } })}
-                    />
-                    <button
-                      type="button"
-                      className={c('btn')}
-                      disabled={voicePreviewBusy}
-                      title="用一句短文本快速听这个音色的语气节奏，不覆盖正式配音"
-                      onClick={() => {
-                        void (async () => {
-                          setVoicePreviewBusy(true);
-                          const voice = str(extra.voice).trim();
-                          const result = await synthesizeStudioTts(PLATFORM, article.id, {
-                            text: '大家好，这是当前音色的试听效果，听听语气和节奏合不合适。',
-                            ...(voice ? { voice } : {}),
-                            ...(voicePresetId ? { presetId: voicePresetId } : {}),
-                            preview: true,
-                          });
-                          setVoicePreviewBusy(false);
-                          if (result.error) studioToast.err(result.error);
-                          else if (result.url) setVoicePreviewUrl(result.url);
-                        })();
-                      }}
-                    >
-                      {voicePreviewBusy ? '试听生成中…' : '试听音色'}
-                    </button>
-                    <button
-                      type="button"
-                      className={`${c('btn')} ${c('btnPrimary')}`}
-                      disabled={ttsBusy || !article.bodyMd.trim()}
-                      onClick={() => void handleTts()}
-                    >
-                      {ttsBusy ? '合成中…' : '生成配音'}
-                    </button>
-                  </div>
-                  {voicePreviewUrl ? (
-                    <div className={c('row')}>
-                      <span className={c('cardHint')}>试听：</span>
-                      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                      <audio controls src={voicePreviewUrl} style={{ flex: 1, height: 32 }} />
-                    </div>
-                  ) : null}
-                  {audioUrl ? (
-                    // eslint-disable-next-line jsx-a11y/media-has-caption
-                    <audio controls src={audioUrl} style={{ width: '100%' }} />
-                  ) : (
-                    <div className={c('cardHint')}>还没有配音。不需要配音（真人出镜/已有成片）直接去下一步。</div>
-                  )}
-                </div>
-                <div className={c('row')}>
                   <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => setTab('video')}>
-                    下一步：成片 <Icon name="chevron-right" size={14} />
+                    下一步：上传 <Icon name="chevron-right" size={14} />
                   </button>
                 </div>
               </>
@@ -1103,10 +978,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
             <div className={`${c('notice')} ${notice.ok ? c('noticeOk') : c('noticeErr')}`}>{notice.text}</div>
           ) : null}
           {tab === 'script' && stepDone.script ? (
-            <NextStepBar hint="脚本完成；配音可选，也可以直接填成片" label="去配音" onGo={() => setTab('voice')} />
-          ) : null}
-          {tab === 'voice' && stepDone.voice ? (
-            <NextStepBar hint="配音就绪，下一步准备成片" label="去成片" onGo={() => setTab('video')} />
+            <NextStepBar hint="脚本完成，下一步上传你剪好的成片" label="去上传" onGo={() => setTab('video')} />
           ) : null}
           {tab === 'video' && stepDone.video ? (
             <NextStepBar hint="成片就绪，去发布——带稿开后台存草稿" label="去发布" onGo={() => setTab('publish')} />
@@ -1181,10 +1053,6 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
               <div className={c('videoCardMeta')}>
                 {str(extra.targetPlatform) || '抖音'} · {str(extra.tone) || '真诚口播'} · {estimateDuration(speechText) || '时长未知'}
               </div>
-              {audioUrl ? (
-                // eslint-disable-next-line jsx-a11y/media-has-caption
-                <audio controls src={audioUrl} style={{ width: '100%' }} />
-              ) : null}
               <div className={c('videoCardScript')}>
                 {speechText.trim() ? speechText.slice(0, 1200) : '口播脚本会显示在这里…'}
               </div>
