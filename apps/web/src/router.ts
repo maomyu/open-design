@@ -152,6 +152,10 @@ export function parseRoute(pathname: string): Route {
   if (parts[0] === 'knowledge') {
     return { kind: 'home', view: 'knowledge' };
   }
+  // 飞书数据中心 · 应用内镜像(2026-07-21)。
+  if (parts[0] === 'datacenter') {
+    return { kind: 'home', view: 'datacenter' };
+  }
   // 应用内后台标签页 — /browser/<platform>/<account>。
   if (parts[0] === 'browser' && parts[1] && parts[2]) {
     return {
@@ -218,6 +222,7 @@ export function buildPath(route: Route): string {
     if (route.view === 'studio-zhihu') return '/studio/zhihu';
     if (route.view === 'studio-weibo') return '/studio/weibo';
     if (route.view === 'knowledge') return '/knowledge';
+    if (route.view === 'datacenter') return '/datacenter';
     if (route.view === 'design-systems') return '/design-systems';
     if (route.view === 'integrations') return '/integrations';
     // 剩下 'home':主页对话框已下线,'/' 会解析回公众号创作台。

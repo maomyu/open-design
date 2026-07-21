@@ -192,6 +192,7 @@ function reviveTab(value: unknown): WorkspaceChromeTab | null {
       || view === 'studio-shipinhao'
       || view === 'studio-make'
       || view === 'knowledge'
+      || view === 'datacenter'
       || view === 'design-systems'
       || view === 'integrations'
     ) {
