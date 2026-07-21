@@ -249,24 +249,32 @@ def delete_record(fs: LarkCliBitable, p: dict) -> dict:
 
 
 def _fv(v):
-    """飞书字段值 → 展示友好的普通值(text 段取 text、多选取数组、人员/附件取名)。"""
+    """飞书字段值 → 展示友好的普通值。
+    text 段取 text、多选取数组、人员/附件取名;关联字段(只带 record id、无文本)显示
+    「🔗关联N条」而非空——否则一堆关联字段看着像空数据(实际有关联)。"""
     if isinstance(v, bool) or isinstance(v, (int, float)) or v is None:
         return v
     if isinstance(v, str):
         return v
     if isinstance(v, list):
-        out = []
+        texts = []
+        link_refs = 0
         for x in v:
             if isinstance(x, dict):
-                out.append(x.get("text") or x.get("name") or x.get("file_name") or x.get("full_name") or "")
-            else:
-                out.append(x)
-        out = [o for o in out if o not in (None, "")]
-        if len(out) == 1 and isinstance(out[0], str):
-            return out[0]
-        return out
+                t = x.get("text") or x.get("name") or x.get("file_name") or x.get("full_name")
+                if t:
+                    texts.append(t)
+                elif isinstance(x.get("id"), str) and x["id"].startswith("rec"):
+                    link_refs += 1  # 关联记录引用,只有 id 无显示文本
+            elif x not in (None, ""):
+                texts.append(x if isinstance(x, str) else str(x))
+        if texts:
+            return texts[0] if (len(texts) == 1 and link_refs == 0) else texts
+        if link_refs:
+            return f"🔗关联{link_refs}条"
+        return []
     if isinstance(v, dict):
-        return v.get("text") or v.get("name") or ""
+        return v.get("text") or v.get("name") or ("🔗已关联" if v.get("id") else "")
     return str(v)
 
 
