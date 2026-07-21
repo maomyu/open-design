@@ -8,6 +8,7 @@
   "status": "active",
   "features": [
     "note.xiaohongshu",
+    "sv.xiaohongshu",
     "article.zhihu",
     "article.weibo",
     "article.baidu-zhidao",
@@ -19,5 +20,5 @@
     "cap.publish",
     "cap.interaction"
   ],
-  "notes": "合同=AI自媒体营销机器人(桌面版):内容平台 小红书图文/知乎/微博/百度知道,能力=自动发布+关键词检索+自动评论回复+AI文案改写,企业知识库。百度知道 W12 已建(平台+浏览器检索);发布=回答注入/互动的选择器待真机(登录百度)校准。刻意不含:公众号(article.wechat-mp,不在合同)、全部短视频(sv.*)、配音(cap.tts)、制作视频(cap.video)。"
+  "notes": "合同=AI自媒体营销机器人(桌面版):内容平台 小红书(图文+视频)/知乎/微博/百度知道,能力=自动发布+关键词检索+自动评论回复+AI文案改写,企业知识库。2026-07-21 用户加 sv.xiaohongshu:小红书要图文+视频两个形态(视频形态采小红书视频爆款)。刻意不含:公众号(article.wechat-mp)、其它短视频(抖音/快手/B站/视频号 sv.*)、配音(cap.tts)、制作视频(cap.video)。"
 }
