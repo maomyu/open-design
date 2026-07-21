@@ -1119,8 +1119,11 @@ async function shipinhaoFormReady(wv: DraftWebview): Promise<boolean> {
   return ok === true;
 }
 
-/** 视频上传状态:'done'=有视频预览/「删除」按钮(传完并转码出预览);'uploading'=页面
- *  有上传中/百分比迹象;'empty'=上传框还是空的。跨 iframe 探测。 */
+/** 视频上传状态:'uploading'=有上传中/转码/百分比迹象;'done'=没有任何上传中迹象且出现
+ *  视频预览/「删除」按钮(真传完);'empty'=上传框还是空的。跨 iframe 探测。
+ *  ⚠️ 顺序关键(2026-07-21 用户报「视频还没传完就去点保存」):必须【先】判上传中——
+ *  客户端预览的 <video>/删除按钮在上传过程中就会出现,先看它会误判 done、提前点保存导致
+ *  存了没视频的空草稿。只要页面还有「上传中/转码/x%」就一律 uploading。 */
 async function shipinhaoVideoUploadState(wv: DraftWebview): Promise<'done' | 'uploading' | 'empty'> {
   const r = await wvEval<string>(
     wv,
@@ -1129,15 +1132,23 @@ async function shipinhaoVideoUploadState(wv: DraftWebview): Promise<'done' | 'up
       for (const f of document.querySelectorAll('iframe')) {
         try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) { /* skip */ }
       }
+      // 1) 先判「还在传/转码」——有任何进度迹象就没完,哪怕预览元素已出现。
+      for (const d of docs) {
+        const t = (d.body && d.body.innerText) || '';
+        if (/上传中|正在上传|上传视频中|转码中?|处理中|发布中|请稍候|\\d{1,3}\\s*%/.test(t)) return 'uploading';
+        // 进度条元素(微信上传器用 progress/带 width% 的进度条)也算在传。
+        if (d.querySelector('progress, [class*="progress"], [class*="uploading"], [class*="loading"]')) {
+          // 但纯 loading 骨架不算;只有同时能看到视频容器且没进度文字时才算传完(下面第2步)。
+          const hasPct = /\\d{1,3}\\s*%/.test(t);
+          if (hasPct) return 'uploading';
+        }
+      }
+      // 2) 没有任何上传中迹象 + 出现视频预览/「删除」按钮 = 真传完。
       for (const d of docs) {
         if (d.querySelector('video')) return 'done';
         for (const b of d.querySelectorAll('button, [role=button]')) {
           if ((b.textContent || '').trim() === '删除' && b.getClientRects().length > 0) return 'done';
         }
-      }
-      for (const d of docs) {
-        const t = (d.body && d.body.innerText) || '';
-        if (/上传中|正在上传|转码|\\d{1,3}\\s*%/.test(t)) return 'uploading';
       }
       return 'empty';
     })()`,
@@ -1294,22 +1305,32 @@ async function injectShipinhao(wv: DraftWebview, draft: DraftPayload, progress: 
   progress('1/4 提交视频(自动上传)…');
   const uploadDeadline = Date.now() + 5 * 60_000;
   let injected = false;
+  // 稳定确认(2026-07-21 用户报「视频还没传完就去点保存」):必须【连续 2 次】探到 done 且中间
+  // 隔一拍,才认定真传完——防上传中途某一帧进度文字恰好消失被误判 done、提前点保存存了空草稿。
+  let doneStreak = 0;
   while (Date.now() < uploadDeadline) {
     const state = await shipinhaoVideoUploadState(wv);
-    if (state === 'done') break;
-    if (state === 'empty' && !injected) {
-      const r = await setFiles(wv, [video], 'input[type=file][accept*="video"], input[type=file]');
-      if (r.ok) {
-        injected = true;
-        progress('1/4 视频上传/转码中…');
+    if (state === 'done') {
+      doneStreak += 1;
+      if (doneStreak >= 2) break;
+    } else {
+      doneStreak = 0;
+      if (state === 'empty' && !injected) {
+        const r = await setFiles(wv, [video], 'input[type=file][accept*="video"], input[type=file]');
+        if (r.ok) {
+          injected = true;
+          progress('1/4 视频上传/转码中…(传完转码好才会自动填写+保存,别急)');
+        }
       }
     }
     await sleep(2500);
   }
+  // 收尾再稳一拍复核:仍非 done 就报错,别在上传中途点保存。
+  await sleep(1500);
   if ((await shipinhaoVideoUploadState(wv)) !== 'done') {
     return {
       ok: false,
-      detail: '视频没上传成功——请在下方页面手动把成片拖入上传区,传完再点一次「一键存草稿」(我会接着自动填写+保存草稿)',
+      detail: '视频没上传成功(或还在转码)——请在下方页面确认视频已完全传好(进度100%、能预览),再点一次「一键存草稿」',
     };
   }
 
@@ -1426,6 +1447,29 @@ async function waitForLogin(wv: DraftWebview, platform: string, label: string, p
   return false;
 }
 
+/** 确保 webview 停在该平台发布页——当前 pathname 不是发布页(如停在平台首页)就导过去并等
+ *  页面加载。已在发布页则不动(不重复 reload)。所有平台一致(2026-07-21 用户报视频号登录后
+ *  停首页存草稿不跳转)。 */
+async function ensureOnPublishPage(wv: DraftWebview, platform: string, label: string, progress: DraftProgress): Promise<void> {
+  const publishUrl = DRAFT_PUBLISH_URL[platform];
+  if (!publishUrl) return;
+  let targetPath = '';
+  try { targetPath = new URL(publishUrl).pathname; } catch { return; }
+  let curPath = '';
+  try { curPath = new URL(wv.getURL()).pathname; } catch { /* 无 URL 视为不在发布页 */ }
+  if (curPath.startsWith(targetPath)) return; // 已在发布页
+  progress(`打开${label}发布页…`);
+  try { await wv.executeJavaScript(`location.href=${JSON.stringify(publishUrl)}`); } catch { /* ignore */ }
+  // 等发布页加载好(轮询 pathname 命中,最多 12 秒)。
+  const deadline = Date.now() + 12_000;
+  while (Date.now() < deadline) {
+    await sleep(1000);
+    let p = '';
+    try { p = new URL(wv.getURL()).pathname; } catch { /* skip */ }
+    if (p.startsWith(targetPath)) { await sleep(1500); return; }
+  }
+}
+
 export async function runDraftInjection(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
   const adapter = ADAPTERS[draft.platform];
   if (!adapter) {
@@ -1437,6 +1481,11 @@ export async function runDraftInjection(wv: DraftWebview, draft: DraftPayload, p
     if (!(await waitForLogin(wv, draft.platform, label, progress))) {
       return { ok: false, detail: `${label}还没登录——请去左侧「账号」页给${label}添加账号并扫码登录,再回来点一次「一键存草稿」` };
     }
+    // 确保停在发布页再注入(2026-07-21 用户报:标签已开在平台首页时——如视频号登录后停在
+    // /platform 首页——存草稿不跳发布页,适配器在首页跑找不到上传/表单)。不管当前是哪一页,
+    // 只要 pathname 不是发布页就导过去。waitForLogin 的「刚登录」分支已导过的,这里 pathname
+    // 命中直接跳过、不重复导航。所有平台一致。
+    await ensureOnPublishPage(wv, draft.platform, label, progress);
     return await adapter(wv, draft, progress);
   } catch (err) {
     return { ok: false, detail: `自动填稿中断(${err instanceof Error ? err.message : String(err)})——文案在剪贴板,请手动接手` };
