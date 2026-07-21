@@ -1235,9 +1235,29 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     res.json({ tables: DATACENTER_TABLES });
   });
 
-  app.get('/api/datacenter/:tableKey/records', (req, res) => {
+  app.get('/api/datacenter/:tableKey/records', async (req, res) => {
     const table = datacenterTableByKey(req.params.tableKey);
     if (!table) return bad(res, 404, `未知数据中心表:${req.params.tableKey}`);
+    // 引擎产出表(选题池/成品/复盘/原始库/拆解库):数据是引擎写飞书的,这里【从飞书拉取】
+    // 只读展示(app 本地没有);用户维护表读本地库。
+    if (table.owner === 'engine') {
+      if (!feishuSync) return res.json({ records: [] });
+      try {
+        const r = await feishuSync('list-record', { table: table.feishuName, limit: 200 });
+        const rows: Array<{ id?: string; fields?: Record<string, unknown> }> = Array.isArray(r?.rows) ? r.rows : [];
+        const records: DatacenterRecord[] = rows.map((row) => ({
+          id: String(row.id ?? ''),
+          tableKey: table.key,
+          fields: row.fields ?? {},
+          feishuRecordId: String(row.id ?? ''),
+          syncState: 'synced',
+          updatedAt: 0,
+        }));
+        return res.json({ records });
+      } catch (err) {
+        return res.json({ records: [], error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     res.json({ records: listDatacenterRecords(db, table.key) });
   });
 

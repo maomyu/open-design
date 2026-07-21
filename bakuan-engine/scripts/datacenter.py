@@ -248,6 +248,48 @@ def delete_record(fs: LarkCliBitable, p: dict) -> dict:
         return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
+def _fv(v):
+    """飞书字段值 → 展示友好的普通值(text 段取 text、多选取数组、人员/附件取名)。"""
+    if isinstance(v, bool) or isinstance(v, (int, float)) or v is None:
+        return v
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        out = []
+        for x in v:
+            if isinstance(x, dict):
+                out.append(x.get("text") or x.get("name") or x.get("file_name") or x.get("full_name") or "")
+            else:
+                out.append(x)
+        out = [o for o in out if o not in (None, "")]
+        if len(out) == 1 and isinstance(out[0], str):
+            return out[0]
+        return out
+    if isinstance(v, dict):
+        return v.get("text") or v.get("name") or ""
+    return str(v)
+
+
+def list_record(fs: LarkCliBitable, p: dict) -> dict:
+    """通用读:daemon 传 {table 中文表名, limit?}。返回 {ok, rows:[{id, fields:{中文字段:值}}]}。
+    引擎产出表(选题池/成品/复盘/原始库/拆解库)是引擎写飞书的,app 数据中心据此拉取只读展示。"""
+    table = p.get("table") or ""
+    if not table:
+        return {"ok": False, "error": "缺少 table"}
+    try:
+        limit = int(p.get("limit") or 200)
+    except (TypeError, ValueError):
+        limit = 200
+    try:
+        rows = []
+        for r in fs.list_records(table)[:limit]:
+            f = r.get("fields", {})
+            rows.append({"id": r.get("record_id", ""), "fields": {k: _fv(v) for k, v in f.items()}})
+        return {"ok": True, "rows": rows}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
 # ── 辅助 ──
 def _upsert(fs: LarkCliBitable, table: str, record_id: str, fields: dict) -> str:
     """有 record_id 走 update（幂等），否则 add 拿新 record_id。"""
@@ -283,7 +325,7 @@ HANDLERS = {
     "push-draft": push_draft, "push-review": push_review,
     "list-monitor": list_monitor, "push-monitor": push_monitor, "delete-monitor": delete_monitor,
     "list-config": list_config, "push-config": push_config,
-    "push-record": push_record, "delete-record": delete_record,
+    "push-record": push_record, "delete-record": delete_record, "list-record": list_record,
 }
 
 

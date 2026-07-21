@@ -139,6 +139,7 @@ export function DataCenterView(): JSX.Element {
   const [editing, setEditing] = useState<{ id: string | 'new'; form: FormState } | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false); // 侧栏表列表一键收缩,给表格让宽
 
   const table = useMemo(() => DATACENTER_TABLES.find((t) => t.key === activeKey)!, [activeKey]);
   const front = DATACENTER_TABLES.filter((t) => t.stage === 'front');
@@ -158,11 +159,13 @@ export function DataCenterView(): JSX.Element {
     void load(activeKey);
   }, [activeKey, load]);
 
-  // 进页面就并行拉全表计数,左侧列表一开就显真实条数(不用逐个点开才更新)。
+  // 进页面并行拉【用户表】计数(本地、快);引擎表要读飞书(慢),留到点开该表再拉。
   useEffect(() => {
     let alive = true;
     void Promise.all(
-      DATACENTER_TABLES.map(async (t) => [t.key, (await fetchDatacenterRecords(t.key)).length] as const),
+      DATACENTER_TABLES.filter((t) => t.owner === 'user').map(
+        async (t) => [t.key, (await fetchDatacenterRecords(t.key)).length] as const,
+      ),
     ).then((pairs) => {
       if (alive) setCounts((c) => ({ ...Object.fromEntries(pairs), ...c }));
     });
@@ -232,7 +235,7 @@ export function DataCenterView(): JSX.Element {
         </p>
       </header>
 
-      <div className={styles.wrap}>
+      <div className={`${styles.wrap}${collapsed ? ` ${styles.wrapCollapsed}` : ''}`}>
         {/* 左：表列表 */}
         <div className={styles.tableList}>
           <div className={styles.groupLabel}>前台 · 常用</div>
@@ -264,6 +267,14 @@ export function DataCenterView(): JSX.Element {
         {/* 右：记录面板 */}
         <div className={styles.panel}>
           <div className={styles.head}>
+            <button
+              type="button"
+              className={styles.collapseBtn}
+              onClick={() => setCollapsed((v) => !v)}
+              title={collapsed ? '展开表列表' : '收起表列表(给表格让宽)'}
+            >
+              {collapsed ? '☰ 表' : '«'}
+            </button>
             <h2 className={styles.title}>{table.label}</h2>
             <span className={styles.ownerBadge}>{isUser ? '你维护 · 推飞书' : '引擎产出 · 只读'}</span>
           </div>

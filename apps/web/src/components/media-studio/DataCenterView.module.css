@@ -5,6 +5,28 @@
   gap: 18px;
   align-items: start;
 }
+/* 收起表列表:表格占满宽度(横向不够时底部滚动条滚) */
+.wrapCollapsed {
+  grid-template-columns: 1fr;
+}
+.wrapCollapsed .tableList {
+  display: none;
+}
+.collapseBtn {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.14));
+  background: var(--surface-1, #fff);
+  cursor: pointer;
+  color: var(--text-secondary, #666);
+  transition: background 0.14s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.collapseBtn:hover {
+  background: var(--surface-2, rgba(0, 0, 0, 0.05));
+}
 
 .tableList {
   display: flex;
