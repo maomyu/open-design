@@ -9,7 +9,7 @@
  * 档案目录：<RUNTIME_DATA_DIR>/browser-profiles/<platform>-<account>/
  */
 import { spawn } from 'node:child_process';
-import { access, mkdir, readdir, stat } from 'node:fs/promises';
+import { access, mkdir, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 /** 各平台创作者发布页直达地址（打开即到发布界面，少一步找入口）。 */
@@ -92,6 +92,28 @@ export async function openProfileBrowser(opts: {
   );
   child.unref();
   return { profileDir, url };
+}
+
+/**
+ * 退出登录 / 换号（网页版 / CLI 路径）：删掉该 平台×账号 的 daemon 侧浏览器档案目录，
+ * 下次「打开登录」是干净会话。对称于 openProfileBrowser。
+ *
+ * 注意：桌面 app 登录走的是【桌面端内置 webview + cookie 保险库】(daemon 够不着那条
+ * 会话)，桌面端「退出/换号」按钮经 host 桥清那一条；这里清的是 daemon 侧独立档案，
+ * 供网页版降级和 `od studio browser logout` 用。
+ */
+export async function logoutProfileBrowser(opts: {
+  root: string;
+  platform: string;
+  account: string;
+}): Promise<{ profileDir: string; removed: boolean }> {
+  const profileDir = profileDirFor(opts.root, opts.platform, opts.account);
+  try {
+    await rm(profileDir, { recursive: true, force: true });
+    return { profileDir, removed: true };
+  } catch {
+    return { profileDir, removed: false };
+  }
 }
 
 /** 已有的浏览器档案列表（平台/账号/最近使用时间）。 */

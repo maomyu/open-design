@@ -58,7 +58,7 @@ import { generateVolcImage, VolcImageError } from './media-studio/volc-image.js'
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
 import { lintContent } from './media-studio/lint.js';
-import { BrowserError, openProfileBrowser, PLATFORM_PUBLISH_URLS, revealInFinder } from './media-studio/browser.js';
+import { BrowserError, logoutProfileBrowser, openProfileBrowser, PLATFORM_PUBLISH_URLS, revealInFinder } from './media-studio/browser.js';
 import { createHandoffBus, HANDOFF_PLATFORMS, HandoffError, isHandoffPlatform } from './media-studio/handoff-jobs.js';
 import { createCollectBus, COLLECT_PLATFORMS, CollectError, isCollectPlatform } from './media-studio/collect-jobs.js';
 import type {
@@ -1247,6 +1247,19 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       res.json({ ok: true, ...result });
     } catch (err) {
       bad(res, err instanceof BrowserError ? 422 : 500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.post('/api/media-studio/browser/logout', async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as { platform?: string; account?: string };
+      const platform = String(body.platform ?? '').trim();
+      const account = String(body.account ?? '').trim() || 'main';
+      if (!platform) return bad(res, 400, '缺少 platform');
+      const result = await logoutProfileBrowser({ root: paths.RUNTIME_DATA_DIR, platform, account });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      bad(res, 500, err instanceof Error ? err.message : String(err));
     }
   });
 

@@ -27,8 +27,8 @@ import type {
   UpdateMediaArticleRequest,
   UpdateMediaTopicRequest,
 } from '@open-design/contracts';
-import { isOpenDesignHostBrowserAvailable, openHostBrowserProfile } from '@open-design/host';
-import { BROWSER_PLATFORM_TITLES, normalizeBrowserPlatform, openBrowserPane } from '../runtime/browser-panes';
+import { clearHostBrowserProfile, isOpenDesignHostBrowserAvailable, isOpenDesignHostClearProfileAvailable, openHostBrowserProfile } from '@open-design/host';
+import { BROWSER_PLATFORM_TITLES, normalizeBrowserPlatform, notifyBrowserTabClosed, openBrowserPane } from '../runtime/browser-panes';
 import { openWebTab } from '../runtime/web-tabs';
 
 const ROOT = '/api/media-studio';
@@ -1019,6 +1019,38 @@ export async function openStudioBrowser(body: {
     });
     const data = (await resp.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     if (!resp.ok) return { error: data.error ?? `打开浏览器失败 (${resp.status})` };
+    return data;
+  } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
+/**
+ * 「退出登录 / 换号」:清掉该 平台×账号 的登录态,让下次「打开登录」是干净二维码
+ * (不被旧会话回灌顶进错号,如视频号扫到没有视频号助手权限的微信)。
+ * 桌面端走 host 桥清【实时会话 + 保险库档案】并销毁已开的后台标签;网页版降级
+ * 走 daemon /browser/logout 清 daemon 侧档案。
+ */
+export async function logoutStudioBrowser(body: {
+  platform: string;
+  account: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  const platform = normalizeBrowserPlatform(body.platform);
+  const account = body.account.trim() || 'main';
+  if (isOpenDesignHostClearProfileAvailable()) {
+    const r = await clearHostBrowserProfile({ platform, account });
+    // 清完销毁已开的后台标签,让重新「打开登录」新建 webview 挂到干净分区。
+    if (r.ok) notifyBrowserTabClosed(platform, account);
+    return r.ok ? { ok: true } : { error: r.reason };
+  }
+  try {
+    const resp = await fetch(`${ROOT}/browser/logout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, account }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!resp.ok) return { error: data.error ?? `退出登录失败 (${resp.status})` };
     return data;
   } catch {
     return { error: '连不上本地服务（daemon）' };

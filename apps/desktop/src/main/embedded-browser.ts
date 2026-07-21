@@ -396,6 +396,54 @@ export function registerEmbeddedBrowserCookieBridge(): void {
   });
 }
 
+const CLEAR_PROFILE_IPC_CHANNEL = "od:browser:clear-profile";
+
+/**
+ * 退出登录 / 换号:清掉某个 平台×账号 登录分区的**全部**会话——
+ *  1) 清空该分区的实时 cookie/storage（当前内存登录态立即失效）；
+ *  2) 删除保险库档案（含并发写留下的 `.tmp` 半截档），回灌不再复活死会话；
+ *  3) 忘掉本次运行的回灌记录，让之后重新「打开登录」能干净重新扫码。
+ *
+ * 为什么需要：内置浏览器"登一次长期保持"靠保险库回灌，但一旦存了个**错号/过期**
+ * 会话（如视频号扫到没有视频号助手权限的微信号），每次打开都被回灌顶进错号、
+ * 弹「没有可登录的视频号」，而账号页原本没有清除入口，只能手删档案。此桥给
+ * 「退出/换号」按钮用，清完下次就是干净二维码。只动**这一个**分区，其他平台/
+ * 账号的登录态不受影响。
+ */
+export function registerEmbeddedBrowserClearBridge(): void {
+  ipcMain.removeHandler(CLEAR_PROFILE_IPC_CHANNEL);
+  ipcMain.handle(CLEAR_PROFILE_IPC_CHANNEL, async (_event, raw: unknown) => {
+    if (!isRecord(raw)) return { ok: false, reason: "invalid clear-profile request" };
+    const platform = sanitizeProfileSegment(raw.platform);
+    const account = sanitizeProfileSegment(raw.account) ?? "main";
+    if (platform == null) return { ok: false, reason: "invalid platform for clear-profile" };
+    const partition = `${PARTITION_PREFIX}${platform}-${account}`;
+    try {
+      // 1) 实时会话:清空该分区 cookie/localStorage/cache 等(内存登录态立即失效)。
+      await session.fromPartition(partition).clearStorageData();
+      // 2) 保险库:删正式档案 + 同名 .tmp 半截档,回灌不再复活死会话。
+      const vaultFile = cookieVaultFileFor(partition);
+      await fs.rm(vaultFile, { force: true }).catch(() => undefined);
+      try {
+        const base = path.basename(vaultFile);
+        for (const f of await fs.readdir(cookieVaultDir())) {
+          if (f.startsWith(`${base}.`) && f.endsWith(".tmp")) {
+            await fs.rm(path.join(cookieVaultDir(), f), { force: true }).catch(() => undefined);
+          }
+        }
+      } catch {
+        /* 保险库目录不在=没存过,正常 */
+      }
+      // 3) 忘掉本次运行的追踪,让之后重新登录能干净重新 track+回灌。
+      cookieVaultPartitions.delete(partition);
+      restoredPartitionsThisRun.delete(partition);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
+}
+
 const SET_FILE_INPUT_IPC_CHANNEL = "od:browser:set-file-input";
 
 /**

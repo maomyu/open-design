@@ -23,7 +23,7 @@ import {
   savePlatformAccount,
   deletePlatformAccountApi,
 } from '../providers/daemon';
-import { openStudioBrowser } from '../providers/media-studio';
+import { logoutStudioBrowser, openStudioBrowser } from '../providers/media-studio';
 import { FeishuDataCenterSection } from './FeishuDataCenterSection';
 import { MonitorConfigSection } from './MonitorConfigSection';
 import { OpsSection } from './OpsSection';
@@ -247,6 +247,26 @@ function PlatformCard({
                   >
                     <Icon name="external-link" size={12} />
                     <span>打开登录</span>
+                  </button>
+                  {/* 退出/换号:清掉该账号在本平台的登录态(实时会话+保险库档案),下次
+                      「打开登录」是干净二维码。修「回灌残留会话顶进错号」——如视频号扫到
+                      没有视频号助手权限的微信号后一直登不进。只清这一个 平台×账号。 */}
+                  <button
+                    type="button"
+                    className="plugin-edit-view__step-link"
+                    title="退出该账号在本平台的登录（清除登录态 + 保险库档案，下次「打开登录」重新扫码换号）。只清这一个平台×账号，不影响其他账号。"
+                    onClick={async () => {
+                      if (!window.confirm(`确定退出「${a.name}」的${platform.title}登录？会清掉登录态，下次要重新扫码。`)) return;
+                      const r = await logoutStudioBrowser({ platform: platform.id, account: a.name });
+                      await onChanged(
+                        r.error
+                          ? `退出失败：${r.error}`
+                          : `已退出「${a.name}」的${platform.title}登录——点「打开登录」重新扫码换号`,
+                      );
+                    }}
+                  >
+                    <Icon name="refresh" size={12} />
+                    <span>退出/换号</span>
                   </button>
                   <button
                     type="button"

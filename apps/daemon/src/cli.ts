@@ -3040,7 +3040,22 @@ async function runStudio(args) {
       if (!resp.ok) { console.error(`browser open failed: ${data?.error ?? resp.status}`); process.exit(1); }
       return out(data, '已拉起独立档案浏览器(登录态与桌面端面板分区不互通,注入发布请用 handoff)');
     }
-    console.error('Usage: od studio browser open --target <平台> [--account 名] | browser urls');
+    if (action === 'logout') {
+      const target = typeof flags.target === 'string' && flags.target ? flags.target : '';
+      if (!target) { console.error('Usage: od studio browser logout --target <平台> [--account 名]'); process.exit(2); }
+      const resp = await fetch(`${root}/browser/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: target,
+          account: typeof flags.account === 'string' && flags.account ? flags.account : 'main',
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) { console.error(`browser logout failed: ${data?.error ?? resp.status}`); process.exit(1); }
+      return out(data, '已清 daemon 侧浏览器档案(桌面端内置浏览器登录请在账号页点「退出/换号」)');
+    }
+    console.error('Usage: od studio browser open --target <平台> [--account 名] | browser logout --target <平台> [--account 名] | browser urls');
     process.exit(2);
   }
   if (sub === 'ai') {

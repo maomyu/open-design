@@ -6,6 +6,7 @@ import type {
   OpenDesignHostBrowserProfileRequest,
   OpenDesignHostSetFileInputRequest,
   OpenDesignHostExportCookiesRequest,
+  OpenDesignHostClearProfileRequest,
   OpenDesignHostExportCookiesResult,
   OpenDesignHostFailure,
   OpenDesignHostProjectImportResult,
@@ -270,6 +271,21 @@ const browser = {
         isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
           ? result.reason
           : 'file input injection failed';
+      return actionFailure(reason);
+    } catch (error) {
+      return actionFailure(reasonFromError(error));
+    }
+  },
+  // 「退出登录 / 换号」:清掉该 平台×账号 分区的实时会话 + 保险库档案,让下次
+  // 「打开登录」是干净二维码,不被旧会话回灌顶进错号(如视频号扫到错微信)。
+  clearProfile: async (request: OpenDesignHostClearProfileRequest): Promise<OpenDesignHostActionResult> => {
+    try {
+      const result = await ipcRenderer.invoke('od:browser:clear-profile', request);
+      if (isRecord(result) && result.ok === true) return { ok: true };
+      const reason =
+        isRecord(result) && typeof result.reason === 'string' && result.reason.length > 0
+          ? result.reason
+          : 'clear session failed';
       return actionFailure(reason);
     } catch (error) {
       return actionFailure(reasonFromError(error));

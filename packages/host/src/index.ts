@@ -231,6 +231,13 @@ export type OpenDesignHostExportCookiesResult =
   | { ok: true; cookieFile: string; count: number }
   | OpenDesignHostFailure;
 
+/** 退出登录/换号：清掉该 平台×账号 登录分区的实时会话 + 保险库档案。 */
+export type OpenDesignHostClearProfileRequest = {
+  /** 平台 id（如 "shipinhao"）+ 账号，定位到那条持久登录分区。 */
+  platform: string;
+  account: string;
+};
+
 export type OpenDesignHostBridge = {
   // Optional capability: hosts older than the embedded-browser feature do
   // not expose it, and the renderer falls back to its non-embedded path.
@@ -240,6 +247,8 @@ export type OpenDesignHostBridge = {
     setFileInput?(request: OpenDesignHostSetFileInputRequest): Promise<OpenDesignHostActionResult>;
     /** Optional (newer hosts): 导出该平台登录分区的 cookie 给下载器带真实会话。 */
     exportCookies?(request: OpenDesignHostExportCookiesRequest): Promise<OpenDesignHostExportCookiesResult>;
+    /** Optional (newer hosts): 退出登录/换号——清该平台登录分区的实时会话 + 保险库档案。 */
+    clearProfile?(request: OpenDesignHostClearProfileRequest): Promise<OpenDesignHostActionResult>;
   };
   client: OpenDesignHostClient;
   pdf: {
@@ -491,6 +500,27 @@ export async function exportHostBrowserCookies(
   }
   try {
     return await exportCookies(request);
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export function isOpenDesignHostClearProfileAvailable(scope: OpenDesignHostGlobalScope = globalThis): boolean {
+  return typeof getOpenDesignHost(scope)?.browser?.clearProfile === "function";
+}
+
+/** 退出登录/换号：清该 平台×账号 登录分区的实时会话 + 保险库档案（仅桌面宿主）。 */
+export async function clearHostBrowserProfile(
+  request: OpenDesignHostClearProfileRequest,
+  scope: OpenDesignHostGlobalScope = globalThis,
+): Promise<OpenDesignHostActionResult> {
+  const host = getOpenDesignHost(scope);
+  const clearProfile = host?.browser?.clearProfile;
+  if (typeof clearProfile !== "function") {
+    return unavailable("host clear-profile is not available (older desktop build)");
+  }
+  try {
+    return await clearProfile(request);
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : String(error));
   }
