@@ -1273,7 +1273,11 @@ export function topicOriginPlatform(url?: string | null): string {
   if (/douyin\.com|iesdouyin\.com/.test(u)) return 'douyin';
   if (/kuaishou\.com|chenzhongtech\.com/.test(u)) return 'kuaishou';
   if (/bilibili\.com|b23\.tv/.test(u)) return 'bilibili';
-  if (/channels\.weixin\.qq\.com/.test(u)) return 'channels';
+  // 视频号(source id=channels):真抓爆款的候选 url 是极致数据(dajiala)的视频 CDN 直链
+  // finder.video.qq.com + #odk=解密key,不是 channels.weixin.qq.com 后台链——只认后者会把
+  // 视频号候选判成 'other' 被平台过滤器滤掉、候选列表不显示(2026-07-21 用户报「视频号存候选
+  // 列表没显示」)。按视频号候选的真实 url 特征(finder.video / #odk)一并认。
+  if (/channels\.weixin\.qq\.com|finder\.video|#odk=/.test(u)) return 'channels';
   return 'other';
 }
 
