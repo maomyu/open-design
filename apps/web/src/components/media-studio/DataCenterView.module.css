@@ -121,7 +121,98 @@
   margin-bottom: 12px;
 }
 
-/* 记录卡片 */
+/* 表格视图 */
+.tableScroll {
+  overflow-x: auto;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 10px;
+  background: var(--surface-1, #fff);
+}
+.table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.table th,
+.table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  text-align: left;
+  vertical-align: top;
+}
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-2, #f6f5f2);
+  font-weight: 500;
+  opacity: 0.85;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.14));
+}
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+.table tbody tr:hover td {
+  background: var(--surface-2, rgba(0, 0, 0, 0.02));
+}
+.table td {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 主字段列冻结在左，横向滚动时保留上下文 */
+.stickyCol {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface-1, #fff);
+  font-weight: 500;
+  box-shadow: 1px 0 0 var(--border, rgba(0, 0, 0, 0.08));
+}
+.table th.stickyCol {
+  z-index: 3;
+  background: var(--surface-2, #f6f5f2);
+}
+.table tbody tr:hover td.stickyCol {
+  background: var(--surface-2, #f4f3f0);
+}
+.actionsCol {
+  position: sticky;
+  right: 0;
+  background: var(--surface-1, #fff);
+  box-shadow: -1px 0 0 var(--border, rgba(0, 0, 0, 0.08));
+  white-space: nowrap;
+}
+.table th.actionsCol {
+  background: var(--surface-2, #f6f5f2);
+}
+.table tbody tr:hover td.actionsCol {
+  background: var(--surface-2, #f4f3f0);
+}
+.syncDot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.dotLocal {
+  background: var(--text-warning, #c99a2e);
+}
+.dotSynced {
+  background: var(--text-success, #1d9e75);
+}
+.dotError {
+  background: var(--text-danger, #d85a30);
+}
+.cellEmpty {
+  opacity: 0.3;
+}
+
+/* 记录卡片(保留，暂未用) */
 .records {
   display: flex;
   flex-direction: column;

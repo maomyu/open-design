@@ -4,7 +4,7 @@
 // 右侧对选中表做记录 CRUD。owner=user 的 5 张表(监控/素材/风格/Prompt/系统配置)
 // 全增删改 + 同步飞书 + 同步态标记;owner=engine 的 5 张第一期只读展示(引擎产出,
 // 第二期接回填)。中文文案不进 i18n(客户定制惯例)。
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   DATACENTER_TABLES,
   type DatacenterField,
@@ -172,6 +172,11 @@ export function DataCenterView(): JSX.Element {
   }, []);
 
   const editableFields = table.fields.filter(isEditable);
+  // 表格列:主字段排首(冻结列),其余按 schema 顺序。
+  const primaryFieldDef = table.fields.find((f) => f.name === table.primaryField);
+  const orderedCols = primaryFieldDef
+    ? [primaryFieldDef, ...table.fields.filter((f) => f.name !== table.primaryField)]
+    : [...table.fields];
 
   async function submitForm() {
     if (!editing) return;
@@ -318,67 +323,75 @@ export function DataCenterView(): JSX.Element {
           ) : records.length === 0 ? (
             <div className={styles.empty}>{isUser ? '还没有记录，点「＋ 新建」加一条。' : '暂无数据。'}</div>
           ) : (
-            <div className={styles.records}>
-              {records.map((rec) => {
-                const titleVal = displayValue(
-                  table.fields.find((f) => f.name === table.primaryField)!,
-                  rec.fields[table.primaryField],
-                );
-                const chips = table.fields.filter(
-                  (f) => f.name !== table.primaryField && displayValue(f, rec.fields[f.name]) !== '',
-                );
-                return (
-                  <div key={rec.id} className={styles.card}>
-                    <div className={styles.cardHead}>
-                      <span className={styles.cardTitle}>{titleVal || '（未命名）'}</span>
-                      <div className={styles.cardActions}>
-                        <span
-                          className={`${styles.sync} ${
-                            rec.syncState === 'synced'
-                              ? styles.syncSynced
-                              : rec.syncState === 'error'
-                                ? styles.syncError
-                                : styles.syncLocal
-                          }`}
-                          title={rec.syncError ?? ''}
-                        >
-                          {rec.syncState === 'synced' ? '已同步飞书' : rec.syncState === 'error' ? '同步失败' : '仅本地'}
-                        </span>
-                        {isUser ? (
-                          <>
-                            <button
-                              type="button"
-                              className={styles.iconBtn}
-                              disabled={busy}
-                              onClick={() => setEditing({ id: rec.id, form: initialForm(table, rec) })}
-                            >
-                              编辑
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.iconBtn}
-                              disabled={busy}
-                              onClick={() => removeRecord(rec)}
-                            >
-                              删除
-                            </button>
-                          </>
-                        ) : null}
-                      </div>
-                    </div>
-                    {chips.length ? (
-                      <div className={styles.fieldGrid}>
-                        {chips.map((f) => (
-                          <Fragment key={f.name}>
-                            <span className={styles.fieldKey}>{f.name}</span>
-                            <span className={styles.fieldVal}>{displayValue(f, rec.fields[f.name])}</span>
-                          </Fragment>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+            <div className={styles.tableScroll}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    {orderedCols.map((f, i) => (
+                      <th key={f.name} className={i === 0 ? styles.stickyCol : undefined}>
+                        {f.name}
+                      </th>
+                    ))}
+                    {isUser ? <th className={styles.actionsCol}>操作</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((rec) => (
+                    <tr key={rec.id}>
+                      {orderedCols.map((f, i) => {
+                        const val = displayValue(f, rec.fields[f.name]);
+                        return (
+                          <td
+                            key={f.name}
+                            className={i === 0 ? styles.stickyCol : undefined}
+                            title={val || undefined}
+                          >
+                            {i === 0 ? (
+                              <span
+                                className={`${styles.syncDot} ${
+                                  rec.syncState === 'synced'
+                                    ? styles.dotSynced
+                                    : rec.syncState === 'error'
+                                      ? styles.dotError
+                                      : styles.dotLocal
+                                }`}
+                                title={
+                                  rec.syncState === 'synced'
+                                    ? '已同步飞书'
+                                    : rec.syncState === 'error'
+                                      ? `同步失败：${rec.syncError ?? ''}`
+                                      : '仅本地（待同步）'
+                                }
+                              />
+                            ) : null}
+                            {val === '' ? <span className={styles.cellEmpty}>—</span> : val}
+                          </td>
+                        );
+                      })}
+                      {isUser ? (
+                        <td className={styles.actionsCol}>
+                          <button
+                            type="button"
+                            className={styles.iconBtn}
+                            disabled={busy}
+                            onClick={() => setEditing({ id: rec.id, form: initialForm(table, rec) })}
+                          >
+                            编辑
+                          </button>{' '}
+                          <button
+                            type="button"
+                            className={styles.iconBtn}
+                            disabled={busy}
+                            onClick={() => removeRecord(rec)}
+                          >
+                            删除
+                          </button>
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
