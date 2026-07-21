@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import subprocess
 from typing import Any
 
 import requests
@@ -16,6 +18,48 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from config import settings as S
 
 _COST: dict[str, int] = {"prompt": 0, "completion": 0, "calls": 0}
+
+
+def _chat_via_cli(cli_cmd: str, messages: list[dict], *, json_mode: bool) -> str:
+    """经【本地 CLI 智能体】(如 claude -p)拿一次补全——用用户的 CLI 登录态,不需任何
+    LLM API key。daemon 把已扫描到的 CLI 命令注入 LLM_CLI_CMD(全路径)+ 认证 env。
+    2026-07-22 用户拍板:引擎 AI 统一走本地 CLI,不再各自接 deepseek/ARK(交付版洗空
+    key 导致 win 采集 0 条的根因)。"""
+    sys_txt = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+    usr_txt = "\n\n".join(m.get("content", "") for m in messages if m.get("role") != "system")
+    prompt = (sys_txt + "\n\n" + usr_txt).strip() if sys_txt else usr_txt
+    if json_mode:
+        prompt += "\n\n【严格输出要求】只输出一个 JSON 对象本身,不要 markdown 代码块、不要任何解释或前后缀文字。"
+    cmd = cli_cmd.split() if " " in cli_cmd else [cli_cmd]
+    if platform.system() == "Windows" and cmd and cmd[0].lower().endswith(".ps1"):
+        # npm 在 win 同时装 claude.cmd(cmd.exe 可执行)和 claude.ps1(只 PowerShell 能跑)。
+        # 交给 cmd.exe(shell=True)跑 .ps1 会被当"打开文件"卡死到 180s 超时(2026-07-22 win
+        # 实测)→ 采集评分全挂 0 条。解析出 .ps1 就换同目录同名 .cmd。
+        _alt = cmd[0][:-4] + ".cmd"
+        if os.path.exists(_alt):
+            cmd[0] = _alt
+    # prompt 走 stdin(避开中文/换行/引号当命令行参数的转义地狱);命令行只留固定 flag。
+    args = cmd + ["-p", "--output-format", "text"]
+    run_kw: dict[str, Any] = dict(
+        input=prompt, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=180,
+    )
+    if platform.system() == "Windows":
+        # win 的 claude 是 .cmd/.ps1 包装,不能直接 CreateProcess → 走 shell(args 只有固定
+        # flag,list2cmdline 安全;prompt 在 stdin 不进命令行)。
+        r = subprocess.run(subprocess.list2cmdline(args), shell=True, **run_kw)
+    else:
+        r = subprocess.run(args, **run_kw)
+    out = (r.stdout or "").strip()
+    if not out:
+        raise RuntimeError(f"本地CLI({cmd[0]})无输出 rc={r.returncode}: {(r.stderr or '')[:200]}")
+    _COST["calls"] += 1
+    try:
+        from src import store as _store
+        _store.add_cost("llm-cli", len(prompt) + len(out), detail=cmd[0])
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def _endpoint(tier: str) -> tuple[str, str, str]:
@@ -82,6 +126,10 @@ def chat(messages: list[dict], *, tier: str = "mid", json_mode: bool = False,
     if os.getenv("DRY_RUN") == "1":
         _COST["calls"] += 1
         return _dry_response(messages)
+    # 本地 CLI 智能体优先(用户拍板:AI 统一走本地 CLI)。没注入 LLM_CLI_CMD 才退回 HTTP。
+    cli_cmd = os.getenv("LLM_CLI_CMD", "").strip()
+    if cli_cmd:
+        return _chat_via_cli(cli_cmd, messages, json_mode=json_mode)
     base, key, model = _endpoint(tier)
     kw = dict(json_mode=json_mode, temperature=temperature, max_tokens=max_tokens)
     try:

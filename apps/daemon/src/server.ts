@@ -9669,6 +9669,20 @@ export async function startServer({
         if (k.apiKey) for (const envName of envNames) out[envName] = k.apiKey;
       } catch { /* 单个 provider 读失败不影响其余 */ }
     }
+    // 本地 CLI 智能体(2026-07-22 用户拍板):引擎 AI(评分/拆解/脚本)统一走用户已装的
+    // 本地 CLI(claude -p),用 CLI 登录态、不需任何 LLM API key——修「交付版洗空 LLM key
+    // 导致 win 采集评分 401 → 0 条」的根因。注入解析出的 claude 全路径 + 认证 env
+    // (CLAUDE_CONFIG_DIR 等);解析不到就不注入,引擎退回 DEEPSEEK/ARK 的 HTTP 路径。
+    try {
+      const cfg = (await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}))) as { agentCliEnv?: unknown };
+      const configuredEnv = agentCliEnvForAgent(cfg?.agentCliEnv as never, 'claude');
+      const def = getAgentDef('claude');
+      const launch = def ? resolveAgentLaunch(def, configuredEnv) : null;
+      if (launch?.launchPath) {
+        out.LLM_CLI_CMD = launch.launchPath;
+        for (const [k, v] of Object.entries(configuredEnv)) if (v) out[k] = v;
+      }
+    } catch { /* 解析失败不阻塞采集(退回 HTTP) */ }
     return out;
   }
 
