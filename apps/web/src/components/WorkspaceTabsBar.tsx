@@ -910,6 +910,7 @@ function displayTabFor(
     'studio-zhihu': '文章',
     'studio-weibo': '文章',
     knowledge: '知识库',
+    datacenter: '数据中心',
     'design-systems': t('entry.navDesignSystems'),
     integrations: t('entry.navIntegrations'),
   };
@@ -933,6 +934,7 @@ function displayTabFor(
     'studio-zhihu': 'pencil',
     'studio-weibo': 'send',
     knowledge: 'layers-filled',
+    datacenter: 'folder-filled',
     'design-systems': 'blocks',
     integrations: 'link',
   };

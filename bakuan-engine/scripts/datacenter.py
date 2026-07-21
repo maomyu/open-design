@@ -10,6 +10,7 @@ LARK_PROFILE（daemon 注入 baochuang-client）。daemon 侧统一传【英文�
   python scripts/datacenter.py <cmd> [--json '<inline>'|@<file>] [--json-file <path>] [--record-id rec...]
   cmd ∈ push-knowledge delete-knowledge push-draft push-review
         list-monitor push-monitor delete-monitor list-config push-config
+        push-record delete-record   （块4 数据中心镜像通用 CRUD，直接用中文字段名）
 """
 from __future__ import annotations
 
@@ -212,6 +213,41 @@ def push_config(fs: LarkCliBitable, p: dict) -> dict:
     return {"ok": True, "record_id": _upsert(fs, TB_CONFIG, rid, fields)}
 
 
+# ── 块4：数据中心镜像通用 CRUD（App 为主 → 推飞书；直接用中文字段名）──
+def push_record(fs: LarkCliBitable, p: dict) -> dict:
+    """通用推送:daemon 传 {table 中文表名, fields {中文字段名: 值}, recordId?}。
+
+    fields 已由 daemon 按 contracts datacenter schema 过滤/收敛(不含 auto_number/
+    formula 等只读字段)。有 recordId 走 update 幂等,无则 add 拿新 record_id 回写。
+    此路径【直接用中文字段名】——数据中心镜像 CRUD,区别于上面按英文语义键映射的
+    push-knowledge/monitor/config。
+    """
+    table = p.get("table") or ""
+    if not table:
+        return {"ok": False, "error": "缺少 table"}
+    raw_fields = p.get("fields") or {}
+    if not isinstance(raw_fields, dict):
+        return {"ok": False, "error": "fields 必须是对象"}
+    # 丢掉 None（飞书对某些字段不接受 null 写入）；空串/空数组保留（合法清空）。
+    fields = {k: v for k, v in raw_fields.items() if v is not None}
+    rid = p.get("recordId") or ""
+    try:
+        return {"ok": True, "record_id": _upsert(fs, table, rid, fields)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
+def delete_record(fs: LarkCliBitable, p: dict) -> dict:
+    table = p.get("table") or ""
+    rid = p.get("recordId") or ""
+    if not table or not rid:
+        return {"ok": False, "error": "缺少 table 或 recordId"}
+    try:
+        return {"ok": bool(fs.delete_record(table, rid))}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+
 # ── 辅助 ──
 def _upsert(fs: LarkCliBitable, table: str, record_id: str, fields: dict) -> str:
     """有 record_id 走 update（幂等），否则 add 拿新 record_id。"""
@@ -247,6 +283,7 @@ HANDLERS = {
     "push-draft": push_draft, "push-review": push_review,
     "list-monitor": list_monitor, "push-monitor": push_monitor, "delete-monitor": delete_monitor,
     "list-config": list_config, "push-config": push_config,
+    "push-record": push_record, "delete-record": delete_record,
 }
 
 

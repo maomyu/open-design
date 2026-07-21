@@ -35,7 +35,18 @@ import type {
   TikhubFeedResponse,
   UpdateMediaArticleRequest,
   UpdateMediaTopicRequest,
+  DatacenterRecord,
 } from '@open-design/contracts';
+import { DATACENTER_TABLES, datacenterTableByKey } from '@open-design/contracts';
+import {
+  createDatacenterRecord,
+  deleteDatacenterRecord,
+  getDatacenterRecord,
+  listDatacenterRecords,
+  markDatacenterSyncError,
+  markDatacenterSynced,
+  updateDatacenterRecord,
+} from './media-studio/datacenter-store.js';
 import type { PathDeps, RouteDeps } from './server-context.js';
 import { readAppConfig, platformAccountsForPlatform } from './app-config.js';
 import { resolveProviderConfig } from './media-config.js';
@@ -1192,6 +1203,96 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     } catch (err) {
       bad(res, 500, '写复盘库失败：' + String((err as any)?.message ?? err));
     }
+  });
+
+  // ── 飞书数据中心 · 应用内镜像 CRUD（App 为主 → 推飞书）─────────────────────
+  // 本地库(datacenter_records)是主，写完异步推飞书、回写 record_id + 同步态。
+  // 推飞书幂等:有 feishuRecordId 走 update-record,无则 create-record 回写 id。
+  // best-effort:飞书没连/推失败不阻塞本地写(记 sync_state=error,可手动「同步」重推)。
+  async function pushDatacenterRecord(rec: DatacenterRecord): Promise<void> {
+    if (!feishuSync) return; // 没连飞书:留在 local,不算错
+    const table = datacenterTableByKey(rec.tableKey);
+    if (!table) return;
+    try {
+      const r = await feishuSync('push-record', {
+        table: table.feishuName,
+        fields: rec.fields,
+        ...(rec.feishuRecordId ? { recordId: rec.feishuRecordId } : {}),
+      });
+      const recordId = r && typeof r === 'object' ? (r.recordId ?? r.record_id) : undefined;
+      if (r && r.ok !== false && typeof recordId === 'string' && recordId) {
+        markDatacenterSynced(db, rec.id, recordId);
+      } else {
+        markDatacenterSyncError(db, rec.id, String(r?.error ?? '飞书未返回 record_id'));
+      }
+    } catch (err) {
+      markDatacenterSyncError(db, rec.id, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // schema:10 表结构(前台5/后台5),UI 渲染列/表单用。
+  app.get('/api/datacenter/tables', (_req, res) => {
+    res.json({ tables: DATACENTER_TABLES });
+  });
+
+  app.get('/api/datacenter/:tableKey/records', (req, res) => {
+    const table = datacenterTableByKey(req.params.tableKey);
+    if (!table) return bad(res, 404, `未知数据中心表:${req.params.tableKey}`);
+    res.json({ records: listDatacenterRecords(db, table.key) });
+  });
+
+  app.post('/api/datacenter/:tableKey/records', async (req, res) => {
+    const table = datacenterTableByKey(req.params.tableKey);
+    if (!table) return bad(res, 404, `未知数据中心表:${req.params.tableKey}`);
+    const fields = (req.body?.fields ?? {}) as Record<string, unknown>;
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return bad(res, 400, 'fields 必须是对象');
+    try {
+      const rec = createDatacenterRecord(db, table.key, fields);
+      void pushDatacenterRecord(rec); // 异步推飞书,不阻塞
+      res.json({ record: rec });
+    } catch (err) {
+      bad(res, 400, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.put('/api/datacenter/:tableKey/records/:id', async (req, res) => {
+    const table = datacenterTableByKey(req.params.tableKey);
+    if (!table) return bad(res, 404, `未知数据中心表:${req.params.tableKey}`);
+    const fields = (req.body?.fields ?? {}) as Record<string, unknown>;
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return bad(res, 400, 'fields 必须是对象');
+    const rec = updateDatacenterRecord(db, req.params.id, fields);
+    if (!rec) return bad(res, 404, '记录不存在');
+    void pushDatacenterRecord(rec);
+    res.json({ record: rec });
+  });
+
+  app.delete('/api/datacenter/:tableKey/records/:id', async (req, res) => {
+    const table = datacenterTableByKey(req.params.tableKey);
+    if (!table) return bad(res, 404, `未知数据中心表:${req.params.tableKey}`);
+    const del = deleteDatacenterRecord(db, req.params.id);
+    if (!del.ok) return bad(res, 404, '记录不存在');
+    // 本地已删;若曾同步过飞书,异步删飞书对应记录。
+    if (feishuSync && del.feishuRecordId) {
+      void feishuSync('delete-record', { table: table.feishuName, recordId: del.feishuRecordId }).catch(() => undefined);
+    }
+    res.json({ ok: true });
+  });
+
+  // 手动「同步到飞书」:把该表所有 local/error 的记录重推一遍(幂等)。
+  app.post('/api/datacenter/:tableKey/sync', async (req, res) => {
+    const table = datacenterTableByKey(req.params.tableKey);
+    if (!table) return bad(res, 404, `未知数据中心表:${req.params.tableKey}`);
+    if (!feishuSync) return bad(res, 503, '未连接飞书数据中心');
+    const pending = listDatacenterRecords(db, table.key).filter((r) => r.syncState !== 'synced');
+    let synced = 0;
+    let failed = 0;
+    for (const r of pending) {
+      await pushDatacenterRecord(r);
+      const after = getDatacenterRecord(db, r.id);
+      if (after?.syncState === 'synced') synced += 1;
+      else failed += 1;
+    }
+    res.json({ ok: failed === 0, synced, failed });
   });
 
   // 全量把本地知识库重推飞书（手动「同步到飞书」按钮 + od media knowledge sync-feishu）。

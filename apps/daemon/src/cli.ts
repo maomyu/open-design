@@ -228,6 +228,7 @@ const SUBCOMMAND_MAP = {
   automation: runAutomation,
   automations: runAutomation,
   monitor: runMonitor,
+  datacenter: runDatacenter,
   baokuan: runBaokuan,
   memory: runMemory,
   run: runRun,
@@ -8158,6 +8159,150 @@ async function runBaokuan(args) {
 
 // od monitor — 飞书数据中心·定时监控配置库 + 系统配置表（块3 双轨 CLI）。打
 // /api/feishu/monitor + /api/feishu/system-config，与账号页 MonitorConfigSection 同源同端点。
+async function runDatacenter(args) {
+  if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(
+      [
+        'od datacenter — 飞书数据中心 · 应用内镜像（App 为主 → 推飞书）',
+        '  od datacenter tables [--json]                     列出 10 张表（键/表名/归属）',
+        '  od datacenter list --table <键> [--json]          列出某表记录',
+        "  od datacenter add --table <键> --fields '<json>'  新建记录（fields 用中文字段名）",
+        '                    [--fields-file <path|->]        fields 也可从文件/stdin 读',
+        "  od datacenter edit --table <键> --id <id> --fields '<json>'   改记录",
+        '  od datacenter rm --table <键> --id <id>           删记录',
+        '  od datacenter sync --table <键>                   把该表未同步记录推飞书',
+        '  表键：monitor material topic draft review raw breakdown style prompt config',
+        '',
+      ].join('\n') + '\n',
+    );
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+  const sub = args[0];
+  const rest = args.slice(1);
+  let flags;
+  try {
+    flags = parseFlags(rest, {
+      string: ['table', 'id', 'fields', 'fields-file', 'daemon-url', 'daemon-port'],
+      boolean: ['json'],
+    });
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+  const base = await cliDaemonBaseUrl(flags);
+  const writeJson = (d) => process.stdout.write(JSON.stringify(d, null, 2) + '\n');
+  const dcUrl = (p) => `${base}/api/datacenter${p}`;
+  const doFetch = async (url, opts) => {
+    try {
+      return await fetch(url, opts);
+    } catch (err) {
+      surfaceFetchError(err, base);
+      process.exit(3);
+    }
+  };
+  const readFields = () => {
+    let raw = '';
+    if (typeof flags['fields-file'] === 'string' && flags['fields-file']) {
+      const p = String(flags['fields-file']);
+      raw = p === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(p, 'utf8');
+    } else if (typeof flags.fields === 'string') {
+      raw = flags.fields;
+    }
+    raw = (raw || '').trim();
+    if (!raw) return {};
+    let obj;
+    try {
+      obj = JSON.parse(raw);
+    } catch (e) {
+      console.error(`--fields 不是合法 JSON：${e.message}`);
+      process.exit(2);
+    }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      console.error('--fields 必须是 JSON 对象');
+      process.exit(2);
+    }
+    return obj;
+  };
+
+  if (sub === 'tables') {
+    const resp = await doFetch(dcUrl('/tables'));
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data);
+    for (const t of data.tables ?? [])
+      console.log(`${t.key}\t${t.feishuName}\t${t.owner === 'user' ? '你维护·推飞书' : '引擎产出·只读'}\t${t.desc}`);
+    return;
+  }
+
+  const table = typeof flags.table === 'string' ? flags.table : '';
+  if (!table) {
+    console.error('缺少 --table <键>（用 od datacenter tables 看键）');
+    process.exit(2);
+  }
+
+  if (sub === 'list') {
+    const resp = await doFetch(dcUrl(`/${encodeURIComponent(table)}/records`));
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data);
+    for (const r of data.records ?? []) console.log(`${r.id}\t[${r.syncState}]\t${JSON.stringify(r.fields)}`);
+    return;
+  }
+  if (sub === 'add') {
+    const fields = readFields();
+    const resp = await doFetch(dcUrl(`/${encodeURIComponent(table)}/records`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data);
+    console.log(`已新建 ${data.record?.id ?? ''}（本地已存，正在异步推飞书）`);
+    return;
+  }
+  if (sub === 'edit') {
+    if (!flags.id) {
+      console.error('缺少 --id <记录id>');
+      process.exit(2);
+    }
+    const fields = readFields();
+    const resp = await doFetch(dcUrl(`/${encodeURIComponent(table)}/records/${encodeURIComponent(String(flags.id))}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data);
+    console.log(`已更新 ${flags.id}`);
+    return;
+  }
+  if (sub === 'rm') {
+    if (!flags.id) {
+      console.error('缺少 --id <记录id>');
+      process.exit(2);
+    }
+    const resp = await doFetch(dcUrl(`/${encodeURIComponent(table)}/records/${encodeURIComponent(String(flags.id))}`), {
+      method: 'DELETE',
+    });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    if (flags.json) return writeJson(await resp.json().catch(() => ({ ok: true })));
+    console.log(`已删除 ${flags.id}`);
+    return;
+  }
+  if (sub === 'sync') {
+    const resp = await doFetch(dcUrl(`/${encodeURIComponent(table)}/sync`), { method: 'POST' });
+    if (!resp.ok) return structuredHttpFailure(resp);
+    const data = await resp.json();
+    if (flags.json) return writeJson(data);
+    console.log(`同步飞书：成功 ${data.synced ?? 0}${data.failed ? `，失败 ${data.failed}` : ''}`);
+    return;
+  }
+  console.error(`未知子命令：${sub}（tables|list|add|edit|rm|sync）`);
+  process.exit(2);
+}
+
 async function runMonitor(args) {
   if (args.length === 0 || args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     process.stdout.write(

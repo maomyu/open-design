@@ -288,6 +288,21 @@ function migrate(db: SqliteDb): void {
     CREATE INDEX IF NOT EXISTS idx_media_knowledge_platform
       ON media_knowledge(platform, updated_at DESC);
 
+    -- 飞书数据中心 · 应用内镜像(App 为主 → 推飞书)。通用记录存储:一表存全 10 张逻辑表,
+    -- 字段异构故存 JSON(key=中文字段名,见 packages/contracts datacenter schema)。
+    -- feishu_record_id 支撑幂等 update;sync_state=local|synced|error。
+    CREATE TABLE IF NOT EXISTS datacenter_records (
+      id TEXT PRIMARY KEY,
+      table_key TEXT NOT NULL,
+      fields_json TEXT NOT NULL DEFAULT '{}',
+      feishu_record_id TEXT,
+      sync_state TEXT NOT NULL DEFAULT 'local',
+      sync_error TEXT,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_datacenter_records_table
+      ON datacenter_records(table_key, updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS media_publishes (
       id TEXT PRIMARY KEY,
       article_id TEXT NOT NULL,

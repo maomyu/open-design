@@ -90,6 +90,7 @@ import { ShortVideoStudioView } from './media-studio/ShortVideoStudioView';
 import { StudioCreateView } from './media-studio/StudioCreateView';
 import { XiaohongshuStudioShell } from './media-studio/XiaohongshuStudioShell';
 import { KnowledgeView } from './media-studio/KnowledgeView';
+import { DataCenterView } from './media-studio/DataCenterView';
 import type { CreateInput, CreateTab, ImportClaudeDesignOutcome } from './NewProjectPanel';
 import type { PluginLoopSubmit } from './PluginLoopHome';
 import { TasksView } from './TasksView';
@@ -677,6 +678,7 @@ export function EntryShell({
             {view === 'studio-bilibili' ? <ShortVideoStudioView platform="bilibili" /> : null}
             {view === 'studio-shipinhao' ? <ShortVideoStudioView platform="tencent" /> : null}
             {view === 'knowledge' ? <KnowledgeView /> : null}
+            {view === 'datacenter' ? <DataCenterView /> : null}
             {view === 'design-systems' ? (
               designSystemsLoading ? (
                 <CenteredLoader label={t('common.loading')} />

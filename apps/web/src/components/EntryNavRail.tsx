@@ -37,6 +37,7 @@ export type EntryView =
   | 'studio-zhihu'
   | 'studio-weibo'
   | 'knowledge'
+  | 'datacenter'
   | 'design-systems'
   | 'integrations';
 
@@ -183,6 +184,17 @@ export function EntryNavRail({ view, onViewChange }: Props) {
             <Icon name="grid" size={18} />
           </NavButton>
         ) : null}
+        {/* 数据中心(2026-07-21 用户拍板):飞书数据中心的应用内镜像,App 为主 → 推飞书,
+            方便在 App 里直接看/维护 10 张表。中文文案不进 i18n(客户定制惯例)。 */}
+        <NavButton
+          active={view === 'datacenter'}
+          ariaLabel="数据中心"
+          label="数据中心"
+          onClick={() => onViewChange('datacenter')}
+          testId="entry-nav-datacenter"
+        >
+          <Icon name="folder-filled" size={18} />
+        </NavButton>
         {/* 自动化(tasks)、设计体系、插件、项目入口对客户定制版隐藏
             (2026-07-04/07-08/07-09 用户拍板"目前用不到"——三创作台已替代
             插件流水线,项目由 AI 任务自动管理)。路由仍保留 ——

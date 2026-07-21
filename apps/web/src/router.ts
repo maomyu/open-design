@@ -34,6 +34,7 @@ export type EntryHomeView =
   | 'studio-zhihu'
   | 'studio-weibo'
   | 'knowledge'
+  | 'datacenter'
   | 'design-systems'
   | 'integrations';
 
