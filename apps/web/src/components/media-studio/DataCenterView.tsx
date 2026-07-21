@@ -172,11 +172,13 @@ export function DataCenterView(): JSX.Element {
   }, []);
 
   const editableFields = table.fields.filter(isEditable);
-  // 表格列:主字段排首(冻结列),其余按 schema 顺序。
-  const primaryFieldDef = table.fields.find((f) => f.name === table.primaryField);
+  // 表格列:排除只读(auto_number/formula——本地镜像永远空,展示是噪声);
+  // 主字段排首(冻结列),其余按 schema 顺序。
+  const visibleCols = table.fields.filter((f) => !f.readonly);
+  const primaryFieldDef = visibleCols.find((f) => f.name === table.primaryField);
   const orderedCols = primaryFieldDef
-    ? [primaryFieldDef, ...table.fields.filter((f) => f.name !== table.primaryField)]
-    : [...table.fields];
+    ? [primaryFieldDef, ...visibleCols.filter((f) => f.name !== table.primaryField)]
+    : visibleCols;
 
   async function submitForm() {
     if (!editing) return;
