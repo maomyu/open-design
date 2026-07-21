@@ -162,10 +162,27 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 主字段列冻结在左，横向滚动时保留上下文 */
-.stickyCol {
+/* 操作列 + 主字段列一起冻结在左:横向滚动时编辑/删除 + 行标识始终可见。
+   操作在最左(left:0,定宽),主字段紧随(left 用内联偏移=操作列宽)。 */
+.actionsCol {
   position: sticky;
   left: 0;
+  z-index: 2;
+  width: 112px;
+  min-width: 112px;
+  background: var(--surface-1, #fff);
+  box-shadow: 1px 0 0 var(--border, rgba(0, 0, 0, 0.08));
+  white-space: nowrap;
+}
+.table th.actionsCol {
+  z-index: 4;
+  background: var(--surface-2, #f6f5f2);
+}
+.table tbody tr:hover td.actionsCol {
+  background: var(--surface-2, #f4f3f0);
+}
+.stickyCol {
+  position: sticky;
   z-index: 1;
   background: var(--surface-1, #fff);
   font-weight: 500;
@@ -177,11 +194,6 @@
 }
 .table tbody tr:hover td.stickyCol {
   background: var(--surface-2, #f4f3f0);
-}
-/* 操作列:普通末列(不 sticky——表格没溢出时 sticky-right 会浮盖其他列)。 */
-.actionsCol {
-  white-space: nowrap;
-  text-align: right;
 }
 .syncDot {
   display: inline-block;

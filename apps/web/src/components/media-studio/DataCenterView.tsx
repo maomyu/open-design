@@ -329,23 +329,48 @@ export function DataCenterView(): JSX.Element {
               <table className={styles.table}>
                 <thead>
                   <tr>
+                    {isUser ? <th className={styles.actionsCol}>操作</th> : null}
                     {orderedCols.map((f, i) => (
-                      <th key={f.name} className={i === 0 ? styles.stickyCol : undefined}>
+                      <th
+                        key={f.name}
+                        className={i === 0 ? styles.stickyCol : undefined}
+                        style={i === 0 ? { left: isUser ? 112 : 0 } : undefined}
+                      >
                         {f.name}
                       </th>
                     ))}
-                    {isUser ? <th className={styles.actionsCol}>操作</th> : null}
                   </tr>
                 </thead>
                 <tbody>
                   {records.map((rec) => (
                     <tr key={rec.id}>
+                      {isUser ? (
+                        <td className={styles.actionsCol}>
+                          <button
+                            type="button"
+                            className={styles.iconBtn}
+                            disabled={busy}
+                            onClick={() => setEditing({ id: rec.id, form: initialForm(table, rec) })}
+                          >
+                            编辑
+                          </button>{' '}
+                          <button
+                            type="button"
+                            className={styles.iconBtn}
+                            disabled={busy}
+                            onClick={() => removeRecord(rec)}
+                          >
+                            删除
+                          </button>
+                        </td>
+                      ) : null}
                       {orderedCols.map((f, i) => {
                         const val = displayValue(f, rec.fields[f.name]);
                         return (
                           <td
                             key={f.name}
                             className={i === 0 ? styles.stickyCol : undefined}
+                            style={i === 0 ? { left: isUser ? 112 : 0 } : undefined}
                             title={val || undefined}
                           >
                             {i === 0 ? (
@@ -370,26 +395,6 @@ export function DataCenterView(): JSX.Element {
                           </td>
                         );
                       })}
-                      {isUser ? (
-                        <td className={styles.actionsCol}>
-                          <button
-                            type="button"
-                            className={styles.iconBtn}
-                            disabled={busy}
-                            onClick={() => setEditing({ id: rec.id, form: initialForm(table, rec) })}
-                          >
-                            编辑
-                          </button>{' '}
-                          <button
-                            type="button"
-                            className={styles.iconBtn}
-                            disabled={busy}
-                            onClick={() => removeRecord(rec)}
-                          >
-                            删除
-                          </button>
-                        </td>
-                      ) : null}
                     </tr>
                   ))}
                 </tbody>
