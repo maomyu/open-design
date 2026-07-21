@@ -40,7 +40,6 @@ import { hasFeature, useLicense } from '../../state/license';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
-import { FinalPromptPreview } from './FinalPromptPreview';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
@@ -796,7 +795,6 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                     <span className={c('cardHint')}>原素材拉好后点这里：先调研 → 按原文+知识库风格仿写出稿（标题/正文/标签/图集建议）→ 清 AI 腔</span>
                   </div>
                   <div className={c('row')}>
-                    <FinalPromptPreview style={refImage ? '' : galleryStyle} description={galleryPrompt} />
                     <button
                       type="button"
                       className={`${c('btn')} ${c('btnPrimary')}`}

@@ -7,7 +7,6 @@
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { composeImagePrompt, IMAGE_STYLE_PRESETS } from '@open-design/contracts';
 
 const API_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 const TIMEOUT_MS = 120_000;
@@ -41,8 +40,90 @@ const DEFAULT_NEGATIVE =
 /** 禁文字风格追加的负面词(模型自写中文十有八九是乱码,除「带文字」风格外全禁)。 */
 const NO_TEXT_NEGATIVE = '，任何文字，字幕，标题，水印，字母，汉字，文字条，logo';
 
-// 风格提示词表已上移 packages/contracts IMAGE_STYLE_PRESETS(单一来源,前端预览同源)。
-
+/** 扩展风格前缀表(2026-07-17 应用户要求扩到 15+ 常见风格;2026-07-21 从 contracts 挪回
+ *  daemon,与煜见对齐——风格提示词是生图内部约定,前端只需 id/label,不再实时预览)。
+ *  id 与 packages/contracts IMAGE_STYLE_PRESETS 一一对应;whiteboard/illustrated/clean/none
+ *  在 composeStylePrompt 里特判(默认/角色模板/禁字/纯提示词),其余查这张表。
+ *  noText=true 追加 NO_TEXT_NEGATIVE;extraNegative=该风格专属负面词(如纪实风的反精致清单)。 */
+const STYLE_PRESET_PREFIXES: Record<string, { prefix: string; noText?: boolean; extraNegative?: string }> = {
+  // 真实抓拍纪实(2026-07-17 用户定制):核心诉求=去掉一切"AI 完美感/商业摆拍感"。
+  // 正向词提炼自用户参考提示词;那一长串"不要"进 extraNegative。
+  candid: {
+    prefix:
+      '真实抓拍照片,纪录片摄影,活动纪实摄影质感。人物状态自然,不看镜头,不摆拍,神情放松专注于手上的事。' +
+      '自然光线,普通人真实皮肤纹理,物品有真实使用痕迹、摆放随意不刻意。' +
+      '轻微噪点,轻微虚焦,构图略微不完美,生活现场感。不是商业广告,不是摆拍写真。画面内容:',
+    noText: true,
+    extraNegative:
+      '，广告大片感，商业海报，杂志封面感，过度精致，完美布光，棚拍感，网红摆拍，人物看镜头，' +
+      '夸张笑容，模特脸，精修皮肤，磨皮，物品摆放整整齐齐，豪华酒店感，廉价培训班感，' +
+      '过度虚化，梦幻滤镜，塑料质感，卡通风，插画风，3D渲染，二维码，错误手部，多余手指，脸部变形',
+  },
+  bigtext: {
+    prefix:
+      'Bold typographic cover design, one short punchy Chinese headline as the dominant visual element, ' +
+      'solid or soft-gradient background, high contrast colors, viral social media cover style, ' +
+      'text must be large, sharp and accurate. ',
+  },
+  'photo-film': {
+    prefix:
+      'Authentic film photography, Fujifilm color palette, natural window light, candid lifestyle scene, ' +
+      'subtle grain, shallow depth of field, thoughtful composition. ',
+    noText: true,
+  },
+  'photo-magazine': {
+    prefix:
+      'High-end editorial magazine photography, studio lighting, generous negative space, ' +
+      'refined muted color grading, premium fashion aesthetic. ',
+    noText: true,
+  },
+  minimal: {
+    prefix:
+      'Minimalist poster design, large negative space, restrained low-saturation palette, ' +
+      'clean geometric composition, premium understated aesthetic. ',
+    noText: true,
+  },
+  'flat-info': {
+    prefix:
+      'Flat vector infographic illustration, iconified elements, clear sections on a tidy grid, ' +
+      'modern business style, crisp edges, harmonious duotone palette, icons only. ',
+    noText: true,
+  },
+  threed: {
+    prefix:
+      'Cute 3D render in C4D style, soft studio lighting, rounded glossy materials, ' +
+      'pastel fresh colors, octane quality, centered hero object. ',
+    noText: true,
+  },
+  guochao: {
+    prefix:
+      'China-chic guochao illustration, new Chinese style, vermilion red, indigo blue and gold accents, ' +
+      'auspicious cloud patterns, traditional motifs with modern flat design. ',
+    noText: true,
+  },
+  journal: {
+    prefix:
+      'Cozy scrapbook journal collage, washi tape, stickers, polaroid photo frames, ' +
+      'handwritten note vibes, warm paper texture, playful layout. ',
+  },
+  watercolor: {
+    prefix:
+      'Fresh watercolor painting, translucent washes, soft blooming edges, airy negative space, light clean colors. ',
+    noText: true,
+  },
+  cute: {
+    prefix:
+      'Adorable chibi cartoon style, big head small body, rounded shapes, soft candy color palette, ' +
+      'expressive kawaii faces, sticker-like. ',
+    noText: true,
+  },
+  oil: {
+    prefix:
+      'Classical oil painting, visible impasto brushstrokes, Rembrandt lighting, rich deep tones, ' +
+      'fine art gallery quality. ',
+    noText: true,
+  },
+};
 
 export class QwenImageError extends Error {}
 
@@ -151,41 +232,42 @@ export interface QwenImageResult {
  *  actual content type).
  *  自愈策略：内容审查拦截 → **自动中性化改写提示词**重试一次（不做同词
  *  盲重抽）；429 限流 → 退避 20 秒最多重试两次。仍失败给可操作的人话错误。 */
-/** 风格提示词拼装（qwen 与火山 Seedream 共用）。
- *  单一来源:风格提示词/禁字/专属负面词全部来自 contracts IMAGE_STYLE_PRESETS,
- *  组装函数 composeImagePrompt 也与前端「最终提示词预览」共用——所见即所发。
- *  daemon 仅保留 illustrated/clean 的兼容分支(下拉已移除,老稿/旧偏好可能还带)。 */
-/** 该风格是否允许画面出现文字——口径与风格禁字**同一份真源**:contracts
- *  IMAGE_STYLE_PRESETS 的 noText(2026-07-20 用户报「手账风格提示词都带禁字」:
- *  写作规则/生图组装曾各自硬编码"除大字报全禁",与风格表打架)。老稿兼容分支
- *  (下拉已移除的 illustrated/clean):clean 禁、illustrated 允;未知 id 默认允。 */
+/** 该风格是否允许画面出现文字——与 composeStylePrompt 的负面词口径**同一份真源**
+ *  (2026-07-20 用户报「手账风格提示词都带禁字」:上游写作规则/生图组装曾各自
+ *  硬编码"除大字报全禁",与本表打架)。允许:whiteboard(图解标签是精髓)/bigtext/
+ *  journal(手写感是精髓)/none/illustrated;其余按 noText 禁。 */
 export function styleAllowsText(style: string | undefined): boolean {
-  if (!style || style === 'illustrated') return true;
+  if (!style || style === 'whiteboard' || style === 'none' || style === 'illustrated') return true;
   if (style === 'clean') return false;
-  const preset = IMAGE_STYLE_PRESETS.find((s) => s.id === style);
+  const preset = STYLE_PRESET_PREFIXES[style];
   return preset ? !preset.noText : true;
 }
 
+/** 风格前缀拼装（qwen 与火山 Seedream 共用同一套画风约定）。
+ *  特判:whiteboard 默认 / illustrated 角色模板 / clean 禁字 / none 纯提示词;
+ *  其余走 STYLE_PRESET_PREFIXES 扩展表;未知 id 落回默认白板(向后兼容)。
+ *  风格前缀直接前置到画面描述(prefix + prompt)——与煜见一致,不再套
+ *  【画风要求】/【画面内容】包装头(2026-07-21 用户拍板:手账等风格套中文包装头
+ *  出图不一致,挪回 daemon 用直接拼接)。 */
 export function composeStylePrompt(style: string | undefined, prompt: string, character?: string): { fullPrompt: string; negative: string } {
-  // 兼容分支:已移除的老风格照旧生效,不走共享表。
-  if (style === 'illustrated') {
-    const prefix = ILLUSTRATED_STYLE_WRAPPER.replace('{character}', character || DEFAULT_ILLUSTRATED_CHARACTER);
-    return { fullPrompt: (prefix + prompt).slice(0, 800), negative: DEFAULT_NEGATIVE };
-  }
-  if (style === 'clean') {
-    return {
-      fullPrompt: (CLEAN_ILLUSTRATION_STYLE + prompt).slice(0, 800),
-      negative: DEFAULT_NEGATIVE + NO_TEXT_NEGATIVE,
-    };
-  }
-  const preset = IMAGE_STYLE_PRESETS.find((s) => s.id === style)
-    ?? IMAGE_STYLE_PRESETS.find((s) => s.id === 'whiteboard')!;
+  let stylePrefix = WHITEBOARD_STYLE;
   let negative = DEFAULT_NEGATIVE;
-  if (preset.noText) negative += NO_TEXT_NEGATIVE;
-  if (preset.extraNegative) negative += preset.extraNegative;
-  // 结构化动态注入(分【画风要求】/【画面内容】两段,画风段声明优先级,压过描述里
-  // 混入的画风词);none(prompt 为空)保持描述原样直达。组装逻辑在 contracts。
-  return { fullPrompt: composeImagePrompt(preset.id, prompt).slice(0, 800), negative };
+  if (style === 'illustrated') {
+    stylePrefix = ILLUSTRATED_STYLE_WRAPPER.replace('{character}', character || DEFAULT_ILLUSTRATED_CHARACTER);
+  } else if (style === 'clean') {
+    stylePrefix = CLEAN_ILLUSTRATION_STYLE;
+    negative = DEFAULT_NEGATIVE + NO_TEXT_NEGATIVE;
+  } else if (style === 'none') {
+    // 不用风格模板(2026-07-09 用户拍板):提示词原样直达模型,画风全由
+    // 用户描述决定;负面词仍保底(防低质/水印)。
+    stylePrefix = '';
+  } else if (style && STYLE_PRESET_PREFIXES[style]) {
+    const preset = STYLE_PRESET_PREFIXES[style];
+    stylePrefix = preset.prefix;
+    if (preset.noText) negative = DEFAULT_NEGATIVE + NO_TEXT_NEGATIVE;
+    if (preset.extraNegative) negative += preset.extraNegative;
+  }
+  return { fullPrompt: (stylePrefix + prompt).slice(0, 800), negative };
 }
 
 export async function generateQwenImage(opts: QwenImageOptions): Promise<QwenImageResult> {

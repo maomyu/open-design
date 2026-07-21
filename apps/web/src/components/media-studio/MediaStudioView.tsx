@@ -18,7 +18,6 @@ import type {
 } from '@open-design/contracts';
 import { IMAGE_STYLE_PRESETS } from '@open-design/contracts';
 import { ImageStyleSamples } from './ImageStyleSamples';
-import { FinalPromptPreview } from './FinalPromptPreview';
 import { Icon } from '../Icon';
 import { fetchPlatformAccounts } from '../../providers/daemon';
 import {
@@ -2011,7 +2010,6 @@ export function CoverGenerator({
         placeholder="封面画面内容：有什么、什么氛围…（画风不用写——由统一风格动态注入）"
         onChange={(e) => setDesc(e.target.value)}
       />
-      <FinalPromptPreview style={style} description={desc} />
       <div className={c('row')}>
         <input
           className={`${c('input')} ${c('grow')}`}
@@ -2097,7 +2095,6 @@ function MarkerRow({
         placeholder="画面内容：有什么、构图、氛围…（画风不用写——由统一风格动态注入）"
         onChange={(e) => setDesc(e.target.value)}
       />
-      <FinalPromptPreview style={style} description={desc} />
       <div className={c('row')}>
         <select className={c('select')} value={style} onChange={(e) => onStyleChange(e.target.value)}>
           {IMAGE_STYLES.map((s) => (
@@ -2168,7 +2165,6 @@ function GeneratedImageRow({
         placeholder="改画面内容再重生成…（画风由统一风格动态注入）"
         onChange={(e) => setDesc(e.target.value)}
       />
-      <FinalPromptPreview style={style} description={desc} />
       <div className={c('row')}>
         <select className={c('select')} value={style} onChange={(e) => onStyleChange(e.target.value)}>
           {IMAGE_STYLES.map((s) => (

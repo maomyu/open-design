@@ -620,132 +620,26 @@ export interface StudioCollectResultRequest {
   detail?: string;
 }
 
-/** 生图风格模板(公众号/图文笔记等创作台共用下拉)。
- *  id 与 daemon `composeStylePrompt` 的风格前缀表一一对应——加新风格两边同步。
- *  标注「带文字」的风格允许模型在画面里写字,其余默认禁文字(防模型乱写中文)。 */
-export interface ImageStylePreset {
-  id: string;
-  label: string;
-  /** 该风格的画风提示词(生图时动态注入;前端预览与 daemon 实发同源,单一来源)。none 为空串。 */
-  prompt: string;
-  /** 禁模型自写文字(非「带文字」风格默认禁,防乱码中文)。 */
-  noText?: boolean;
-  /** 该风格专属负面词(如纪实风的反精致清单)。 */
-  extraNegative?: string;
-}
-
-/** 生图最终提示词的两段包装(前端预览与 daemon 组装共用,保证所见即所发)。 */
-export const IMAGE_STYLE_WRAP = {
-  styleHead: '【画风要求,以此为准,忽略下文一切画风描述】',
-  contentHead: '【画面内容】',
-} as const;
-
-export const IMAGE_STYLE_PRESETS: ReadonlyArray<ImageStylePreset> = [
-  {
-    id: 'whiteboard', label: '白板手绘（默认）',
-    prompt: 'Whiteboard illustration style, hand-drawn with colored markers, clean white background, ' +
-      'sketch-like diagrams and text, professional but casual, minimalist line art. ',
-  },
-  {
-    id: 'candid', label: '真实抓拍（纪实）',
-    prompt: '真实抓拍照片,纪录片摄影,活动纪实摄影质感。人物状态自然,不看镜头,不摆拍,神情放松专注于手上的事。' +
-      '自然光线,普通人真实皮肤纹理,物品有真实使用痕迹、摆放随意不刻意。' +
-      '轻微噪点,轻微虚焦,构图略微不完美,生活现场感。不是商业广告,不是摆拍写真。',
-    noText: true,
-    extraNegative: '，广告大片感，商业海报，杂志封面感，过度精致，完美布光，棚拍感，网红摆拍，人物看镜头，' +
-      '夸张笑容，模特脸，精修皮肤，磨皮，物品摆放整整齐齐，豪华酒店感，廉价培训班感，' +
-      '过度虚化，梦幻滤镜，塑料质感，卡通风，插画风，3D渲染，二维码，错误手部，多余手指，脸部变形',
-  },
-  {
-    id: 'bigtext', label: '大字报封面（带文字）',
-    prompt: 'Bold typographic cover design, one short punchy Chinese headline as the dominant visual element, ' +
-      'solid or soft-gradient background, high contrast colors, viral social media cover style, ' +
-      'text must be large, sharp and accurate. ',
-  },
-  {
-    id: 'photo-film', label: '胶片实拍',
-    prompt: 'Authentic film photography, Fujifilm color palette, natural window light, candid lifestyle scene, ' +
-      'subtle grain, shallow depth of field, thoughtful composition. ',
-    noText: true,
-  },
-  {
-    id: 'photo-magazine', label: '杂志大片',
-    prompt: 'High-end editorial magazine photography, studio lighting, generous negative space, ' +
-      'refined muted color grading, premium fashion aesthetic. ',
-    noText: true,
-  },
-  {
-    id: 'minimal', label: '极简高级',
-    prompt: 'Minimalist poster design, large negative space, restrained low-saturation palette, ' +
-      'clean geometric composition, premium understated aesthetic. ',
-    noText: true,
-  },
-  {
-    id: 'flat-info', label: '扁平信息图',
-    prompt: 'Flat vector infographic illustration, iconified elements, clear sections on a tidy grid, ' +
-      'modern business style, crisp edges, harmonious duotone palette, icons only. ',
-    noText: true,
-  },
-  {
-    id: 'threed', label: '3D 立体（C4D）',
-    prompt: 'Cute 3D render in C4D style, soft studio lighting, rounded glossy materials, ' +
-      'pastel fresh colors, octane quality, centered hero object. ',
-    noText: true,
-  },
-  {
-    id: 'guochao', label: '国潮新中式',
-    prompt: 'China-chic guochao illustration, new Chinese style, vermilion red, indigo blue and gold accents, ' +
-      'auspicious cloud patterns, traditional motifs with modern flat design. ',
-    noText: true,
-  },
-  {
-    id: 'journal', label: '手账拼贴',
-    prompt: 'Cozy scrapbook journal collage, washi tape, stickers, polaroid photo frames, ' +
-      'handwritten note vibes, warm paper texture, playful layout. ',
-  },
-  {
-    id: 'watercolor', label: '水彩清新',
-    prompt: 'Fresh watercolor painting, translucent washes, soft blooming edges, airy negative space, light clean colors. ',
-    noText: true,
-  },
-  {
-    id: 'cute', label: '可爱 Q 版',
-    prompt: 'Adorable chibi cartoon style, big head small body, rounded shapes, soft candy color palette, ' +
-      'expressive kawaii faces, sticker-like. ',
-    noText: true,
-  },
-  {
-    id: 'oil', label: '油画质感',
-    prompt: 'Classical oil painting, visible impasto brushstrokes, Rembrandt lighting, rich deep tones, ' +
-      'fine art gallery quality. ',
-    noText: true,
-  },
-  { id: 'none', label: '不用模板（纯提示词）', prompt: '' },
+/** 生图风格模板下拉(公众号/图文笔记等创作台共用)。前端只需 id/label;风格提示词、
+ *  禁字口径、专属负面词全在 daemon `composeStylePrompt` 的 STYLE_PRESET_PREFIXES
+ *  ——加新风格两边同步(2026-07-21 用户拍板:从 contracts 挪回 daemon 并删实时预览,
+ *  与煜见对齐;风格是生图内部约定,前端套【画风要求】包装头反而让手账等风格出图不一致)。 */
+export const IMAGE_STYLE_PRESETS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'whiteboard', label: '白板手绘（默认）' },
+  { id: 'candid', label: '真实抓拍（纪实）' },
+  { id: 'bigtext', label: '大字报封面（带文字）' },
+  { id: 'photo-film', label: '胶片实拍' },
+  { id: 'photo-magazine', label: '杂志大片' },
+  { id: 'minimal', label: '极简高级' },
+  { id: 'flat-info', label: '扁平信息图' },
+  { id: 'threed', label: '3D 立体（C4D）' },
+  { id: 'guochao', label: '国潮新中式' },
+  { id: 'journal', label: '手账拼贴（可带手写字）' },
+  { id: 'watercolor', label: '水彩清新' },
+  { id: 'cute', label: '可爱 Q 版' },
+  { id: 'oil', label: '油画质感' },
+  { id: 'none', label: '不用模板（纯提示词）' },
 ];
-// 2026-07-17 用户拍板移除:暖插画(illustrated)/纯净插画(clean)/赛博霓虹(cyber)。
-// daemon composeStylePrompt 仍保留 illustrated/clean 的兼容分支(老稿/旧偏好可能还带)。
-
-/** 画风词清洗:选了内置风格时,把描述里混入的画风词剥掉(老稿的图集建议/配图标注里
- *  常有 AI 写死的"扁平插画风"之类,和所选风格打架)。只剥「××风/风格/画风/感」后缀形态
- *  与少量固定短语,不伤内容名词("水彩颜料小碗"不受影响);none 风格不清洗(用户全权)。 */
-export function stripStyleWords(description: string): string {
-  return description
-    .replace(/(扁平插画|白板手绘|手绘插画|扁平|插画|手绘|水彩|油画|素描|卡通|漫画|Q版|3D渲染|3D|三维|C4D|赛博朋克|霓虹|胶片|摄影|写实|极简|国潮|水墨|像素|波普|孟菲斯)(风格|画风|风)/g, '')
-    .replace(/(插画感|手绘感|卡通感|3D感|渲染感)/g, '')
-    .replace(/^[,，、:：;；.。\s]+/, '')
-    .replace(/[,，、]{2,}/g, '，')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-/** 组装最终生图提示词(前端预览与 daemon 实发共用,所见即所发;含画风词清洗)。 */
-export function composeImagePrompt(styleId: string, description: string): string {
-  const preset = IMAGE_STYLE_PRESETS.find((s) => s.id === styleId);
-  const stylePrompt = preset?.prompt ?? '';
-  if (!stylePrompt) return description;
-  const cleaned = stripStyleWords(description) || description;
-  return `${IMAGE_STYLE_WRAP.styleHead}${stylePrompt}\n${IMAGE_STYLE_WRAP.contentHead}${cleaned}`;
-}
 
 /** 生图比例选项(图文笔记台等)。默认 3:4(小红书竖图)。 */
 export const IMAGE_RATIO_OPTIONS: ReadonlyArray<{ id: string; label: string }> = [
