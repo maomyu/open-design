@@ -268,25 +268,11 @@ function patchClientHintsHeaders(sess: Electron.Session): void {
           : major;
       headers[key] = `${val}, "Google Chrome";v="${ver}"`;
     }
-    // 微信视频号助手(channels.weixin.qq.com)的 mmfinderassistant 接口校验 Referer。爆创
-    // webview 登录时停在 login.html/根路径,发出的请求 Referer 是根路径 → 微信拒(errCode
-    // 300334)→ 卡「没有可登录的视频号」死循环(2026-07-20 真机对照真Chrome抓出:同请求改
-    // Referer=/platform 即 errCode:0)。但只准救「坏 Referer」(login.html/裸根路径):真实
-    // 业务页(post/create、iframe post-card.html)的 Referer 必须原样保留——post_draft 等
-    // 写接口校验 Referer 与来源页一致,全量强改 /platform 会反过来 300002 保存失败
-    // (2026-07-20 保存草稿链路抓包实锤,同日收窄)。
-    if (/channels\.weixin\.qq\.com\/cgi-bin\/mmfinderassistant/i.test(details.url)) {
-      const refererKey = Object.keys(headers).find((k) => k.toLowerCase() === "referer");
-      const referer = refererKey ? String(headers[refererKey]) : "";
-      const broken =
-        !referer ||
-        /\/login\.html/i.test(referer) ||
-        /^https?:\/\/channels\.weixin\.qq\.com\/?$/i.test(referer);
-      if (broken) {
-        if (refererKey) delete headers[refererKey];
-        headers.Referer = "https://channels.weixin.qq.com/platform";
-      }
-    }
+    // 视频号 Referer 改写已移除(2026-07-21 用户报登录二维码「加载失败」+ 参考煜见分支):
+    // 登录页(login.html)发出的登录二维码/auth 请求 Referer 就该是 login.html,被强改成
+    // /platform 会被微信拒→二维码加载失败、登不进去。登录后 auth_finder_list 在 /platform
+    // 页调,Referer 天然是 /platform,不需要改写。煜见分支视频号登录只清 UA(不动 Referer/
+    // Client Hints),实测能登——与之对齐,Referer 一律原样透传。
     callback({ requestHeaders: headers });
   });
 }
