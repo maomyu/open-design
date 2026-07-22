@@ -1628,6 +1628,134 @@ function attachAgentStreamHandlers(
   return { child, acpSession };
 }
 
+/**
+ * Run the user's SELECTED agent CLI once for a plain-text completion and return
+ * the full assistant text. Reuses the exact spawn + per-agent stream-parse
+ * machinery `testAgentConnection` uses, so ANY installed agent (claude / codex /
+ * gemini / hermes / …) works uniformly — callers never encode per-CLI argv or
+ * output formats, and a future agent added to the registry is supported for
+ * free.
+ *
+ * The bakuan engine's LLM router calls this over the loopback daemon URL (POST
+ * /api/media-studio/agent-complete) so 采集评分/拆解/脚本 run on whatever CLI the
+ * user picked in onboarding (app-config `agentId`) — NOT a hard-coded 'claude'.
+ * Interactive/agentic tools are hard-disabled so the CLI just answers the
+ * scoring prompt instead of wandering off into the filesystem.
+ */
+export async function completeWithAgent(
+  agentId: string,
+  prompt: string,
+  opts: {
+    model?: string | null;
+    agentCliEnv?: unknown;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  } = {},
+): Promise<string> {
+  const def = getAgentDef(agentId);
+  if (!def) throw new Error(`unknown agent id: ${agentId}`);
+  const configuredAgentEnv = agentCliEnvForAgent(
+    validateAgentCliEnv(opts.agentCliEnv ?? undefined),
+    agentId,
+  );
+  const resolution = resolveAgentLaunch(def, configuredAgentEnv);
+  if (!resolution.launchPath) throw new Error(`agent not installed: ${agentId}`);
+  const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'od-llm-'));
+  const sink = createAgentSink();
+  let child: ReturnType<typeof spawn> | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const args = def.buildArgs(
+      prompt,
+      [],
+      [],
+      {
+        model: opts.model ?? null,
+        // Pure completion: no interactive/agentic tools. Only claude's buildArgs
+        // consumes this today (→ --disallowedTools); harmless to the rest.
+        disallowedTools: [
+          'Bash', 'Read', 'Edit', 'Write', 'NotebookEdit',
+          'WebFetch', 'WebSearch', 'Task', 'AskUserQuestion',
+        ],
+      },
+      { cwd },
+    );
+    const baseEnv = spawnEnvForAgent(
+      agentId,
+      { ...process.env, ...(def.env || {}) },
+      configuredAgentEnv,
+    );
+    const env = applyAgentLaunchEnv(baseEnv, resolution);
+    const stdinMode =
+      def.promptViaStdin || def.streamFormat === 'acp-json-rpc' ? 'pipe' : 'ignore';
+    const invocation = createCommandInvocation({
+      command: resolution.launchPath,
+      args,
+      env,
+    });
+    child = spawn(invocation.command, invocation.args, {
+      env,
+      stdio: [stdinMode, 'pipe', 'pipe'],
+      cwd,
+      shell: false,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    });
+    const exited = new Promise<void>((resolve) => {
+      child!.once('error', () => resolve());
+      child!.once('close', () => resolve());
+    });
+    attachAgentStreamHandlers(
+      def,
+      child,
+      prompt,
+      cwd,
+      opts.model ?? undefined,
+      sink.send,
+      sink.appendRawStdout,
+    );
+    if (def.promptViaStdin && child.stdin && def.streamFormat !== 'pi-rpc') {
+      child.stdin.on('error', () => {
+        /* EPIPE when the CLI closes stdin early — non-fatal */
+      });
+      child.stdin.end(formatPromptForAgentStdin(def, prompt), 'utf8');
+    }
+    const timeoutMs = opts.timeoutMs ?? 180_000;
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+      timer.unref?.();
+    });
+    const aborted = new Promise<'aborted'>((resolve) => {
+      if (opts.signal?.aborted) resolve('aborted');
+      else opts.signal?.addEventListener('abort', () => resolve('aborted'), { once: true });
+    });
+    // Wait for the child to finish (or time out); `sink.getText()` holds the
+    // full accumulated assistant text regardless of the streamFormat parser.
+    const outcome = await Promise.race<'exit' | 'error' | 'timeout' | 'aborted'>([
+      exited.then(() => 'exit' as const),
+      sink.streamError.then(() => 'error' as const),
+      timedOut,
+      aborted,
+    ]);
+    const text = sink.getText().trim();
+    if (!text) {
+      const tail = redactSecrets(sink.getStderrTail().slice(-240));
+      throw new Error(
+        `agent ${def.name} produced no text (${outcome})${tail ? `: ${tail}` : ''}`,
+      );
+    }
+    return text;
+  } finally {
+    if (timer) clearTimeout(timer);
+    sink.dispose();
+    try {
+      child?.kill('SIGKILL');
+    } catch {
+      /* already exited */
+    }
+    await fsp.rm(cwd, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 type AgentChild = ReturnType<typeof spawn>;
 type AgentChildExit =
   | { kind: 'exit'; code: number | null; signal: NodeJS.Signals | null }

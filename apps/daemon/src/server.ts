@@ -249,6 +249,7 @@ import {
   type ObservabilityEventRequest,
 } from '@open-design/contracts/analytics';
 import {
+  completeWithAgent,
   redactSecrets,
   testAgentConnection,
   testProviderConnection,
@@ -9669,20 +9670,17 @@ export async function startServer({
         if (k.apiKey) for (const envName of envNames) out[envName] = k.apiKey;
       } catch { /* 单个 provider 读失败不影响其余 */ }
     }
-    // 本地 CLI 智能体(2026-07-22 用户拍板):引擎 AI(评分/拆解/脚本)统一走用户已装的
-    // 本地 CLI(claude -p),用 CLI 登录态、不需任何 LLM API key——修「交付版洗空 LLM key
-    // 导致 win 采集评分 401 → 0 条」的根因。注入解析出的 claude 全路径 + 认证 env
-    // (CLAUDE_CONFIG_DIR 等);解析不到就不注入,引擎退回 DEEPSEEK/ARK 的 HTTP 路径。
+    // 本地 CLI 智能体(2026-07-22 用户拍板:引擎 AI 走用户引导时扫描并【选中】的本地 CLI,
+    // 绝不写死 claude——将来可能是 codex/gemini/hermes/…;"我选什么,采集评分就用什么")。
+    // 引擎不自己 spawn CLI(每家 argv/输出协议都不同、还要各自解析 JSON 流),改为回调 daemon
+    // 的 /api/media-studio/agent-complete:daemon 用 app-config.agentId 选中的 agent、复用跑
+    // 主助手的同一套 spawn+每-agent 输出解析产出纯文本。这里只注入回调 URL(loopback)+ 选中 id
+    // (供引擎日志)。既修「交付版洗空 LLM key → 采集评分 401 → 0 条」根因,又不把引擎绑死某一家 CLI。
     try {
-      const cfg = (await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}))) as { agentCliEnv?: unknown };
-      const configuredEnv = agentCliEnvForAgent(cfg?.agentCliEnv as never, 'claude');
-      const def = getAgentDef('claude');
-      const launch = def ? resolveAgentLaunch(def, configuredEnv) : null;
-      if (launch?.launchPath) {
-        out.LLM_CLI_CMD = launch.launchPath;
-        for (const [k, v] of Object.entries(configuredEnv)) if (v) out[k] = v;
-      }
-    } catch { /* 解析失败不阻塞采集(退回 HTTP) */ }
+      out.OD_LLM_ENDPOINT = `http://127.0.0.1:${resolvedPort}/api/media-studio/agent-complete`;
+      const cfg = (await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}))) as { agentId?: string | null };
+      if (cfg?.agentId) out.OD_LLM_AGENT = String(cfg.agentId);
+    } catch { /* 注入失败不阻塞采集(引擎退回 DEEPSEEK/ARK 的 HTTP 路径) */ }
     return out;
   }
 
@@ -10355,6 +10353,48 @@ export async function startServer({
     }
     return { title, text };
   }
+
+  // 引擎 LLM 回调:用【用户引导时扫描并选中的本地 CLI agent】(app-config.agentId——
+  // 可能是 claude/codex/gemini/hermes/…)跑一次纯文本补全。引擎 router.py 通过注入的
+  // OD_LLM_ENDPOINT 打这个端点,所以采集评分/拆解/脚本用的永远是"你选的那个 CLI",
+  // 绝不写死 claude(2026-07-22 用户拍板:底层智能体按扫描到的本地 CLI,我选什么就用什么)。
+  // completeWithAgent 复用应用跑主助手的同一套 spawn+每-agent 输出解析,任意 agent 统一支持,
+  // 将来注册表新增 agent 也自动生效——引擎侧零 CLI 知识。
+  app.post('/api/media-studio/agent-complete', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const prompt = String(req.body?.prompt || '');
+    if (!prompt.trim()) return res.status(400).json({ error: '缺少 prompt' });
+    const jsonMode = req.body?.jsonMode === true;
+    const model = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : undefined;
+    try {
+      const cfg = (await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({}))) as {
+        agentId?: string | null;
+        agentCliEnv?: unknown;
+      };
+      // 选中优先;没选过 → 探测到的第一个可用 agent(与 web/daemon 首启 seed 同规则)。
+      let agentId = (cfg?.agentId || '').trim();
+      if (!agentId) {
+        const detected = await detectAgents(
+          (cfg?.agentCliEnv as Record<string, Record<string, string>>) ?? {},
+        ).catch(() => [] as Array<{ id: string; available: boolean }>);
+        agentId = detected.find((a) => a.available)?.id || 'claude';
+      }
+      // json_mode:引擎要结构化输出时,尾部追加"只输出 JSON"硬约束(与 router.py 里
+      // _chat_via_cli 的旧行为一致,便于任何 agent 都吐纯 JSON)。
+      const finalPrompt = jsonMode
+        ? `${prompt}\n\n【严格输出要求】只输出一个 JSON 对象本身,不要 markdown 代码块、不要任何解释或前后缀文字。`
+        : prompt;
+      const text = await completeWithAgent(agentId, finalPrompt, {
+        ...(model ? { model } : {}),
+        agentCliEnv: cfg?.agentCliEnv,
+        timeoutMs: 180_000,
+      });
+      return res.json({ text, agent: agentId });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return res.status(502).json({ error: redactSecrets(detail) });
+    }
+  });
 
   app.post('/api/media-studio/fetch-source', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });

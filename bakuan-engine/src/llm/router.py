@@ -62,6 +62,28 @@ def _chat_via_cli(cli_cmd: str, messages: list[dict], *, json_mode: bool) -> str
     return out
 
 
+def _chat_via_daemon(endpoint: str, messages: list[dict], *, json_mode: bool) -> str:
+    """经 daemon 的 /api/media-studio/agent-complete 拿一次补全——daemon 用用户在引导时扫描并
+    【选中】的本地 CLI agent(claude/codex/gemini/hermes/…)跑,复用它跑主助手的同一套调用+输出
+    解析。引擎完全不碰各家 CLI 的 argv/沙箱/JSON 流差异,选什么 CLI 就用什么(2026-07-22 用户拍板)。"""
+    sys_txt = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+    usr_txt = "\n\n".join(m.get("content", "") for m in messages if m.get("role") != "system")
+    prompt = (sys_txt + "\n\n" + usr_txt).strip() if sys_txt else usr_txt
+    r = requests.post(endpoint, json={"prompt": prompt, "jsonMode": bool(json_mode)}, timeout=200)
+    r.raise_for_status()
+    data = r.json()
+    out = (data.get("text") or "").strip()
+    if not out:
+        raise RuntimeError(f"daemon agent-complete 无输出: {str(data)[:200]}")
+    _COST["calls"] += 1
+    try:
+        from src import store as _store
+        _store.add_cost("llm-cli", len(prompt) + len(out), detail=str(data.get("agent") or "agent"))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _endpoint(tier: str) -> tuple[str, str, str]:
     """返回 (base_url, api_key, model) — 默认 DeepSeek，可按 tier 覆盖。"""
     base = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com").rstrip("/")
@@ -126,7 +148,13 @@ def chat(messages: list[dict], *, tier: str = "mid", json_mode: bool = False,
     if os.getenv("DRY_RUN") == "1":
         _COST["calls"] += 1
         return _dry_response(messages)
-    # 本地 CLI 智能体优先(用户拍板:AI 统一走本地 CLI)。没注入 LLM_CLI_CMD 才退回 HTTP。
+    # 本地 CLI 智能体优先(用户拍板:AI 走用户扫描并【选中】的本地 CLI,选什么用什么)。
+    # ① daemon 端点最优先:daemon 用 config.agentId 选中的 agent 跑、复用主助手的调用+解析,
+    #    任意 CLI(claude/codex/gemini/hermes/…)统一支持,引擎零 CLI 知识。
+    # ② 其次直接 CLI(LLM_CLI_CMD,兼容无 daemon 的直连场景/旧路径)。③ 都没有才退回 HTTP。
+    endpoint = os.getenv("OD_LLM_ENDPOINT", "").strip()
+    if endpoint:
+        return _chat_via_daemon(endpoint, messages, json_mode=json_mode)
     cli_cmd = os.getenv("LLM_CLI_CMD", "").strip()
     if cli_cmd:
         return _chat_via_cli(cli_cmd, messages, json_mode=json_mode)
