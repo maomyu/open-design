@@ -12,7 +12,10 @@
  *     （复制源码 → bundled python 建 venv → `pip install --no-index` 离线装 wheels），
  *     之后与 dev 走同一套脚本调用。
  *
- * provision 幂等：只在 `.venv/bin/python` 缺失时跑一次，用单例 Promise 防并发重复。
+ * provision 幂等：只在 venv 里的 python 缺失时跑一次，用单例 Promise 防并发重复。
+ *
+ * 平台差异集中在文件顶部的 `VENV_BIN` / `exeName()`：Windows 的 venv 是 `Scripts\*.exe`、
+ * 内置解释器在归档顶层 `python.exe`。解压仍用 `tar`——Windows 10 1803+ 自带 bsdtar。
  */
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -22,12 +25,32 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+// ── 平台差异:venv 与 python 运行时的目录/文件名 ──────────────────────────────
+// Windows 的 venv 把可执行文件放 `Scripts\` 而不是 `bin/`,可执行文件带 .exe;
+// python-build-standalone 的 Windows 归档里解释器就在顶层(`python.exe`),不像 POSIX 在 `bin/python3`。
+// 这些差异原先全是写死的 POSIX 形态,Windows 上 provision 必然找不到文件。
+const IS_WIN = process.platform === 'win32';
+const VENV_BIN = IS_WIN ? 'Scripts' : 'bin';
+const exeName = (name: string): string => (IS_WIN ? `${name}.exe` : name);
+
+/** venv 里某个可执行文件的绝对路径。平台差异只在这一处,单测据此锁死两个平台的形态。 */
+export function venvExecutable(engineDir: string, name: string): string {
+  return path.join(engineDir, '.venv', VENV_BIN, exeName(name));
+}
+
+/** 安装包自带的 python 解释器路径(解压后)。POSIX 在 `bin/python3`,Windows 在归档顶层。 */
+export function bundledPythonPath(runtimeRoot: string): string {
+  return IS_WIN
+    ? path.join(runtimeRoot, 'python-runtime', 'python.exe')
+    : path.join(runtimeRoot, 'python-runtime', 'bin', 'python3');
+}
+
 export interface EngineHandle {
   /** 脚本运行的 cwd（源码 + .venv + .env + data 都在这里）。 */
   engineDir: string;
-  /** `.venv/bin/python` 绝对路径。 */
+  /** venv 里 python 的绝对路径（POSIX `.venv/bin/python`，Windows `.venv\Scripts\python.exe`）。 */
   python: string;
-  /** `.venv/bin/yt-dlp` 绝对路径（provision 时随 yt-dlp wheel 生成 console script）。 */
+  /** venv 里 yt-dlp 的绝对路径（provision 时随 yt-dlp wheel 生成 console script）。 */
   ytdlp: string;
   /**
    * 传给引擎子进程的环境：在 process.env 基础上把 venv/bin 和（packaged 时）自带的
@@ -50,23 +73,36 @@ function runtimeRootFor(ctx: EngineContext): string {
 }
 
 function handleFor(ctx: EngineContext, engineDir: string): EngineHandle {
-  const venvBin = path.join(engineDir, '.venv', 'bin');
+  const venvBin = path.join(engineDir, '.venv', VENV_BIN);
   // packaged 自带静态 ffmpeg（首启动从 tar 解到 engine-runtime）；dev 依赖系统 PATH。
   const ffmpegDir = ctx.resourceRoot ? path.join(runtimeRootFor(ctx), 'ffmpeg') : null;
   // dev/兜底:再把常见 CLI 安装目录并进 PATH。GUI app 从 Finder 启动时 launchd 只给最小 PATH
   // (/usr/bin:/bin:…),没有 /opt/homebrew/bin;引擎子进程要用的系统工具靠这个找到。
-  const commonBins = [
-    '/opt/homebrew/bin', '/usr/local/bin',
-    path.join(os.homedir(), '.npm-global', 'bin'),
-    path.join(os.homedir(), '.local', 'bin'),
-    '/usr/bin', '/bin',
-  ];
+  // Windows 没有这套目录布局(GUI 进程也拿得到完整用户 PATH),拼进去只会是一串不存在的路径。
+  const commonBins = IS_WIN
+    ? []
+    : [
+      '/opt/homebrew/bin', '/usr/local/bin',
+      path.join(os.homedir(), '.npm-global', 'bin'),
+      path.join(os.homedir(), '.local', 'bin'),
+      '/usr/bin', '/bin',
+    ];
   const pathParts = [venvBin, ffmpegDir, ...commonBins, process.env.PATH].filter(Boolean) as string[];
   return {
     engineDir,
-    python: path.join(venvBin, 'python'),
-    ytdlp: path.join(venvBin, 'yt-dlp'),
-    env: { ...process.env, PATH: pathParts.join(path.delimiter) },
+    python: venvExecutable(engineDir, 'python'),
+    ytdlp: venvExecutable(engineDir, 'yt-dlp'),
+    env: {
+      ...process.env,
+      PATH: pathParts.join(path.delimiter),
+      // 引擎脚本把 JSON 打到 stdout 给 daemon 读,内容里有中文和 emoji。Windows 上 Python 的
+      // stdout 默认跟随系统 ANSI 代码页(中文机器是 GBK),遇到 emoji 直接抛
+      // `'gbk' codec can't encode character '\U0001f9e1'` 整个脚本挂掉——2026-07-25 真机实测:
+      // 微博评论带 🧡 就必崩,知乎那条没 emoji 所以侥幸能过。UTF-8 模式一次性覆盖所有引擎脚本
+      // (stdout/stderr + 文件读写),POSIX 上本来就是 UTF-8,设了也没有行为变化。
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
+    },
   };
 }
 
@@ -85,7 +121,7 @@ export function bakuanEngineProvisionError(): string | null {
   return lastProvisionError;
 }
 
-/** provision 是否已完成（`.venv/bin/python` 存在）。 */
+/** provision 是否已完成（venv 里的 python 存在）。 */
 export function isBakuanEngineReady(ctx: EngineContext): boolean {
   return fs.existsSync(handleFor(ctx, engineDirFor(ctx)).python);
 }
@@ -106,7 +142,7 @@ async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
   const bundledEngine = path.join(resourceRoot, 'bakuan-engine');
   const wheels = path.join(resourceRoot, 'wheels');
   const runtimeRoot = runtimeRootFor(ctx);
-  const bundledPython = path.join(runtimeRoot, 'python-runtime', 'bin', 'python3');
+  const bundledPython = bundledPythonPath(runtimeRoot);
   if (!fs.existsSync(wheels) || !fs.existsSync(bundledEngine)) {
     throw new Error(
       '安装包缺少内置 Python 引擎（wheels / bakuan-engine 未随包发布）——请用带 vendor 的构建重新打包',
@@ -121,7 +157,7 @@ async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
     await extractTarOnce(
       path.join(resourceRoot, 'ffmpeg.tar.gz'),
       runtimeRoot,
-      path.join(runtimeRoot, 'ffmpeg', 'ffmpeg'),
+      path.join(runtimeRoot, 'ffmpeg', exeName('ffmpeg')),
     );
   }
 
@@ -136,7 +172,7 @@ async function provision(ctx: EngineContext, engineDir: string): Promise<void> {
   await execFileAsync(bundledPython, ['-m', 'venv', venvDir], { cwd: engineDir, timeout: 180_000 });
 
   // 4) 离线装依赖（wheels 已按目标 ABI 预下载，无需联网/编译）。
-  const pip = path.join(venvDir, 'bin', 'pip');
+  const pip = venvExecutable(engineDir, 'pip');
   const runtimeReq = path.join(engineDir, 'requirements-runtime.txt');
   const req = fs.existsSync(runtimeReq) ? runtimeReq : path.join(engineDir, 'requirements.txt');
   await execFileAsync(
