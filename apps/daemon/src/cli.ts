@@ -2442,11 +2442,17 @@ async function runStudio(args) {
 
 【互动运营】(读评论→匹配规则→拟人回复,受风控台账门控;需桌面端在运行)
   od studio rules [--platform xiaohongshu] [--account 名]                     # 列匹配规则
-  od studio rule-add --name n --keywords "价格,多少钱" --reply "私信你啦{author}"
+  od studio rule-add --name n --keywords "价格,多少钱" --reply "私信你啦{author}" [--reply-mode ai]  # --reply-mode ai:--reply 当【意图】交给 AI 现写
                     [--mode contains|exact|regex] [--action reply|sub-reply|dm] [--priority 0] [--account 名]
   od studio rule-rm <ruleId>
+  od studio gen-reply --note "标题|正文" [--persona "账号人设"] "评论1" "评论2"  # AI 逐条判该不该回+现写(不外发);不给 --persona 就用「账号」页里该账号的人设
+  od studio gen-reply --payload-file <json>                                   # 同上,完整 JSON 入参(note/persona/comments/sentReplies)
   od studio auto-reply --note <笔记URL> [--account 名] [--max 3]              # 预览:读评论+匹配,不外发
   od studio auto-reply --note <笔记URL> --live [--max 3]                      # 真发(逐条过风控)
+  od studio ai-auto-reply --note <笔记URL> [--persona "人设"] [--max 3]       # AI 自动直发预览:只挑安全正向类(共鸣/提问/夸赞),不外发
+  od studio ai-auto-reply --note <笔记URL> --live [--max 3]                   # AI 自动直发:安全类拟完直接发,后台拟人节奏+过风控台账
+  #  批量=对多篇各发几条(每篇少发、摊开更抗风控):for u in URL1 URL2 URL3; do od studio ai-auto-reply --note "$u" --live --max 2; done
+  od studio auto-send-unfreeze [--platform xiaohongshu] [--account 名]        # 人工完成平台风控验证后,解除当天的自动直发冻结
 
 【登录态保活】(W6:探测账号是否还登录着 + 失效告警;需桌面端在运行)
   od studio login-check --account <名> [--platform xiaohongshu]              # 发起探测,等回登录/失效
@@ -3261,8 +3267,10 @@ async function runStudio(args) {
     const name = typeof flags.name === 'string' ? flags.name : '';
     const keywords = String(flags.keywords || '').split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
     const reply = typeof flags.reply === 'string' ? flags.reply : '';
-    if (!name || !keywords.length || !reply) { console.error('用法: od studio rule-add --name <名> --keywords "价格,多少钱" --reply "<回复文案,可含{author}/{keyword}>" [--mode contains|exact|regex] [--action reply|sub-reply|dm] [--priority 0] [--account 名]'); process.exit(2); }
-    const body = { platform, account: typeof flags.account === 'string' && flags.account ? flags.account : null, name, keywords, replyTemplate: reply, matchMode: flags.mode || 'contains', action: flags.action || 'reply', priority: Number(flags.priority || 0) };
+    if (!name || !keywords.length || !reply) { console.error('用法: od studio rule-add --name <名> --keywords "价格,多少钱" --reply "<回复文案,可含{author}/{keyword}>" [--reply-mode template|ai] [--mode contains|exact|regex] [--action reply|sub-reply|dm] [--priority 0] [--account 名]\n  --reply-mode ai 时 --reply 填的是【意图】(例:"热情引导私信,别甩链接"),AI 照着意图逐条现写,不是固定文案'); process.exit(2); }
+    // --reply-mode ai:关键词负责挑出该回的人,AI 负责把话说得像人(同一条模板刷屏最招风控)。
+    const replyMode = String(flags['reply-mode'] || 'template') === 'ai' ? 'ai' : 'template';
+    const body = { platform, account: typeof flags.account === 'string' && flags.account ? flags.account : null, name, keywords, replyTemplate: reply, replyMode, matchMode: flags.mode || 'contains', action: flags.action || 'reply', priority: Number(flags.priority || 0) };
     const resp = await fetch(`${root}/interaction-rules`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!resp.ok) return fail(resp, 'add rule');
     const data = await resp.json();
@@ -3276,6 +3284,96 @@ async function runStudio(args) {
     const resp = await fetch(`${root}/interaction-rules/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!resp.ok) return fail(resp, 'delete rule');
     console.log('已删除');
+    return;
+  }
+
+  // ── 互动区 AI 智能评论回复(阶段2):逐条判「该不该回 + 回什么」,返回结构化拟稿(不外发)──
+  // 需先在「设置→媒体生成→DeepSeek/文本模型」配一个文本模型 Key。
+  if (sub === 'gen-reply') {
+    let payload: unknown;
+    if (typeof flags['payload-file'] === 'string' && flags['payload-file']) {
+      const { readFile } = await import('node:fs/promises');
+      try { payload = JSON.parse(await readFile(String(flags['payload-file']), 'utf8')); }
+      catch (e) { console.error(`读 payload-file 失败: ${e instanceof Error ? e.message : e}`); process.exit(2); }
+    } else {
+      const noteRaw = String(flags.note || '');
+      const [title, ...contentParts] = noteRaw.split('|');
+      const comments = rest.filter((a) => a && !a.startsWith('--')).map((t, i) => ({ id: `c${i + 1}`, author: '网友', text: t }));
+      if (!comments.length) {
+        console.error('用法: od studio gen-reply --payload-file <json>\n   或: od studio gen-reply --note "标题|正文" --persona "账号人设" "评论1" "评论2" …');
+        process.exit(2);
+      }
+      // 不给 --persona 时,daemon 会自动取【账号中心里这个账号的人设】(要带上 platform+account),
+      // 与 UI 同一份人设,不必在命令行里重抄一遍语气。
+      payload = {
+        note: { title: title || '', content: contentParts.join('|') || '' },
+        persona: String(flags.persona || ''),
+        platform: String(flags.platform || 'xiaohongshu'),
+        account: flags.account ? String(flags.account) : null,
+        comments,
+      };
+    }
+    const resp = await fetch(`${root}/interaction/gen-reply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!resp.ok) return fail(resp, 'gen-reply');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    const results = Array.isArray(data.results) ? data.results : [];
+    if (!results.length) { console.log('(无结果)'); return; }
+    for (const r of results) {
+      console.log(`${r.should_reply ? '✓回' : '✗跳过'} [${r.category || '?'}] ${r.reply || '(不回复)'}${r.reason ? `  — ${r.reason}` : ''}`);
+    }
+    return;
+  }
+
+  // ── 互动区 AI「自动直发」:AI 逐条拟稿 → 只把【安全正向类(共鸣/提问/夸赞)】自动外发,受风控台账
+  //    门控 + 后台拟人节奏(约每分钟1条)。默认预览(不发);--live 才真发。UI 的「自动直发」开关 CLI 双轨。
+  if (sub === 'ai-auto-reply') {
+    const note = typeof flags.note === 'string' ? flags.note : (rest.find((a) => a && !a.startsWith('--')) ?? '');
+    if (!note) { console.error('用法: od studio ai-auto-reply --note <笔记URL> [--platform xiaohongshu] [--account 名] [--persona "人设"] [--max 5] [--live]'); process.exit(2); }
+    const account = typeof flags.account === 'string' && flags.account ? flags.account : null;
+    const persona = typeof flags.persona === 'string' ? flags.persona : '';
+    const max = Math.max(1, Math.min(10, Number(flags.max || 3)));
+    // 1) 读评论 + AI 逐条拟稿(服务端读,需桌面端在跑)。
+    const dryResp = await fetch(`${root}/ai-reply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account, noteRef: note, persona, dryRun: true }) });
+    if (dryResp.status === 409) { console.error('桌面端未连接——读评论需要 social-auto 桌面应用在运行'); process.exit(3); }
+    if (!dryResp.ok) return fail(dryResp, 'ai-auto-reply(read)');
+    const dry = await dryResp.json();
+    if (dry.needsLogin) { console.log('未登录:请在桌面端标签里扫码登录后重试'); return; }
+    const drafts = Array.isArray(dry.drafts) ? dry.drafts : [];
+    // 2) 挑安全正向类候选(和 UI/服务端同口径:共鸣/提问/夸赞 + should_reply,按 confidence 降序截到 max)。
+    const SAFE = new Set(['夸赞', '提问', '共鸣']);
+    const cands = drafts
+      .filter((d) => d.should_reply && String(d.reply || '').trim() && SAFE.has(String(d.category || '').trim()))
+      .sort((a, b) => (Number(b.confidence) || 0) - (Number(a.confidence) || 0))
+      .slice(0, max)
+      .map((d) => ({ commentId: d.id, text: d.reply, category: d.category, ...(d.author ? { author: d.author } : {}) }));
+    if (!flags.live) {
+      if (flags.json) return out({ read: dry.read, willSend: cands, total: drafts.length });
+      console.log(`读到 ${dry.read} 条评论,AI 判 ${drafts.filter((d) => d.should_reply).length} 条可回;可自动直发的安全类 ${cands.length} 条(预览,未外发;加 --live 真发):`);
+      for (const c of cands) console.log(`  · [${c.category}] @${c.author || '网友'} → ${c.text}`);
+      if (!cands.length) console.log('  (没有安全类可自动发——负面/水军/求链接默认不自动发)');
+      return;
+    }
+    // 3) --live:交后台拟人节奏派发器(立即返回,后台逐条陆续发)。
+    if (!cands.length) { console.log('没有可自动直发的安全类回复,未发。'); return; }
+    const sendResp = await fetch(`${root}/ai-reply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account, noteRef: note, autoSend: true, chosen: cands, maxReplies: max }) });
+    if (!sendResp.ok) return fail(sendResp, 'ai-auto-reply(send)');
+    const sent = await sendResp.json();
+    if (flags.json) return out(sent);
+    console.log(`✅ 已自动排队直发 ${sent.autoQueued ?? cands.length} 条安全评论——后台按拟人节奏陆续发出(约每分钟1条,受台账门控/静默时段)。进度看桌面端健康看板「发/拦/败」。`);
+    return;
+  }
+
+  // 撞风控被冻结当天后的人工出口:用户已在浏览器完成平台验证,解除冻结恢复自动直发资格
+  // (「验证完成」没有可靠的自动信号,交还给人;UI 的「解除冻结」按钮同源同端点)。
+  if (sub === 'auto-send-unfreeze') {
+    // 互动默认小红书(同 login-check):共享的 platform 默认是 wechat-mp,解错平台会"静默成功"骗人。
+    const ufPlatform = typeof flags.platform === 'string' && flags.platform ? flags.platform : 'xiaohongshu';
+    const account = typeof flags.account === 'string' && flags.account ? flags.account : null;
+    const resp = await fetch(`${root}/interaction/auto-send-unfreeze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: ufPlatform, account }) });
+    if (!resp.ok) return fail(resp, 'auto-send-unfreeze');
+    if (flags.json) return out(await resp.json());
+    console.log('✅ 已解除当天的自动直发风控冻结。确认你已在浏览器完成平台验证,再重新发起直发(每条仍逐条过风控台账)。');
     return;
   }
 

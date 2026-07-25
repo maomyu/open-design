@@ -5,16 +5,33 @@
 // 载荷)→ BrowserPanesHost 的 interact 分支跑拟人回复注入、reportInteractionProgress 回写进度、
 // completeInteractionJob 落终态(daemon 端据此写互动审计)。只在桌面端挂载(依赖 <webview> 与登录分区)。
 import { isOpenDesignHostBrowserAvailable } from '@open-design/host';
-import type { StudioInteractionJob } from '@open-design/contracts';
+import type { StudioInteractionJob, StudioInteractionTerminalReason } from '@open-design/contracts';
 import { claimInteractionJob } from '../providers/media-studio';
 import { fetchPlatformAccounts } from '../providers/daemon';
 import { openBrowserPane } from './browser-panes';
 import { buildNoteUrl, type CommentPlatform } from './comment-extractors';
+import { navigate, parseRoute } from '../router';
 
 const EVENTS_URL = '/api/media-studio/interaction/events';
 
+async function fetchInteractionStatus(
+  id: string,
+): Promise<{ status: string | null; reason?: StudioInteractionTerminalReason }> {
+  try {
+    const resp = await fetch(`/api/media-studio/interaction/${encodeURIComponent(id)}`);
+    if (!resp.ok) return { status: null };
+    const data = (await resp.json()) as { job?: { status?: string; reason?: StudioInteractionTerminalReason } };
+    return { status: data.job?.status ?? null, reason: data.job?.reason };
+  } catch {
+    return { status: null };
+  }
+}
+
 export async function executeInteraction(job: StudioInteractionJob): Promise<void> {
   if (!(await claimInteractionJob(job.id))) return; // 别的窗口抢到了
+  // 发之前记住当前页面(通常是互动页);发完切回去——否则批量发时第一条发完就把用户困在浏览器标签,
+  // 看不到后续进度,会以为"没反应"。同读评论桥的 returnRoute 处理。
+  const returnRoute = parseRoute(window.location.pathname);
   const acctResp = await fetchPlatformAccounts();
   const account =
     job.account ||
@@ -26,20 +43,37 @@ export async function executeInteraction(job: StudioInteractionJob): Promise<voi
     job.action === 'dm'
       ? 'about:blank'
       : buildNoteUrl(job.platform as CommentPlatform, pageRef) || 'about:blank';
-  openBrowserPane({
-    platform: job.platform,
-    account,
-    url,
-    interact: {
-      jobId: job.id,
+  let stayOnPane = false;
+  try {
+    openBrowserPane({
       platform: job.platform,
-      action: job.action,
-      targetRef: job.targetRef,
-      ...(job.noteRef ? { noteRef: job.noteRef } : {}),
-      ...(job.authorName ? { authorName: job.authorName } : {}),
-      text: job.text,
-    },
-  });
+      account,
+      url,
+      interact: {
+        jobId: job.id,
+        platform: job.platform,
+        action: job.action,
+        targetRef: job.targetRef,
+        ...(job.noteRef ? { noteRef: job.noteRef } : {}),
+        ...(job.authorName ? { authorName: job.authorName } : {}),
+        text: job.text,
+      },
+    });
+    // 等这条发完(job 到终态)或超时(90s),再切回原页面。让用户看到这条发出去,又不被困在浏览器标签。
+    const deadline = Date.now() + 90_000;
+    let terminalReason: StudioInteractionTerminalReason | undefined;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const { status, reason } = await fetchInteractionStatus(job.id);
+      if (status === 'done' || status === 'error') { terminalReason = reason; break; }
+      if (!status) break;
+    }
+    // 撞登录墙/触发风控:【不切回】,把标签留在这一页——用户要在这个浏览器里扫码登录 / 人工过验证,
+    // daemon 探到登录恢复会自动接着发;切回去用户就没法处理了(用户明确要:留在浏览器等我扫码再继续)。
+    stayOnPane = terminalReason === 'needs-login' || terminalReason === 'risk-control';
+  } finally {
+    if (returnRoute.kind !== 'browser' && !stayOnPane) navigate(returnRoute);
+  }
 }
 
 /** 挂上互动执行桥监听(桌面端专用;网页版返回空拆卸函数)。 */

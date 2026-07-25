@@ -270,6 +270,14 @@ def normalize(platform: str, item: dict[str, Any]) -> RawContent:
     )
     if not rc.url:
         rc.url = _build_url(platform, aid)
+    # 小红书:explore/<id> 页在【新 webview / 未从 feed 点进】时需要 xsec_token 才打得开,否则
+    # 「当前笔记暂时无法浏览」/白屏——这就是"内置浏览器打不开采集来的笔记、读评论=0"的根因。
+    # 搜索结果自带 top-level xsec_token,拼进 URL 随选题带走,读评论/带稿开后台/去创作才打得开。
+    if platform == "xiaohongshu" and rc.url and "xiaohongshu.com/explore/" in rc.url and "xsec_token=" not in rc.url:
+        tok = str(item.get("xsec_token") or "").strip()
+        if tok:
+            sep = "&" if "?" in rc.url else "?"
+            rc.url = f"{rc.url}{sep}xsec_token={tok}&xsec_source=pc_search"
     # 视频号:把 decode_key 以 fragment 挂到下载 url 上(#odk=<key>),下载时 daemon 拆出来解密。
     # dajiala 无「按 object_id 反查」,download_url+decode_key 只在采集时有——这样随选题带走,
     # 下载才拿得到解密 key。fragment 不发服务器、不影响 download_url 的抓取。

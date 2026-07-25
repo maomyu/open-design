@@ -54,10 +54,14 @@ export function matchInteractionRule(
   for (const r of sorted) {
     const hit = matchOne(r, text);
     if (hit !== null) {
+      const mode = r.replyMode === 'ai' ? 'ai' : 'template';
       return {
         ruleId: r.id,
         ruleName: r.name,
+        // AI 模式下 replyTemplate 是【意图】,不是文案:占位符照样替换(意图里写 {author} 也讲得通),
+        // 但调用方必须把它当意图交给 AI 现写,绝不能直接外发。
         reply: renderReplyTemplate(r.replyTemplate, { author: comment.author ?? '', keyword: hit }),
+        replyMode: mode,
         action: r.action,
         matchedKeyword: hit || null,
       };

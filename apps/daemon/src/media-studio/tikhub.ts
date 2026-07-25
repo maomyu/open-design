@@ -31,7 +31,18 @@ async function tikhubFetch(key: string, path: string, init?: { method?: string; 
     },
     ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
   });
-  const data = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+  // 大整数 id 防精度损坏:知乎新版问题 id ~2e18、抖音 aweme_id ~7e18,都超过 Number.MAX_SAFE_INTEGER
+  // (9e15)——resp.json() 一解析就四舍五入成【另一个 id】,拼出的链接 404(2026-07-25 知乎直发真机事故:
+  // /question/2062518030224061700 不存在,真 id 已不可考)。解析前把 ≥16 位的纯数字 *id* 字段值加引号
+  // 转成字符串,后续取用原样保真。只动键名含 id 的字段,不影响播放量/时间戳等数值语义。
+  const raw = await resp.text().catch(() => '{}');
+  const safe = raw.replace(/"(\w*[iI]d)"\s*:\s*(\d{16,})(\s*[,}\]])/g, '"$1":"$2"$3');
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(safe) as Record<string, unknown>;
+  } catch {
+    data = {};
+  }
   if (resp.status === 401 || resp.status === 403) {
     throw new TikhubError('TikHub API Key 无效或没权限——去「设置 → 媒体生成 → TikHub」检查');
   }
@@ -73,6 +84,16 @@ function pick(o: Record<string, unknown>, keys: string[]): string {
     const v = str(o[k]);
     if (v) return v;
   }
+  return '';
+}
+
+/**
+ * 取平台内容 id 当字符串。大整数 id(知乎新版问题/回答 ~2e18 超 Number.MAX_SAFE_INTEGER)已在
+ * tikhubFetch 层转成字符串防精度损坏,小 id 仍是数字——两种都要能取到,且【绝不再 Number() 一遍】。
+ */
+function idStr(v: unknown): string {
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
   return '';
 }
 
@@ -232,7 +253,8 @@ async function zhihuHot(key: string): Promise<MediaTopicHit[]> {
       if (!title) return null;
       const hot = pick(r, ['detail_text', 'hot_text']);
       const answers = num(target.answer_count);
-      const qid = num(target.id) != null ? String(num(target.id)) : pick(target, ['id']);
+      // id 已在 tikhubFetch 层转成字符串(大整数防精度损坏),原样取用;绝不再 Number() 一遍。
+      const qid = idStr(target.id);
       const url = qid
         ? `https://www.zhihu.com/question/${qid}`
         : `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(title)}`;
@@ -244,12 +266,41 @@ async function zhihuHot(key: string): Promise<MediaTopicHit[]> {
     .filter((h): h is MediaTopicHit => h != null);
 }
 
+/**
+ * 知乎搜索命中 → 能真正打开的网页链接。
+ *
+ * 搜索返回的 `object.url` 是接口内部地址(`api.zhihu.com/answers/{id}`),浏览器打不开;而 `id`
+ * 对【回答】来说是回答 id——旧代码一律拼成 `zhuanlan.zhihu.com/p/{id}`(专栏文章地址),回答拼出来
+ * 必 404(「你似乎来到了没有知识存在的荒原」)。按 type 分流:回答 → `/question/{qid}/answer/{aid}`
+ * (问题 id 缺失就退 `/answer/{aid}`,知乎会自己跳),文章 → `zhuanlan.zhihu.com/p/{id}`。
+ *
+ * 回答页链接还是【互动区读评论】的前提:知乎评论接口按 answer_id 取,只有问题链接读不到评论。
+ */
+export function zhihuContentUrl(obj: Record<string, unknown>, title: string): string {
+  const kind = pick(obj, ['type']);
+  const id = idStr(obj.id);
+  if (id && kind === 'answer') {
+    const qid = idStr((obj.question as Record<string, unknown> | undefined)?.id);
+    return qid
+      ? `https://www.zhihu.com/question/${qid}/answer/${id}`
+      : `https://www.zhihu.com/answer/${id}`;
+  }
+  if (id && (kind === 'article' || kind === '')) return `https://zhuanlan.zhihu.com/p/${id}`;
+  return `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(title)}`;
+}
+
 async function zhihuSearch(key: string, keyword: string): Promise<MediaTopicHit[]> {
   const data = await tikhubFetch(
     key,
     `/api/v1/zhihu/web/fetch_article_search_v3?keyword=${encodeURIComponent(keyword)}&limit=20`,
   );
-  const rows = findObjectArray(data, ['title', 'excerpt']);
+  // 真实响应(2026-07-25 实测):data.data 是 {type, object} 包装列表,object.type 区分
+  // answer/article/people/ring_box/relevant_query——只有回答和文章能当选题,人和相关搜索没 title,
+  // 由下面的 title 判空滤掉。
+  const nested = ((data as Record<string, unknown>).data as Record<string, unknown> | undefined)?.data;
+  const rows = Array.isArray(nested)
+    ? (nested as Array<Record<string, unknown>>).filter((x) => typeof x === 'object' && x != null)
+    : findObjectArray(data, ['title', 'excerpt']);
   return rows
     .map((r) => {
       const obj = (r.object ?? r) as Record<string, unknown>;
@@ -257,9 +308,7 @@ async function zhihuSearch(key: string, keyword: string): Promise<MediaTopicHit[
       if (!title) return null;
       const author = (obj.author ?? {}) as Record<string, unknown>;
       const voteup = num(obj.voteup_count) ?? num(r.voteup_count);
-      const id = pick(obj, ['id']) || pick(r, ['id']);
-      const url = id ? `https://zhuanlan.zhihu.com/p/${id}` : `https://www.zhihu.com/search?type=content&q=${encodeURIComponent(title)}`;
-      return hitOf(stripEm(title), url, {
+      return hitOf(stripEm(title), zhihuContentUrl(obj, stripEm(title)), {
         account: pick(author, ['name', 'nickname']),
         hot: voteup != null ? `赞 ${voteup}` : null,
       });
@@ -295,17 +344,35 @@ async function weiboSearch(key: string, keyword: string): Promise<MediaTopicHit[
     key,
     `/api/v1/weibo/web/fetch_search?keyword=${encodeURIComponent(keyword)}&page=1`,
   );
-  const rows = findObjectArray(data, ['text_raw', 'text', 'title']);
+  // 真实响应(2026-07-25 实测):data.data.cards[] 是卡片列表,帖子在 card.mblog(card_type 9),
+  // 字段是 {bid(base62), mid, text(HTML), user:{id, screen_name}}——【没有 mblogid、没有 text_raw】。
+  // 旧代码找的正是这两个不存在的字段,于是每条都退化成 s.weibo.com 搜索页链接:互动区因此永远
+  // 拿不到真帖子(只能手动往池里存),读评论更无从谈起。
+  const cards = ((((data as Record<string, unknown>).data as Record<string, unknown> | undefined)
+    ?.data as Record<string, unknown> | undefined)?.cards);
+  const rows = Array.isArray(cards)
+    ? (cards as Array<Record<string, unknown>>)
+      .map((c) => (typeof c?.mblog === 'object' && c.mblog != null ? (c.mblog as Record<string, unknown>) : c))
+      .filter((x) => typeof x === 'object' && x != null)
+    : findObjectArray(data, ['text_raw', 'text', 'title']);
   return rows
     .map((r) => {
       const rawText = pick(r, ['text_raw', 'text', 'title']);
       if (!rawText) return null;
-      const title = stripEm(rawText).replace(/\s+/g, ' ').slice(0, 60);
+      const title = stripEm(rawText).replace(/\s+/g, ' ').trim().slice(0, 60);
+      if (!title) return null;
       const user = (r.user ?? {}) as Record<string, unknown>;
       const reposts = num(r.reposts_count);
-      const mid = pick(r, ['mblogid', 'mid', 'id']);
-      const uid = pick(user, ['idstr', 'id']) || (num(user.id) != null ? String(num(user.id)) : '');
-      const url = mid && uid ? `https://weibo.com/${uid}/${mid}` : `https://s.weibo.com/weibo?q=${encodeURIComponent(keyword)}`;
+      // 帖子页地址是 weibo.com/{uid}/{bid62}——bid 是 base62 短码,不是 mid;拿 mid 拼这个位置打不开。
+      // uid 缺失时退 weibo.com/detail/{mid}(数字 mid 的规范形态,同样能开、也能读评论)。
+      const bid = idStr(r.bid) || idStr(r.mblogid);
+      const mid = idStr(r.mid) || idStr(r.id);
+      const uid = idStr(user.idstr) || idStr(user.id);
+      const url = bid && uid
+        ? `https://weibo.com/${uid}/${bid}`
+        : mid
+          ? `https://weibo.com/detail/${mid}`
+          : `https://s.weibo.com/weibo?q=${encodeURIComponent(keyword)}`;
       return hitOf(title, url, {
         account: pick(user, ['screen_name', 'name']),
         hot: reposts != null ? `转 ${reposts}` : null,

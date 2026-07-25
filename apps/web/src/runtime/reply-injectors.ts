@@ -11,7 +11,7 @@ import {
   type DraftWebview,
 } from './browser-draft';
 import { buildNoteUrl, COMMENT_LOGIN_WALL, type CommentPlatform } from './comment-extractors';
-import type { InteractionAction } from '@open-design/contracts';
+import type { InteractionAction, StudioInteractionTerminalReason } from '@open-design/contracts';
 
 export interface ReplyInjectSpec {
   platform: string;
@@ -28,6 +28,9 @@ export interface ReplyInjectSpec {
 export interface ReplyInjectResult {
   ok: boolean;
   detail: string;
+  /** 终态原因码(给 daemon 编排层用):撞登录墙=needs-login(可暂停等扫码后续跑);
+   *  触发平台风控/验证=risk-control(整批立即停,绝不再猛发)。普通失败(选择器漂移等)不带。 */
+  reason?: StudioInteractionTerminalReason;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -50,6 +53,42 @@ async function loginWalled(wv: DraftWebview, platform: CommentPlatform): Promise
 }
 
 /**
+ * 失败兜底分类:发送没成时,看当前页到底是撞了什么墙,产出终态原因码给 daemon 编排层。
+ *  · risk-control(优先且保守):一有验证码/滑块/人机验证/"操作频繁"信号(或 URL 明显是验证页)就判风控——
+ *    宁可整批停也绝不在风控页继续猛发(那只会加速封号)。
+ *  · needs-login:登录墙(可暂停等用户扫码,登录后 daemon 会自动接着发)。
+ *  文本信号要求【页面基本被墙占满】(压掉空白后 < 220 字)才认,避免正文里恰好出现"验证码/登录"等词误判;
+ *  URL 信号(验证页/登录页)则单独成立。都不像=返回 undefined(普通失败,如选择器漂移,不触发暂停/停批)。
+ */
+async function classifyWall(wv: DraftWebview): Promise<StudioInteractionTerminalReason | undefined> {
+  const info = await wvEval<{ text: string; url: string; captchaEl: boolean }>(
+    wv,
+    `(() => {
+      const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 30 && r.height > 30; };
+      let captchaEl = false;
+      try {
+        captchaEl = [...document.querySelectorAll('[class*="captcha"],[id*="captcha"],iframe[src*="captcha"],[class*="geetest"],[class*="sec-check"]')].some(vis);
+      } catch (e) { /* ignore */ }
+      return { text: (document.body ? document.body.innerText : '').slice(0, 3000), url: location.href, captchaEl };
+    })()`,
+  );
+  if (!info) return undefined;
+  const url = info.url || '';
+  const text = info.text || '';
+  const shortPage = text.replace(/\s/g, '').length < 220;
+  // `/404?source=/404/sec_xxx`:小红书风控拦截页(账号被临时限制访问该笔记,2026-07-25 真机抓到)。
+  // 带 sec_ 前缀=安全拦截,不是笔记被删(被删是普通 404,不带 sec_)——按风控处置(等用户人工处理)。
+  const riskUrl = /captcha|geetest|antispam|\bverify\b|seccheck|security\b|risk[-_/]|\/404\?source=[^&]*sec_/i.test(url);
+  const riskText = shortPage && /验证码|滑块|拖动|安全验证|完成验证|人机验证|点击验证|操作(过于|太)?频繁|访问(过于|太)?频繁|请(稍后|稍候|过会)[^。]{0,4}(再|重)?试|账号(存在|出现)?异常|行为异常|环境异常/.test(text);
+  // captchaEl:弹窗式滑块/验证组件【盖在正常长页面上】时,shortPage 文本判定必漏——可见验证组件本身就是铁证。
+  if (info.captchaEl || riskUrl || riskText) return 'risk-control';
+  const loginUrl = /\/login\b|passport|signin|sign-in|\/user\/login|account.*login/i.test(url);
+  const loginText = shortPage && /扫码登录|手机号登录|登录后继续|立即登录|请先?登录|登录后可/.test(text);
+  if (loginUrl || loginText) return 'needs-login';
+  return undefined;
+}
+
+/**
  * 小红书评论回复。一级评论:点底部评论框→逐字键入→点发送。楼中楼:先点目标父评论的「回复」
  * 展开其楼中楼输入框(输入框会带 @对方),再键入发送。选择器给多候选,改版优先只调这里。
  */
@@ -66,7 +105,13 @@ async function injectXhsReply(
     await wvEval(wv, `location.href = ${JSON.stringify(noteUrl)}`);
     await ready(wv);
   }
-  if (await loginWalled(wv, 'xiaohongshu')) return { ok: false, detail: '未登录:请在标签里扫码登录后重试' };
+  if (await loginWalled(wv, 'xiaohongshu')) return { ok: false, detail: '未登录:请在标签里扫码登录后重试', reason: 'needs-login' };
+  // 笔记页被平台风控拦截(302 到 /404?source=/404/sec_xxx):别再徒劳找评论框,直接按风控上报,
+  // 让 daemon 暂停等用户人工处理(墙观察器会引导:回首页按平台提示完成验证/重新登录)。
+  const landedUrl = (await wvEval<string>(wv, 'location.href')) || '';
+  if (/\/404\?source=[^&]*sec_/i.test(landedUrl)) {
+    return { ok: false, detail: '笔记页被平台风控拦截(sec 404,账号被临时限制)——需人工在浏览器里处理验证/重新登录', reason: 'risk-control' };
+  }
 
   // 楼中楼:先在笔记页内定位父评论,点它的「回复」展开楼中楼输入框。
   if (spec.action === 'sub-reply') {
@@ -124,7 +169,33 @@ async function injectXhsReply(
   say('发送…');
   const sent = await clickRealByText(wv, ['发送', '发布', '回复']);
   if (!sent) return { ok: false, detail: '输入成功但没找到「发送」按钮(可能需回车发送或按钮文案不同)' };
-  await sleep(1200);
+  await sleep(2500);
+  // 提交验证(2026-07-25 真机事故根因):小红书常在【点发送那一刻】才弹滑块/安全验证——之前这里
+  // 不验证直接报成功,评论根本没发出去,daemon 记 done,风控等待/冻结的全部处置被绕过(用户看着
+  // 验证页,系统却"若无其事"往下走)。三重判定:①出现可见验证组件/URL 跳到验证页=risk-control;
+  // ②我们键入的文本还留在输入框=没发出去(原因码交外层 classifyWall 兜底);③都没有=真发出去了。
+  const after = await wvEval<{ captcha: boolean; leftover: boolean }>(wv, `(() => {
+    const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 30 && r.height > 30; };
+    let captcha = false;
+    try {
+      captcha = [...document.querySelectorAll('[class*="captcha"],[id*="captcha"],iframe[src*="captcha"],[class*="geetest"],[class*="sec-check"]')].some(vis)
+        || /captcha|geetest|\\bverify\\b/i.test(location.href);
+    } catch (e) { /* ignore */ }
+    let leftover = false;
+    try {
+      const head = ${JSON.stringify(spec.text.slice(0, 12))};
+      if (head) {
+        for (const s of ${JSON.stringify(INPUT_SELS)}) {
+          const el = document.querySelector(s);
+          const val = el ? (el.innerText || el.textContent || el.value || '') : '';
+          if (val.includes(head)) { leftover = true; break; }
+        }
+      }
+    } catch (e) { /* ignore */ }
+    return { captcha, leftover };
+  })()`);
+  if (after?.captcha) return { ok: false, detail: '点发送时弹出了安全验证(滑块/验证码),这条评论没发出去', reason: 'risk-control' };
+  if (after?.leftover) return { ok: false, detail: '点了发送但内容仍留在输入框(未发出)' };
   return { ok: true, detail: `已回复:${spec.text.slice(0, 20)}${spec.text.length > 20 ? '…' : ''}` };
 }
 
@@ -154,7 +225,7 @@ async function injectBaiduReply(
     wv,
     `(() => { const a=[...document.querySelectorAll('a')].find(x=>{const t=(x.textContent||'').trim(); const r=x.getBoundingClientRect(); return t==='登录'&&r.width>0&&r.top<80;}); return Boolean(a); })()`,
   );
-  if (loggedOut) return { ok: false, detail: '百度知道未登录——在账号页登录百度账号后重试' };
+  if (loggedOut) return { ok: false, detail: '百度知道未登录——在账号页登录百度账号后重试', reason: 'needs-login' };
 
   // 展开评论区:有评论数的「评论(N)」都点开(楼中楼要在里面找目标评论);一级评论至少开一个框。
   // 百度的按钮处理器【绑定偏晚】(页面水合后好几秒;真机教训同「我来答」):点太早没反应。
@@ -289,7 +360,11 @@ async function injectZhihuReply(
     wv,
     `(() => { const a=[...document.querySelectorAll('button,a')].find(x=>{const t=(x.textContent||'').trim(); const r=x.getBoundingClientRect(); return (t==='登录'||t==='登录/注册')&&r.width>0&&r.top<80;}); return Boolean(a); })()`,
   );
-  if (loggedOut) return { ok: false, detail: '知乎未登录——在账号页登录知乎后重试' };
+  if (loggedOut) return { ok: false, detail: '知乎未登录——在账号页登录知乎后重试', reason: 'needs-login' };
+  // 页面不存在守卫(「你似乎来到了没有知识存在的荒原」= 问题被删/链接失效,常见于选题链接过期
+  // 或旧版大整数 id 精度损坏的历史数据):明确报因,别再往下瞎找评论框。
+  const gone = await wvEval<boolean>(wv, `/没有知识存在的荒原|页面不存在/.test((document.body ? document.body.innerText : '').slice(0, 1500)) || /404/.test(document.title)`);
+  if (gone) return { ok: false, detail: '知乎页面不存在/已删除(选题链接可能已失效)——换一篇或重新采集选题' };
 
   // 展开评论(处理器可能晚绑:循环点到评论条真渲染,最多 5 轮)。
   say('展开评论区…');
@@ -303,14 +378,21 @@ async function injectZhihuReply(
   if (spec.action === 'sub-reply') {
     if (!expanded) return { ok: false, detail: '评论区没展开(「条评论」按钮点了没反应)——稍后重试' };
     say('定位目标评论,点开「回复」…');
+    // 评论现在是【接口读】来的(TikHub fetch_comment_v5),而回复要在页面上点——两边的 id 未必同源。
+    // 首选 data-id 精确命中;命中不了就按【评论者昵称】找(昵称由 daemon 从读评论时直传,
+    // 与微博楼中楼同一套思路)。两者都找不到多半是这条评论在页面的后续分页里还没渲染。
+    const zhAuthor = (spec.authorName ?? '').trim();
     const opened = await wvEval<boolean>(wv, `(() => {
-      const it=[...document.querySelectorAll('div[data-id]')].find(d=>d.getAttribute('data-id')===${JSON.stringify(spec.targetRef)});
+      const items=[...document.querySelectorAll('div[data-id]')].filter(d=>d.querySelector('.CommentContent'));
+      let it=items.find(d=>d.getAttribute('data-id')===${JSON.stringify(spec.targetRef)});
+      const author=${JSON.stringify(zhAuthor)};
+      if (!it && author) it=items.find(d=>[...d.querySelectorAll('a,span')].some(x=>(x.textContent||'').trim()===author));
       if (!it) return false;
       const btn=[...it.querySelectorAll('button')].find(b=>(b.textContent||'').trim().indexOf('回复')>=0);
       if (!btn) return false;
       it.scrollIntoView({block:'center'}); btn.click(); return true;
     })()`);
-    if (!opened) return { ok: false, detail: '没找到目标评论的「回复」入口(评论可能翻页在后面或已删除)' };
+    if (!opened) return { ok: false, detail: '没找到目标评论的「回复」入口(评论可能在后面的分页里还没渲染,或已删除)' };
     await sleep(1800);
   } else {
     // 一级评论:点「添加评论」唤起顶部评论框。
@@ -338,6 +420,9 @@ async function injectZhihuReply(
     const ed = document.querySelector('[data-od-target="1"]');
     if (!ed) return false;
     ed.focus();
+    // 先清空:知乎会把上次没发出去的草稿存在本地并在重开时恢复——不清会把旧草稿和新文案拼成一条发出去
+    // (2026-07-25 真机翻车:一条评论里带了上一轮失败的残稿)。
+    if ((ed.innerText || '').trim()) { document.execCommand('selectAll', false); document.execCommand('delete', false); }
     const range = document.createRange(); range.selectNodeContents(ed); range.collapse(false);
     const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
     document.execCommand('insertText', false, ${JSON.stringify(spec.text)});
@@ -356,20 +441,42 @@ async function injectZhihuReply(
   await sleep(600);
 
   // 发布:取【离目标编辑器最近的】可用「发布」按钮(顶部添加评论框也有一个,不能全局点第一个)。
+  // 找不到时分两种:①按钮在但禁用=DraftJS 状态没收到落字 → 补一记状态同步(插入再删一个空格)重找;
+  // ②真没有 → 明确报出。按钮候选扩到 [role=button] 和「发送」文案(知乎改版兜底)。
   say('发布…');
-  const pos = await wvEval<{ x: number; y: number } | null>(wv, `(() => {
-    const ed=document.querySelector('[data-od-target="1"]');
+  // 锚点解析:DraftJS 落字后 React 常把我们标记过的编辑器节点【整个换掉】(data-od-target 随之丢失)——
+  // 2026-07-25 验尸:文字躺在编辑器里、「发布」按钮就在旁边且可用,却因标记节点没了直接报"没找到按钮"
+  // (7-20 起知乎直发全败于此)。标记丢了就退回「可见且已有内容的编辑器」当锚点。
+  const findPublish = `(() => {
+    let ed=document.querySelector('[data-od-target="1"]');
+    if (!ed) {
+      const eds=[...document.querySelectorAll('.public-DraftEditor-content')].filter(e=>e.getBoundingClientRect().height>0);
+      ed = eds.find(e=>(e.innerText||'').trim().length>0) || eds[0] || null;
+    }
     if (!ed) return null;
     const er=ed.getBoundingClientRect();
     const norm=(s)=>(s||'').replace(/[\\u200b-\\u200d\\ufeff]/g,'').trim();  // 知乎按钮文本常带零宽字符
-    const btns=[...document.querySelectorAll('button')].filter(b=>norm(b.textContent)==='发布'&&!b.disabled&&b.getBoundingClientRect().width>0);
-    if (!btns.length) return null;
-    btns.sort((p,q)=>Math.abs(p.getBoundingClientRect().top-er.top)-Math.abs(q.getBoundingClientRect().top-er.top));
-    const b=btns[0]; b.scrollIntoView({block:'center'});
+    const cand=[...document.querySelectorAll('button,[role="button"]')].filter(b=>['发布','发送'].includes(norm(b.textContent))&&b.getBoundingClientRect().width>0);
+    const usable=cand.filter(b=>b.disabled!==true&&b.getAttribute('aria-disabled')!=='true');
+    if (!usable.length) return cand.length ? { disabledOnly: true } : null;
+    usable.sort((p,q)=>Math.abs(p.getBoundingClientRect().top-er.top)-Math.abs(q.getBoundingClientRect().top-er.top));
+    const b=usable[0]; b.scrollIntoView({block:'center'});
     const r=b.getBoundingClientRect();
     return { x: Math.round(r.left+r.width/2), y: Math.round(r.top+r.height/2) };
-  })()`);
-  if (!pos) return { ok: false, detail: '输入成功但没找到可用的「发布」按钮' };
+  })()`;
+  let pos = await wvEval<{ x?: number; y?: number; disabledOnly?: boolean } | null>(wv, findPublish);
+  if (pos?.disabledOnly) {
+    await wvEval(wv, `(() => {
+      let ed=document.querySelector('[data-od-target="1"]');
+      if (!ed) { const eds=[...document.querySelectorAll('.public-DraftEditor-content')].filter(e=>e.getBoundingClientRect().height>0); ed = eds.find(e=>(e.innerText||'').trim().length>0) || eds[0] || null; }
+      if(!ed) return; ed.focus(); document.execCommand('insertText', false, ' '); document.execCommand('delete');
+    })()`);
+    await sleep(900);
+    pos = await wvEval<{ x?: number; y?: number; disabledOnly?: boolean } | null>(wv, findPublish);
+  }
+  if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') {
+    return { ok: false, detail: pos?.disabledOnly ? '「发布」按钮一直禁用(文字没落进编辑器状态)——稍后重试或手动发' : '输入成功但没找到可用的「发布」按钮' };
+  }
   wv.sendInputEvent({ type: 'mouseMove', x: pos.x, y: pos.y });
   await sleep(150);
   wv.sendInputEvent({ type: 'mouseDown', x: pos.x, y: pos.y, button: 'left', clickCount: 1 });
@@ -401,7 +508,7 @@ async function injectWeiboReply(
     await ready(wv);
     await sleep(2000);
   }
-  if (await loginWalled(wv, 'weibo')) return { ok: false, detail: '微博未登录——在账号页登录微博后重试' };
+  if (await loginWalled(wv, 'weibo')) return { ok: false, detail: '微博未登录——在账号页登录微博后重试', reason: 'needs-login' };
 
   // 楼中楼:回复文案带「回复@作者:」前缀(微博惯例;@提及会通知到对方,等价原生楼中楼)。
   // 作者名【由 daemon 从读评论时带来】(spec.authorName)——不再在页面靠 synthId 重找那条评论:
@@ -489,9 +596,23 @@ export async function runReplyInjection(
   if (!wv) return { ok: false, detail: '面板 webview 未就绪' };
   const fn = INJECTORS[spec.platform];
   if (!fn) return { ok: false, detail: `「${spec.platform}」的自动回复暂未接入(当前支持小红书/百度知道/知乎/微博)` };
+  // 失败(注入器返回 ok:false 或抛异常)但没带原因码时,回看当前页兜底分类:发送时才弹的登录墙/
+  // 验证码风控(注入器没显式判到)在这里补上——daemon 才能据此正确暂停等扫码 / 整批停。
+  // 成功也复核一眼(2026-07-25):发送后整页若已是验证/登录墙(URL 跳去验证页、可见验证组件),这条
+  // 大概率没真发出去——绝不能带着 ok:true 回 daemon,否则风控等待/冻结的全部处置都会被绕过。
+  const withReason = async (r: ReplyInjectResult): Promise<ReplyInjectResult> => {
+    if (r.ok) {
+      const wall = await classifyWall(wv);
+      if (!wall) return r;
+      return { ok: false, detail: `发送后页面出现${wall === 'risk-control' ? '安全验证' : '登录墙'},这条评论视为未发出`, reason: wall };
+    }
+    if (r.reason) return r;
+    const reason = await classifyWall(wv);
+    return reason ? { ...r, reason } : r;
+  };
   try {
-    return await fn(wv, spec, say);
+    return await withReason(await fn(wv, spec, say));
   } catch (err) {
-    return { ok: false, detail: `回复注入异常:${err instanceof Error ? err.message : String(err)}` };
+    return await withReason({ ok: false, detail: `回复注入异常:${err instanceof Error ? err.message : String(err)}` });
   }
 }

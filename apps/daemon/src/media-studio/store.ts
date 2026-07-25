@@ -614,6 +614,9 @@ function ruleFromRow(r: Row): InteractionRule {
     keywords,
     matchMode: (mode === 'exact' || mode === 'regex' ? mode : 'contains') as RuleMatchMode,
     replyTemplate: str(r.reply_template),
+    // 'ai' 时 reply_template 存的是意图而非文案;未知值一律当 'template'(老行为),
+    // 绝不能把意图误当文案发出去。
+    replyMode: str(r.reply_mode, 'template') === 'ai' ? 'ai' : 'template',
     action: (action === 'sub-reply' || action === 'dm' ? action : 'reply') as InteractionAction,
     priority: numOrNull(r.priority) ?? 0,
     enabled: (numOrNull(r.enabled) ?? 1) !== 0,
@@ -647,8 +650,8 @@ export function getInteractionRule(db: Database.Database, id: string): Interacti
 export function createInteractionRule(db: Database.Database, input: CreateInteractionRuleRequest): InteractionRule {
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO interaction_rules (id, platform, account_id, name, keywords_json, match_mode, reply_template, action, priority, enabled, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO interaction_rules (id, platform, account_id, name, keywords_json, match_mode, reply_template, reply_mode, action, priority, enabled, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     input.platform,
@@ -657,6 +660,7 @@ export function createInteractionRule(db: Database.Database, input: CreateIntera
     JSON.stringify(Array.isArray(input.keywords) ? input.keywords : []),
     input.matchMode ?? 'contains',
     input.replyTemplate,
+    input.replyMode === 'ai' ? 'ai' : 'template',
     input.action ?? 'reply',
     Number.isFinite(input.priority) ? Number(input.priority) : 0,
     input.enabled === false ? 0 : 1,
@@ -674,18 +678,20 @@ export function updateInteractionRule(db: Database.Database, id: string, patch: 
     keywords: patch.keywords ?? existing.keywords,
     matchMode: patch.matchMode ?? existing.matchMode,
     replyTemplate: patch.replyTemplate ?? existing.replyTemplate,
+    replyMode: patch.replyMode ?? existing.replyMode ?? 'template',
     action: patch.action ?? existing.action,
     priority: patch.priority !== undefined ? patch.priority : existing.priority,
     enabled: patch.enabled !== undefined ? patch.enabled : existing.enabled,
   };
   db.prepare(
-    `UPDATE interaction_rules SET account_id = ?, name = ?, keywords_json = ?, match_mode = ?, reply_template = ?, action = ?, priority = ?, enabled = ? WHERE id = ?`,
+    `UPDATE interaction_rules SET account_id = ?, name = ?, keywords_json = ?, match_mode = ?, reply_template = ?, reply_mode = ?, action = ?, priority = ?, enabled = ? WHERE id = ?`,
   ).run(
     next.accountId ?? null,
     next.name,
     JSON.stringify(next.keywords),
     next.matchMode,
     next.replyTemplate,
+    next.replyMode,
     next.action,
     next.priority,
     next.enabled ? 1 : 0,
@@ -742,9 +748,10 @@ export function setLoginStatus(
 }
 
 function alertFromRow(r: Row): MediaAlert {
+  const kind = str(r.kind);
   return {
     id: str(r.id),
-    kind: (str(r.kind) === 'login-expired' ? 'login-expired' : 'login-expired') as AlertKind,
+    kind: (kind === 'risk-control' ? 'risk-control' : 'login-expired') as AlertKind,
     platform: str(r.platform),
     account: strOrNull(r.account),
     message: str(r.message),
@@ -774,4 +781,12 @@ export function listAlerts(db: Database.Database, opts: { includeDismissed?: boo
 
 export function dismissAlert(db: Database.Database, id: string): boolean {
   return db.prepare(`UPDATE media_alerts SET dismissed = 1 WHERE id = ?`).run(id).changes > 0;
+}
+
+/** 账号重新确认「已登录」时,把它名下未消隐的登录失效告警一并消掉——否则补登(或本就没掉线)后
+ *  红色「去补登」条还挂着,出现「检测明明是已登录却还提示补登」(2026-07-21 用户反馈)。 */
+export function dismissLoginAlertsFor(db: Database.Database, platform: string, account: string | null): number {
+  return db.prepare(
+    `UPDATE media_alerts SET dismissed = 1 WHERE dismissed = 0 AND kind = 'login-expired' AND platform = ? AND account IS ?`,
+  ).run(platform, account ?? null).changes;
 }

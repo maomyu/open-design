@@ -153,6 +153,9 @@ export interface InteractionRecord_ListResponse {
 /** 关键词匹配方式：contains=评论含任一关键词；exact=评论等于任一关键词；regex=用首个关键词作正则。 */
 export type RuleMatchMode = 'contains' | 'exact' | 'regex';
 
+/** 规则命中后怎么写回复：套死模板，还是把模板当【意图】交给 AI 现写。 */
+export type InteractionReplyMode = 'template' | 'ai';
+
 /** 一条互动匹配规则（interaction_rules 一行）——决定"哪条评论该回、回什么"。 */
 export interface InteractionRule {
   id: string;
@@ -163,8 +166,12 @@ export interface InteractionRule {
   /** 关键词集（contains/exact 命中任一即算；regex 用 keywords[0] 作正则）。 */
   keywords: string[];
   matchMode: RuleMatchMode;
-  /** 回复文案，可含占位符 {author}（评论者昵称）/ {keyword}（命中的关键词）。 */
+  /** 回复文案，可含占位符 {author}（评论者昵称）/ {keyword}（命中的关键词）。
+   *  `replyMode: 'ai'` 时这里存的不是文案而是【意图】（例：「引导私信，别甩链接」）。 */
   replyTemplate: string;
+  /** 命中后怎么写回复：'template'（默认，套死文案）| 'ai'（把 replyTemplate 当意图交给 AI 现写）。
+   *  关键词负责【找准该回的人】，AI 负责【把话说得像人】——避免同一条模板刷屏被判机器人。 */
+  replyMode?: InteractionReplyMode;
   /** 回复动作：默认一级回复；也可楼中楼 / 私信。 */
   action: InteractionAction;
   /** 优先级，高者先匹配（同评论命中多条时取最高）。 */
@@ -184,6 +191,7 @@ export interface CreateInteractionRuleRequest {
   keywords: string[];
   matchMode?: RuleMatchMode;
   replyTemplate: string;
+  replyMode?: InteractionReplyMode;
   action?: InteractionAction;
   priority?: number;
   enabled?: boolean;
@@ -195,7 +203,10 @@ export type UpdateInteractionRuleRequest = Partial<Omit<CreateInteractionRuleReq
 export interface InteractionRuleMatch {
   ruleId: string;
   ruleName: string;
+  /** `replyMode: 'ai'` 时这里是【意图】而不是可直接外发的文案——调用方必须先交给 AI 现写，
+   *  绝不能把它当成回复直接发出去（意图文本发出去就是一句莫名其妙的话）。 */
   reply: string;
+  replyMode: InteractionReplyMode;
   action: InteractionAction;
   matchedKeyword: string | null;
 }
@@ -655,6 +666,10 @@ export interface StudioCollectResultRequest {
 // 与 handoff/collect 差异：job 携带单平台+账号+动作+目标引用+文本；无 results 数组。
 export type StudioInteractionStatus = 'pending' | 'claimed' | 'running' | 'done' | 'error';
 
+/** 互动 job 终态的结构原因码(比 detail 文本可靠,编排层据此做暂停/恢复决策):
+ *  needs-login=执行时撞登录墙(未登录);risk-control=触发平台风控/验证。 */
+export type StudioInteractionTerminalReason = 'needs-login' | 'risk-control';
+
 export interface StudioInteractionJob {
   id: string;
   platform: MediaStudioPlatform;
@@ -673,6 +688,8 @@ export interface StudioInteractionJob {
   status: StudioInteractionStatus;
   progress: string[];
   detail?: string;
+  /** 终态原因码(status=error 时可能有):needs-login=撞登录墙;risk-control=触发平台风控。 */
+  reason?: StudioInteractionTerminalReason;
   createdAt: number;
   updatedAt: number;
 }
@@ -783,7 +800,7 @@ export interface StudioLoginCheckResultRequest {
   detail?: string;
 }
 
-export type AlertKind = 'login-expired';
+export type AlertKind = 'login-expired' | 'risk-control';
 export interface MediaAlert {
   id: string;
   kind: AlertKind;
@@ -1013,7 +1030,7 @@ export const IMAGE_STYLE_PRESETS: ReadonlyArray<ImageStylePreset> = [
     noText: true,
   },
   {
-    id: 'journal', label: '手账拼贴',
+    id: 'journal', label: '手账拼贴（可带手写字）',
     prompt: 'Cozy scrapbook journal collage, washi tape, stickers, polaroid photo frames, ' +
       'handwritten note vibes, warm paper texture, playful layout. ',
   },

@@ -52,6 +52,7 @@ import {
 } from './media-studio/dajiala.js';
 import { TikhubError, tikhubTopicFeed } from './media-studio/tikhub.js';
 import { generateGeminiImageFallback, generateQwenImage, QwenImageError } from './media-studio/qwen-image.js';
+import { anchorDescriptionToParagraph, imageMarkerContext, styleAllowsText } from './media-studio/image-context.js';
 import { generateVolcImage, VolcImageError } from './media-studio/volc-image.js';
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
 import { composeStudioAiTask } from './media-studio/ai-tasks.js';
@@ -65,6 +66,9 @@ import { createLoginCheckBus, LoginCheckError } from './media-studio/login-check
 import { createMyNotesBus, MyNotesError } from './media-studio/my-notes-jobs.js';
 import { DEFAULT_INTERACTION_POLICY } from './media-studio/interaction-quota.js';
 import { matchInteractionRule } from './media-studio/interaction-rules.js';
+import { generateReplyDrafts, resolveAccountPersona } from './media-studio/interaction-reply-run.js';
+import { pickAutoSendCandidates, type AutoSendCandidate } from './media-studio/interaction-reply.js';
+import { createAutoSendFreeze } from './media-studio/interaction-freeze.js';
 import type {
   AutoReplyPlanItem,
   AutoReplyRequest,
@@ -119,6 +123,7 @@ import {
   listLoginStatus,
   getLoginStatus,
   createAlert,
+  dismissLoginAlertsFor,
   listAlerts,
   dismissAlert,
 } from './media-studio/store.js';
@@ -508,6 +513,16 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const dir = assetsDirFor(article.id);
       await mkdir(dir, { recursive: true });
       const marker = typeof body.marker === 'string' && body.marker ? body.marker : null;
+      // 段落上下文锚定(2026-07-21 参考 workbuild/煜见):标注描述常太简短(甚至只有「商务场景」),
+      // 按 marker 定位它所配的正文段落,连同文章主题拼成锚定到内容的提示词——不管描述写得好坏,
+      // 画面都贴合所配段落;老稿(简短标注)不重写也立即受益。画风词仍由 composeStylePrompt 注入。
+      const paragraphCtx = marker ? imageMarkerContext(article.bodyMd, marker) : null;
+      const enrichedPrompt = anchorDescriptionToParagraph(description, {
+        context: paragraphCtx,
+        articleTitle: article.title || '',
+        // 允字风格(白板/大字报/手账)剥掉描述里残留的禁字句,别顶掉风格精髓。
+        allowText: styleAllowsText(typeof body.style === 'string' ? body.style : undefined),
+      });
       // 时间戳后加随机段：双候选并行请求会在同一毫秒落盘，纯 Date.now()
       // 会同名互相覆盖（一张图丢失 + 前端候选 key 重复）。
       const baseName = `img-${(marker ?? 'x').replace(/[^\w-]/g, '')}-${Date.now()}-${randomUUID().slice(0, 6)}`;
@@ -535,7 +550,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         const volcCfg = await resolveProviderConfig(paths.PROJECT_ROOT, 'volcengine').catch(() => ({} as { model?: string }));
         const volcModel = requestedModel || volcCfg.model || '';
         finalPath = await generateVolcImage({
-          prompt: description,
+          prompt: enrichedPrompt,
           outFile: path.join(dir, baseName),
           ...(body.style ? { style: body.style } : {}),
           ...(body.ratio ? { ratio: body.ratio } : {}),
@@ -545,7 +560,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       } else if (model === 'gemini') {
         // 用户显式选 Gemini：直接走 Gemini（不经过千问）。
         finalPath = await generateGeminiImageFallback({
-          prompt: description,
+          prompt: enrichedPrompt,
           outFile: path.join(dir, `${baseName}.png`),
           ...(body.ratio ? { ratio: body.ratio } : {}),
           env: keys,
@@ -553,7 +568,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       } else {
         try {
           const result = await generateQwenImage({
-            prompt: description,
+            prompt: enrichedPrompt,
             outFile: path.join(dir, baseName),
             ...(body.style ? { style: body.style } : {}),
             ...(body.ratio ? { ratio: body.ratio } : {}),
@@ -569,7 +584,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
           const geminiKey = (keys.GEMINI_API_KEY ?? '').trim();
           if (!(err instanceof QwenImageError) || !geminiKey) throw err;
           finalPath = await generateGeminiImageFallback({
-            prompt: description,
+            prompt: enrichedPrompt,
             outFile: path.join(dir, `${baseName}.png`),
             ...(body.ratio ? { ratio: body.ratio } : {}),
             env: keys,
@@ -996,10 +1011,11 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
 
   // web 执行完回写终态：按实际结果落一条互动审计（配额名额在建 job 时已占,此处不再动配额）。
   app.post('/api/media-studio/interaction/:id/complete', (req, res) => {
-    const body = (req.body ?? {}) as { ok?: boolean; detail?: string };
+    const body = (req.body ?? {}) as { ok?: boolean; detail?: string; reason?: string };
     const ok = body.ok === true;
     const detail = String(body.detail ?? '');
-    const job = interactionBus.complete(req.params.id, ok, detail);
+    const reason = body.reason === 'needs-login' || body.reason === 'risk-control' ? body.reason : undefined;
+    const job = interactionBus.complete(req.params.id, ok, detail, reason);
     if (!job) return bad(res, 404, 'job not found');
     recordInteraction(db, {
       platform: job.platform,
@@ -1008,7 +1024,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       targetRef: job.targetRef,
       text: job.text,
       status: ok ? 'done' : 'error',
-      detail: ok ? null : (detail || null),
+      detail: ok ? null : ((reason ? `[${reason}] ` : '') + detail || null),
     });
     res.json({ job });
   });
@@ -1072,6 +1088,8 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         keywords,
         matchMode: (mode === 'exact' || mode === 'regex' ? mode : 'contains'),
         replyTemplate,
+        // 'ai' 时 replyTemplate 是【意图】而非文案;未知值一律当 'template'(老行为)。
+        replyMode: (b.replyMode === 'ai' ? 'ai' : 'template'),
         action: (action === 'sub-reply' || action === 'dm' ? action : 'reply'),
         priority: Number.isFinite(Number(b.priority)) ? Number(b.priority) : 0,
         enabled: b.enabled !== false,
@@ -1087,6 +1105,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     if (Array.isArray(b.keywords)) patch.keywords = (b.keywords as unknown[]).map((k) => String(k).trim()).filter(Boolean);
     if (b.matchMode === 'contains' || b.matchMode === 'exact' || b.matchMode === 'regex') patch.matchMode = b.matchMode;
     if (typeof b.replyTemplate === 'string') patch.replyTemplate = b.replyTemplate;
+    if (b.replyMode === 'ai' || b.replyMode === 'template') patch.replyMode = b.replyMode;
     if (b.action === 'reply' || b.action === 'sub-reply' || b.action === 'dm') patch.action = b.action;
     if (Number.isFinite(Number(b.priority))) patch.priority = Number(b.priority);
     if (typeof b.enabled === 'boolean') patch.enabled = b.enabled;
@@ -1147,19 +1166,59 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     if (cur.needsLogin) return res.json({ read: 0, matched: [], dispatched: [], needsLogin: true, detail: '未登录:请在标签里扫码登录后重试' } satisfies AutoReplyResponse);
     // 2) 拍平评论(一级 + 楼中楼)后逐条过匹配规则。
     const rules = listInteractionRules(db, platform, account);
+    const aiRuleErrors: string[] = [];
     const flat: Array<{ id: string; author: string; text: string }> = [];
     for (const c of cur.comments) {
       flat.push({ id: c.id, author: c.author, text: c.text });
       for (const s of c.subReplies ?? []) flat.push({ id: s.id, author: s.author, text: s.text });
     }
     const matched: AutoReplyPlanItem[] = [];
+    // AI 模式的命中先攒着:同一条规则下的评论一起交给 AI(意图=该规则的 replyTemplate),
+    // 一条规则一次调用,而不是每条评论调一次。
+    const aiPending = new Map<string, { intent: string; ruleName: string; items: AutoReplyPlanItem[] }>();
     for (const c of flat) {
       const m = matchInteractionRule(rules, { text: c.text, author: c.author });
-      if (m) matched.push({ commentId: c.id, author: c.author, commentText: c.text, ruleName: m.ruleName, reply: m.reply, action: m.action });
+      if (!m) continue;
+      const item: AutoReplyPlanItem = { commentId: c.id, author: c.author, commentText: c.text, ruleName: m.ruleName, reply: m.reply, action: m.action };
+      if (m.replyMode === 'ai') {
+        const g = aiPending.get(m.ruleId) ?? { intent: m.reply, ruleName: m.ruleName, items: [] };
+        g.items.push(item);
+        aiPending.set(m.ruleId, g);
+        continue;
+      }
+      matched.push(item);
+    }
+    // AI 模式:关键词负责【挑出该回的人】,AI 负责【把话说得像人】(同一条模板刷屏最容易被判机器人)。
+    // 铁律:AI 没写出来(判定不该回 / 调用失败)就【跳过这条】,绝不能退回模板——AI 模式下模板里
+    // 存的是「意图」而不是文案,发出去就是一句莫名其妙的话。
+    const personaForRules = await resolveAccountPersona(paths.RUNTIME_DATA_DIR, platform, account, '');
+    for (const g of aiPending.values()) {
+      try {
+        const drafts = await generateReplyDrafts(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT, {
+          // 规则路径拿不到笔记正文(这条链路只读评论,不取详情):靠【意图 + 评论原文】写。
+          // 关键词规则命中的多是「价格/求链接」这类与正文关系不大的评论,够用。
+          persona: personaForRules,
+          intent: g.intent,
+          comments: g.items.map((it) => ({ id: it.commentId, author: it.author, text: it.commentText })),
+        });
+        const byId = new Map(drafts.map((d) => [d.id, d]));
+        for (const it of g.items) {
+          const d = byId.get(it.commentId);
+          if (d?.should_reply && d.reply.trim()) matched.push({ ...it, reply: d.reply.trim() });
+        }
+      } catch (err) {
+        // 整组失败:如实记一条,别把意图当文案发出去。
+        aiRuleErrors.push(`规则「${g.ruleName}」AI 拟稿失败,已跳过 ${g.items.length} 条:${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     // 3) 预览模式到此为止。
     if (isDry) {
-      return res.json({ read: flat.length, matched, dispatched: [] } satisfies AutoReplyResponse);
+      return res.json({
+        read: flat.length,
+        matched,
+        dispatched: [],
+        ...(aiRuleErrors.length ? { detail: aiRuleErrors.join(';') } : {}),
+      } satisfies AutoReplyResponse);
     }
     // 4) 真发:逐条过风控台账,放行则派发回复 job(楼中楼 noteRef=笔记 URL + targetRef=评论 id;
     //    一级=targetRef 笔记)。冷却/单日上限会自然截断,不会一次性刷屏。
@@ -1182,7 +1241,345 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
         dispatched.push({ ...item, jobId: null, blocked: err instanceof Error ? err.message : String(err) });
       }
     }
-    res.json({ read: flat.length, matched, dispatched } satisfies AutoReplyResponse);
+    res.json({
+      read: flat.length,
+      matched,
+      dispatched,
+      ...(aiRuleErrors.length ? { detail: aiRuleErrors.join(';') } : {}),
+    } satisfies AutoReplyResponse);
+  });
+
+  // ── 自动直发的「拟人节奏后台派发器」────────────────────────────────────
+  // 「每篇一键直发」的落地闸门:把安全类候选逐条外发,但绝不一次性 burst(那必被风控)。
+  // 逐条随机延时(首条 3-8s 让用户马上看到动静,之后每条 45-120s,都 ≥ 台账 30s 冷却)+ 每条过
+  // claimInteractionSlot(单日上限/冷却/静默时段)。命中每日上限/静默时段就整批停(再发也会被拦);
+  // 冷却=等它过去再发本条(绝不丢单,≤3 次);桌面掉线才停。不阻塞 HTTP:端点立即返回,发送在后台,进度看健康看板 发/拦/败。
+  // 每发一条都【等终态再排下一条】(2026-07-23):真串行,且能对两类终态原因码做正确处置——
+  //   needs-login:撞登录墙。暂停整批+告警提醒扫码,周期性静默探测,探到已登录自动重试本条接着发(≤10min)。
+  //   risk-control:触发平台风控/验证。先【暂停等用户人工处理】(2026-07-25:去浏览器完成验证/重新
+  //     登录,不立刻放弃当天),恢复后重试本条探路;重试仍被拦、或等 10 分钟没人处理 → 才冻结当天整批停
+  //     (见 interaction-freeze.ts;冻结后可人工「解除冻结」)。绝不在风控墙还立着时继续猛发。
+  // detached async:daemon 常驻进程,循环里全程 try/catch,任何一条出错不影响其余、也不崩 daemon。
+  // ── 风控冻结台账 + 告警去重 ──────────────────────────────────────────
+  // 风控冻结:某 平台×账号 【确认】撞风控(等过用户+重试仍被拦/等不到人)后,当天冻结自动直发。见 interaction-freeze.ts。
+  const autoSendFreeze = createAutoSendFreeze(interactionPolicy().tzOffsetMinutes ?? 480);
+  const isAutoSendFrozen = (platform: string, account: string | null): boolean => autoSendFreeze.isFrozen(platform, account);
+  const freezeAutoSend = (platform: string, account: string | null): void => autoSendFreeze.freeze(platform, account);
+  const loginAlertedAt = new Map<string, number>(); // 登录墙告警去重:key=platform|account → 上次告警时间戳(ms)
+  const riskAlertedAt = new Map<string, number>(); // 风控暂停告警去重:多篇并发各自撞墙时 5 分钟内只提醒一次
+  const freezeKey = (platform: string, account: string | null): string => `${platform}|${account ?? ''}`;
+  // 「墙清了」信号:撞墙后桌面端把浏览器标签停在验证/登录页并【盯着它】(BrowserPanesHost 的墙观察器),
+  // 用户做完滑块/扫完码、页面恢复正常就 POST /interaction/wall-cleared 打点。等待中的派发器据此
+  // 【立刻】恢复重发——这是"用户扫完码就自动接着发"的关键信号(滑块类验证没有登录态翻转可探)。
+  const wallClearedAt = new Map<string, number>(); // key=platform|account → 上次墙清除时间戳(ms)
+
+  const isLoggedInNow = (platform: string, account: string | null): boolean => {
+    if (account) return getLoginStatus(db, platform, account)?.state === 'logged-in';
+    return listLoginStatus(db, platform).some((r) => r.state === 'logged-in');
+  };
+
+  // 等用户扫码:周期性触发静默 cookie 探测(桌面在线时,不开页面),探到 logged-in 即返回 true。
+  // 桌面端墙观察器报「墙清了」(用户在验证页扫完码,登录墙消失)也算恢复——比 12s 探测周期更快。
+  const waitLoginRecovery = async (platform: string, account: string | null, maxMs: number): Promise<boolean> => {
+    const since = Date.now();
+    const deadline = since + maxMs;
+    while (Date.now() < deadline) {
+      try {
+        if (loginCheckBus.subscriberCount() > 0) loginCheckBus.create({ platform, account: account ?? 'main' });
+      } catch { /* 探测只是加速手段,失败就靠下次循环 */ }
+      await new Promise((r) => setTimeout(r, 6_000));
+      if (isLoggedInNow(platform, account)) return true;
+      if ((wallClearedAt.get(freezeKey(platform, account)) ?? 0) > since) return true;
+    }
+    return false;
+  };
+
+  // 等用户人工处理风控验证(web 端已把浏览器标签停在验证页,且墙观察器盯着它)。两种形态:
+  //  · 已掉登录(验证要求重新登录/会话被平台掐了):等重新扫码(静默探测+墙清信号,≤10 分钟)。
+  //  · 仍在登录(滑块/点选类验证,没有登录态翻转可探):先发一次静默探测刷新登录态(防库里状态陈旧),
+  //    然后【等墙观察器的"墙清了"信号】——用户做完滑块页面恢复正常的那一刻立即恢复重发;
+  //    10 分钟等不到信号才放弃(freeze 交回 autoDispatchPaced)。
+  const waitRiskRecovery = async (platform: string, account: string | null): Promise<boolean> => {
+    if (!isLoggedInNow(platform, account)) return waitLoginRecovery(platform, account, 10 * 60_000);
+    const since = Date.now();
+    try {
+      if (loginCheckBus.subscriberCount() > 0) loginCheckBus.create({ platform, account: account ?? 'main' });
+    } catch { /* 探测失败不阻断:靠墙清信号/重试探路 */ }
+    const deadline = since + 10 * 60_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5_000));
+      if ((wallClearedAt.get(freezeKey(platform, account)) ?? 0) > since) {
+        await new Promise((r) => setTimeout(r, 3_000)); // 页面刚恢复,给一点点稳定时间再重发
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // 等一条 job 落终态(≤180s)。返回终态 job;超时/消失返回 null。
+  const waitInteractionTerminal = async (jobId: string, maxMs = 180_000) => {
+    const deadline = Date.now() + maxMs;
+    let cursor = 0;
+    while (Date.now() < deadline) {
+      const snap = await interactionBus.wait(jobId, cursor, 20_000);
+      const job = snap?.job ?? interactionBus.get(jobId);
+      if (!job) return null;
+      cursor = snap?.cursor ?? cursor;
+      if (job.status === 'done' || job.status === 'error') return job;
+    }
+    return null;
+  };
+
+  const autoDispatchPaced = (opts: {
+    platform: string;
+    account: string | null;
+    noteRef: string;
+    items: AutoSendCandidate[];
+  }): void => {
+    void (async () => {
+      let firstDelay = true;
+      let quickNext = false; // 用户刚人工完成验证/扫码 → 重试不再走 45-120s 拟人延时,几秒内就发(人刚操作完,立刻行动最像人)
+      // 恢复后「重试本条」用【索引回退】(i -= 1):之前 for...of 里 continue 只会跳到下一条,根本回不到
+      // 当前这条——"登录恢复后重试本条"实际是静默丢单。每条各只重试一次,防探测抖动/风控墙不消失时死循环。
+      let loginRetriedFor = '';
+      let riskRetriedFor = '';
+      const cooldownTries = new Map<string, number>(); // 冷却重试计数(每条上限 3 次,防两派发器互相顶着冷却死循环)
+      for (let i = 0; i < opts.items.length; i += 1) {
+        const item = opts.items[i]!;
+        const wait = quickNext ? 4_000 + Math.floor(Math.random() * 4_000)
+          : firstDelay ? 3_000 + Math.floor(Math.random() * 5_000) : 45_000 + Math.floor(Math.random() * 75_000);
+        firstDelay = false;
+        quickNext = false;
+        await new Promise((r) => setTimeout(r, wait));
+        const commentId = String(item.id);
+        const text = String(item.reply);
+        try {
+          // 本账号当天已触发风控冻结:整批停(含还在管道里陆续到的别的笔记——它们各自的派发器到这也会停)。
+          if (isAutoSendFrozen(opts.platform, opts.account)) {
+            recordInteraction(db, { platform: opts.platform, accountId: opts.account, action: 'reply', targetRef: commentId, text, status: 'blocked', detail: '当天已触发平台风控,自动直发已冻结' });
+            break;
+          }
+          const decision = claimInteractionSlot(db, opts.platform, opts.account, interactionPolicy());
+          if (!decision.allowed) {
+            // 冷却是【暂时的】:等它过去再发这条,绝不丢单。多篇批量的第二篇几乎必撞——每篇拟稿(~25s)
+            // +首条延时(3-8s)正好落在上一篇 claim 的 30s 冷却窗边缘,实测每批都被拦掉一条(2026-07-25
+            // 用户报「勾了多条只发了 1 个」的根因)。等 retryAfterMs 后 quickNext 快速重试,每条最多 3 次。
+            if (decision.reason === 'cooldown' && (cooldownTries.get(commentId) ?? 0) < 3) {
+              cooldownTries.set(commentId, (cooldownTries.get(commentId) ?? 0) + 1);
+              const waitMs = Math.min(Math.max(decision.retryAfterMs ?? 20_000, 5_000), 60_000) + 3_000 + Math.floor(Math.random() * 4_000);
+              await new Promise((r) => setTimeout(r, waitMs));
+              quickNext = true; i -= 1; continue;
+            }
+            recordInteraction(db, { platform: opts.platform, accountId: opts.account, action: 'reply', targetRef: commentId, text, status: 'blocked', detail: decision.reason ?? null });
+            // 每日上限/静默时段:后面每条都会被同样拦下,直接整批停。
+            if (decision.reason === 'daily-cap' || decision.reason === 'quiet-hours') break;
+            continue;
+          }
+          if (interactionBus.subscriberCount() === 0) {
+            // 桌面端不在,没人执行外发。已占的名额只能认了(极少见),记一条失败并停。
+            recordInteraction(db, { platform: opts.platform, accountId: opts.account, action: 'reply', targetRef: commentId, text, status: 'error', detail: '桌面端未连接,无法外发' });
+            break;
+          }
+          const job = interactionBus.create({ platform: opts.platform, account: opts.account, action: 'reply', targetRef: opts.noteRef, noteRef: opts.noteRef, ...(item.author ? { authorName: String(item.author) } : {}), text });
+          const terminal = await waitInteractionTerminal(job.id);
+          if (!terminal) {
+            // 桌面端 180s 没落终态(pane 卡死/被关):不堵整批,跳下一条;若 web 之后补落终态,审计会再补一条,正好能看出"迟到"。
+            recordInteraction(db, { platform: opts.platform, accountId: opts.account, action: 'reply', targetRef: commentId, text, status: 'error', detail: '执行超时(180s 未落终态)' });
+            continue;
+          }
+          if (terminal.reason === 'needs-login') {
+            // 撞登录墙:暂停整批,告警提醒扫码;web 端已把标签停在登录页。探到登录恢复就重试本条。
+            // 多篇并发时每条派发器都可能撞到同一堵登录墙——告警按 平台×账号 去重(5 分钟内只提醒一次),
+            // 别刷屏;探测循环各自跑无妨(都很轻)。
+            const lk = freezeKey(opts.platform, opts.account);
+            const lastAlert = loginAlertedAt.get(lk) ?? 0;
+            if (Date.now() - lastAlert > 5 * 60_000) {
+              loginAlertedAt.set(lk, Date.now());
+              createAlert(db, { kind: 'login-expired', platform: opts.platform, account: opts.account, message: `「${opts.account ?? '默认账号'}」的${opts.platform}未登录,批量直发已暂停——请去浏览器标签扫码,登录后会自动接着发。` });
+            }
+            const recovered = await waitLoginRecovery(opts.platform, opts.account, 10 * 60_000);
+            if (recovered) {
+              if (loginRetriedFor !== commentId) { loginRetriedFor = commentId; i -= 1; quickNext = true; } // 重试本条;已重试过就只能跳过
+              continue;
+            }
+            recordInteraction(db, { platform: opts.platform, accountId: opts.account, action: 'reply', targetRef: commentId, text, status: 'error', detail: '等待扫码超时(10 分钟),批量直发中止' });
+            break;
+          }
+          if (terminal.reason === 'risk-control') {
+            // 触发平台风控/验证:不立刻放弃当天——web 端已把浏览器标签停在验证页,先【暂停等用户人工处理】
+            // (掉登录=静默探测等重新扫码 ≤10 分钟;没掉登录=滑块/点选类,给几分钟人工完成),恢复后重试
+            // 本条探路。重试仍被拦、或等不到人 → 确认是真风控:冻结当天+整批停(后续别的笔记的派发器也会
+            // 在开头查到冻结而停)——冻着还猛发只会加速封号。用户完成验证后可在互动页「解除冻结」恢复。
+            if (riskRetriedFor !== commentId) {
+              const rk = freezeKey(opts.platform, opts.account);
+              const lastRiskAlert = riskAlertedAt.get(rk) ?? 0;
+              if (Date.now() - lastRiskAlert > 5 * 60_000) {
+                riskAlertedAt.set(rk, Date.now());
+                createAlert(db, { kind: 'risk-control', platform: opts.platform, account: opts.account, message: `「${opts.account ?? '默认账号'}」在${opts.platform}触发了平台风控/验证,批量直发已暂停——请去浏览器标签完成滑块/扫码,系统正盯着那个页面,完成后会立刻自动重发(最多等 10 分钟)。` });
+              }
+              const recovered = await waitRiskRecovery(opts.platform, opts.account);
+              if (recovered) { riskRetriedFor = commentId; i -= 1; quickNext = true; continue; }
+            }
+            freezeAutoSend(opts.platform, opts.account);
+            createAlert(db, { kind: 'risk-control', platform: opts.platform, account: opts.account, message: `「${opts.account ?? '默认账号'}」在${opts.platform}的风控验证${riskRetriedFor === commentId ? '处理后重试仍被拦' : '等了 10 分钟没人处理'},自动直发已冻结,今天不再自动发。人工完成验证后可在互动页点「解除冻结」恢复(或明天自动解冻);也可手动逐条发。` });
+            break;
+          }
+          // done 或普通 error:终态已被 complete 端点落审计,跳下一条。
+        } catch (err) {
+          recordInteraction(db, { platform: opts.platform, accountId: opts.account, action: 'reply', targetRef: commentId, text, status: 'error', detail: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    })();
+  };
+
+  // 桌面端墙观察器的「墙清了」打点:验证页/登录页恢复正常(用户做完滑块/扫完码)时上报。
+  // 等待中的派发器(waitRiskRecovery/waitLoginRecovery)靠它立刻恢复重发。幂等,多报无害。
+  app.post('/api/media-studio/interaction/wall-cleared', (req, res) => {
+    const b = (req.body ?? {}) as { platform?: string; account?: string | null };
+    const platform = String(b.platform ?? '').trim();
+    if (!platform) return bad(res, 400, '缺少 platform');
+    const account = typeof b.account === 'string' && b.account ? b.account : null;
+    wallClearedAt.set(freezeKey(platform, account), Date.now());
+    res.json({ ok: true });
+  });
+
+  // 手动解除当天的风控冻结:用户已去浏览器人工完成平台验证后,恢复该 平台×账号 的自动直发资格。
+  // 「验证完成」没有可靠的自动信号(滑块类验证不掉登录,静默探测探不出来),所以交还给人:谁完成了
+  // 验证谁来点这一下(UI「解除冻结」按钮 / od studio auto-send-unfreeze)。解除只清冻结台账,之后
+  // 每条外发仍逐条过风控台账(冷却/上限/静默时段),再撞风控照样会重新走 等待→重试→冻结。
+  app.post('/api/media-studio/interaction/auto-send-unfreeze', (req, res) => {
+    const b = (req.body ?? {}) as { platform?: string; account?: string | null };
+    const platform = String(b.platform ?? '').trim();
+    if (!platform) return bad(res, 400, '缺少 platform');
+    const account = typeof b.account === 'string' && b.account ? b.account : null;
+    autoSendFreeze.unfreeze(platform, account);
+    res.json({ ok: true });
+  });
+
+  // ── 互动区 AI 智能评论回复:读评论 → 逐条 AI 拟稿(dryRun)/ 真发选中的(dryRun:false, chosen)/
+  //    自动直发(autoSend:安全类候选 → 拟人节奏后台派发,不用逐条审核)──
+  // 与 auto-reply 同一套读评论 + 风控派发,只是把「关键词命中出模板」换成「AI 逐条判该不该回 + 现写」。
+  // AI 走创作台同款「检测到的本地 CLI 智能体」(generateReplyDrafts→callModelOnce),不另配 Key。
+  app.post('/api/media-studio/ai-reply', async (req, res) => {
+    const b = (req.body ?? {}) as {
+      platform?: string; noteRef?: string; account?: string | null; persona?: string;
+      note?: { title?: string; content?: string }; dryRun?: boolean; autoSend?: boolean;
+      chosen?: Array<{ commentId?: string; author?: string; action?: string; text?: string; category?: string }>;
+      maxReplies?: number;
+    };
+    const platform = String(b.platform ?? '').trim();
+    const account = typeof b.account === 'string' && b.account ? b.account : null;
+    const noteRef = String(b.noteRef ?? '').trim();
+    const autoSend = b.autoSend === true;
+    const isDry = !autoSend && b.dryRun !== false;
+    if (!platform) return bad(res, 400, '缺少 platform');
+
+    // 自动直发(每篇一键):客户端已读评论+AI 拟稿+初筛安全类,这里按安全白名单【服务端再兜底过一遍】
+    // (绝不把负面/水军/求链接自动外发),截到上限,交拟人节奏后台派发器。立即返回,不阻塞;进度看战果看板。
+    if (autoSend) {
+      if (!noteRef) return bad(res, 400, '缺少 noteRef');
+      // 本账号当天已触发风控冻结:直接回绝,连排队都不排(避免风控后还继续送新笔记进管道)。
+      if (isAutoSendFrozen(platform, account)) {
+        return res.json({ autoQueued: 0, frozen: true, detail: '今天已触发平台风控,自动直发已冻结(避免连发加速封号)——先去浏览器标签人工完成平台验证,然后点「解除冻结」再发;不处理则明天自动解冻。也可手动逐条发。' });
+      }
+      const maxReplies = Number.isFinite(Number(b.maxReplies)) ? Math.max(1, Math.min(10, Number(b.maxReplies))) : 5;
+      const candidates = pickAutoSendCandidates(
+        (Array.isArray(b.chosen) ? b.chosen : []).map((c) => ({
+          id: String(c?.commentId ?? ''),
+          should_reply: true,
+          category: String(c?.category ?? ''),
+          reply: String(c?.text ?? ''),
+          ...(c?.author ? { author: String(c.author) } : {}),
+        })),
+        maxReplies,
+      ).filter((c) => c.id);
+      if (candidates.length === 0) {
+        return res.json({ autoQueued: 0, detail: '没有可自动直发的安全类回复(负面/水军/求链接默认不自动发,留人工手动发)' });
+      }
+      autoDispatchPaced({ platform, account, noteRef, items: candidates });
+      return res.json({ autoQueued: candidates.length });
+    }
+
+    // 真发:直接派发人在预览里选/改过的 chosen,不重读评论(逐条过风控台账)。
+    if (!isDry) {
+      if (!noteRef) return bad(res, 400, '缺少 noteRef');
+      const chosen = Array.isArray(b.chosen)
+        ? b.chosen.filter((x) => x && String(x.commentId ?? '').trim() && String(x.text ?? '').trim())
+        : [];
+      if (chosen.length === 0) return bad(res, 400, '没有选中的回复');
+      const maxReplies = Number.isFinite(Number(b.maxReplies)) ? Math.max(1, Math.min(20, Number(b.maxReplies))) : 5;
+      const dispatched: Array<{ commentId: string; text: string; jobId: string | null; blocked?: string }> = [];
+      let sent = 0;
+      for (const item of chosen) {
+        if (sent >= maxReplies) break;
+        const action = item.action === 'sub-reply' ? 'sub-reply' : 'reply';
+        const commentId = String(item.commentId);
+        const text = String(item.text);
+        const decision = claimInteractionSlot(db, platform, account, interactionPolicy());
+        if (!decision.allowed) {
+          recordInteraction(db, { platform, accountId: account, action, targetRef: commentId, text, status: 'blocked', detail: decision.reason ?? null });
+          dispatched.push({ commentId, text, jobId: null, blocked: decision.reason ?? 'blocked' });
+          continue;
+        }
+        try {
+          const targetRef = action === 'reply' ? noteRef : commentId;
+          const job = interactionBus.create({ platform, account, action, targetRef, noteRef, ...(item.author ? { authorName: String(item.author) } : {}), text });
+          dispatched.push({ commentId, text, jobId: job.id });
+          sent += 1;
+        } catch (err) {
+          dispatched.push({ commentId, text, jobId: null, blocked: err instanceof Error ? err.message : String(err) });
+        }
+      }
+      return res.json({ dispatched });
+    }
+
+    // 预览:读评论 → AI 逐条拟稿。
+    if (!noteRef) return bad(res, 400, '缺少 noteRef');
+    if (commentReadBus.subscriberCount() === 0) return bad(res, 409, '桌面端未连接——读评论需要 social-auto 桌面应用在运行。');
+    let readJob;
+    try { readJob = commentReadBus.create({ platform, account, noteRef }); }
+    catch (err) { return bad(res, 409, err instanceof Error ? err.message : String(err)); }
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      await commentReadBus.wait(readJob.id, readJob.progress.length, 4000);
+      const j = commentReadBus.get(readJob.id);
+      if (!j) break;
+      if (j.status === 'done' || j.status === 'error' || j.comments.length > 0 || j.needsLogin) { readJob = j; break; }
+      readJob = j;
+    }
+    const cur = commentReadBus.get(readJob.id) ?? readJob;
+    if (cur.needsLogin) return res.json({ read: 0, drafts: [], needsLogin: true });
+    const flat: Array<{ id: string; author: string; text: string }> = [];
+    for (const c of cur.comments) {
+      flat.push({ id: c.id, author: c.author, text: c.text });
+      for (const s of c.subReplies ?? []) flat.push({ id: s.id, author: s.author, text: s.text });
+    }
+    if (flat.length === 0) return res.json({ read: 0, drafts: [], detail: cur.detail });
+    try {
+      const drafts = await generateReplyDrafts(paths.RUNTIME_DATA_DIR, paths.PROJECT_ROOT, {
+        note: b.note ?? {},
+        // 没显式给人设就用【账号中心里这个账号的人设】(与创作台写作同一份)。
+        persona: await resolveAccountPersona(
+          paths.RUNTIME_DATA_DIR,
+          String(b.platform ?? ''),
+          b.account ?? null,
+          typeof b.persona === 'string' ? b.persona : '',
+        ),
+        comments: flat,
+      });
+      const byId = new Map(flat.map((c) => [c.id, c]));
+      const out = drafts.map((d) => ({
+        ...d,
+        author: byId.get(d.id)?.author ?? '',
+        commentText: byId.get(d.id)?.text ?? '',
+      }));
+      return res.json({ read: flat.length, drafts: out });
+    } catch (err) {
+      if (err && (err as { code?: string }).code === 'NO_PROVIDER') {
+        return bad(res, 400, '未检测到可用 AI——请确认创作台在用的那个本地 CLI 智能体(如 Claude Code)已配好;评论回复复用同一个 AI,不需要另配 Key。');
+      }
+      return bad(res, 500, 'AI 拟稿失败：' + (err instanceof Error ? err.message : String(err)));
+    }
   });
 
   // ---- 登录态保活 + 失效告警 + 扫码补登（W6;2026-07-20 改后台静默探测）----
@@ -1259,6 +1656,10 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       const flip = setLoginStatus(db, job.platform, job.account, state, detail || null);
       if (flip.flippedToLoggedOut) {
         createAlert(db, { kind: 'login-expired', platform: job.platform, account: job.account, message: `「${job.account}」的${job.platform}登录已失效,请去账号页扫码补登。` });
+      } else if (state === 'logged-in') {
+        // 探到已登录:把该账号名下残留的「登录失效」告警消掉,否则补登/仍在登录后红条还挂着,
+        // 出现「检测明明是已登录却还提示补登」(2026-07-21 用户反馈)。
+        dismissLoginAlertsFor(db, job.platform, job.account);
       }
     }
     res.json({ job: loginCheckBus.get(req.params.id) });

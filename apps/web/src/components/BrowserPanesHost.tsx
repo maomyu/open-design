@@ -33,13 +33,13 @@ import {
   type LoginCheckPaneSpec,
   type MyNotesPaneSpec,
 } from '../runtime/browser-panes';
-import { runDraftInjection, humanSearch, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
+import { runDraftInjection, humanSearch, wvEval, type DraftPayload, type DraftWebview } from '../runtime/browser-draft';
 import { runReplyInjection } from '../runtime/reply-injectors';
 import { CARD_PROBE_SEL, EXTRACTORS, INFINITE_SCROLL, LOGIN_WALL, PLATFORM_HOMEPAGE, SEARCH_BY_TYPING, buildSearchUrl } from '../runtime/collect-extractors';
 import { COMMENT_EXTRACTORS, COMMENT_LOGIN_WALL, buildNoteUrl, type CommentPlatform } from '../runtime/comment-extractors';
 import { LOGIN_HOME, LOGIN_PROBE, parseLoginProbe } from '../runtime/login-markers';
 import { MY_NOTES_HOME, SELF_PROFILE_FINDER, MY_NOTES_EXTRACTOR } from '../runtime/my-notes-extractor';
-import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress, reportInteractionProgress, completeInteractionJob, reportLoginCheckProgress, postLoginCheckResult, completeLoginCheckJob, reportMyNotesProgress, postMyNotesResult, completeMyNotesJob } from '../providers/media-studio';
+import { postCollectResult, reportCollectProgress, postCommentReadResult, reportCommentReadProgress, reportInteractionProgress, completeInteractionJob, reportInteractionWallCleared, reportLoginCheckProgress, postLoginCheckResult, completeLoginCheckJob, reportMyNotesProgress, postMyNotesResult, completeMyNotesJob } from '../providers/media-studio';
 import type { CommentNode, StudioCollectItem, StudioNoteCard } from '@open-design/contracts';
 import styles from './BrowserPanesHost.module.css';
 
@@ -294,9 +294,16 @@ async function runReadComments(
   el: DraftWebview | null,
   spec: CommentReadPaneSpec,
   isCancelled: () => boolean,
+  onStatus?: (s: CollectPaneStatus) => void,
 ): Promise<void> {
   const { jobId, platform, noteRef } = spec;
-  const say = (t: string) => { if (!isCancelled()) reportCommentReadProgress(jobId, t); };
+  // 进度既写进 job(给互动页轮询),也顶到【本浏览器标签】的状态条——读评论时用户正看着这个标签,
+  // 「打开笔记页 → 读取评论树 → 读到 N 条」就是"AI 边阅读边执行"的可视反馈。
+  const say = (t: string) => {
+    if (isCancelled()) return;
+    reportCommentReadProgress(jobId, t);
+    onStatus?.({ text: `读评论:${t}`, kind: /打不开|未登录|诊断|无法浏览/.test(t) ? 'action' : 'info' });
+  };
   const finish = (comments: CommentNode[], needsLogin: boolean) => {
     if (isCancelled()) return;
     postCommentReadResult(jobId, comments, needsLogin);
@@ -330,6 +337,12 @@ async function runReadComments(
     say('未登录：请在标签里扫码登录后重试');
     return finish([], true);
   }
+  // 小红书没带 xsec_token 的 explore 链接会被判「笔记暂时无法浏览」/白屏 → 读评论必然 0。明确报出来
+  // (根因是采集来的链接缺 token;已在引擎给采集 URL 补 xsec_token,重新采集的笔记就带 token 了)。
+  if (platform === 'xiaohongshu' && /笔记暂时无法浏览|当前笔记状态异常|内容不存在|你访问的页面不见了|访问的页面不存在/.test(bodyText)) {
+    say('这条笔记在内置浏览器打不开(小红书判「暂时无法浏览」)——链接多半缺 xsec_token。请用带完整参数的分享链接,或重新采集后再试。');
+    return finish([], false);
+  }
   // 滚动到评论区并多滚几次加载楼中楼（小红书评论懒加载）。
   for (let i = 0; i < 6; i++) {
     if (isCancelled()) return;
@@ -340,24 +353,88 @@ async function runReadComments(
   const raw = await evalJs(COMMENT_EXTRACTORS[platform as CommentPlatform], 6000);
   const comments = Array.isArray(raw) ? (raw as CommentNode[]) : [];
   const total = comments.reduce((n, c2) => n + 1 + (c2.subReplies?.length ?? 0), 0);
-  say(`读到 ${comments.length} 条一级评论 / 共 ${total} 条(含楼中楼)`);
+  // 读到 0 条时的【自诊断】:把页面上真实的评论容器情况报出来——若 .parent-comment/.comment-item 明明
+  // 有却抽成 0,就是选择器过时了(小红书改版);全 0 则是这条真没评论/评论没加载。把这行发来即可校准。
+  if (comments.length === 0 && platform === 'xiaohongshu') {
+    const diag = await evalJs(
+      `(() => { const c = (s) => { try { return document.querySelectorAll(s).length; } catch { return -1; } };
+        const cls = [...new Set([...document.querySelectorAll('[class*=comment]')].map((e) => String(e.className || '')).filter(Boolean))].slice(0, 8);
+        return JSON.stringify({ parent: c('.parent-comment'), item: c('.comment-item'), cont: c('.comments-container'), list: c('.comment-list'), cls }); })()`,
+      3000,
+    );
+    say(`读到 0 条评论——诊断:${String(diag ?? '(读不到页面结构)').slice(0, 220)}`);
+  } else {
+    say(`读到 ${comments.length} 条一级评论 / 共 ${total} 条(含楼中楼)`);
+  }
   finish(comments, false);
+}
+
+/** 当前页是否还立着墙(可见验证组件 / 验证-登录 URL / 短页登录墙文本)。评估失败按「墙还在」处理(继续等)。 */
+async function wallStillPresent(el: DraftWebview): Promise<boolean> {
+  try {
+    const v = await wvEval<{ cap: boolean; url: string; text: string }>(el, `(() => {
+      const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 30 && r.height > 30; };
+      let cap = false;
+      try { cap = [...document.querySelectorAll('[class*="captcha"],[id*="captcha"],iframe[src*="captcha"],[class*="geetest"],[class*="sec-check"]')].some(vis); } catch (e) { /* ignore */ }
+      return { cap, url: location.href, text: (document.body ? document.body.innerText : '').slice(0, 1200) };
+    })()`);
+    if (!v) return true;
+    if (v.cap) return true;
+    if (/captcha|geetest|antispam|\bverify\b|seccheck|\/login\b|passport|signin|sign-in|\/404\?source=[^&]*sec_/i.test(v.url || '')) return true;
+    const short = (v.text || '').replace(/\s/g, '').length < 220;
+    if (short && /扫码登录|手机号登录|请先?登录|安全验证|人机验证|验证码|滑块/.test(v.text || '')) return true;
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 /**
  * 在本面板 webview 里执行一次互动(自动评论回复/楼中楼),回写 interaction job 终态。
  * 名额已在 daemon 建 job 时(W1 风控台账)占用;这里只负责真实外发。
+ *
+ * 撞墙(needs-login/risk-control)后的【墙观察器】:标签停在验证/登录页,状态条醒目提示用户
+ * 去扫码/做滑块;每 4s 盯一眼页面,连续两次「墙没了」= 用户处理完了 → 上报 wall-cleared,
+ * daemon 等待中的派发器立刻恢复重发这条评论。这是"扫完码就自动接着发"的落地(2026-07-25 用户定稿)。
  */
 async function runInteraction(
   el: DraftWebview | null,
   spec: InteractPaneSpec,
   isCancelled: () => boolean,
+  opts?: { account?: string | null; onStatus?: (s: CollectPaneStatus) => void },
 ): Promise<void> {
   const { jobId } = spec;
   const say = (t: string) => { if (!isCancelled()) reportInteractionProgress(jobId, t); };
+  opts?.onStatus?.(null); // 新一次执行(含自动重试)开始:清掉上一轮的墙提醒
   const r = await runReplyInjection(el, spec, say);
-  if (isCancelled()) return;
-  completeInteractionJob(jobId, r.ok, r.detail);
+  if (isCancelled()) {
+    // 执行中途被取消(窗格被工作区标签挤掉/重建/关闭):【必须回终态】,否则 job 悬在 running,
+    // daemon 只能等 180s 超时(2026-07-25 微博/小红书两起"执行超时"悬案的真身)。
+    // 已终态的 job 这里再补一发 complete 是 404 无害。
+    completeInteractionJob(jobId, false, '执行被中断(浏览器标签被切换/重建),这条未发出——重新点直发即可');
+    return;
+  }
+  // reason(needs-login/risk-control)一并回传:daemon 编排层据此暂停等扫码续跑 / 触发风控整批停。
+  completeInteractionJob(jobId, r.ok, r.detail, r.reason);
+  if (r.ok || !r.reason || !el) return;
+  const need = r.reason === 'needs-login'
+    ? '扫码登录:请直接在下方页面扫码'
+    : '完成安全验证:请在下方页面操作(滑块/扫码;若显示 404 拦截页,点「回首页」按平台提示完成验证或重新登录)';
+  opts?.onStatus?.({ kind: 'action', text: `⚠️ 需要人工${need}——完成后系统会自动重发这条评论(最多等 10 分钟)` });
+  const deadline = Date.now() + 10 * 60_000;
+  let clearStreak = 0;
+  while (Date.now() < deadline && !isCancelled()) {
+    await new Promise((res) => setTimeout(res, 4_000));
+    if (isCancelled()) return;
+    if (await wallStillPresent(el)) { clearStreak = 0; continue; }
+    clearStreak += 1;
+    if (clearStreak >= 2) {
+      reportInteractionWallCleared(spec.platform, opts?.account ?? null);
+      opts?.onStatus?.({ kind: 'info', text: '✅ 验证已完成——等待中的评论会自动重发;若几分钟内没动静,去互动页看是否已冻结(可一键解除)。' });
+      return;
+    }
+  }
+  // 超时/被取消:提醒不撤(用户回来还能看到该干嘛);派发器那头到点会按冻结策略收尾。
 }
 
 /**
@@ -795,7 +872,13 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
       if (cancelled) return;
       ranReadRef.current = seq;
       navigate({ kind: 'browser', platform: spec.platform, account: spec.account });
-      void runReadComments(ref.current as unknown as DraftWebview | null, readSpec, () => cancelled);
+      setCollectStatus({ text: '读评论:打开笔记页…', kind: 'info' });
+      void runReadComments(
+        ref.current as unknown as DraftWebview | null,
+        readSpec,
+        () => cancelled,
+        (s) => { if (!cancelled) setCollectStatus(s); },
+      ).finally(() => { if (!cancelled) window.setTimeout(() => setCollectStatus(null), 4000); });
     }, 400);
     return () => { cancelled = true; window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -813,7 +896,11 @@ function BrowserPane({ spec, active }: { spec: PaneSpec; active: boolean }): JSX
       ranInteractRef.current = seq;
       // 互动要用户看得见拟人操作(评论区高频发言,让用户能随时叫停),切到本标签前台。
       navigate({ kind: 'browser', platform: spec.platform, account: spec.account });
-      void runInteraction(ref.current as unknown as DraftWebview | null, interactSpec, () => cancelled);
+      void runInteraction(ref.current as unknown as DraftWebview | null, interactSpec, () => cancelled, {
+        account: spec.account ?? null,
+        // 撞墙提醒/墙观察进度顶到本标签状态条(用户此刻正看着这个标签);新一轮执行会先清掉旧提醒。
+        onStatus: (s) => { if (!cancelled) setCollectStatus(s); },
+      });
     }, 400);
     return () => { cancelled = true; window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -26,7 +26,8 @@
 //      switch to OpenAI but reuse my existing key" change costs zero
 //      typing.
 //   1. current Local CLI, when the caller passed `chatAgentId` and the
-//      agent supports headless one-shot output (Claude Code today).
+//      agent supports headless one-shot output (claude/codex/opencode/kimi —
+//      see canUseLocalCliForMemory).
 //   2. matching provider env var for the current chat protocol.
 //   3. BYOK chat-config snapshot for API-mode chats.
 //   4. ANTHROPIC_API_KEY env → Claude Haiku 4.5 (legacy fallback)
@@ -228,10 +229,15 @@ function chatProtocolFromAgentId(agentId) {
 
 function canUseLocalCliForMemory(agentId, provider) {
   // Keep this allowlist explicit: each entry below has a headless one-shot
-  // mode that accepts stdin and a parser we can reduce back to assistant text.
+  // mode and a parser we can reduce back to assistant text.
   if (agentId === 'claude' && provider === 'anthropic') return true;
   if (agentId === 'codex' && provider === 'openai') return true;
   if (agentId === 'opencode' && provider === 'openai') return true;
+  // kimi 的 protocol 映到 openai,但本机 kimi CLI 本身就能一发(kimi -p)——
+  // 不补这条,agentId=kimi 时会跌去借 hermes/codex 的 ChatGPT OAuth token 打
+  // api.openai.com:那边要么 token 过期 401、要么 insufficient_quota 429,
+  // 互动区 AI 拟稿直接挂(2026-07-23「无法评论」事故的第三环)。
+  if (agentId === 'kimi' && provider === 'openai') return true;
   return false;
 }
 
@@ -799,6 +805,10 @@ async function writeLocalCliPromptAttachment(agentId, prompt) {
   };
 }
 
+// 本 daemon 进程内「代理已证实挂死」的记忆:首次因代理超时并用无代理重试成功后置 true,
+// 后续一发直接无代理(本地代理抽风往往持续一阵,别每次都先赔一个 120s 超时)。重启即复位。
+let preferNoProxyLocalCli = false;
+
 async function callLocalCli(provider, system, user, options) {
   if (typeof options?.localCliRunner === 'function') {
     return options.localCliRunner({
@@ -876,21 +886,54 @@ async function callLocalCli(provider, system, user, options) {
     );
     stdinText = '';
     parseStdout = (raw) => extractJsonEventText(def.eventParser || def.id, raw, def.name);
+  } else if (provider.agentId === 'kimi') {
+    // kimi -p 一次性非交互(prompt 作参数值)。--output-format stream-json 出 JSONL:
+    // {"role":"assistant","content":"..."} + {"role":"meta",...} 尾行——text 模式会把 prompt
+    // 回显混进 stdout(系统提示里的 JSON 示例会骗过 first-{-to-last-} 解析),必须按事件解析,
+    // 取最后一条 assistant 消息的 content。
+    args = ['-p', prompt, '--output-format', 'stream-json'];
+    if (provider.model && provider.model !== 'default') {
+      args.push('--model', provider.model);
+    }
+    stdinText = '';
+    parseStdout = (raw) => {
+      let last = '';
+      for (const line of raw.split('\n')) {
+        const t = line.trim();
+        if (!t) continue;
+        let ev;
+        try { ev = JSON.parse(t); } catch { continue; }
+        if (ev && ev.role === 'assistant' && typeof ev.content === 'string') last = ev.content;
+      }
+      return last.trim();
+    };
   } else {
     throw new Error(`Local CLI memory extraction is not supported for ${provider.agentId}`);
   }
 
-  const env = applyAgentLaunchEnv(
+  const baseEnv = applyAgentLaunchEnv(
     spawnEnvForAgent(def.id, { ...process.env, ...(def.env || {}) }, configuredAgentEnv),
     launch,
   );
-  const invocation = createCommandInvocation({
-    command: launch.launchPath,
-    args,
-    env,
-  });
+  // 系统代理容错:打包启动器会把 macOS 系统代理(HTTP/HTTPS/ALL_PROXY)注入 daemon 及其子进程。
+  // 本地代理(如 Clash)间歇抽风时,CLI 的流式 API 连接会整体挂死到超时(2026-07-25 真机取证:
+  // 子进程 7 条连接全部 idle 在 127.0.0.1:7897 上;同机同 env 直连秒通)。首次超时且 env 带代理时,
+  // 自动【去掉代理 env 重试一次】;成功则本进程后续一发直接无代理。
+  const proxyKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
+  const stripProxyEnv = (source) => {
+    const out = { ...source };
+    for (const key of proxyKeys) delete out[key];
+    return out;
+  };
+  const envHasProxy = proxyKeys.some((key) => baseEnv[key]);
 
-  return await new Promise((resolve, reject) => {
+  const attemptSpawn = (env) => {
+    const invocation = createCommandInvocation({
+      command: launch.launchPath,
+      args,
+      env,
+    });
+    return new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -963,7 +1006,21 @@ async function callLocalCli(provider, system, user, options) {
       if (err.code !== 'EPIPE') finish(err);
     });
     child.stdin.end(stdinText);
-  });
+    });
+  };
+
+  const startStripped = preferNoProxyLocalCli && envHasProxy;
+  try {
+    return await attemptSpawn(startStripped ? stripProxyEnv(baseEnv) : baseEnv);
+  } catch (err) {
+    const timedOut = /timed out/i.test(String(err instanceof Error ? err.message : err));
+    const retryable = envHasProxy && !startStripped && timedOut
+      && (provider.agentId === 'claude' || provider.agentId === 'kimi'); // 仅纯 stdin/参数式一发可安全重试(opencode 的附件已被清理)
+    if (!retryable) throw err;
+    const out = await attemptSpawn(stripProxyEnv(baseEnv));
+    preferNoProxyLocalCli = true;
+    return out;
+  }
 }
 
 // Tolerant JSON parse — the model occasionally wraps output in ```json

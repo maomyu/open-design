@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import type {
   CreateStudioInteractionRequest,
   StudioInteractionJob,
+  StudioInteractionTerminalReason,
   StudioInteractionWaitResponse,
 } from '@open-design/contracts';
 
@@ -41,7 +42,7 @@ export interface InteractionBus {
   create(req: CreateStudioInteractionRequest): StudioInteractionJob;
   claim(id: string): StudioInteractionJob | null;
   progress(id: string, message: string): StudioInteractionJob | null;
-  complete(id: string, ok: boolean, detail: string): StudioInteractionJob | null;
+  complete(id: string, ok: boolean, detail: string, reason?: StudioInteractionTerminalReason): StudioInteractionJob | null;
   get(id: string): StudioInteractionJob | null;
   wait(id: string, since: number, timeoutMs: number): Promise<StudioInteractionWaitResponse | null>;
 }
@@ -128,12 +129,15 @@ export function createInteractionBus(now: () => number = Date.now): InteractionB
       touch(entry);
       return { ...entry.job };
     },
-    complete(id, ok, detail) {
+    complete(id, ok, detail, reason) {
       const entry = jobs.get(id);
       if (!entry) return null;
       if (isTerminal(entry.job)) return { ...entry.job };
       entry.job.status = ok ? 'done' : 'error';
       entry.job.detail = detail;
+      // 结构原因码(needs-login/risk-control):编排层据此暂停等登录、或触发风控整批停——
+      // 不靠解析 detail 文本。只有 error 终态才带(成功不需要原因)。
+      if (!ok && reason) entry.job.reason = reason;
       touch(entry);
       return { ...entry.job };
     },

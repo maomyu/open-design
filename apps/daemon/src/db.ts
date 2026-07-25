@@ -340,6 +340,8 @@ function migrate(db: SqliteDb): void {
       keywords_json TEXT NOT NULL DEFAULT '[]',
       match_mode TEXT NOT NULL DEFAULT 'contains',
       reply_template TEXT NOT NULL DEFAULT '',
+      -- 'template'(默认)=reply_template 就是要发的文案;'ai'=reply_template 是【意图】,交给 AI 现写。
+      reply_mode TEXT NOT NULL DEFAULT 'template',
       action TEXT NOT NULL DEFAULT 'reply',
       priority INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -390,6 +392,12 @@ function migrate(db: SqliteDb): void {
   const knowledgeCols = db.prepare(`PRAGMA table_info(media_knowledge)`).all() as DbRow[];
   if (knowledgeCols.length > 0 && !knowledgeCols.some((c: DbRow) => c.name === 'category')) {
     db.exec(`ALTER TABLE media_knowledge ADD COLUMN category TEXT`);
+  }
+  // 关键词规则可以挂【AI 意图】而不只是死模板(reply_mode='ai' 时 reply_template 存的是意图,
+  // 由 AI 照着意图逐条现写)。存量库补列,默认 'template' = 老行为不变。
+  const ruleCols = db.prepare(`PRAGMA table_info(interaction_rules)`).all() as DbRow[];
+  if (ruleCols.length > 0 && !ruleCols.some((c: DbRow) => c.name === 'reply_mode')) {
+    db.exec(`ALTER TABLE interaction_rules ADD COLUMN reply_mode TEXT NOT NULL DEFAULT 'template'`);
   }
   // 选题候选带上采集时抓到的原文案/原图(2026-07-20 用户报:存候选→去创作丢原素材)。存量库补列。
   const topicCols = db.prepare(`PRAGMA table_info(media_topics)`).all() as DbRow[];

@@ -285,6 +285,7 @@ import {
   VIDEO_MODELS,
 } from './media-models.js';
 import { readMaskedConfig, writeConfig, readStoredProviderKey } from './media-config.js';
+import { generateReplyDrafts, generateOpeningComment, resolveAccountPersona } from './media-studio/interaction-reply-run.js';
 import {
   deleteMediaTask,
   getMediaTask,
@@ -9899,6 +9900,135 @@ export async function startServer({
       return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null });
     } catch (err) {
       return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
+    }
+  });
+
+  // ── 互动区 AI 智能评论回复(后端生成器端点)──────────────────────────────────
+  // 读评论后,把 评论 + 笔记正文 + 账号人设 交【与创作台同一个「检测到的本地 CLI 智能体」】
+  // ——callModelOnce 复用 memory/plugin 那套多 provider 层(本地 CLI 如 Claude Code / BYOK 都行,
+  // 不另配文本模型 Key),逐条判「该不该回 + 回什么」,返回结构化拟稿给前端预览(人确认后才外发)。
+  app.post('/api/media-studio/interaction/gen-reply', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const body = req.body ?? {};
+    const comments = Array.isArray(body.comments)
+      ? body.comments.filter((c) => c && String(c.id ?? '').trim()).slice(0, 40)
+      : [];
+    if (comments.length === 0) return res.status(400).json({ error: '缺少 comments' });
+    try {
+      // 没显式给人设就用【账号中心里这个账号的人设】(与创作台写作同一份),UI/CLI 都受益。
+      const persona = await resolveAccountPersona(
+        RUNTIME_DATA_DIR,
+        String(body.platform ?? ''),
+        typeof body.account === 'string' ? body.account : null,
+        typeof body.persona === 'string' ? body.persona : '',
+      );
+      const results = await generateReplyDrafts(RUNTIME_DATA_DIR, PROJECT_ROOT, {
+        note: body.note,
+        persona,
+        comments,
+        sentReplies: Array.isArray(body.sentReplies) ? body.sentReplies : [],
+        maxLen: Number((body.constraints ?? {}).maxLen) || 60,
+        chatAgentId: typeof body.chatAgentId === 'string' ? body.chatAgentId : null,
+      });
+      return res.json({ results });
+    } catch (err) {
+      if (err && (err as { code?: string }).code === 'NO_PROVIDER') {
+        return res.status(400).json({ error: '未检测到可用 AI——请确认创作台在用的那个本地 CLI 智能体(如 Claude Code)已配好;评论回复复用同一个 AI,不需要另配 Key。' });
+      }
+      return res.status(500).json({ error: 'AI 回复生成失败：' + String(err && (err as Error).message ? (err as Error).message : err) });
+    }
+  });
+
+  // ── 开场评论:给一条【没人评论】的笔记写 1 条首评(抢热度引流)。走同一个检测到的本地 CLI 智能体。──
+  app.post('/api/media-studio/interaction/gen-opening', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const body = req.body ?? {};
+    try {
+      const persona = await resolveAccountPersona(
+        RUNTIME_DATA_DIR,
+        String(body.platform ?? ''),
+        typeof body.account === 'string' ? body.account : null,
+        typeof body.persona === 'string' ? body.persona : '',
+      );
+      const comment = await generateOpeningComment(RUNTIME_DATA_DIR, PROJECT_ROOT, {
+        note: body.note,
+        persona,
+        maxLen: Number((body.constraints ?? {}).maxLen) || 50,
+        chatAgentId: typeof body.chatAgentId === 'string' ? body.chatAgentId : null,
+      });
+      return res.json({ comment });
+    } catch (err) {
+      if (err && (err as { code?: string }).code === 'NO_PROVIDER') {
+        return res.status(400).json({ error: '未检测到可用 AI——请确认创作台在用的那个本地 CLI 智能体(如 Claude Code)已配好;开场评论复用同一个 AI,不需要另配 Key。' });
+      }
+      return res.status(500).json({ error: '开场评论生成失败：' + String(err && (err as Error).message ? (err as Error).message : err) });
+    }
+  });
+
+  // ── 旧小红书笔记「现取 xsec_token」──────────────────────────────────────────
+  // 旧采集的笔记 URL 缺 xsec_token → 内置浏览器打不开(反爬)→ 互动读评论/回复全废。互动前用
+  // TikHub 笔记详情(只要 note id)现取一个新 token,拼成能打开的完整 URL。取不到就原样返回(不阻断)。
+  app.post('/api/media-studio/resolve-xhs-url', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const noteRef = String(req.body?.noteRef ?? '').trim();
+    if (!noteRef) return res.status(400).json({ error: '缺少 noteRef' });
+    // 已带 token,或压根不是小红书笔记引用 → 原样。
+    const looksXhs = /xiaohongshu\.com\/(?:explore|discovery\/item)\//.test(noteRef) || /^[0-9a-zA-Z]{16,}$/.test(noteRef);
+    if (/xsec_token=/.test(noteRef) || !looksXhs) return res.json({ url: noteRef });
+    let eng;
+    try { eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX); }
+    catch { return res.json({ url: noteRef }); }
+    try {
+      const r = await execFileBuffered(eng.python, ['-m', 'scripts.resolve_xhs_token', noteRef], {
+        cwd: eng.engineDir, env: { ...eng.env, ...(await bakuanKeysEnv()) }, timeout: 30_000,
+      });
+      const out = String(r.stdout || '');
+      const parsed = JSON.parse(out.slice(out.indexOf('{')));
+      return res.json({ url: typeof parsed.url === 'string' && parsed.url ? parsed.url : noteRef, ...(parsed.error ? { detail: String(parsed.error) } : {}) });
+    } catch {
+      return res.json({ url: noteRef });
+    }
+  });
+
+  // ── 互动区【秒读评论】(接口直取,替代内置浏览器抓取)────────────────────────────
+  // 内置浏览器读评论:切到浏览器标签→加载笔记页→滚动→抓取,慢 15-60s、跳标签、还会卡在"打开笔记页"。
+  // 改用 TikHub 评论接口(只要 note id):~1-2s 拿到结构化评论树(id/作者/正文,含一层楼中楼),
+  // 既快又稳、不切标签、不反爬。互动 AI 拟稿的读评论从此走这条;真发/回复仍走浏览器(登录态外发)。
+  app.post('/api/media-studio/read-comments-fast', async (req, res) => {
+    if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
+    const platform = String(req.body?.platform ?? 'xiaohongshu').trim() || 'xiaohongshu';
+    const noteRef = String(req.body?.noteRef ?? '').trim();
+    if (!noteRef) return res.status(400).json({ error: '缺少 noteRef' });
+    let eng;
+    try { eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX); }
+    catch { return res.status(503).json({ error: '引擎不可用(读评论需要引擎在)' }); }
+    // withNote:顺带取内容本体的标题+正文当【AI 拟稿上下文】。多花一次 TikHub 调用(按次计费),
+    // 所以由调用方决定;取不到不影响评论。
+    const withNote = req.body?.withNote === true;
+    try {
+      const args = ['-m', 'scripts.fetch_comments', noteRef, platform, ...(withNote ? ['--with-note'] : [])];
+      const r = await execFileBuffered(eng.python, args, {
+        cwd: eng.engineDir, env: { ...eng.env, ...(await bakuanKeysEnv()) }, timeout: 30_000,
+      });
+      const out = String(r.stdout || '');
+      const parsed = JSON.parse(out.slice(out.indexOf('{'))) as {
+        comments?: Array<{ id?: string; author?: string; text?: string }>;
+        note?: { title?: string; text?: string };
+        error?: string;
+      };
+      if (parsed.error) return res.json({ read: 0, comments: [], detail: String(parsed.error) });
+      const comments = (Array.isArray(parsed.comments) ? parsed.comments : [])
+        .map((c) => ({ id: String(c?.id ?? '').trim(), author: String(c?.author ?? '').trim(), text: String(c?.text ?? '').trim() }))
+        .filter((c) => c.id && c.text);
+      const noteTitle = String(parsed.note?.title ?? '').trim();
+      const noteText = String(parsed.note?.text ?? '').trim();
+      return res.json({
+        read: comments.length,
+        comments,
+        ...(noteTitle || noteText ? { note: { title: noteTitle, text: noteText } } : {}),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: '读评论失败：' + (err instanceof Error ? err.message : String(err)) });
     }
   });
 

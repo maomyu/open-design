@@ -34,6 +34,7 @@ import {
   requestLoginCheck,
   fetchMediaAlerts,
   dismissMediaAlert,
+  PLATFORM_LOGIN_URLS,
 } from '../providers/media-studio';
 import './AccountsView.css';
 import './PluginEditView.css';
@@ -74,24 +75,6 @@ interface Draft {
 }
 
 const EMPTY_DRAFT: Draft = { name: '', persona: '', samplesText: '', credentials: {} };
-
-// 各平台【登录用主站】URL:比发布上传深页更适合登录(有清楚的「登录」入口),且和采集
-// 访问的是同一域名——扫码登录后 cookie 落在 .douyin.com 等主域,采集/发布共用同一登录态。
-// 没映射的平台退回默认后台 URL(daemon /browser/urls)。
-const PLATFORM_LOGIN_URLS: Record<string, string> = {
-  douyin: 'https://www.douyin.com/',
-  xiaohongshu: 'https://www.xiaohongshu.com/',
-  // 快手登【创作者中心】:www.kuaishou.com 在 webview 里会返回 JSON 接口响应,不是登录页;
-  // cp.kuaishou.com 会重定向到 passport 扫码登录页,且正是发布(cp.kuaishou.com)要的登录态。
-  kuaishou: 'https://cp.kuaishou.com/',
-  bilibili: 'https://www.bilibili.com/',
-  shipinhao: 'https://channels.weixin.qq.com/',
-  tencent: 'https://channels.weixin.qq.com/',
-  'wechat-mp': 'https://mp.weixin.qq.com/',
-  zhihu: 'https://www.zhihu.com/',
-  weibo: 'https://weibo.com/',
-  'baidu-zhidao': 'https://zhidao.baidu.com/',
-};
 
 export function AccountsView() {
   const { t } = useI18n();
@@ -163,6 +146,12 @@ export function AccountsView() {
     setAlerts((list) => list.filter((a) => a.id !== id));
   }
 
+  // 已确认「已登录」的账号,不再显示它的失效告警——补登后(或本就没掉线)红条即时消失,
+  // 不用等下一轮心跳。根治「检测明明是已登录却还提示补登」(2026-07-21 用户反馈)。
+  const visibleAlerts = alerts.filter(
+    (a) => !a.account || loginStatus[loginKey(a.platform, a.account)]?.state !== 'logged-in',
+  );
+
   return (
     <section className="accounts-view" aria-labelledby="accounts-title">
       <header className="accounts-view__hero">
@@ -177,9 +166,9 @@ export function AccountsView() {
 
       {/* ── 登录失效告警 ──
           心跳探测到某账号从「已登录」掉线时产的告警,顶显引导补登;消隐后不再提醒。 */}
-      {alerts.length > 0 ? (
+      {visibleAlerts.length > 0 ? (
         <div style={{ margin: '4px 0 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {alerts.map((a) => (
+          {visibleAlerts.map((a) => (
             <div
               key={a.id}
               role="alert"

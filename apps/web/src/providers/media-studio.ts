@@ -982,6 +982,26 @@ export async function resolvePlatformBrowserUrl(platform: string): Promise<strin
 }
 
 /**
+ * 各平台【登录用主站】URL:比发布上传深页更适合登录(有清楚的「登录」入口),且和采集
+ * 访问的是同一域名——扫码登录后 cookie 落在 .douyin.com 等主域,采集/发布共用同一登录态。
+ * 账号页「去补登」、互动撞登录墙后「留在登录页等扫码」共用这一份;没映射的平台退回默认后台 URL。
+ */
+export const PLATFORM_LOGIN_URLS: Record<string, string> = {
+  douyin: 'https://www.douyin.com/',
+  xiaohongshu: 'https://www.xiaohongshu.com/',
+  // 快手登【创作者中心】:www.kuaishou.com 在 webview 里会返回 JSON 接口响应,不是登录页;
+  // cp.kuaishou.com 会重定向到 passport 扫码登录页,且正是发布(cp.kuaishou.com)要的登录态。
+  kuaishou: 'https://cp.kuaishou.com/',
+  bilibili: 'https://www.bilibili.com/',
+  shipinhao: 'https://channels.weixin.qq.com/',
+  tencent: 'https://channels.weixin.qq.com/',
+  'wechat-mp': 'https://mp.weixin.qq.com/',
+  zhihu: 'https://www.zhihu.com/',
+  weibo: 'https://weibo.com/',
+  'baidu-zhidao': 'https://zhidao.baidu.com/',
+};
+
+/**
  * 打开平台后台。桌面端 = 应用内后台标签页(2026-07-09 用户拍板:与创作台
  * 并列切换,keep-alive 不重载);网页端落回 daemon 拉起的独立 Chrome 档案。
  * 两条路径共用同一 persist 分区档案,登录态互通。
@@ -1130,6 +1150,70 @@ export function completeCollectJob(jobId: string, ok: boolean, detail: string): 
 }
 
 // ── 读评论桥（桌面端执行侧回写 daemon read-comments job）──
+/** UI 侧发起读评论 job(桌面端会认领 → 开面板导航到笔记 → 抓评论),返回 job 供轮询进度/评论。 */
+export async function createStudioCommentRead(body: {
+  platform: string; account?: string | null; noteRef: string;
+}): Promise<{ job: import('@open-design/contracts').StudioCommentReadJob } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/read-comments`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, '创建读评论任务失败') };
+    return (await resp.json()) as { job: import('@open-design/contracts').StudioCommentReadJob };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+/** 轮询一个读评论 job:拿最新 progress[](实时进度)+ comments[] + 终态。 */
+export async function fetchStudioCommentRead(id: string): Promise<import('@open-design/contracts').StudioCommentReadJob | null> {
+  try {
+    const resp = await fetch(`${ROOT}/read-comments/${encodeURIComponent(id)}`);
+    if (!resp.ok) return null;
+    const d = (await resp.json()) as { job?: import('@open-design/contracts').StudioCommentReadJob };
+    return d.job ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 旧小红书笔记缺 xsec_token 时,现取一个新 token 拼成能打开的完整 URL(取不到/非小红书原样返回)。 */
+export async function resolveXhsNoteUrl(noteRef: string): Promise<string> {
+  try {
+    const resp = await fetch(`${ROOT}/resolve-xhs-url`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ noteRef }),
+    });
+    if (!resp.ok) return noteRef;
+    const d = (await resp.json()) as { url?: string };
+    return d.url || noteRef;
+  } catch {
+    return noteRef;
+  }
+}
+
+/** 互动区【秒读评论】:走 TikHub 评论接口(只要 note id),~1-2s 拿到结构化评论(id/作者/正文),
+ *  替代内置浏览器抓取(慢+切标签+会卡)。读评论从此走这条;真发/回复仍走浏览器(登录态外发)。 */
+export type FastCommentRead = {
+  read: number;
+  comments: Array<{ id: string; author: string; text: string }>;
+  /** withNote 时顺带取回的内容本体(标题+正文),给 AI 拟稿当上下文;取不到就没有这个字段。 */
+  note?: { title: string; text: string };
+  detail?: string;
+};
+
+export async function readCommentsFast(
+  body: { platform: string; noteRef: string; withNote?: boolean },
+): Promise<FastCommentRead | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/read-comments-fast`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, '读评论失败') };
+    return (await resp.json()) as FastCommentRead;
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
 export async function claimCommentReadJob(jobId: string): Promise<boolean> {
   try {
     const resp = await fetch(`${ROOT}/read-comments/${encodeURIComponent(jobId)}/claim`, { method: 'POST' });
@@ -1185,11 +1269,26 @@ export function reportInteractionProgress(jobId: string, message: string): void 
   }).catch(() => undefined);
 }
 
-export function completeInteractionJob(jobId: string, ok: boolean, detail: string): void {
+export function completeInteractionJob(
+  jobId: string,
+  ok: boolean,
+  detail: string,
+  reason?: 'needs-login' | 'risk-control',
+): void {
   void fetch(`${ROOT}/interaction/${encodeURIComponent(jobId)}/complete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ok, detail }),
+    body: JSON.stringify({ ok, detail, ...(reason ? { reason } : {}) }),
+  }).catch(() => undefined);
+}
+
+/** 墙观察器打点「墙清了」:验证页/登录页恢复正常(用户做完滑块/扫完码)。daemon 等待中的
+ *  派发器靠它立刻恢复重发。幂等 fire-and-forget。 */
+export function reportInteractionWallCleared(platform: string, account?: string | null): void {
+  void fetch(`${ROOT}/interaction/wall-cleared`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform, account: account ?? null }),
   }).catch(() => undefined);
 }
 
@@ -1402,6 +1501,106 @@ export async function removeInteractionRule(id: string): Promise<boolean> {
     return resp.ok;
   } catch {
     return false;
+  }
+}
+
+/** AI 智能评论回复的一条拟稿(逐条:该不该回 + 现写的回复 + 分类/理由)。 */
+export interface AiReplyDraft {
+  id: string;
+  should_reply: boolean;
+  category: string;
+  reply: string;
+  reason: string;
+  confidence: number;
+  author?: string;
+  commentText?: string;
+}
+export interface AiReplyResponse {
+  read?: number;
+  drafts?: AiReplyDraft[];
+  needsLogin?: boolean;
+  detail?: string;
+  dispatched?: Array<{ commentId: string; text: string; jobId: string | null; blocked?: string }>;
+  /** 自动直发(autoSend):已排队进后台拟人节奏派发器的安全类回复条数。 */
+  autoQueued?: number;
+  /** 该账号当天已触发平台风控被冻结:客户端据此【整批停】,别再往下送笔记。 */
+  frozen?: boolean;
+}
+/** AI 拟稿(显式评论):已读到评论后,交检测到的本地 CLI 智能体逐条判该不该回+现写。 */
+export async function genInteractionReplies(body: {
+  note?: { title?: string; content?: string };
+  /** 不填就由 daemon 自动用【账号中心里这个账号的人设】(要带上 platform+account)。 */
+  persona?: string;
+  platform?: string;
+  account?: string | null;
+  comments: Array<{ id: string; author?: string; text: string }>;
+  sentReplies?: string[];
+}): Promise<{ results: AiReplyDraft[] } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/interaction/gen-reply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, 'AI 拟稿失败') };
+    return (await resp.json()) as { results: AiReplyDraft[] };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+/** 给一条【没人评论】的笔记写 1 条开场评论(抢首评引流)——同一个检测到的本地 CLI。空串=不合适/敏感,不发。 */
+export async function genOpeningComment(body: {
+  note?: { title?: string; content?: string };
+  /** 不填就由 daemon 自动用【账号中心里这个账号的人设】(要带上 platform+account)。 */
+  persona?: string;
+  platform?: string;
+  account?: string | null;
+}): Promise<{ comment: string } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/interaction/gen-opening`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, '生成开场评论失败') };
+    return (await resp.json()) as { comment: string };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+/** 互动区 AI 智能回复:dryRun 读评论 → 逐条 AI 拟稿;dryRun:false + chosen 真发选中的(过风控);
+ *  autoSend:true + chosen(带 category)自动直发——服务端按安全白名单再兜底筛,拟人节奏后台派发。 */
+export async function runAiReply(body: {
+  platform: string;
+  noteRef?: string;
+  account?: string | null;
+  persona?: string;
+  note?: { title?: string; content?: string };
+  dryRun?: boolean;
+  autoSend?: boolean;
+  chosen?: Array<{ commentId: string; author?: string; action?: string; text: string; category?: string }>;
+  maxReplies?: number;
+}): Promise<AiReplyResponse | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/ai-reply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, 'AI 拟稿失败') };
+    return (await resp.json()) as AiReplyResponse;
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
+  }
+}
+
+/** 解除当天的自动直发风控冻结——用户已在浏览器人工完成平台验证后手动恢复(「验证完成」没有
+ *  可靠的自动信号,交还给人)。解除后每条外发仍逐条过风控台账。 */
+export async function unfreezeAutoSend(platform: string, account?: string | null): Promise<{ ok: boolean } | { error: string }> {
+  try {
+    const resp = await fetch(`${ROOT}/interaction/auto-send-unfreeze`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, account: account ?? null }),
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, '解除冻结失败') };
+    return (await resp.json()) as { ok: boolean };
+  } catch {
+    return { error: '连不上本地服务(daemon)' };
   }
 }
 

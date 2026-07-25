@@ -597,6 +597,83 @@ async function uploadXiaohongshuCover(wv: DraftWebview, coverPath: string, progr
   return true;
 }
 
+/** 轮询等文件输入【存在于 DOM】(不看可见性——上传 input 常隐藏,visible 判定会漏)。 */
+async function waitForFileInput(wv: DraftWebview, selector: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const has = await wvEval<boolean>(wv, `Boolean(document.querySelector(${JSON.stringify(selector)}))`);
+    if (has === true) return true;
+    await sleep(800);
+  }
+  return false;
+}
+
+/** 点「像 tab 的」小控件(文本含 substr、矮、靠上)——刻意避开中心大上传按钮(点它会弹原生
+ *  文件框卡死注入)。先真实坐标点、再 JS 点兜底。小红书发布页顶部 上传视频/上传图文 就是这种 tab。 */
+async function clickTabContaining(wv: DraftWebview, substr: string): Promise<boolean> {
+  const rect = await wvEval<{ x: number; y: number } | null>(
+    wv,
+    `(() => {
+      const want = ${JSON.stringify(substr)};
+      const cand = [...document.querySelectorAll('[role=tab], .tab, button, div, span, a')]
+        .filter((n) => {
+          const t = (n.textContent || '').trim();
+          if (!t.includes(want) || t.length > 8) return false;
+          const r = n.getBoundingClientRect();
+          // 窄+矮+靠上=像 tab;宽的(>160)是中心大上传拖拽区(点它弹原生文件框),排除。
+          return r.width > 0 && r.width < 160 && r.height > 0 && r.height < 70 && r.top < 260;
+        })
+        .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+      if (!cand) return null;
+      cand.scrollIntoView({ block: 'center' });
+      const r = cand.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`,
+  );
+  if (!rect) return false;
+  clickAt(wv, Math.round(rect.x), Math.round(rect.y));
+  await sleep(300);
+  await wvEval<boolean>(
+    wv,
+    `(() => {
+      const want = ${JSON.stringify(substr)};
+      const el = [...document.querySelectorAll('[role=tab], .tab, button, div, span, a')].find((n) => {
+        const t = (n.textContent || '').trim();
+        if (!t.includes(want) || t.length > 8) return false;
+        const r = n.getBoundingClientRect();
+        return r.width > 0 && r.width < 160 && r.height > 0 && r.height < 70 && r.top < 260;
+      });
+      if (el) { el.click(); return true; }
+      return false;
+    })()`,
+  );
+  return true;
+}
+
+/** 失败自诊:把发布页真实结构(URL/登录墙/文件输入 accept/疑似 tab 文案)压成一行塞进错误详情——
+ *  平台改版时用户点一次就把"页面到底长啥样"带回来,免去反复试探式重打包校准。 */
+async function xhsPageDiag(wv: DraftWebview): Promise<string> {
+  const info = await wvEval<{ url: string; wall: boolean; inputs: string[]; tabs: string[] }>(
+    wv,
+    `(() => {
+      const inputs = [...document.querySelectorAll('input[type=file]')].map((i) => i.getAttribute('accept') || '(无accept)');
+      const tabs = [...new Set(
+        [...document.querySelectorAll('[role=tab], .tab, button, div, span, a')]
+          .map((n) => (n.textContent || '').trim())
+          .filter((t) => t && t.length <= 8 && /图文|视频|上传|图片/.test(t)),
+      )].slice(0, 8);
+      return {
+        url: location.href,
+        wall: /扫码登录|手机号登录|登录后继续|立即登录/.test(document.body?.innerText || '') || /login|passport/i.test(location.href),
+        inputs,
+        tabs,
+      };
+    })()`,
+  );
+  if (!info) return '诊断:页面状态读不到(可能还在加载)';
+  return `诊断:URL=${info.url}｜登录墙=${info.wall ? '是' : '否'}｜文件输入${info.inputs.length}个[${info.inputs.join(' , ') || '无'}]｜疑似tab[${info.tabs.join(' / ') || '无'}]`;
+}
+
 // ---- 小红书(图文 / 视频) ----
 async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress: DraftProgress): Promise<DraftResult> {
   if (await isLoginWall(wv)) {
@@ -605,40 +682,36 @@ async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress
   const isVideo = draft.kind === 'video';
 
   if (isVideo) {
-    // 发布页默认就是「上传视频」tab(实测 active),且页面上「上传视频」还有个中心圆形
-    // 上传按钮——点它会触发原生文件选择框(卡死注入)。所以视频路【不点 tab】,直接 CDP
-    // 塞文件到隐藏的视频输入(setFiles 走 DOM.setFileInputFiles,对隐藏输入也生效)。
+    // 先确保停在「上传视频」tab(点小 tab,不点中心大上传按钮——后者会弹原生文件框卡死)。默认
+    // 多半已是视频 tab,点一下只是保险;随后【轮询等隐藏的视频文件输入进 DOM】再塞——SPA 懒挂载,
+    // 原来的固定 600ms 常抢在输入渲染前,是"视频没传上"的主因。
     progress('1/6 准备上传视频…');
-    await sleep(600);
+    await clickTabContaining(wv, '视频');
+    // 视频输入 accept 是扩展名列表 `.mp4,.mov,.flv,…`(非 video/*);多写几种兜底。
+    const VID_INPUT = 'input[type=file][accept*="mp4"], input[type=file][accept*="video"], input[type=file][accept*=".mov"], input[type=file][accept*=".flv"]';
+    await waitForFileInput(wv, VID_INPUT, 15_000);
     progress('2/6 上传视频…');
-    // 小红书视频输入的 accept 是扩展名列表 `.mp4,.mov,.flv,…`(实测,非 video/*),
-    // 按 mp4 匹配才命中;失败退回通用 setFiles 自动找第一个文件输入(默认就是视频 tab)。
-    const put = (await setFiles(wv, draft.filePaths, 'input[type=file][accept*="mp4"]')).ok
-      ? { ok: true }
-      : await setFiles(wv, draft.filePaths);
+    let put = await setFiles(wv, draft.filePaths, VID_INPUT);
+    if (!put.ok) put = await setFiles(wv, draft.filePaths); // 兜底:第一个文件输入
     if (!put.ok) {
-      return { ok: false, detail: '视频注入失败——请手动拖入(视频文件夹已可从发布步打开)' };
+      return { ok: false, detail: `视频没传上(${put.reason ?? '未知'})——${await xhsPageDiag(wv)}｜可手动拖入(成片文件夹已可从发布步打开)` };
     }
   } else {
     progress('1/6 切换到「上传图文」…');
-    // 图文 tab 用【真实鼠标点击】切换(小红书 React tab,JS el.click() 常不生效);兜底再 JS 点。
+    // 用【部分文本匹配】找图文 tab(文案可能是 上传图文/写图文/图文),真实坐标点 + JS 点兜底;
+    // 再【轮询等图片输入进 DOM】(输入常隐藏,查存在性不查可见性)。
+    await clickTabContaining(wv, '图文');
     await clickRealByText(wv, ['上传图文']);
     await clickByText(wv, ['上传图文']);
-    // 轮询等【图片输入】进 DOM(tab 切过去才渲染出来)。文件输入常隐藏,waitFor 的可见性判定
-    // 抓不到,这里直接查 DOM 存在性。最多 8 秒。
-    const IMG_INPUT = 'input[type=file][accept*="jpg"], input[type=file][accept*="png"], input[type=file][accept*="image"]';
-    for (let i = 0; i < 8; i++) {
-      if (await wvEval<boolean>(wv, `Boolean(document.querySelector(${JSON.stringify(IMG_INPUT)}))`)) break;
-      await sleep(1000);
-    }
+    const IMG_INPUT = 'input[type=file][accept*="jpg"], input[type=file][accept*="png"], input[type=file][accept*="image"], input[type=file][accept*=".webp"]';
+    await waitForFileInput(wv, IMG_INPUT, 12_000);
     progress(`2/6 上传 ${draft.filePaths.length} 张图…`);
-    // 关键:图文输入 accept=`.jpg,.jpeg,.png,.webp`,和【视频输入同 class .upload-input】——用默认
-    // input[type=file] 会命中【视频】输入(它拒收 jpg)→ 图集传不上去、后面表单全不出(2026-07-16
-    // 用户报"图集传不上、标题正文没填、按钮没点到"的根因)。这里按 accept 精确命中【图片】输入。
+    // 图文输入 accept=`.jpg,.jpeg,.png,.webp`,和视频输入同 class——必须按 accept 精确命中图片输入,
+    // 否则默认 input[type=file] 会命中视频输入(拒收 jpg)→ 图集传不上、后面表单全不出。
     let put = await setFiles(wv, draft.filePaths, IMG_INPUT);
     if (!put.ok) put = await setFiles(wv, draft.filePaths);   // 兜底:通用第一个文件输入
     if (!put.ok) {
-      return { ok: false, detail: `图片注入失败(${put.reason ?? '未知'})——请确认已切到「上传图文」页,或手动拖入(图集文件夹已可从发布步打开)` };
+      return { ok: false, detail: `图片没传上(${put.reason ?? '未知'})——${await xhsPageDiag(wv)}｜请确认已切到「上传图文」页或手动拖入` };
     }
   }
 
@@ -646,9 +719,9 @@ async function injectXiaohongshu(wv: DraftWebview, draft: DraftPayload, progress
   // 传完后小红书才渲染标题/正文表单;等标题框出现。视频要转码,等得久些。
   const formReady = await waitFor(wv, 'input[placeholder*="标题"], input[placeholder*="填写标题"]', isVideo ? 120_000 : 60_000);
   if (!formReady) {
-    return { ok: false, detail: isVideo
+    return { ok: false, detail: (isVideo
       ? '视频已提交但编辑表单没等到(可能还在转码)——表单出现后手动粘贴文案即可,文案在剪贴板'
-      : '图片已提交但编辑表单没等到(可能还在处理)——表单出现后手动粘贴文案即可,文案在剪贴板' };
+      : '图片已提交但编辑表单没等到(可能还在处理)——表单出现后手动粘贴文案即可,文案在剪贴板') + `｜${await xhsPageDiag(wv)}` };
   }
 
   progress('4/6 键入标题…');

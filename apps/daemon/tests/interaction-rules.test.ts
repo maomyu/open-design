@@ -23,6 +23,7 @@ function rule(p: Partial<InteractionRule>): InteractionRule {
     keywords: p.keywords ?? [],
     matchMode: p.matchMode ?? 'contains',
     replyTemplate: p.replyTemplate ?? '谢谢～',
+    ...(p.replyMode ? { replyMode: p.replyMode } : {}),
     action: p.action ?? 'reply',
     priority: p.priority ?? 0,
     enabled: p.enabled ?? true,
@@ -123,5 +124,32 @@ describe('interaction rules store（CRUD + 账号作用域）', () => {
     createInteractionRule(db, { platform: 'xiaohongshu', name: '问价', keywords: ['多少钱', '价格'], replyTemplate: '私信报价给你～', priority: 10 });
     const rules = listInteractionRules(db, 'xiaohongshu', '茂宇');
     expect(matchInteractionRule(rules, { text: '这条项链多少钱' })?.reply).toBe('私信报价给你～');
+  });
+
+  // 关键词规则的【AI 意图模式】:关键词负责挑出该回的人,AI 负责把话说得像人(同一条模板刷屏
+  // 最容易被平台判机器人)。存回来的 replyMode 必须原样带到匹配结果上——调用方就是靠它决定
+  // 「直接发」还是「先交给 AI 现写」;丢了这一位,意图文本就会被当成文案发出去。
+  it('replyMode 存得回来、也带到匹配结果上', () => {
+    createInteractionRule(db, {
+      platform: 'xiaohongshu', name: '问价走AI', keywords: ['多少钱'],
+      replyTemplate: '热情引导私信,别在评论区甩链接', replyMode: 'ai', priority: 20,
+    });
+    const rules = listInteractionRules(db, 'xiaohongshu', null);
+    expect(rules[0]?.replyMode).toBe('ai');
+    expect(matchInteractionRule(rules, { text: '这条多少钱' })?.replyMode).toBe('ai');
+  });
+
+  it('没写 replyMode 的历史规则一律当 template(存量库补列后默认值)', () => {
+    createInteractionRule(db, { platform: 'xiaohongshu', name: '老规则', keywords: ['价格'], replyTemplate: '私信你啦' });
+    const rules = listInteractionRules(db, 'xiaohongshu', null);
+    expect(rules[0]?.replyMode).toBe('template');
+    expect(matchInteractionRule(rules, { text: '价格多少' })?.replyMode).toBe('template');
+  });
+
+  it('改规则能把 template 切成 ai', () => {
+    const created = createInteractionRule(db, { platform: 'xiaohongshu', name: 'r', keywords: ['价格'], replyTemplate: '私信你啦' });
+    const updated = updateInteractionRule(db, created.id, { replyMode: 'ai', replyTemplate: '引导私信,别甩链接' });
+    expect(updated?.replyMode).toBe('ai');
+    expect(updated?.replyTemplate).toBe('引导私信,别甩链接');
   });
 });
