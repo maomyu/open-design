@@ -735,6 +735,24 @@ describe("wellKnownUserToolchainBins", () => {
     }
   });
 
+  // Kimi CLI's official installer drops the binary in ~/.kimi-code/bin and appends
+  // that dir to the *user* PATH (Windows registry / shell rc). An already-running
+  // GUI-launched daemon inherits neither, so if this dir is missing here a freshly
+  // installed Kimi stays invisible — and the one-click installer, which only reports
+  // success once detection confirms the binary, reports failure for an install that
+  // actually worked. Confirmed on Windows 2026-07-25: kimi.exe landed in
+  // %USERPROFILE%\.kimi-code\bin yet the app showed "安装失败,点此重试".
+  // Kimi is the default CLI auto-installed on first run, so this is the flagship path.
+  it("includes ~/.kimi-code/bin so a freshly installed Kimi CLI is detected", () => {
+    const home = mkdtempSync(join(tmpdir(), "wkutb-kimi-"));
+    try {
+      const dirs = wellKnownUserToolchainBins({ home, env: {}, includeSystemBins: false });
+      expect(dirs).toContain(join(home, ".kimi-code", "bin"));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   // Regression for #442. The two dominant non-canonical npm prefixes used
   // by sudo-free tutorials (~/.npm-global, ~/.npm-packages) must always
   // appear, otherwise GUI-launched daemons miss `npm i -g`'d CLIs.

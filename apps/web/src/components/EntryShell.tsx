@@ -79,6 +79,7 @@ import {
 } from './home-hero/plugin-authoring';
 import type { PluginUseAction } from './plugins-home/useActions';
 import { Icon } from './Icon';
+import { useAgentInstall, DEFAULT_AGENT_ID } from '../hooks/useAgentInstall';
 import { AgentIcon } from './AgentIcon';
 import { IntegrationsView, type IntegrationTab } from './IntegrationsView';
 import { InlineModelSwitcher } from './InlineModelSwitcher';
@@ -1646,6 +1647,16 @@ function OnboardingCliSetupPanel({
   const t = useT();
   const scanning = scanStatus === 'scanning';
   const showEmpty = scanStatus === 'done' && agents.length === 0;
+  // 首次引导撞上「一个可用 CLI 都没有」时,直接把默认的(Kimi)装上——这里是用户开箱看到的第一屏,
+  // 让他去读「请自行安装 …… 然后点重新扫描」等于把非技术用户挡在门外(整个创作台的 AI 都依赖它)。
+  // 装完由 onRefresh 重扫,检测到就自动进入下面的 CLI 选择条。
+  const { installs, begin, support } = useAgentInstall({
+    agents,
+    agentsLoading: scanStatus !== 'done',
+    autoInstallDefault: true,
+    onInstalled: () => { onRefresh(); },
+  });
+  const defaultInstall = installs[DEFAULT_AGENT_ID];
   return (
     <div className="onboarding-view__setup-panel">
       <div className="onboarding-view__setup-head">
@@ -1697,7 +1708,36 @@ function OnboardingCliSetupPanel({
       ) : null}
       {showEmpty ? (
         <div className="onboarding-view__empty-slice">
-          {t('settings.noAgentsDetected')}
+          {defaultInstall?.status === 'running' ? (
+            <p className="onboarding-view__scan-status">
+              <Icon name="spinner" size={13} className="icon-spin" />
+              <span>{defaultInstall.lastLine || t('settings.agentInstall.autoKimi')}</span>
+            </p>
+          ) : defaultInstall?.status === 'error' ? (
+            <>
+              <p>{defaultInstall.detail || t('settings.agentInstall.failedRetry')}</p>
+              <button
+                type="button"
+                className="onboarding-view__mini-button"
+                onClick={() => void begin(DEFAULT_AGENT_ID)}
+              >
+                {t('settings.agentInstall.failedRetry')}
+              </button>
+            </>
+          ) : support.includes(DEFAULT_AGENT_ID) ? (
+            <>
+              <p>{t('settings.noAgentsDetected')}</p>
+              <button
+                type="button"
+                className="onboarding-view__mini-button"
+                onClick={() => void begin(DEFAULT_AGENT_ID)}
+              >
+                {t('settings.agentInstall.oneClick')}
+              </button>
+            </>
+          ) : (
+            t('settings.noAgentsDetected')
+          )}
         </div>
       ) : null}
       {selectedAgent && modelOptions.length > 0 ? (

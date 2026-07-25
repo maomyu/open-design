@@ -927,6 +927,13 @@ export function wellKnownUserToolchainBins(
     join(home, ".local", "bin"),
     join(home, ".vite-plus", "bin"),
     join(home, ".opencode", "bin"),
+    // Kimi CLI's official installer drops the binary here and appends the dir to
+    // the *user* PATH (registry on Windows, shell rc elsewhere). An already-running
+    // GUI-launched daemon sees neither, so without this entry a freshly installed
+    // Kimi stays invisible — and the one-click installer, which only reports success
+    // once detection confirms the binary, reports "安装失败" for an install that
+    // actually worked. Confirmed on Windows 2026-07-25 (%USERPROFILE%\.kimi-code\bin\kimi.exe).
+    join(home, ".kimi-code", "bin"),
     join(home, ".bun", "bin"),
     join(home, ".volta", "bin"),
     join(home, ".asdf", "shims"),

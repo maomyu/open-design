@@ -82,11 +82,8 @@ import type {
 import { testAgent, testApiProvider } from '../providers/connection-test';
 import { fetchProviderModels } from '../providers/provider-models';
 import {
-  fetchAgentInstallJob,
-  fetchAgentInstallSupport,
   fetchConnectors,
   fetchDesignTemplates,
-  startAgentInstall,
 } from '../providers/registry';
 import { IMAGE_MODELS, MEDIA_PROVIDERS } from '../media/models';
 import { XaiOAuthControl } from './XaiOAuthControl';
@@ -120,6 +117,7 @@ import {
   requestNotificationPermission,
   showCompletionNotification,
 } from '../utils/notifications';
+import { useAgentInstall } from '../hooks/useAgentInstall';
 
 export type SettingsSection =
   | 'execution'
@@ -862,55 +860,22 @@ export function SettingsDialog({
     };
   }, []);
   const [showApiKey, setShowApiKey] = useState(false);
-  // ── 本地 CLI 一键安装(2026-07-25 用户定稿:设置里直接装,首次引导无可用 CLI 时自动装默认 Kimi)──
-  const [agentInstallSupport, setAgentInstallSupport] = useState<string[]>([]);
-  const [agentInstalls, setAgentInstalls] = useState<Record<string, { jobId: string; status: 'running' | 'done' | 'error'; lastLine: string; detail: string | null }>>({});
-  const autoKimiTriedRef = useRef(false);
-  useEffect(() => {
-    void fetchAgentInstallSupport().then((s) => { if (s) setAgentInstallSupport(s.ids); });
-  }, []);
-  const beginAgentInstall = useCallback(async (agentId: string) => {
-    setAgentInstalls((m) => ({ ...m, [agentId]: { jobId: '', status: 'running', lastLine: '', detail: null } }));
-    const job = await startAgentInstall(agentId);
-    if ('error' in job) {
-      setAgentInstalls((m) => ({ ...m, [agentId]: { jobId: '', status: 'error', lastLine: '', detail: job.error } }));
-      return;
-    }
-    setAgentInstalls((m) => ({ ...m, [agentId]: { jobId: job.id, status: job.status, lastLine: job.lines[job.lines.length - 1] ?? '', detail: job.detail } }));
-  }, []);
-  // 轮询进行中的安装;装成后刷新 agents 列表,且此前没有可用选择时自动选中新装的。
-  useEffect(() => {
-    const running = Object.entries(agentInstalls).filter(([, st]) => st.status === 'running' && st.jobId);
-    if (running.length === 0) return;
-    const timer = window.setInterval(() => {
-      for (const [agentId, st] of running) {
-        void fetchAgentInstallJob(st.jobId).then((job) => {
-          if (!job) return;
-          setAgentInstalls((m) => {
-            const prev = m[agentId];
-            if (prev && prev.status === job.status && prev.lastLine === (job.lines[job.lines.length - 1] ?? '')) return m;
-            return { ...m, [agentId]: { jobId: job.id, status: job.status, lastLine: job.lines[job.lines.length - 1] ?? '', detail: job.detail } };
-          });
-          if (job.status === 'done') {
-            void onAgentsRefresh?.();
-            setCfg((c) => {
-              const hasValid = Boolean(c.agentId) && agents.some((x) => x.id === c.agentId && x.available);
-              return hasValid ? c : { ...c, agentId };
-            });
-          }
-        });
-      }
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [agentInstalls, agents, onAgentsRefresh]);
-  // 首次引导(欢迎模式):检测完成且没有任何可用 CLI → 自动安装默认 Kimi(只试一次)。
-  useEffect(() => {
-    if (!welcome || agentsLoading || autoKimiTriedRef.current) return;
-    if (agents.some((a) => a.available)) return;
-    if (!agentInstallSupport.includes('kimi')) return;
-    autoKimiTriedRef.current = true;
-    void beginAgentInstall('kimi');
-  }, [welcome, agentsLoading, agents, agentInstallSupport, beginAgentInstall]);
+  // ── 本地 CLI 一键安装 ─────────────────────────────────────────────────
+  // 状态机与首次引导页共用 `useAgentInstall`(见该文件注释:两处各写一份必然走偏)。
+  // 这里【不开】autoInstallDefault:自动装默认 CLI 只属于首次引导那一屏,在设置里
+  // 一进来就自作主张装东西是越权的。
+  const { support: agentInstallSupport, installs: agentInstalls, begin: beginAgentInstall } = useAgentInstall({
+    agents,
+    agentsLoading,
+    onInstalled: (agentId) => {
+      void onAgentsRefresh?.();
+      // 此前没有可用选择时,自动选中刚装好的这个,省一步手点。
+      setCfg((c) => {
+        const hasValid = Boolean(c.agentId) && agents.some((x) => x.id === c.agentId && x.available);
+        return hasValid ? c : { ...c, agentId };
+      });
+    },
+  });
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
   // Scroll the right-hand content pane back to the top whenever the user
   // picks a different settings section. Without this, switching from a
