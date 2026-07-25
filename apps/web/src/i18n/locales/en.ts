@@ -358,6 +358,10 @@ export const en: Dict = {
   'settings.testAgentSpawn': 'Could not start {agentName}: {detail}.',
   'settings.testUnknown': 'Test failed: {detail}',
   'settings.agentInstall.install': 'Install',
+  'settings.agentInstall.oneClick': 'One-click install',
+  'settings.agentInstall.running': 'Installing…',
+  'settings.agentInstall.failedRetry': 'Install failed — retry',
+  'settings.agentInstall.autoKimi': 'No local CLI detected on first run — installing the default Kimi CLI automatically…',
   'settings.agentInstall.docs': 'Docs',
   'settings.agentInstall.pathHint':
     'If you installed a CLI with npm or Homebrew and it still shows as not installed, ensure the tool\'s bin directory is on the PATH the social-auto daemon inherits (Terminal vs GUI apps can differ on macOS). See QUICKSTART.md (section "Local agent CLI and PATH").',

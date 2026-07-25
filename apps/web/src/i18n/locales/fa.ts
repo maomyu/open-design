@@ -253,6 +253,10 @@ export const fa: Dict = {
   'settings.testAgentSpawn': '{agentName} اجرا نشد: {detail}.',
   'settings.testUnknown': 'آزمایش ناموفق بود: {detail}',
   'settings.agentInstall.install': 'نصب',
+  'settings.agentInstall.oneClick': 'نصب با یک کلیک',
+  'settings.agentInstall.running': 'در حال نصب…',
+  'settings.agentInstall.failedRetry': 'نصب ناموفق — تلاش دوباره',
+  'settings.agentInstall.autoKimi': 'CLI محلی یافت نشد — Kimi CLI پیش‌فرض به‌طور خودکار نصب می‌شود…',
   'settings.agentInstall.docs': 'مستندات',
   'settings.agentInstall.pathHint':
     'اگر CLI را با npm یا Homebrew نصب کرده‌اید اما هنوز به‌صورت نصب‌نشده نمایش داده می‌شود، مطمئن شوید پوشه bin ابزار در PATHای باشد که daemon اوپن دیزاین به ارث می‌برد (در macOS ممکن است PATH ترمینال و برنامه‌های GUI متفاوت باشد). بخش "Local agent CLI and PATH" در QUICKSTART.md را ببینید.',

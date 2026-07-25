@@ -253,6 +253,10 @@ export const hu: Dict = {
   'settings.testAgentSpawn': 'Nem sikerült elindítani: {agentName} — {detail}.',
   'settings.testUnknown': 'Sikertelen teszt: {detail}',
   'settings.agentInstall.install': 'Telepítés',
+  'settings.agentInstall.oneClick': 'Egykattintásos telepítés',
+  'settings.agentInstall.running': 'Telepítés…',
+  'settings.agentInstall.failedRetry': 'Sikertelen — újra',
+  'settings.agentInstall.autoKimi': 'Nem található helyi CLI — az alapértelmezett Kimi CLI automatikus telepítése folyamatban…',
   'settings.agentInstall.docs': 'Dokumentáció',
   'settings.agentInstall.pathHint':
     'Ha npm-mel vagy Homebrew-val telepítettél egy CLI-t, de továbbra is nincs telepítve állapotban látszik, ellenőrizd, hogy az eszköz bin könyvtára benne van-e abban a PATH-ban, amit az social-auto daemon örököl (macOS-en a Terminal és a GUI appok PATH-ja eltérhet). Lásd a QUICKSTART.md "Local agent CLI and PATH" szakaszát.',

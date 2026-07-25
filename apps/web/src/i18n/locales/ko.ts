@@ -253,6 +253,10 @@ export const ko: Dict = {
   'settings.testAgentSpawn': '{agentName}을(를) 시작할 수 없습니다: {detail}.',
   'settings.testUnknown': '테스트 실패: {detail}',
   'settings.agentInstall.install': '설치',
+  'settings.agentInstall.oneClick': '원클릭 설치',
+  'settings.agentInstall.running': '설치 중…',
+  'settings.agentInstall.failedRetry': '설치 실패 — 재시도',
+  'settings.agentInstall.autoKimi': '사용 가능한 로컬 CLI가 없어 기본 Kimi CLI를 자동 설치하는 중…',
   'settings.agentInstall.docs': '문서',
   'settings.agentInstall.pathHint':
     'npm 또는 Homebrew로 CLI를 설치했는데도 아직 미설치로 표시된다면, social-auto daemon이 상속받는 PATH에 도구의 bin 디렉터리가 포함되어 있는지 확인하세요(macOS에서는 Terminal과 GUI 앱의 PATH가 다를 수 있습니다). QUICKSTART.md("Local agent CLI and PATH" 섹션)를 참고하세요.',

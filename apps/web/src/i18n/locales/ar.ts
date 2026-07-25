@@ -253,6 +253,10 @@ export const ar: Dict = {
   'settings.testAgentSpawn': 'تعذّر تشغيل {agentName}: {detail}.',
   'settings.testUnknown': 'فشل الاختبار: {detail}',
   'settings.agentInstall.install': 'تثبيت',
+  'settings.agentInstall.oneClick': 'تثبيت بنقرة واحدة',
+  'settings.agentInstall.running': 'جارٍ التثبيت…',
+  'settings.agentInstall.failedRetry': 'فشل التثبيت — أعد المحاولة',
+  'settings.agentInstall.autoKimi': 'لم يتم العثور على CLI محلي — يجري تثبيت Kimi CLI الافتراضي تلقائيًا…',
   'settings.agentInstall.docs': 'الوثائق',
   'settings.agentInstall.pathHint':
     'إذا ثبّتّ CLI باستخدام npm أو Homebrew وما زال يظهر كغير مثبت، فتأكد من أن مجلد bin للأداة موجود في PATH الذي يرثه daemon الخاص بـ social-auto (قد يختلف PATH بين Terminal وتطبيقات GUI على macOS). راجع QUICKSTART.md (قسم "Local agent CLI and PATH").',

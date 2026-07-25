@@ -99,6 +99,39 @@ export async function fetchAgents(options?: { throwOnError?: boolean }): Promise
   }
 }
 
+// ── 本地 CLI 一键安装(设置执行模式/首次引导自动装 Kimi)──────────────────
+export async function fetchAgentInstallSupport(): Promise<import('@open-design/contracts').AgentInstallSupportResponse | null> {
+  try {
+    const resp = await fetch('/api/agents/install-support', { cache: 'no-store' });
+    if (!resp.ok) return null;
+    return (await resp.json()) as import('@open-design/contracts').AgentInstallSupportResponse;
+  } catch {
+    return null;
+  }
+}
+
+export async function startAgentInstall(agentId: string): Promise<import('@open-design/contracts').AgentInstallJob | { error: string }> {
+  try {
+    const resp = await fetch(`/api/agents/${encodeURIComponent(agentId)}/install`, { method: 'POST' });
+    const json = (await resp.json().catch(() => ({}))) as { job?: import('@open-design/contracts').AgentInstallJob; error?: string };
+    if (!resp.ok || !json.job) return { error: json.error ?? `install ${resp.status}` };
+    return json.job;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function fetchAgentInstallJob(jobId: string): Promise<import('@open-design/contracts').AgentInstallJob | null> {
+  try {
+    const resp = await fetch(`/api/agents/install-jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+    if (!resp.ok) return null;
+    const json = (await resp.json()) as { job: import('@open-design/contracts').AgentInstallJob };
+    return json.job ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchSkills(): Promise<SkillSummary[]> {
   try {
     const resp = await fetch('/api/skills');

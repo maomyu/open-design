@@ -252,6 +252,10 @@ export const th: Dict = {
   'settings.testAgentSpawn': 'ไม่สามารถเริ่ม {agentName} ได้: {detail}',
   'settings.testUnknown': 'การทดสอบล้มเหลว: {detail}',
   'settings.agentInstall.install': 'ติดตั้ง',
+  'settings.agentInstall.oneClick': 'ติดตั้งในคลิกเดียว',
+  'settings.agentInstall.running': 'กำลังติดตั้ง…',
+  'settings.agentInstall.failedRetry': 'ล้มเหลว — ลองใหม่',
+  'settings.agentInstall.autoKimi': 'ไม่พบ CLI ในเครื่อง กำลังติดตั้ง Kimi CLI เริ่มต้นให้อัตโนมัติ…',
   'settings.agentInstall.docs': 'เอกสาร',
   'settings.agentInstall.pathHint':
     'หากคุณติดตั้ง CLI ด้วย npm หรือ Homebrew แล้วแต่ยังแสดงว่าไม่ได้ติดตั้ง โปรดตรวจสอบว่าโฟลเดอร์ bin ของเครื่องมือนั้นอยู่ใน PATH ที่ social-auto daemon ใช้งาน (บน macOS ค่า PATH ของ Terminal และแอป GUI อาจต่างกัน) ดู QUICKSTART.md (ส่วน "Local agent CLI and PATH")',

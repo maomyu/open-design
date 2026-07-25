@@ -82,8 +82,11 @@ import type {
 import { testAgent, testApiProvider } from '../providers/connection-test';
 import { fetchProviderModels } from '../providers/provider-models';
 import {
+  fetchAgentInstallJob,
+  fetchAgentInstallSupport,
   fetchConnectors,
   fetchDesignTemplates,
+  startAgentInstall,
 } from '../providers/registry';
 import { IMAGE_MODELS, MEDIA_PROVIDERS } from '../media/models';
 import { XaiOAuthControl } from './XaiOAuthControl';
@@ -152,6 +155,8 @@ interface Props {
   initial: AppConfig;
   agents: AgentInfo[];
   agentsLoading?: boolean;
+  /** 一键安装 CLI 成功后让宿主重拉 /api/agents(刷新已装/未装分组)。 */
+  onAgentsRefresh?: () => Promise<void> | void;
   daemonLive: boolean;
   appVersionInfo: AppVersionInfo | null;
   welcome?: boolean;
@@ -806,6 +811,7 @@ export function SettingsDialog({
   initial,
   agents,
   agentsLoading = false,
+  onAgentsRefresh,
   daemonLive,
   appVersionInfo,
   welcome,
@@ -856,6 +862,55 @@ export function SettingsDialog({
     };
   }, []);
   const [showApiKey, setShowApiKey] = useState(false);
+  // ── 本地 CLI 一键安装(2026-07-25 用户定稿:设置里直接装,首次引导无可用 CLI 时自动装默认 Kimi)──
+  const [agentInstallSupport, setAgentInstallSupport] = useState<string[]>([]);
+  const [agentInstalls, setAgentInstalls] = useState<Record<string, { jobId: string; status: 'running' | 'done' | 'error'; lastLine: string; detail: string | null }>>({});
+  const autoKimiTriedRef = useRef(false);
+  useEffect(() => {
+    void fetchAgentInstallSupport().then((s) => { if (s) setAgentInstallSupport(s.ids); });
+  }, []);
+  const beginAgentInstall = useCallback(async (agentId: string) => {
+    setAgentInstalls((m) => ({ ...m, [agentId]: { jobId: '', status: 'running', lastLine: '', detail: null } }));
+    const job = await startAgentInstall(agentId);
+    if ('error' in job) {
+      setAgentInstalls((m) => ({ ...m, [agentId]: { jobId: '', status: 'error', lastLine: '', detail: job.error } }));
+      return;
+    }
+    setAgentInstalls((m) => ({ ...m, [agentId]: { jobId: job.id, status: job.status, lastLine: job.lines[job.lines.length - 1] ?? '', detail: job.detail } }));
+  }, []);
+  // 轮询进行中的安装;装成后刷新 agents 列表,且此前没有可用选择时自动选中新装的。
+  useEffect(() => {
+    const running = Object.entries(agentInstalls).filter(([, st]) => st.status === 'running' && st.jobId);
+    if (running.length === 0) return;
+    const timer = window.setInterval(() => {
+      for (const [agentId, st] of running) {
+        void fetchAgentInstallJob(st.jobId).then((job) => {
+          if (!job) return;
+          setAgentInstalls((m) => {
+            const prev = m[agentId];
+            if (prev && prev.status === job.status && prev.lastLine === (job.lines[job.lines.length - 1] ?? '')) return m;
+            return { ...m, [agentId]: { jobId: job.id, status: job.status, lastLine: job.lines[job.lines.length - 1] ?? '', detail: job.detail } };
+          });
+          if (job.status === 'done') {
+            void onAgentsRefresh?.();
+            setCfg((c) => {
+              const hasValid = Boolean(c.agentId) && agents.some((x) => x.id === c.agentId && x.available);
+              return hasValid ? c : { ...c, agentId };
+            });
+          }
+        });
+      }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [agentInstalls, agents, onAgentsRefresh]);
+  // 首次引导(欢迎模式):检测完成且没有任何可用 CLI → 自动安装默认 Kimi(只试一次)。
+  useEffect(() => {
+    if (!welcome || agentsLoading || autoKimiTriedRef.current) return;
+    if (agents.some((a) => a.available)) return;
+    if (!agentInstallSupport.includes('kimi')) return;
+    autoKimiTriedRef.current = true;
+    void beginAgentInstall('kimi');
+  }, [welcome, agentsLoading, agents, agentInstallSupport, beginAgentInstall]);
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection);
   // Scroll the right-hand content pane back to the top whenever the user
   // picks a different settings section. Without this, switching from a
@@ -2597,6 +2652,12 @@ export function SettingsDialog({
                         </button>
                       </div>
                     </div>
+                    {agentInstalls['kimi']?.status === 'running' && !agents.some((x) => x.available) ? (
+                      <p className="hint agent-install-path-hint" role="status">
+                        {t('settings.agentInstall.autoKimi')}
+                        {agentInstalls['kimi']?.lastLine ? ` ${agentInstalls['kimi']!.lastLine.slice(0, 60)}` : ''}
+                      </p>
+                    ) : null}
                     {installedAgents.length > 0 ? (
                       <div className="agent-grid agent-grid-installed">
                         {installedAgents.map((a) => {
@@ -2947,8 +3008,27 @@ export function SettingsDialog({
                                   </div>
                                 ) : null}
                               </div>
-                              {hasLinks ? (
+                              {hasLinks || agentInstallSupport.includes(a.id) ? (
                                 <div className="agent-card-actions agent-card-actions--inline">
+                                  {agentInstallSupport.includes(a.id) ? (
+                                    agentInstalls[a.id]?.status === 'running' ? (
+                                      <span className="agent-card-link agent-card-link--muted">
+                                        {t('settings.agentInstall.running')}
+                                        {agentInstalls[a.id]?.lastLine ? ` · ${agentInstalls[a.id]!.lastLine.slice(0, 44)}` : ''}
+                                      </span>
+                                    ) : agentInstalls[a.id]?.status === 'done' ? (
+                                      <span className="agent-card-link agent-card-link--muted">{t('common.installed')}</span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="agent-card-link agent-card-link--ghost"
+                                        onClick={() => void beginAgentInstall(a.id)}
+                                        title={agentInstalls[a.id]?.detail ?? undefined}
+                                      >
+                                        {agentInstalls[a.id]?.status === 'error' ? t('settings.agentInstall.failedRetry') : t('settings.agentInstall.oneClick')}
+                                      </button>
+                                    )
+                                  ) : null}
                                   {docsUrl ? (
                                     <a
                                       href={docsUrl}
@@ -2960,7 +3040,7 @@ export function SettingsDialog({
                                       {t('settings.agentInstall.docs')}
                                     </a>
                                   ) : null}
-                                  {installUrl ? (
+                                  {installUrl && !agentInstallSupport.includes(a.id) ? (
                                     <a
                                       href={installUrl}
                                       target="_blank"

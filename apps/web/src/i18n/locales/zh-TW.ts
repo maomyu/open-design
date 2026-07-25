@@ -258,6 +258,10 @@ export const zhTW: Dict = {
   'settings.testAgentSpawn': '無法啟動 {agentName}：{detail}。',
   'settings.testUnknown': '測試失敗：{detail}',
   'settings.agentInstall.install': '安裝',
+  'settings.agentInstall.oneClick': '一鍵安裝',
+  'settings.agentInstall.running': '安裝中…',
+  'settings.agentInstall.failedRetry': '安裝失敗,點此重試',
+  'settings.agentInstall.autoKimi': '首次使用未偵測到可用的本地 CLI,正在自動安裝預設的 Kimi CLI…',
   'settings.agentInstall.docs': '文件',
   'settings.agentInstall.pathHint':
     '如果你透過 npm 或 Homebrew 安裝了 CLI，但仍顯示為未安裝，請確認該工具的 bin 目錄已加入 social-auto daemon 繼承的 PATH（在 macOS 上，Terminal 與 GUI 應用的 PATH 可能不同）。請參閱 QUICKSTART.md（「Local agent CLI and PATH」章節）。',

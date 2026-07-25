@@ -254,6 +254,10 @@ export const uk: Dict = {
   'settings.testAgentSpawn': 'Не вдалося запустити {agentName}: {detail}.',
   'settings.testUnknown': 'Тест не виконано: {detail}',
   'settings.agentInstall.install': 'Встановити',
+  'settings.agentInstall.oneClick': 'Встановлення в один клік',
+  'settings.agentInstall.running': 'Встановлення…',
+  'settings.agentInstall.failedRetry': 'Помилка — повторити',
+  'settings.agentInstall.autoKimi': 'Локальний CLI не знайдено — автоматично встановлюється типовий Kimi CLI…',
   'settings.agentInstall.docs': 'Документація',
   'settings.agentInstall.pathHint':
     'Якщо ви встановили CLI через npm або Homebrew, але вона все ще відображається як не встановлена, переконайтеся, що bin-каталог інструмента є у PATH, який успадковує daemon social-auto (у macOS PATH у Terminal і GUI-застосунків може відрізнятися). Див. QUICKSTART.md (розділ "Local agent CLI and PATH").',

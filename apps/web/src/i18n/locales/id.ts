@@ -253,6 +253,10 @@ export const id: Dict = {
   'settings.testAgentSpawn': 'Tidak dapat memulai {agentName}: {detail}.',
   'settings.testUnknown': 'Tes gagal: {detail}',
   'settings.agentInstall.install': 'Instal',
+  'settings.agentInstall.oneClick': 'Instal sekali klik',
+  'settings.agentInstall.running': 'Menginstal…',
+  'settings.agentInstall.failedRetry': 'Gagal — coba lagi',
+  'settings.agentInstall.autoKimi': 'CLI lokal tidak terdeteksi — menginstal Kimi CLI bawaan secara otomatis…',
   'settings.agentInstall.docs': 'Dokumentasi',
   'settings.agentInstall.pathHint':
     'Jika Anda memasang CLI dengan npm atau Homebrew tetapi masih tampil sebagai belum terpasang, pastikan direktori bin alat ada di PATH yang diwarisi daemon social-auto (PATH Terminal dan aplikasi GUI bisa berbeda di macOS). Lihat QUICKSTART.md (bagian "Local agent CLI and PATH").',

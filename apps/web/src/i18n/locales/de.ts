@@ -253,6 +253,10 @@ export const de: Dict = {
   'settings.testAgentSpawn': '{agentName} konnte nicht gestartet werden: {detail}.',
   'settings.testUnknown': 'Test fehlgeschlagen: {detail}',
   'settings.agentInstall.install': 'Installieren',
+  'settings.agentInstall.oneClick': 'Ein-Klick-Installation',
+  'settings.agentInstall.running': 'Wird installiert…',
+  'settings.agentInstall.failedRetry': 'Fehlgeschlagen — erneut versuchen',
+  'settings.agentInstall.autoKimi': 'Keine lokale CLI gefunden — die Standard-Kimi-CLI wird automatisch installiert…',
   'settings.agentInstall.docs': 'Doku',
   'settings.agentInstall.pathHint':
     'Wenn Sie eine CLI mit npm oder Homebrew installiert haben und sie weiterhin als nicht installiert angezeigt wird, stellen Sie sicher, dass das Bin-Verzeichnis der CLI im PATH enthalten ist, den der Open-Design-Daemon erbt (Terminal und GUI-Apps koennen sich unter macOS unterscheiden). Siehe QUICKSTART.md (Abschnitt "Local agent CLI and PATH").',

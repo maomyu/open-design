@@ -373,6 +373,10 @@ export interface Dict {
   'settings.testAgentSpawn': string;
   'settings.testUnknown': string;
   'settings.agentInstall.install': string;
+  'settings.agentInstall.oneClick': string;
+  'settings.agentInstall.running': string;
+  'settings.agentInstall.failedRetry': string;
+  'settings.agentInstall.autoKimi': string;
   'settings.agentInstall.docs': string;
   'settings.agentInstall.pathHint': string;
   'settings.agentInstall.stepOpenLinks': string;

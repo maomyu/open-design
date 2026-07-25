@@ -4290,6 +4290,114 @@ export async function startServer({
     }
   });
 
+  // ── 本地 CLI 一键安装(2026-07-25 用户定稿)──────────────────────────────
+  // 设置/首次引导里直接把 CLI 装好,不再丢文档链接让用户自己折腾;首装无任何可用 CLI 时,
+  // 前端(SettingsDialog 欢迎模式)会自动安装默认的 Kimi CLI。安装命令【服务端硬编码白名单】:
+  // 客户端只传 agentId,绝不执行客户端提供的命令。装完重新探测,若此前没有可用配置则自动选中新装的。
+  const AGENT_INSTALL_COMMANDS: Record<string, Partial<Record<NodeJS.Platform, string>>> = {
+    kimi: {
+      darwin: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash',
+      linux: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash',
+      win32: 'irm https://code.kimi.com/kimi-code/install.ps1 | iex',
+    },
+    claude: {
+      darwin: 'curl -fsSL https://claude.ai/install.sh | bash',
+      linux: 'curl -fsSL https://claude.ai/install.sh | bash',
+      win32: 'irm https://claude.ai/install.ps1 | iex',
+    },
+    opencode: {
+      darwin: 'curl -fsSL https://opencode.ai/install | bash',
+      linux: 'curl -fsSL https://opencode.ai/install | bash',
+    },
+    // npm 系:用【用户级 prefix】(~/.local,bin 落 ~/.local/bin,检测器本来就扫)——
+    // 直接 npm -g 常挑到系统 npm(/usr/local)EACCES 要 sudo(实测退出码 243)。Windows 的
+    // npm 默认 prefix 就在用户目录(%APPDATA%\npm),不用改。
+    codex: {
+      darwin: 'npm install -g --prefix "$HOME/.local" @openai/codex',
+      linux: 'npm install -g --prefix "$HOME/.local" @openai/codex',
+      win32: 'npm install -g @openai/codex',
+    },
+    gemini: {
+      darwin: 'npm install -g --prefix "$HOME/.local" @google/gemini-cli',
+      linux: 'npm install -g --prefix "$HOME/.local" @google/gemini-cli',
+      win32: 'npm install -g @google/gemini-cli',
+    },
+  };
+  const agentInstallJobs = new Map<string, { id: string; agentId: string; status: 'running' | 'done' | 'error'; lines: string[]; detail: string | null; startedAt: number }>();
+  let agentInstallSeq = 0;
+
+  app.get('/api/agents/install-support', (_req, res) => {
+    const ids = Object.entries(AGENT_INSTALL_COMMANDS)
+      .filter(([, byPlatform]) => Boolean(byPlatform[process.platform]))
+      .map(([id]) => id);
+    res.json({ ids, platform: process.platform });
+  });
+
+  app.post('/api/agents/:agentId/install', requireLocalDaemonRequest, async (req, res) => {
+    const agentId = String(req.params.agentId ?? '');
+    const command = AGENT_INSTALL_COMMANDS[agentId]?.[process.platform];
+    if (!command) {
+      return res.status(400).json({ error: `「${agentId}」暂不支持在当前系统一键安装——请按安装文档手动安装` });
+    }
+    for (const existing of agentInstallJobs.values()) {
+      if (existing.agentId === agentId && existing.status === 'running') return res.json({ job: existing }); // 幂等:复用进行中的
+    }
+    agentInstallSeq += 1;
+    const job = { id: `agi-${Date.now().toString(36)}-${agentInstallSeq}`, agentId, status: 'running' as const, lines: [] as string[], detail: null as string | null, startedAt: Date.now() };
+    agentInstallJobs.set(job.id, job);
+    const push = (chunk: unknown) => {
+      for (const line of String(chunk).split(/\r?\n/)) {
+        const t = line.trim();
+        if (t) job.lines.push(t.slice(0, 300));
+      }
+      if (job.lines.length > 200) job.lines.splice(0, job.lines.length - 200);
+    };
+    const child = process.platform === 'win32'
+      ? spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], { env: process.env, windowsHide: true })
+      : spawn('/bin/bash', ['-lc', command], { env: process.env });
+    const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } }, 15 * 60_000);
+    killTimer.unref?.();
+    child.stdout?.on('data', push);
+    child.stderr?.on('data', push);
+    child.once('error', (err) => { clearTimeout(killTimer); (job as { status: string }).status = 'error'; job.detail = String(err instanceof Error ? err.message : err); });
+    child.once('close', (code) => {
+      clearTimeout(killTimer);
+      void (async () => {
+        if (job.status !== 'running') return;
+        if (code !== 0) {
+          (job as { status: string }).status = 'error';
+          job.detail = `安装脚本退出码 ${code}(常见原因:网络/代理不通;看上方日志行排查)`;
+          return;
+        }
+        try {
+          const config = await readAppConfig(RUNTIME_DATA_DIR).catch(() => ({} as Record<string, unknown>));
+          const agents = await detectAgents((config as { agentCliEnv?: Record<string, Record<string, string>> }).agentCliEnv ?? {});
+          const hit = agents.find((a) => a.id === agentId);
+          if (hit?.available) {
+            (job as { status: string }).status = 'done';
+            // 首装场景:此前没配置过可用 CLI → 自动选中刚装好的(「默认 Kimi」诉求)。
+            const configuredId = (config as { agentId?: string }).agentId;
+            const configuredAvailable = configuredId && agents.some((a) => a.id === configuredId && a.available);
+            if (!configuredAvailable) await writeAppConfig(RUNTIME_DATA_DIR, { agentId }).catch(() => { /* 选中失败不影响安装结果 */ });
+          } else {
+            (job as { status: string }).status = 'error';
+            job.detail = '安装脚本执行完了,但仍未检测到该 CLI(可能装到了非常规路径)——重启应用后再看一眼';
+          }
+        } catch (err) {
+          (job as { status: string }).status = 'error';
+          job.detail = String(err instanceof Error ? err.message : err);
+        }
+      })();
+    });
+    res.json({ job });
+  });
+
+  app.get('/api/agents/install-jobs/:id', (req, res) => {
+    const job = agentInstallJobs.get(String(req.params.id ?? ''));
+    if (!job) return res.status(404).json({ error: 'job not found' });
+    res.json({ job });
+  });
+
   app.post('/api/plugins/events/purge', requireLocalDaemonRequest, async (_req, res) => {
     try {
       const { purgePluginEventBuffer } = await import('./plugins/events.js');

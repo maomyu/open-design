@@ -215,6 +215,7 @@ const SUBCOMMAND_MAP = {
   artifacts: runArtifacts,
   account: runAccount,
   accounts: runAccount,
+  agents: runAgents,
   studio: runStudio,
   media: runMedia,
   mcp: runMcp,
@@ -2254,6 +2255,57 @@ async function runPluginConfig(rest) {
 // render/publish. Mirrors the 公众号创作台 UI (spec: specs/current/media-studio.md).
 // `od license` — 功能授权(定制版):查看/导入/重载。签发在运营方侧
 // (apps/daemon/scripts/license-tool.ts),这里只是客户机的查询与装载面。
+// 本地 CLI 智能体:检测列表 + 一键安装(设置「执行模式」一键安装 的 CLI 双轨,走同一组 /api/agents 端点)。
+async function runAgents(args) {
+  const sub = args.find((a) => !a.startsWith('-'));
+  const flags = parseFlags(args.filter((a) => a !== sub), { string: ['daemon-url'], boolean: ['json', 'help', 'h'] });
+  if (flags.help || flags.h || !sub || !['list', 'install'].includes(sub)) {
+    console.log(`Usage:
+  od agents list [--json]           # 本地 CLI 检测结果(哪些已装可用)
+  od agents install <id> [--json]   # 一键安装本地 CLI(官方安装脚本;支持项看 install-support)
+  #  例: od agents install kimi     # 装默认的 Kimi CLI`);
+    process.exit(sub ? 0 : 2);
+  }
+  const base = (await pluginDaemonUrl(flags)).replace(/\/$/, '');
+  if (sub === 'list') {
+    const resp = await fetch(`${base}/api/agents`);
+    if (!resp.ok) { console.error(`agents list failed: ${resp.status}`); process.exit(1); }
+    const data = await resp.json();
+    const support = await fetch(`${base}/api/agents/install-support`).then((r) => (r.ok ? r.json() : { ids: [] })).catch(() => ({ ids: [] }));
+    if (flags.json) return process.stdout.write(JSON.stringify({ ...data, installSupport: support.ids }, null, 2) + '\n');
+    for (const a of data.agents ?? []) {
+      const oneClick = support.ids?.includes(a.id) && !a.available ? '(可 od agents install)' : '';
+      console.log(`${a.available ? '●' : '○'} ${a.id}${a.name && a.name !== a.id ? `(${a.name})` : ''}${a.available ? '' : ' 未安装'}${oneClick}`);
+    }
+    return;
+  }
+  const bare = args.filter((a) => !a.startsWith('-'));
+  const id = bare[1];
+  if (!id) { console.error('用法: od agents install <id>(先 od agents list 看 id;默认推荐 kimi)'); process.exit(2); }
+  const resp = await fetch(`${base}/api/agents/${encodeURIComponent(id)}/install`, { method: 'POST' });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data.job) { console.error(`安装启动失败: ${data.error ?? resp.status}`); process.exit(1); }
+  if (!flags.json) console.log(`开始安装 ${id}…(官方安装脚本,可能要几分钟)`);
+  let seen = 0;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const jr = await fetch(`${base}/api/agents/install-jobs/${encodeURIComponent(data.job.id)}`).catch(() => null);
+    if (!jr || !jr.ok) continue;
+    const { job } = await jr.json();
+    if (!flags.json) for (; seen < job.lines.length; seen += 1) console.log(`  ${job.lines[seen]}`);
+    if (job.status === 'done') {
+      if (flags.json) return process.stdout.write(JSON.stringify({ job }, null, 2) + '\n');
+      console.log(`✅ ${id} 安装完成,已可在 设置→执行模式/顶栏 选用`);
+      return;
+    }
+    if (job.status === 'error') {
+      if (flags.json) { process.stdout.write(JSON.stringify({ job }, null, 2) + '\n'); process.exit(1); }
+      console.error(`✗ 安装失败: ${job.detail ?? '未知原因'}`);
+      process.exit(1);
+    }
+  }
+}
+
 async function runLicense(args) {
   const sub = args.find((a) => !a.startsWith('-'));
   const flags = parseFlags(args.filter((a) => a !== sub), { string: ['daemon-url'], boolean: ['json', 'help', 'h'] });

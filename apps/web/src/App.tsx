@@ -1598,6 +1598,10 @@ function AppInner() {
           initial={config}
           agents={agents}
           agentsLoading={agentsLoading}
+          onAgentsRefresh={async () => {
+            const list = await fetchAgents();
+            setAgents(list);
+          }}
           daemonLive={daemonLive}
           appVersionInfo={appVersionInfo}
           welcome={settingsWelcome}

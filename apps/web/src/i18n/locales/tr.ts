@@ -253,6 +253,10 @@ export const tr: Dict = {
   'settings.testAgentSpawn': '{agentName} başlatılamadı: {detail}.',
   'settings.testUnknown': 'Test başarısız: {detail}',
   'settings.agentInstall.install': 'Yükle',
+  'settings.agentInstall.oneClick': 'Tek tıkla kurulum',
+  'settings.agentInstall.running': 'Kuruluyor…',
+  'settings.agentInstall.failedRetry': 'Başarısız — yeniden dene',
+  'settings.agentInstall.autoKimi': 'Yerel CLI bulunamadı — varsayılan Kimi CLI otomatik kuruluyor…',
   'settings.agentInstall.docs': 'Dokümanlar',
   'settings.agentInstall.pathHint':
     'Bir CLI\'yi npm veya Homebrew ile kurduysan ancak hâlâ kurulu değil olarak görünüyorsa, aracın bin dizininin social-auto daemon\'unun devraldığı PATH içinde olduğundan emin ol (macOS\'te Terminal ve GUI uygulamalarının PATH\'i farklı olabilir). QUICKSTART.md içindeki "Local agent CLI and PATH" bölümüne bak.',

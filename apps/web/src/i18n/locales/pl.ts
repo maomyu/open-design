@@ -253,6 +253,10 @@ export const pl: Dict = {
   'settings.testAgentSpawn': 'Nie można uruchomić {agentName}: {detail}.',
   'settings.testUnknown': 'Test nieudany: {detail}',
   'settings.agentInstall.install': 'Zainstaluj',
+  'settings.agentInstall.oneClick': 'Instalacja jednym kliknięciem',
+  'settings.agentInstall.running': 'Instalowanie…',
+  'settings.agentInstall.failedRetry': 'Niepowodzenie — ponów',
+  'settings.agentInstall.autoKimi': 'Nie wykryto lokalnego CLI — automatyczna instalacja domyślnego Kimi CLI…',
   'settings.agentInstall.docs': 'Dokumentacja',
   'settings.agentInstall.pathHint':
     'Jeśli zainstalowano CLI przez npm lub Homebrew, ale nadal widnieje jako niezainstalowana, upewnij się, że katalog bin narzędzia jest w PATH dziedziczonym przez daemon social-auto (na macOS PATH w Terminalu i aplikacjach GUI może się różnić). Zobacz QUICKSTART.md (sekcja "Local agent CLI and PATH").',
