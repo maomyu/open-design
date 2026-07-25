@@ -93,11 +93,19 @@ const BAKUAN_ENGINE_EXCLUDE_TOP = new Set([
   ".pytest_cache",
 ]);
 
-function shouldBundleEnginePath(engineSrc: string, src: string): boolean {
+// dotenv 模板可以进包(给交付后的配置文档用),真实 .env 永不出仓库。
+const DOTENV_TEMPLATE = /^\.env\.(example|sample|template)$/;
+
+// 引擎 config/settings.py 是 load_dotenv() 的——bakuan-engine/.env 是 API key 的
+// 常驻处。一旦打进安装包,key 就随 dmg 发到客户机器上(2026-07-23 用户明确要求:
+// 打包不得携带 API key)。所有 dotenv 文件(任意层级)一律不进包,模板除外。
+export function shouldBundleEnginePath(engineSrc: string, src: string): boolean {
   const rel = relative(engineSrc, src);
   if (rel === "") return true; // 引擎根目录本身
   const top = rel.split(sep)[0];
   if (BAKUAN_ENGINE_EXCLUDE_TOP.has(top)) return false;
+  const base = src.split(sep).pop() ?? "";
+  if (base === ".env" || (base.startsWith(".env.") && !DOTENV_TEMPLATE.test(base))) return false;
   if (src.endsWith(".pyc") || src.endsWith(".sqlite") || src.endsWith(".json.bak")) return false;
   if (rel.split(sep).includes("__pycache__")) return false;
   return true;

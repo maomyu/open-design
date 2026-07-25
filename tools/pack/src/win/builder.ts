@@ -106,7 +106,10 @@ async function runElectronBuilderRaw(config: ToolPackConfig, paths: WinPaths, pr
     buildDependenciesFromSource: ELECTRON_BUILDER_BUILD_DEPENDENCIES_FROM_SOURCE,
     compression: "maximum",
     directories: { output: paths.appBuilderOutputRoot },
-    electronDist: config.electronDistPath,
+    // 本机 Electron dist 只有【宿主平台】的产物(mac 上是 Electron.app,没有 electron.exe)。
+    // 在 mac/linux 上交叉打 win 包时必须放开 electronDist,让 electron-builder 按
+    // electronVersion 自动下载 win32-x64 的 Electron 发行包(带缓存),否则 rename electron.exe ENOENT。
+    ...(process.platform === "win32" ? { electronDist: config.electronDistPath } : {}),
     electronVersion: config.electronVersion,
     executableName: PRODUCT_NAME,
     extraMetadata: {

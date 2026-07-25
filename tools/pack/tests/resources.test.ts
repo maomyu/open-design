@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { copyBundledResourceTrees } from "../src/resources.js";
+import { copyBundledResourceTrees, shouldBundleEnginePath } from "../src/resources.js";
 import { copyOptionalVelaCliBinary, resolveOptionalVelaCliBinary } from "../src/vela-cli.js";
 
 async function writeFakeOpenCodeCompanion(
@@ -348,5 +348,29 @@ describe("resolveOptionalVelaCliBinary", () => {
         },
       }),
     ).resolves.toBeNull();
+  });
+});
+
+describe("shouldBundleEnginePath — 打包不得携带 API key", () => {
+  const root = join("/ws", "bakuan-engine");
+
+  it("真实 dotenv 文件一律不进包(引擎 settings.py 是 load_dotenv 的,.env 是 key 常驻处)", () => {
+    expect(shouldBundleEnginePath(root, join(root, ".env"))).toBe(false);
+    expect(shouldBundleEnginePath(root, join(root, ".env.local"))).toBe(false);
+    expect(shouldBundleEnginePath(root, join(root, ".env.production"))).toBe(false);
+    expect(shouldBundleEnginePath(root, join(root, "scripts", ".env"))).toBe(false);
+  });
+
+  it("dotenv 模板可以进包(只是文档,没有真实 key)", () => {
+    expect(shouldBundleEnginePath(root, join(root, ".env.example"))).toBe(true);
+    expect(shouldBundleEnginePath(root, join(root, ".env.sample"))).toBe(true);
+  });
+
+  it("常规源码/排除项行为不变", () => {
+    expect(shouldBundleEnginePath(root, root)).toBe(true);
+    expect(shouldBundleEnginePath(root, join(root, "config", "settings.py"))).toBe(true);
+    expect(shouldBundleEnginePath(root, join(root, ".venv", "bin", "python"))).toBe(false);
+    expect(shouldBundleEnginePath(root, join(root, "data", "app.sqlite"))).toBe(false);
+    expect(shouldBundleEnginePath(root, join(root, "src", "x.pyc"))).toBe(false);
   });
 });
