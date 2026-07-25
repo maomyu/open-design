@@ -20,7 +20,7 @@ import {
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { studioToast, StudioToastHost } from './StudioFeedback';
-import { useOrphanRun } from './useOrphanRun';
+import { useOrphanRun, useAiRunElapsed, fmtRunElapsed } from './useOrphanRun';
 import { NoteStudioView } from './NoteStudioView';
 import { ShortVideoStudioView } from './ShortVideoStudioView';
 import type { SauPlatformId } from '@open-design/contracts';
@@ -97,6 +97,8 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
   // 页面刷新/热更后认领孤儿 AI 任务,进度不丢。
   const { orphan, cancelOrphan } = useOrphanRun(aiTask === null);
   const effectiveAiRunning = aiRunning || orphan != null;
+  // 计时基准取后台 run 真实开始时间,切走导航/刷新重挂载不归零(2026-07-21 用户反馈,与煜见对齐)。
+  const aiElapsed = useAiRunElapsed(effectiveAiRunning, orphan?.startedAt);
   // 单页创作流:选完形态就地展开嵌入台(零跳页)。刷新后从 localStorage 恢复。
   const [activeDraft, setActiveDraftRaw] = useState<ActiveDraft | null>(loadActiveDraft);
   const setActiveDraft = (d: ActiveDraft | null) => {
@@ -361,7 +363,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
       {orphan != null && aiTask === null ? (
         <div className={c('card')}>
           <div className={c('cardHint')}>
-            ⏳ 有一个 AI 任务仍在后台运行(页面刷新前启动)——候选会自动更新;
+            ⏳ AI 任务仍在后台运行(切换页面/刷新都不影响,候选完成自动更新)· 已运行 {fmtRunElapsed(aiElapsed)};
             <button type="button" className={c('btn')} style={{ marginLeft: 8 }} onClick={() => void cancelOrphan()}>
               中止它
             </button>

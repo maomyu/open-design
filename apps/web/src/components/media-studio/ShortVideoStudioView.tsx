@@ -41,7 +41,7 @@ import { buildStudioDraft } from './draft-builders';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
 import { hasFeature, hasShortVideoPlatform, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
-import { useOrphanRun } from './useOrphanRun';
+import { useOrphanRun, useAiRunElapsed, fmtRunElapsed } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
 import { navigate } from '../../router';
 import styles from './MediaStudio.module.css';
@@ -227,7 +227,6 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   const aiSeqRef = useRef(0);
   const [aiRunning, setAiRunning] = useState(false);
   const [aiStage, setAiStage] = useState('');
-  const [aiElapsed, setAiElapsed] = useState(0);
   const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
   const aiAnchorRef = useRef<HTMLDivElement | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -383,16 +382,9 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   }, [article?.id, editArticle]);
 
 
-  // AI 任务计时：跑多久一目了然（配合阶段自报，「有没有在执行」不再靠猜）。
-  useEffect(() => {
-    if (!effectiveAiRunning) {
-      setAiElapsed(0);
-      return;
-    }
-    const started = Date.now();
-    const timer = window.setInterval(() => setAiElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => window.clearInterval(timer);
-  }, [effectiveAiRunning]);
+  // AI 任务计时：基准取后台 run 真实开始时间(orphan.startedAt),切走导航再切回/刷新重挂载
+  // 都不归零——不再让人误以为写作中断了(2026-07-21 用户反馈,与煜见对齐)。
+  const aiElapsed = useAiRunElapsed(effectiveAiRunning, orphan?.startedAt);
 
   // Cmd/Ctrl+S：跳过防抖立即落库。
   useEffect(() => {
@@ -624,8 +616,8 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
           <span className={c('aiGlobalPulse')} />
           <span className={c('aiGlobalTitle')}>
             {aiTask
-              ? `AI 正在执行：${aiTask.title}${aiStage ? ` · ${aiStage}` : ''} · 已运行 ${aiElapsed >= 60 ? `${Math.floor(aiElapsed / 60)} 分 ${aiElapsed % 60} 秒` : `${aiElapsed} 秒`}`
-              : '后台 AI 任务运行中（页面刷新前启动）——产物完成后自动写回并刷新'}
+              ? `AI 正在执行：${aiTask.title}${aiStage ? ` · ${aiStage}` : ''} · 已运行 ${fmtRunElapsed(aiElapsed)}`
+              : `AI 任务仍在后台运行（切换页面/刷新都不影响，产物完成自动写回）· 已运行 ${fmtRunElapsed(aiElapsed)}`}
           </span>
           {aiTask ? (
             <button

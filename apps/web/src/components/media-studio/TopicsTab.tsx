@@ -380,7 +380,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       const tier = 'tier' in scored ? (scored.tier ?? '') : '';
       setCollectTier(hitList.length > 0 ? tier : '');
       if (hitList.length === 0) {
-        studioToast.info('这个词实在没采到内容(可能太冷门/太新)。换个词,或勾具体爆款规则再试。');
+        studioToast.info('这次没采到爆款(已多翻几页尽力找)。换个更热门的词、把「采集页数」调大,或切换图文/视频形态再试。');
       } else {
         const tierLabel = tier ? `按【${tier}】档 · ` : '';
         studioToast.ok(`${tierLabel}真抓到 ${hitList.length} 个爆款,已列在下面(带链接·点赞·粉丝)。勾选想做的,再点「AI 帮我选题」生成候选选题。`);

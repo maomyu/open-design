@@ -13,6 +13,7 @@ import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { IMAGE_STYLE_PRESETS, type MediaArticle, type StudioAiTaskKind } from '@open-design/contracts';
+import { styleAllowsText } from './image-context.js';
 
 // 各配图风格对应的【画面内容取向】——喂给写作 AI,让它标注配图位时写出贴合所选风格的画面,
 // 而不是一律写成信息图/示意图(2026-07-20 用户:配图/封面风格要在写作时就定,提示词才对得上)。
@@ -68,9 +69,17 @@ function imageStyleGuidance(article: MediaArticle): string {
   const imageId = typeof extra.imageStyle === 'string' && extra.imageStyle ? extra.imageStyle : 'whiteboard';
   const coverHint = STYLE_CONTENT_HINT[coverId] ?? '贴合该风格的画面主体';
   const imageHint = STYLE_CONTENT_HINT[imageId] ?? '贴合该风格的画面主体';
+  // 文字策略(与生图端 styleAllowsText / 风格负面词同一份真源):允字风格(白板/大字报/手账/纯提示词)
+  // 要【主动带】手写短词/标签/便签,且严禁写「不含文字」禁字句(否则顶掉手写/标签精髓);禁字风格反之。
+  // 此前缺这条,手账等允字风格的图不出手写感——与煜见对齐(2026-07-21 用户反馈「手账拼贴风格不一致」)。
+  const textRule = (id: string): string =>
+    styleAllowsText(id)
+      ? `该风格【可带文字元素】——${id === 'bigtext' ? '封面描述直接给出要写的那句短标题(≤12 字)' : '手写短词/标签/便签/图解标注等,单处别超一句话(长句模型写不好)'};严禁在描述里写「不含文字/无文字/不要出现文字」这类禁字句`
+      : '该风格【画面里不要出现可读文字】(生图模型写不好字)';
   return (
     `- 本文【封面风格=${styleLabel(coverId)}】、【正文配图风格=${styleLabel(imageId)}】(用户已在写作页选定)。` +
-    `IMAGE_COVER 的画面内容按封面风格来:${coverHint};IMAGE_N 的画面内容按配图风格来:${imageHint}。` +
+    `IMAGE_COVER 的画面内容按封面风格来:${coverHint}(${textRule(coverId)});` +
+    `IMAGE_N 的画面内容按配图风格来:${imageHint}(${textRule(imageId)})。` +
     `仍然只写【画面内容】、不写画风词(插画/手绘/摄影/3D 等由风格模板生图时注入),但画面取向必须贴合这两个风格。`
   );
 }
