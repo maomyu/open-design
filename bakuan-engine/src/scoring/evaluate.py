@@ -37,7 +37,8 @@ class Evaluation:
 def evaluate(rc: RawContent, *, transcript: str = "", comments: list[str] | None = None,
              account_recent_likes: list[int] | None = None,
              keyword_sample_likes: list[int] | None = None,
-             growth_per_hour: float | None = None) -> Evaluation:
+             growth_per_hour: float | None = None,
+             cdims: dict | None = None) -> Evaluation:
     comments = comments or []
 
     # ── 流量爆款分：数据类维度(程序)。数据缺失 → None(交给可用权重归一化)，不算 0 ──
@@ -59,10 +60,12 @@ def evaluate(rc: RawContent, *, transcript: str = "", comments: list[str] | None
     fast = os.getenv("RADAR_FAST") == "1"
 
     # ── 流量爆款分：内容类维度(模型) ── fast 模式下跳过 LLM,用中性默认。
-    cdims = {} if fast else router.chat_json(
-        [{"role": "system", "content": prompts.CONTENT_DIM_SYS},
-         {"role": "user", "content": prompts.content_dims_user(rc.title, transcript)}],
-        tier="mid")
+    # cdims 预评分(2026-07-22 批量调用产出):调用方已批量评好就不再单条打 LLM。
+    if cdims is None:
+        cdims = {} if fast else router.chat_json(
+            [{"role": "system", "content": prompts.CONTENT_DIM_SYS},
+             {"role": "user", "content": prompts.content_dims_user(rc.title, transcript)}],
+            tier="mid")
 
     traffic_dims = {
         "data_heat": _norm(max(rc.likes, rc.plays), 200_000),
@@ -133,3 +136,50 @@ def content_type(ev: Evaluation) -> str:
     if hi_i:
         return "精准型"
     return "流量型"
+
+
+def batch_content_dims(pairs: list[tuple[str, str]], *, batch_size: int = 6) -> list[dict]:
+    """多条 (标题, 文案) 一次 LLM 调用评出内容维度——本地 CLI 智能体一调用一进程,
+    逐条评 N 条 = N 次进程启动(2026-07-22 用户反馈整轮运行特别慢的根因之一)。
+    返回值与 pairs 等长;批量失败或缺条的条目回退逐条单评,绝不整批丢;
+    RADAR_FAST 模式直接全空(dict),走 evaluate() 的中性默认,与 fast 语义一致。"""
+    results: list[dict] = [{} for _ in pairs]
+    if not pairs or os.getenv("RADAR_FAST") == "1":
+        return results
+    for start in range(0, len(pairs), batch_size):
+        end = min(start + batch_size, len(pairs))
+        chunk = [(i + 1, pairs[start + i][0], pairs[start + i][1]) for i in range(end - start)]
+        arr: list = []
+        try:
+            data = router.chat_json(
+                [{"role": "system", "content": prompts.CONTENT_DIM_BATCH_SYS},
+                 {"role": "user", "content": prompts.content_dims_batch_user(chunk)}],
+                tier="mid")
+            raw = data.get("items")
+            if isinstance(raw, list):
+                arr = raw
+        except Exception:  # noqa: BLE001 — 批量调用失败,整 chunk 回退逐条单评
+            arr = []
+        got: dict[int, dict] = {}
+        for entry in arr:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                i = int(entry.get("i", 0))
+            except (TypeError, ValueError):
+                continue
+            if 1 <= i <= len(chunk):
+                got[i] = entry
+        for seq, title, transcript in chunk:
+            entry = got.get(seq)
+            if entry is None:
+                # 缺条回退逐条单评(与 evaluate() 内的单次调用同提示词)
+                entry = router.chat_json(
+                    [{"role": "system", "content": prompts.CONTENT_DIM_SYS},
+                     {"role": "user", "content": prompts.content_dims_user(title, transcript)}],
+                    tier="mid")
+            results[start + seq - 1] = {
+                "topic_match": float(entry.get("topic_match", 0.5) or 0.5),
+                "structure": float(entry.get("structure", 0.5) or 0.5),
+            }
+    return results

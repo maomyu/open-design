@@ -31,6 +31,23 @@ topic_match(与男性情感赛道及目标用户相关度)、structure(钩子/�
 文案：{transcript[:1200]}"""
 
 
+# ── 内容维度【批量】打分（2026-07-22 用户拍板:本地 CLI 智能体一调用一进程,逐条评分
+#    N 条=N 次进程启动,是整轮采集慢的主因——一次调用评多条,缺条再回退逐条）──
+CONTENT_DIM_BATCH_SYS = "你是内容评估器，只输出 JSON，各维度取值 0~1，按输入序号逐条给出、一条不漏。"
+
+
+def content_dims_batch_user(items: list[tuple[int, str, str]]) -> str:
+    """items: [(序号, 标题, 文案), ...] → 批量评估 prompt。"""
+    blocks = "\n\n".join(
+        f"--- 第{i}条 ---\n标题：{title}\n文案：{transcript[:800]}"
+        for i, title, transcript in items)
+    return f"""逐条评估以下内容，输出 JSON：{{"items":[{{"i":1,"topic_match":0.0,"structure":0.0}}, ...]}}
+topic_match(与男性情感赛道及目标用户相关度)、structure(钩子/情绪/争议/可复用性带来的传播潜力)。
+每条都必须给出，i 与输入序号一一对应。
+
+{blocks}"""
+
+
 # ── 评论意图分析（mid 模型，产出 intent_score 的意图类维度 + 高频问题）──
 INTENT_SYS = "你是评论意图分析器，只输出 JSON。"
 

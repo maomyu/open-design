@@ -27,6 +27,37 @@ from src.script import generate as GEN
 from src import store
 
 
+def _collect_error(platform: str, exc: BaseException) -> dict:
+    """把一次采集异常压成可上报的 {platform, status, reason}。
+
+    数据源的致命错误几乎总是 HTTP 层的（401 令牌失效、402 欠费、429 限流），
+    但到了这里它已经被 tenacity 包成 RetryError、把状态码藏在最后一次尝试里。
+    逐层解包取出 status_code，让上层能区分"这个词没爆款"和"你的 key 废了"。
+    """
+    status: int | None = None
+    cur: BaseException | None = exc
+    seen = 0
+    while cur is not None and seen < 8:
+        seen += 1
+        last = getattr(cur, "last_attempt", None)          # tenacity.RetryError
+        if last is not None and hasattr(last, "exception"):
+            try:
+                inner = last.exception()
+            except Exception:  # noqa: BLE001
+                inner = None
+            if isinstance(inner, BaseException):
+                cur = inner
+                continue
+        resp = getattr(cur, "response", None)               # requests.HTTPError
+        code = getattr(resp, "status_code", None)
+        if isinstance(code, int):
+            status = code
+            break
+        cur = cur.__cause__ or cur.__context__
+    reason = f"HTTP {status}" if status else f"{type(exc).__name__}: {exc}"
+    return {"platform": platform, "status": status, "reason": reason[:200]}
+
+
 class Pipeline:
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
@@ -41,6 +72,7 @@ class Pipeline:
         self._materials: list[dict] | None = None  # 我的素材库缓存（本次运行读一次）
         self.xhs_note_type: int | None = None    # 小红书采集内容类型:2 图文(图文笔记台)/1 视频(短视频台)/None 综合
         self.radar_tier: str | None = None       # 自动降档命中的档位名(给前端显示"按【热门】采到N条")
+        self.collect_errors: list[dict] = []     # 本轮各平台的采集失败原因(带 HTTP 状态码)——见 _collect_error
         if dry_run:
             os.environ["DRY_RUN"] = "1"
             self.tik = self.dajiala = self.fs = None
@@ -325,11 +357,18 @@ class Pipeline:
         auto_target = int((self._criteria or {}).get("target", 5)) if auto_mode else 5
         all_cands: list[normalize.RawContent] = []
         self.radar_tier = None
+        self.collect_errors = []
         for p in platforms:
             try:
                 raw = self._search(p, keyword, count)
             except Exception as e:
-                logger.warning(f"采集失败 {p}: {e}")
+                # 采集失败必须留痕:只 log 一行 warning 的话,数据源整个挂掉(key 失效/欠费/
+                # 接口变更)在界面上和"这个关键词没有爆款"长得一模一样。2026-07-26 客户机
+                # 实况:TikHub 令牌失效 → 每次请求 401 → 候选 0 条 → 用户以为是没爆款,
+                # 白等了几天。留下带状态码的原因,交给 radar 输出上报给前端。
+                detail = _collect_error(p, e)
+                self.collect_errors.append(detail)
+                logger.warning(f"采集失败 {p}: {detail['reason']}")
                 continue
             sample_likes = [normalize._to_int(normalize._pick(
                 it, "likes", "statistics.digg_count", "interact_info.liked_count",
@@ -448,8 +487,21 @@ class Pipeline:
                     if len(to_process) >= max_process:
                         break
         logger.info(f"本轮精处理 {len(to_process)} 条（平台轮流，其余 {len(candidates)-len(to_process)} 条仅入库）")
+        # 批量内容评分(2026-07-22 用户拍板):本地 CLI 智能体一调用一进程,逐条评分 N 次
+        # 进程启动是整轮慢的主因——先取齐文案/评论,一次调用评多条(缺条自动回退逐条)。
+        prefetched: dict[str, dict] = {}
+        for rc in to_process:
+            prefetched[rc.content_id] = {
+                "transcript": self._transcript(rc),
+                "comments": self._comments(rc.platform, rc.content_id),
+            }
+        cdims_list = EV.batch_content_dims(
+            [(rc.title, prefetched[rc.content_id]["transcript"]) for rc in to_process])
+        for rc, cd in zip(to_process, cdims_list):
+            prefetched[rc.content_id]["cdims"] = cd
         generated = sum(1 for rc in to_process
-                        if self._process_candidate(rc, raw_rid=self._rid_by_cid.get(rc.content_id, "")))
+                        if self._process_candidate(rc, raw_rid=self._rid_by_cid.get(rc.content_id, ""),
+                                                   prefetched=prefetched.get(rc.content_id)))
         result = {"keyword": keyword, "candidates": len(candidates),
                   "processed": len(to_process), "generated": generated,
                   "archived_only": len(candidates) - len(to_process),
@@ -549,8 +601,20 @@ class Pipeline:
                 candidates.append((rc, recent, rid))
             if skipped_window:
                 logger.info(f"[竞品账号] {p} 窗口外跳过 {skipped_window} 条(时间窗 {time_window})")
+        # 批量内容评分(同 run_keyword):账号监控候选全量精处理,逐条 LLM 进程启动开销更大。
+        prefetched_acct: dict[str, dict] = {}
+        for rc, _recent, _rid in candidates:
+            prefetched_acct[rc.content_id] = {
+                "transcript": self._transcript(rc),
+                "comments": self._comments(rc.platform, rc.content_id),
+            }
+        cdims_acct = EV.batch_content_dims(
+            [(rc.title, prefetched_acct[rc.content_id]["transcript"]) for rc, _, _ in candidates])
+        for (rc, _, _), cd in zip(candidates, cdims_acct):
+            prefetched_acct[rc.content_id]["cdims"] = cd
         generated = sum(1 for rc, recent, rid in candidates
-                        if self._process_candidate(rc, account_recent_likes=recent, raw_rid=rid))
+                        if self._process_candidate(rc, account_recent_likes=recent, raw_rid=rid,
+                                                   prefetched=prefetched_acct.get(rc.content_id)))
         if self.dry_run:
             self._dump()
         return {"account": account, "candidates": len(candidates), "generated": generated}
@@ -615,21 +679,26 @@ class Pipeline:
     # ── 候选 → 评分 → 脚本 → 封面 → 复盘/成本 ──
     def _process_candidate(self, rc: normalize.RawContent, *,
                            account_recent_likes: list[int] | None = None,
-                           raw_rid: str = "") -> bool:
+                           raw_rid: str = "",
+                           prefetched: dict | None = None) -> bool:
         try:
             # 原生关联字段值：指向「爆款内容原始库」那条记录（空则不写关联）
             link = [{"id": raw_rid}] if raw_rid else None
-            transcript = self._transcript(rc)
+            # prefetched(2026-07-22 批量评分):调用方已取齐 文案/评论/内容维度评分,
+            # 不再逐条重取——批量场景下省掉 N-1 次重复抓取与 N-1 次 CLI 进程启动。
+            prefetched = prefetched or {}
+            transcript = prefetched["transcript"] if "transcript" in prefetched else self._transcript(rc)
             # 原视频文案(口播原文/图文正文)回写原始库那条记录，供审核与追溯
             if raw_rid and transcript and transcript != rc.title:
                 try:
                     self.fs.update_record("爆款内容原始库", raw_rid, {"原视频文案": transcript})
                 except Exception as e:
                     logger.warning(f"回写原视频文案跳过：{e}")
-            comments = self._comments(rc.platform, rc.content_id)
+            comments = prefetched["comments"] if "comments" in prefetched else self._comments(rc.platform, rc.content_id)
             ev = EV.evaluate(rc, transcript=transcript, comments=comments,
                              account_recent_likes=account_recent_likes,
-                             growth_per_hour=store.growth_per_hour(rc.content_id))
+                             growth_per_hour=store.growth_per_hour(rc.content_id),
+                             cdims=prefetched.get("cdims"))
             topic_rid = self._write_topic(rc, ev, link)   # 选题池 record_id(供审核库关联)
             topic_link = [{"id": topic_rid}] if topic_rid else None
             if self._radar_mode:
@@ -996,8 +1065,11 @@ def main():
         items = sorted(pipe.radar_items, key=lambda x: (x["流量爆款分"] + x["精准意向分"]), reverse=True)
         # feishu_synced=False 说明本轮飞书数据中心回写失败(多为 lark-cli 未装/未连接)——上报给前端
         # 提示用户,不再静默(2026-07-16 用户报"没和飞书数据中心同步")。
+        # collect_errors:数据源本身挂了(令牌失效/欠费/限流)时,前端要能和"这个词没爆款"
+        # 区分开——只有 0 条而没有原因的话,用户会一直以为是自己关键词选得不好。
         print(json.dumps({"keyword": args.keyword, "count": len(items),
                           "tier": pipe.radar_tier, "feishu_synced": not pipe._feishu_broken,
+                          "collect_errors": pipe.collect_errors,
                           "选题候选": items},
                          ensure_ascii=False, indent=2))
         return
