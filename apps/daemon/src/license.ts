@@ -82,6 +82,38 @@ export function verifyLicenseFile(
   return { ok: true, payload: p };
 }
 
+/**
+ * 首启动把【安装包里内嵌的 license】播种到数据目录。
+ *
+ * 定制包把客户 license 打进资源树(`<resourceRoot>/license.json`,见 tools/pack 的
+ * `copyCustomerLicense`),这样客户双击装完直接就是合同范围——不必再让客户跑一次
+ * `license import`(2026-07-26 之前就是这样,结果客户装完看到的是全功能超集,
+ * 公众号/抖音/快手/B站/视频号这些合同外平台全露着)。
+ *
+ * 铁律:数据目录已有 license 就【绝不覆盖】。客户续期时 import 的新 license 写在数据目录,
+ * 覆盖它等于每次重装/升级都把客户打回旧授权。资源里没有(开发/超集包)则什么都不做。
+ */
+export async function seedLicenseFromResources(
+  dataDir: string,
+  resourceRoot: string | null,
+): Promise<void> {
+  if (!resourceRoot) return;
+  const target = licenseFilePath(dataDir);
+  try {
+    await readFile(target, 'utf8');
+    return; // 已有授权(含客户自己续期导入的)——不动
+  } catch { /* 没有才播种 */ }
+  let bundled: string;
+  try {
+    bundled = await readFile(path.join(resourceRoot, 'license.json'), 'utf8');
+  } catch {
+    return; // 超集包没内嵌 license
+  }
+  try {
+    await writeFile(target, bundled, 'utf8');
+  } catch { /* 数据目录不可写:退回"无授权=全解锁",不阻断启动 */ }
+}
+
 /** 读盘+验签+过期/时钟判定。无文件 → status none(全解锁)。
  *  publicKeySpkiB64 仅测试注入用,产品路径永远走内嵌公钥。 */
 export async function loadLicenseState(

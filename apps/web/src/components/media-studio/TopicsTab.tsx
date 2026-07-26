@@ -955,7 +955,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             可多选,命中任一即算爆款
           </span>
           <span className={c('cardHint')} style={{ opacity: 0.55, width: '100%', fontSize: 11.5 }}>
-            热度 = 播放与点赞取高值;抖音/视频号不公开播放量,按点赞算(快手/B站按播放算)。
+            {/* 别在这句里逐个点名平台:这是超集文案,而客户只买了自己那几个平台(靠 license 裁剪)。
+                列举抖音/快手/B站/视频号会让只买小红书的客户以为自己拿到了没买的功能。 */}
+            热度 = 播放与点赞取高值;部分平台不公开播放量,按点赞算。
             {collectTargets.includes('channels') ? '视频号是纯点赞,默认门槛已自动降到 2000。' : ''}
           </span>
         </div>

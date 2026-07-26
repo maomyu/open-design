@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import { cp } from "node:fs/promises";
+import { cp, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveCustomerLicense } from "./customer-license.js";
 
 function resolveToolsPackRoot(startDir: string): string {
   const maxDepth = 6;
@@ -79,6 +80,31 @@ export async function copyBundledResourceTrees({
     });
   }
   await copyBakuanEngine({ workspaceRoot, resourceRoot });
+  await copyCustomerLicense({ workspaceRoot, resourceRoot });
+}
+
+/**
+ * 把客户 license 打进【安装包资源树】,客户双击装完首启动即按合同裁剪。
+ *
+ * 原来 license 只被拷进本地打包运行时目录(mac/license-seed.ts,给 `tools-pack install`
+ * 本机验证用),【不进安装包】——交付得让客户再跑一次 `license import`。实际结果是客户
+ * 双击装完看到的是全功能超集(公众号/抖音/快手/B站/视频号 这些合同外平台全露出来)。
+ *
+ * daemon 首启动时若数据目录还没有 license.json,就从这里播种一份(见 apps/daemon 的
+ * seedLicenseFromResources)。后续客户续期 `license import` 写的是数据目录,优先级更高,
+ * 不会被包里的旧 license 回退。
+ */
+export async function copyCustomerLicense({
+  workspaceRoot,
+  resourceRoot,
+}: {
+  workspaceRoot: string;
+  resourceRoot: string;
+}): Promise<void> {
+  const resolved = await resolveCustomerLicense(workspaceRoot);
+  if (!resolved) return; // 未设 OD_PACK_CUSTOMER = 全功能超集包(开发/内部用)
+  await writeFile(join(resourceRoot, "license.json"), resolved.raw, "utf8");
+  process.stderr.write(`[tools-pack] 内嵌 license: 客户=${resolved.customer} → ${resourceRoot}/license.json\n`);
 }
 
 // Short-video 创作台整条管线（真抓爆款评分/视频下载/ASR 转写）都靠 bakuan-engine

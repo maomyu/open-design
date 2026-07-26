@@ -318,7 +318,7 @@ import {
   setToken,
 } from './mcp-tokens.js';
 import { accountCredentialKeysFromManifest, accountPlatformFromManifest, agentCliEnvForAgent, applyExclusiveCredentialRule, configuredEnvForAgentSpawn, pluginConfigEnvForPlugin, platformAccountsForPlatform, readAppConfig, readPluginEnvKnobs, resolvePlatformAccountCredentials, writeAppConfig } from './app-config.js';
-import { licenseFilePath, licenseGuard, licenseStatusResponse, loadLicenseState, verifyLicenseFile, type LicenseStateRef } from './license.js';
+import { licenseFilePath, licenseGuard, licenseStatusResponse, loadLicenseState, seedLicenseFromResources, verifyLicenseFile, type LicenseStateRef } from './license.js';
 import { readPluginConfigEnvFile } from './plugin-config-env.js';
 import { OrbitService, formatLocalProjectTimestamp, renderOrbitTemplateSystemPrompt } from './orbit.js';
 import { buildOrbitNoLiveArtifactSummary } from './orbit-agent-summary.js';
@@ -5665,6 +5665,8 @@ export async function startServer({
   registerAccountRoutes(app, { http: httpDeps, paths: pathDeps });
   // 功能授权强制(定制版):挂在 media-studio 之前——daemon 是唯一强制点,
   // UI 隐藏只是体验层。无授权文件时 licenseGuard 直接放行。
+  // 定制包首启动:把安装包内嵌的客户 license 播到数据目录,再读——客户双击装完即按合同裁剪。
+  await seedLicenseFromResources(RUNTIME_DATA_DIR, DAEMON_RESOURCE_ROOT);
   const licenseRef: LicenseStateRef = { current: await loadLicenseState(RUNTIME_DATA_DIR) };
   if (licenseRef.current.status !== 'none') {
     const lp = licenseRef.current.payload;
