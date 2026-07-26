@@ -64,6 +64,46 @@ type VersionProbeOutcome =
   | { kind: 'not-invocable' }
   | { kind: 'spawned'; version: string | null };
 
+// Stderr fingerprints of a *launcher* that never reached the program it
+// fronts for. Every entry names the launcher's own failure vocabulary —
+// uv's venv trampoline, CPython's import machinery, cmd.exe's shim
+// resolution, the POSIX shebang loader — rather than anything an agent
+// CLI would say about its own arguments.
+//
+// Matched lowercase against stderr.
+const LAUNCHER_FAILURE_SIGNATURES = [
+  'trampoline failed to spawn',
+  'no module named',
+  'is not recognized as an internal or external command',
+  'the system cannot find the path specified',
+  'the system cannot find the file specified',
+  'bad interpreter',
+  'command not found',
+] as const;
+
+/**
+ * True when a non-zero exit came from the launcher rather than the agent.
+ *
+ * A wrapper that died before handing off produces a distinctive shape:
+ * **nothing on stdout** (the real program never got to speak) plus a
+ * launcher-owned error on stderr. Both halves are load-bearing —
+ * requiring silent stdout is what keeps a working CLI that merely
+ * mentions a matching phrase in a warning from being retired.
+ *
+ * This exists because exit 126/127 is only the *POSIX shell's* way of
+ * saying "my target is gone". Other launchers have their own codes: a
+ * uv venv trampoline whose interpreter is unreachable exits **1**, and
+ * on a customer's Windows laptop that let a dead Hermes install show up
+ * as an available agent, get auto-selected, and fail on every run.
+ */
+function isLauncherFailure(err: unknown): boolean {
+  const streams = err as { stdout?: unknown; stderr?: unknown };
+  if (String(streams?.stdout ?? '').trim().length > 0) return false;
+  const stderr = String(streams?.stderr ?? '').toLowerCase();
+  if (!stderr.trim()) return false;
+  return LAUNCHER_FAILURE_SIGNATURES.some((signature) => stderr.includes(signature));
+}
+
 /**
  * Run the agent's `--version` probe and classify the result. The probe
  * has two distinct failure modes the catch arm has to discriminate:
@@ -79,7 +119,9 @@ type VersionProbeOutcome =
  *     shims, mise/nvm/fnm pointer files, and Windows `.CMD` shims
  *     whose target was uninstalled. We mark the agent unavailable
  *     so Settings does not advertise a ghost entry (issue #658,
- *     lefarcen review P2 on PR #1301).
+ *     lefarcen review P2 on PR #1301). Launchers outside the POSIX
+ *     shell family signal the same thing with their own exit codes,
+ *     so `isLauncherFailure` reads their stderr instead.
  *
  *   - **Spawned but `--version` was unhappy.** The binary itself ran
  *     (any other rejection: timeout, generic non-zero exit, stderr
@@ -111,6 +153,9 @@ async function probeVersionAtPath(
         return { kind: 'not-invocable' };
       }
     } else if (typeof code === 'number' && (code === 126 || code === 127)) {
+      return { kind: 'not-invocable' };
+    }
+    if (isLauncherFailure(err)) {
       return { kind: 'not-invocable' };
     }
     return { kind: 'spawned', version: null };

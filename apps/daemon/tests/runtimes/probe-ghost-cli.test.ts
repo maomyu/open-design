@@ -83,6 +83,19 @@ function exitCodeError(code: number): NodeJS.ErrnoException {
   return error;
 }
 
+function exitCodeErrorWithOutput(
+  code: number,
+  streams: { stdout?: string; stderr?: string },
+): NodeJS.ErrnoException {
+  // promisify(execFile) attaches the captured streams to the rejection,
+  // which is the only place a launcher-level failure identifies itself
+  // when the exit code is a generic 1.
+  return Object.assign(exitCodeError(code), {
+    stdout: streams.stdout ?? '',
+    stderr: streams.stderr ?? '',
+  });
+}
+
 describe('probe (issue #658) — ghost CLI after the binary is uninstalled', () => {
   beforeEach(() => {
     execAgentFileMock.mockReset();
@@ -149,6 +162,96 @@ describe('probe (issue #658) — ghost CLI after the binary is uninstalled', () 
     expect(codex).toBeDefined();
     expect(codex?.available).toBe(true);
     expect(codex?.version).toBeNull();
+  });
+
+  describe('launchers that fail with a generic exit code', () => {
+    // Field report (customer Windows laptop, 2026-07-26): the packaged app
+    // showed Hermes as an available agent and auto-selected it, but every
+    // run failed. `hermes.exe --version` exited **1** — not 126/127 — with
+    // an empty stdout and a uv-trampoline error on stderr, because the
+    // venv's Python could no longer be reached. The exit-code guard above
+    // only recognises the POSIX shell's 126/127, so the CLI sailed through
+    // as "available, version=null" and became a ghost entry: visible,
+    // selectable, and dead on first use.
+    //
+    // A launcher that never reached the real program prints nothing on
+    // stdout and names itself on stderr, which is what these cases pin.
+    const launcherFailures: Array<{ name: string; stderr: string }> = [
+      {
+        name: 'a uv venv trampoline whose interpreter is unreachable',
+        stderr:
+          'error: uv trampoline failed to spawn Python child process\n' +
+          '  Caused by: entity not found (os error 2)\n',
+      },
+      {
+        name: 'a Python console script whose package was removed',
+        stderr:
+          'Traceback (most recent call last):\n' +
+          '  File "<frozen runpy>", line 198, in _run_module_as_main\n' +
+          "ModuleNotFoundError: No module named 'hermes_cli'\n",
+      },
+      {
+        name: 'a Windows .cmd shim whose target interpreter is off PATH',
+        stderr:
+          "'node' is not recognized as an internal or external command,\n" +
+          'operable program or batch file.\n',
+      },
+      {
+        name: 'a POSIX shim whose shebang interpreter is gone',
+        stderr: '/usr/bin/env: bad interpreter: No such file or directory\n',
+      },
+    ];
+
+    for (const { name, stderr } of launcherFailures) {
+      it(`marks the agent unavailable for ${name}`, async () => {
+        execAgentFileMock.mockRejectedValue(exitCodeErrorWithOutput(1, { stderr }));
+        const { detectAgents } = await import('../../src/runtimes/detection.js');
+
+        const agents = await detectAgents();
+        const codex = agents.find((agent) => agent.id === 'codex');
+
+        expect(codex).toBeDefined();
+        expect(codex?.available).toBe(false);
+      });
+    }
+
+    it('keeps available=true when exit 1 carries ordinary CLI usage output', async () => {
+      // The counterweight to the cases above: adapters whose `--version`
+      // flag is unsupported exit non-zero with a usage message. Those CLIs
+      // are perfectly runnable and must keep showing up.
+      execAgentFileMock.mockRejectedValue(
+        exitCodeErrorWithOutput(1, {
+          stderr: 'error: unknown flag: --version\nUsage: agent [command]\n',
+        }),
+      );
+      const { detectAgents } = await import('../../src/runtimes/detection.js');
+
+      const agents = await detectAgents();
+      const codex = agents.find((agent) => agent.id === 'codex');
+
+      expect(codex).toBeDefined();
+      expect(codex?.available).toBe(true);
+      expect(codex?.version).toBeNull();
+    });
+
+    it('keeps available=true when the program printed on stdout before failing', async () => {
+      // Anything on stdout proves the real program ran, so a launcher-ish
+      // phrase on stderr (a warning, a sub-shell's noise) must not
+      // retire a working agent.
+      execAgentFileMock.mockRejectedValue(
+        exitCodeErrorWithOutput(1, {
+          stdout: 'agent 1.2.3\n',
+          stderr: "warning: No module named 'optional_plugin'\n",
+        }),
+      );
+      const { detectAgents } = await import('../../src/runtimes/detection.js');
+
+      const agents = await detectAgents();
+      const codex = agents.find((agent) => agent.id === 'codex');
+
+      expect(codex).toBeDefined();
+      expect(codex?.available).toBe(true);
+    });
   });
 
   it('returns the parsed version on a clean --version run', async () => {
