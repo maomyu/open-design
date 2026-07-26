@@ -438,6 +438,7 @@ import {
   warmBakuanEngine,
   type EngineContext,
 } from './media-studio/bakuan-engine.js';
+import { describeCollectFailure } from './media-studio/collect-errors.js';
 import { registerPluginDraftRoutes } from './plugin-draft-routes.js';
 import { registerSkillDraftRoutes } from './skill-draft-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
@@ -10318,6 +10319,14 @@ export async function startServer({
       let parsed;
       try { parsed = JSON.parse(s); } catch {
         return res.status(500).json({ error: 'TikHub 采集/评分失败：' + (r.stderr || r.stdout || '').slice(-300) });
+      }
+      // 数据源整个挂掉(令牌失效/欠费/限流)和"这个词没爆款"在界面上长得一模一样,都是空
+      // 列表。引擎已把每个平台的失败原因带上来,0 条时必须把原因摆到用户面前——2026-07-26
+      // 客户机实况:TikHub 令牌过期,每次请求 401,客户对着空列表反复换关键词换了几天。
+      // 有候选就照常返回:部分平台失败不该挡住已经采到的那些。
+      const collectFailure = describeCollectFailure(parsed.collect_errors);
+      if ((parsed.count ?? 0) === 0 && collectFailure) {
+        return res.status(502).json({ error: collectFailure });
       }
       return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null, feishuSynced: parsed.feishu_synced !== false });
     } catch (err) {
