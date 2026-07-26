@@ -1650,6 +1650,13 @@ export async function completeWithAgent(
     agentCliEnv?: unknown;
     timeoutMs?: number;
     signal?: AbortSignal;
+    /** 放开 Read 工具（一次性成稿需要看产品图/风格参考图再写图集建议；
+     *  其余交互/写/检索工具仍全禁,agent 看完图只能吐文本）。 */
+    allowRead?: boolean;
+    /** 透传 agent 流事件(status/tool_use/text_delta……)给调用方——一次性成稿的
+     *  SSE 进度用它把「正在看哪张图/正在撰写」实时推给界面(2026-07-23 用户拍板:
+     *  快路径也要看得见过程)。回调里抛错绝不影响补全本身。 */
+    onEvent?: (event: string, payload: unknown) => void;
   } = {},
 ): Promise<string> {
   const def = getAgentDef(agentId);
@@ -1673,9 +1680,11 @@ export async function completeWithAgent(
         model: opts.model ?? null,
         // Pure completion: no interactive/agentic tools. Only claude's buildArgs
         // consumes this today (→ --disallowedTools); harmless to the rest.
+        // allowRead(一次性成稿看图):只放开 Read,其余照禁。
         disallowedTools: [
-          'Bash', 'Read', 'Edit', 'Write', 'NotebookEdit',
+          'Bash', 'Edit', 'Write', 'NotebookEdit',
           'WebFetch', 'WebSearch', 'Task', 'AskUserQuestion',
+          ...(opts.allowRead ? [] : ['Read']),
         ],
       },
       { cwd },
@@ -1704,13 +1713,23 @@ export async function completeWithAgent(
       child!.once('error', () => resolve());
       child!.once('close', () => resolve());
     });
+    const send = (event: string, payload: unknown) => {
+      if (opts.onEvent) {
+        try {
+          opts.onEvent(event, payload);
+        } catch {
+          /* 进度回调绝不拖垮补全本身 */
+        }
+      }
+      sink.send(event, payload);
+    };
     attachAgentStreamHandlers(
       def,
       child,
       prompt,
       cwd,
       opts.model ?? undefined,
-      sink.send,
+      send,
       sink.appendRawStdout,
     );
     if (def.promptViaStdin && child.stdin && def.streamFormat !== 'pi-rpc') {

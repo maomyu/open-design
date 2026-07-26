@@ -29,6 +29,7 @@ import type {
   CreateStudioHandoffRequest,
   MediaRenderRequest,
   StudioAiTaskRequest,
+  StudioNoteWriteRequest,
   StudioHandoffCompleteRequest,
   TopicFeedSearchRequest,
   TikhubFeedRequest,
@@ -49,6 +50,8 @@ import {
 } from './media-studio/datacenter-store.js';
 import type { PathDeps, RouteDeps } from './server-context.js';
 import { readAppConfig, platformAccountsForPlatform } from './app-config.js';
+import { completeWithAgent } from './connectionTest.js';
+import { detectAgents } from './agents.js';
 import { resolveProviderConfig } from './media-config.js';
 import { getProject, insertConversation, insertProject } from './db.js';
 import {
@@ -67,7 +70,7 @@ import { TikhubError, tikhubTopicFeed } from './media-studio/tikhub.js';
 import { generateGeminiImageFallback, generateQwenImage, QwenImageError, styleAllowsText } from './media-studio/qwen-image.js';
 import { generateVolcImage, VolcImageError } from './media-studio/volc-image.js';
 import { missingKeyError, resolveStudioKeys } from './media-studio/step-keys.js';
-import { composeStudioAiTask } from './media-studio/ai-tasks.js';
+import { composeNoteOneShotPrompt, composeStudioAiTask } from './media-studio/ai-tasks.js';
 import { lintContent } from './media-studio/lint.js';
 import { BrowserError, logoutProfileBrowser, openProfileBrowser, PLATFORM_PUBLISH_URLS, revealInFinder } from './media-studio/browser.js';
 import { createHandoffBus, HANDOFF_PLATFORMS, HandoffError, isHandoffPlatform } from './media-studio/handoff-jobs.js';
@@ -2001,6 +2004,197 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
       });
     } catch (err) {
       bad(res, 400, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  // ---- 图文笔记一次性成稿（2026-07-22 用户拍板：写笔记不起完整 agent run） ----
+  // 原素材（原文案/原图）在「拉取原素材」步已存进文章；agentic 写笔记会用 curl 把同一篇
+  // 原文重抓一遍、再逐张 Read 原图,整条分钟级。这里用【用户引导时选中的本地 CLI agent】
+  // 做一次纯文本补全（与 /api/media-studio/agent-complete 同一套 agent 解析+JSON 硬约束），
+  // 服务端解析后直接写回文章。失败（agent 不可用/超时/JSON 缺字段）由 web 端回退到
+  // /ai-task 的完整智能体流程,能力不回归。
+  // SSE 模式(2026-07-23 用户拍板「进度和过程也要能看到」):Accept: text/event-stream 时
+  // 把 agent 流事件(启动/逐张看图/撰写中)实时推给界面;普通 JSON 客户端(CLI)不受影响。
+  app.post('/api/media-studio/:platform/ai-write-note', async (req, res) => {
+    // web 中止 → 连接断开 → abort 掉本地 CLI 进程(completeWithAgent 内部 SIGKILL),
+    // 不留孤儿进程。声明在 try 外,catch 里要分辨中止与真错误。
+    const ac = new AbortController();
+    // 监听必须在所有 await 之前挂上(2026-07-23 实测:agent 探测要好几秒,期间客户端
+    // 断开的话,事后才挂的监听会错过 close 事件→ 中止失效照跑照写)。
+    // 用 res 的 close(不是 req):POST body 被 express 读完时 req 的 close 已提前触发过。
+    res.on('close', () => {
+      if (!res.writableEnded) ac.abort();
+    });
+    const sse = String(req.headers.accept ?? '').includes('text/event-stream');
+    let keepalive: ReturnType<typeof setInterval> | null = null;
+    const sseSend = (event: string, data: unknown) => {
+      if (!sse || res.writableEnded) return;
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    if (sse) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      res.flushHeaders();
+      sseSend('progress', { stage: 'start', label: '已提交本地 agent，等待出稿…' });
+      keepalive = setInterval(() => {
+        if (!res.writableEnded) res.write(': ka\n\n');
+      }, 15_000);
+      keepalive.unref?.();
+    }
+    const finish = () => {
+      if (keepalive) clearInterval(keepalive);
+      if (sse && !res.writableEnded) res.end();
+    };
+    const fail = (status: number, message: string) => {
+      if (sse) {
+        sseSend('error', { error: message });
+        finish();
+        return;
+      }
+      bad(res, status, message);
+    };
+    // agent 流事件 → 人话进度(去重,同类不连发)。
+    let lastLabel = '';
+    const onAgentEvent = (event: string, payload: unknown) => {
+      if (event !== 'agent') return;
+      const ev = (payload ?? {}) as Record<string, unknown>;
+      let label = '';
+      if (ev.type === 'status') {
+        label = ev.label === 'initializing' ? '启动本地 agent…' : '';
+      } else if (ev.type === 'tool_use') {
+        const input = (ev.input ?? {}) as Record<string, unknown>;
+        const fp = String(input.file_path ?? input.path ?? '');
+        label = ev.name === 'Read'
+          ? `查看图片 ${fp ? path.basename(fp) : ''}…`.trim()
+          : `调用工具 ${String(ev.name ?? '')}`;
+      } else if (ev.type === 'text_delta' || ev.type === 'text') {
+        label = '撰写成稿中…';
+      }
+      if (label && label !== lastLabel) {
+        lastLabel = label;
+        sseSend('progress', { stage: 'progress', label });
+      }
+    };
+    try {
+      const platform = req.params.platform;
+      const body = (req.body ?? {}) as StudioNoteWriteRequest;
+      const article = body.articleId ? getArticle(db, body.articleId) : null;
+      if (!article) return fail(404, 'article not found');
+
+      // 覆盖正文前先快照（与 /ai-task 的 write 一致，后悔药）。
+      createVersion(db, article, 'AI 写笔记 前');
+
+      // 与 /ai-task 同规则：绑定账号人设 + 知识库（全局 + 账号条目，截断防爆）。
+      let account: { name: string; persona?: string; samples?: string[] } | null = null;
+      const accountId = article.accountId || null;
+      if (accountId) {
+        const prefs = await readAppConfig(paths.RUNTIME_DATA_DIR);
+        const record = platformAccountsForPlatform(prefs, platform).find((a) => a.id === accountId);
+        if (record) {
+          account = {
+            name: record.name,
+            ...(record.style?.persona ? { persona: record.style.persona } : {}),
+            ...(record.style?.samples?.length ? { samples: record.style.samples } : {}),
+          };
+        }
+      }
+      const knowledgeItems = listKnowledge(db, platform)
+        .filter((k) => !k.accountId || k.accountId === (accountId ?? ''))
+        .slice(0, 12)
+        .map((k) => ({ name: k.name, contentMd: k.contentMd.slice(0, 2000), ...(k.category ? { category: k.category } : {}) }));
+
+      // 产品图/风格参考图(与 /ai-task 同一映射):资产 URL → 磁盘绝对路径,给 agent Read。
+      const assetUrlToDisk = (u: unknown): string | null => {
+        if (typeof u !== 'string' || !u.startsWith(STUDIO_ASSET_URL_PREFIX)) return null;
+        const rest = u.slice(STUDIO_ASSET_URL_PREFIX.length).split('/');
+        if (rest.length !== 2) return null;
+        return path.join(assetsDirFor(decodeURIComponent(rest[0] ?? '')), decodeURIComponent(rest[1] ?? ''));
+      };
+      const articleExtra = (article.extra ?? {}) as Record<string, unknown>;
+      const productImagePaths = (Array.isArray(articleExtra.userRefImages) ? articleExtra.userRefImages : [])
+        .map(assetUrlToDisk).filter((p): p is string => !!p).slice(0, 4);
+      const styleImagePaths = (Array.isArray(articleExtra.sourceImages) ? articleExtra.sourceImages : [])
+        .map(assetUrlToDisk).filter((p): p is string => !!p).slice(0, 3);
+
+      const prompt = composeNoteOneShotPrompt({
+        article,
+        note: String(body.note ?? ''),
+        account,
+        knowledge: knowledgeItems,
+        // 看图写图集建议(2026-07-23 用户拍板):产品图/风格参考图映射成磁盘路径,
+        // 一次性补全以 allowRead 放开 Read 工具,agent 先逐张看图再写建议(与 agentic 版同纪律)。
+        ...(productImagePaths.length ? { productImagePaths } : {}),
+        ...(styleImagePaths.length ? { styleImagePaths } : {}),
+      });
+
+      // agent 解析与 /api/media-studio/agent-complete 一致：选中优先，没选过用探测到的
+      // 第一个可用 agent，再兜底 'claude'。
+      const cfg = (await readAppConfig(paths.RUNTIME_DATA_DIR).catch(() => ({}))) as {
+        agentId?: string | null;
+        agentCliEnv?: unknown;
+      };
+      let agentId = (cfg?.agentId || '').trim();
+      if (!agentId) {
+        const detected = await detectAgents(
+          (cfg?.agentCliEnv as Record<string, Record<string, string>>) ?? {},
+        ).catch(() => [] as Array<{ id: string; available: boolean }>);
+        agentId = detected.find((a) => a.available)?.id || 'claude';
+      }
+      const finalPrompt = `${prompt}\n\n【严格输出要求】只输出一个 JSON 对象本身，不要 markdown 代码块、不要任何解释或前后缀文字。`;
+      // 看图轮次拉长耗时,超时放宽到 300s。调用前已断开就别再烧 agent 起进程。
+      if (ac.signal.aborted) return finish();
+      const text = await completeWithAgent(agentId, finalPrompt, {
+        agentCliEnv: cfg?.agentCliEnv,
+        timeoutMs: 300_000,
+        signal: ac.signal,
+        allowRead: productImagePaths.length > 0 || styleImagePaths.length > 0,
+        onEvent: onAgentEvent,
+      });
+
+      // 容错解析：首尾花括号夹取（与引擎 router.chat_json 同策略）。
+      let data: Record<string, unknown> | null = null;
+      try {
+        data = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+          try {
+            data = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+          } catch {
+            data = null;
+          }
+        }
+      }
+      const titleOut = typeof data?.title === 'string' ? data.title.trim() : '';
+      const bodyOut = typeof data?.bodyMd === 'string' ? data.bodyMd.trim() : '';
+      if (!data || !titleOut || !bodyOut) {
+        return fail(502, 'AI 返回的内容解析不出标题/正文');
+      }
+      const ideas = Array.isArray(data.imageIdeas)
+        ? (data.imageIdeas as unknown[]).map((v) => String(v).trim()).filter(Boolean).join('\n')
+        : '';
+      const updated = updateArticle(db, article.id, {
+        title: titleOut,
+        ...(typeof data.digest === 'string' && data.digest.trim() ? { digest: data.digest.trim() } : {}),
+        bodyMd: bodyOut,
+        extra: {
+          ...(typeof data.tags === 'string' && data.tags.trim() ? { tags: data.tags.trim() } : {}),
+          ...(ideas ? { imageIdeas: ideas } : {}),
+        },
+      });
+      if (sse) {
+        sseSend('done', { article: updated, agent: agentId });
+        return finish();
+      }
+      return res.json({ article: updated, agent: agentId });
+    } catch (err) {
+      // web 端主动中止：连接已断,无需回错误,进程已被 completeWithAgent 杀掉。
+      if (ac.signal.aborted) return finish();
+      return fail(502, err instanceof Error ? err.message : String(err));
     }
   });
 

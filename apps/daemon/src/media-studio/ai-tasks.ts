@@ -282,6 +282,11 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     const sourceBlock = sourceContent
       ? `## 原文参考（这是要【仿写】的小红书爆款原文案——学它的钩子/结构/表达节奏，但换你自己的角度、素材和话术，绝不照抄，避免判重）\n${sourceContent.slice(0, 1500)}`
       : '';
+    // 视频源转写出的口播文案(2026-07-23 用户拍板:视频→转写口播;没有就不带,忽略)
+    const sourceTranscript = String((article.extra as Record<string, unknown>).sourceTranscript ?? '').trim();
+    const transcriptBlock = sourceTranscript
+      ? `## 原视频口播文案（视频源转写出的口播原文——学它的钩子/结构/信息点，绝不照抄原句、不搬它的品牌与产品）\n${sourceTranscript.slice(0, 2000)}`
+      : '';
     // 产品纪律(2026-07-18 用户反馈「AI 文案和我的产品没关系」):有知识库时笔记主角
     // 必须是自家产品——原文只借结构,别人的品牌绝不出现,否则种草种给了竞品。
     const productDiscipline = (input.knowledge?.length ?? 0) > 0
@@ -292,15 +297,24 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
           '- 若选题方向与自家产品不直接相关，就以自家产品的视角切入这个话题（蹭结构不蹭品牌）。',
         ].join('\n')
       : '';
+    // 调研去重(2026-07-22 用户拍板):「拉取原素材」步已把原文案抓回存进 sourceContent,
+    // 上面「原文参考」已将它内联——再做第 0 步调研=用 curl 把同一篇原文重抓一遍,纯浪费。
+    // 三级:简报 > 已有原文案(跳过调研) > 真缺素材才调研,且简报写回 researchMd 供下次复用。
     const researchPhase = researchMd
       ? `## 素材简报（已调研——事实优先用这里的，不必重查）\n${researchMd.slice(0, 3000)}`
-      : [
-          '## 第 0 步：先做素材调研（必做）',
-          topicUrl
-            ? `1. 抓选题原文：\`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${article.platform}/article-detail" -H 'Content-Type: application/json' -d '{"url":"${topicUrl}"}'\`；`
-            : '1. 用你的检索工具找 2-3 篇同题优质内容（看结构、看评论区在问什么）。',
-          '2. 记下：可用事实/数字、大家的写法、评论区高频疑问（笔记的互动钩子就从这来）。',
-        ].join('\n');
+      : sourceContent
+        ? '## 素材调研（跳过）：原素材已在上文「原文参考」里备齐——直接按它仿写，不要再抓原文、不要再做检索。'
+        : [
+            '## 第 0 步：先做素材调研（必做）',
+            topicUrl
+              ? `1. 抓选题原文：\`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${article.platform}/article-detail" -H 'Content-Type: application/json' -d '{"url":"${topicUrl}"}'\`；`
+              : '1. 用你的检索工具找 2-3 篇同题优质内容（看结构、看评论区在问什么）。',
+            '2. 记下：可用事实/数字、大家的写法、评论区高频疑问（笔记的互动钩子就从这来）。',
+            `3. 把简报存 /tmp/studio-research-${article.id.slice(0, 8)}.md 并写回文章（下次写作直接复用，不再重查）：`,
+            '```bash',
+            `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{researchMd:fs.readFileSync("/tmp/studio-research-${article.id.slice(0, 8)}.md","utf8")}})}).then(r=>console.log("research saved",r.status))'`,
+            '```',
+          ].join('\n');
     return {
       title: `AI 写笔记 · ${article.title || article.topic || '未命名'}`,
       prompt: [
@@ -311,6 +325,7 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         knowledgeBlock(input.knowledge),
         productDiscipline,
         sourceBlock,
+        transcriptBlock,
         researchPhase,
         '## 硬限制（平台规则，超了发不出去）',
         '- 标题 ≤20 个字：钩子前置（数字/反差/身份代入），可带 1 个 emoji；',
@@ -510,4 +525,90 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
       cliBlock(input.cliPath),
     ].filter(Boolean).join('\n\n'),
   };
+}
+
+export interface ComposeNoteOneShotInput {
+  article: MediaArticle;
+  /** 补充要求（用户自由输入）。 */
+  note: string;
+  account: ComposeAiTaskInput['account'];
+  knowledge: ComposeAiTaskInput['knowledge'];
+  /** 产品图磁盘绝对路径——图集建议必须以它为主体(先 Read 看图)。 */
+  productImagePaths?: string[];
+  /** 风格参考图(爆款原图)磁盘绝对路径——图集建议模仿其构图/光线/质感。 */
+  styleImagePaths?: string[];
+}
+
+/** 图文笔记一次性成稿 prompt（2026-07-22 用户拍板）：原素材（原文案/原图）在「拉取原素材」
+ *  步已存进文章，写笔记不再起完整 agent run（它会用 curl 重抓同一篇原文、再逐张 Read 原图，
+ *  整条分钟级）——纯文本补全一次、JSON 直出，daemon 收到后服务端直接写回文章。
+ *  与 agentic 版（write+note 分支）共用同一套账号人设/知识库/产品纪律/平台硬限制/图集规则，
+ *  产物字段一一对应（title/digest/tags/bodyMd + extra.imageIdeas）。
+ *  看图(2026-07-23 用户拍板):daemon 以 allowRead 调 completeWithAgent——只放开 Read 工具,
+ *  有产品图/风格图时 agent 先逐张 Read 再写图集建议(与 agentic 版同一纪律)。 */
+export function composeNoteOneShotPrompt(input: ComposeNoteOneShotInput): string {
+  const { article, note } = input;
+  const sourceContent = String((article.extra as Record<string, unknown>).sourceContent ?? '').trim();
+  const sourceBlock = sourceContent
+    ? `## 原文参考（这是要【仿写】的小红书爆款原文案——学它的钩子/结构/表达节奏，但换你自己的角度、素材和话术，绝不照抄，避免判重）\n${sourceContent.slice(0, 2500)}`
+    : '';
+  // 视频源转写出的口播文案(2026-07-23 用户拍板:视频→转写口播;没有就不带,忽略)
+  const sourceTranscript = String((article.extra as Record<string, unknown>).sourceTranscript ?? '').trim();
+  const transcriptBlock = sourceTranscript
+    ? `## 原视频口播文案（视频源转写出的口播原文——学它的钩子/结构/信息点，绝不照抄原句、不搬它的品牌与产品）\n${sourceTranscript.slice(0, 2000)}`
+    : '';
+  const productDiscipline = (input.knowledge?.length ?? 0) > 0
+    ? [
+        '## 产品纪律（硬性——违反等于白写）',
+        '- 这篇笔记的主角【必须】是上面知识库里的自家产品/品牌；卖点、成分、场景、人群全从知识库取材，不足的地方宁可写少也不编造；',
+        '- 「原文参考」只借它的【结构/钩子/节奏/排版】；原文里出现的任何其它品牌名、产品名、店铺名一律不得写进你的笔记；',
+        '- 若选题方向与自家产品不直接相关，就以自家产品的视角切入这个话题（蹭结构不蹭品牌）。',
+      ].join('\n')
+    : '';
+  return [
+    '# 任务：写一篇图文笔记（小红书调性，可直接发布）——一次性成稿，直接输出最终成品',
+    `选题：${article.topic || article.title || '（按补充要求定）'}`,
+    note.trim() ? `补充要求：${note.trim()}` : '',
+    accountBlock(input.account),
+    knowledgeBlock(input.knowledge),
+    productDiscipline,
+    sourceBlock,
+    transcriptBlock,
+    [
+      '## 硬限制（平台规则，超了发不出去）',
+      '- 标题 ≤20 个字：钩子前置（数字/反差/身份代入），可带 1 个 emoji；',
+      '- 正文 ≤1000 字：口语、短段落（1-2 句一段）、适度 emoji 分隔、干货分点、结尾一个互动问题；',
+      '- 话题标签 5-8 个（不带#，逗号分隔）；',
+      '- 正文不放外链、不放微信号（平台高压线）；',
+      '- 直接写成干净成品：不要机翻感/套话/「作为一个AI」这类 AI 腔。',
+    ].join('\n'),
+    [
+      '## 图集画面建议（3-6 条，之后图集页按描述逐张生成）',
+      // 看图定制(与 agentic 版同纪律):有产品图/风格图时必须先 Read 看图再写建议。
+      ...((input.productImagePaths?.length || input.styleImagePaths?.length)
+        ? [
+            '**先看图再写（必做）**：你只有 Read 工具可用——用它逐张查看下面的图片，看清楚再写建议；看完直接输出 JSON，不做任何其他操作。',
+            ...(input.productImagePaths?.length
+              ? [`- 产品图（自家产品，生成时会原样融入画面，建议里的主体就是它们）:\n${input.productImagePaths.map((p) => `  ${p}`).join('\n')}`]
+              : []),
+            ...(input.styleImagePaths?.length
+              ? [`- 风格参考图（爆款原图——每条建议的构图/机位/光线/氛围/道具风格都要模仿它们的调子）:\n${input.styleImagePaths.map((p) => `  ${p}`).join('\n')}`]
+              : []),
+            '每条建议 = 一个可直接执行的具体画面：【自家产品为主体】+【模仿风格图的构图光线氛围】+【呼应正文对应段落的卖点】。写清场景、机位/角度、光线、道具；别写与产品和风格图无关的泛泛画面。',
+          ]
+        : []),
+      '- 第 1 条是封面：大字观点/清单结论，一眼有信息量；后续每条一个要点；',
+      '- 每条只写【画面内容】（主体/构图/信息），**禁止写画风词**（插画/手绘/摄影/水彩/3D/卡通等）——画风由图集页的风格模板在生图时动态注入，描述里写了画风会和用户选的风格打架。',
+    ].join('\n'),
+    [
+      '## 输出契约（严格 JSON 对象，五个字段缺一不可）',
+      '{',
+      '  "title": "≤20字标题",',
+      '  "digest": "一句话简介（≤40字，说清读者能得到什么，不复述标题）",',
+      '  "tags": "标签1,标签2,标签3,标签4,标签5",',
+      '  "bodyMd": "纯正文（不含标题/标签/图集建议）",',
+      '  "imageIdeas": ["第1张封面画面描述", "第2张画面描述", "……共3-6条"]',
+      '}',
+    ].join('\n'),
+  ].filter(Boolean).join('\n\n');
 }

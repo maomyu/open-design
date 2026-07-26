@@ -3075,6 +3075,24 @@ async function runStudio(args) {
       ...(typeof flags.words === 'string' && flags.words ? { wordCount: flags.words } : {}),
       ...(typeof flags.account === 'string' && flags.account ? { accountId: flags.account } : {}),
     };
+    // 图文笔记快路径(2026-07-22 用户拍板,与界面同一行为):note 平台的 write 先走
+    // 一次性成稿端点(daemon 用本地选中 agent 一次补全、JSON 直出直接写回),
+    // 失败自动回退下面的完整智能体流程。
+    if (kind === 'write' && platform === 'note' && articleId) {
+      const oneShotResp = await fetch(`${base}/ai-write-note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ articleId, ...(input.note ? { note: input.note } : {}) }),
+      });
+      const oneShot = await oneShotResp.json().catch(() => ({}));
+      if (oneShotResp.ok && oneShot.article) {
+        return out(
+          { articleId, agent: oneShot.agent, title: oneShot.article.title, digest: oneShot.article.digest },
+          `一次性成稿完成(${oneShot.agent})——标题/正文/标签/图集建议已写回 ${articleId}`,
+        );
+      }
+      if (!flags.json) console.log(`[ai] 一次性成稿没成(${oneShot?.error ?? oneShotResp.status})——改用智能体精写…`);
+    }
     const taskResp = await fetch(`${base}/ai-task`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

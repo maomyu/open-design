@@ -451,6 +451,20 @@ export interface StudioAiTaskResponse {
   title: string;
 }
 
+/** 图文笔记一次性成稿（2026-07-22 用户拍板）：素材（原文案/原图）在原素材拉取步已备齐，
+ *  写笔记不再起完整 agent run（它会重复抓原文、逐张读图，分钟级）——daemon 用用户选中的
+ *  本地 CLI agent 做一次纯文本补全，JSON 直出标题/正文/标签/图集建议并直接写回文章。 */
+export interface StudioNoteWriteRequest {
+  articleId: string;
+  /** 补充要求（用户自由输入，如「再口语一点」「按这个想法写」）. */
+  note?: string;
+}
+export interface StudioNoteWriteResponse {
+  article: MediaArticle;
+  /** 执行本次补全的本地 agent id. */
+  agent: string;
+}
+
 /** 音色设计（2026-07-19 用户拍板「界面功能支持音色设计,这很重要」）。
  *  双通道：qwen=千问 qwen3-tts-instruct（描述→指令控制音色,即设即听,无需预训练）;
  *  volc=火山 openspeech voice_design（正牌音色设计,产出可复用 speaker_id,

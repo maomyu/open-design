@@ -585,6 +585,25 @@
 }
 .aiGlobalBtn:hover { background: #eaf1ff; }
 
+/* 一次性成稿的实时过程步骤(2026-07-23 用户拍板过程可视):挂在全局状态条下方。 */
+.aiGlobalSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 14px 8px 32px;
+  margin: -6px 0 10px;
+  border: 1px solid #c9d7f2;
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: #f7faff;
+  color: #5a6b8c;
+  font-size: 12px;
+}
+.aiGlobalStepCurrent {
+  color: #2d5bb9;
+  font-weight: 600;
+}
+
 /* ---- 步骤接力条 ---- */
 .nextStepBar {
   display: flex;

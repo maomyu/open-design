@@ -22,6 +22,8 @@ import type {
   StudioCollectJob,
   StudioAiTaskRequest,
   StudioAiTaskResponse,
+  StudioNoteWriteRequest,
+  StudioNoteWriteResponse,
   TopicFeedSearchRequest,
   TopicFeedSearchResponse,
   UpdateMediaArticleRequest,
@@ -672,6 +674,73 @@ export async function createStudioAiTask(
     if (!resp.ok) return { error: await errorMessage(resp, 'AI 任务创建失败') };
     return (await resp.json()) as StudioAiTaskResponse;
   } catch {
+    return { error: '连不上本地服务（daemon）' };
+  }
+}
+
+/** 图文笔记一次性成稿（2026-07-22 用户拍板，快路径）：daemon 用本地选中的 agent 一次
+ *  纯文本补全、JSON 直出并直接写回文章；失败时调用方回退 createStudioAiTask 完整智能体流程。
+ *  支持 AbortSignal 中止（中止不算失败,调用方别回退）。
+ *  2026-07-23 过程可视：走 SSE——progress 事件(启动/看图/撰写)经 onProgress 实时上屏。 */
+export async function writeStudioNoteOneShot(
+  platform: string,
+  body: StudioNoteWriteRequest,
+  opts?: { signal?: AbortSignal; onProgress?: (label: string) => void },
+): Promise<StudioNoteWriteResponse | { error: string; aborted?: boolean }> {
+  try {
+    const resp = await fetch(`${ROOT}/${encodeURIComponent(platform)}/ai-write-note`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+      signal: opts?.signal ?? null,
+    });
+    if (!resp.ok) return { error: await errorMessage(resp, 'AI 写笔记失败') };
+    const contentType = resp.headers.get('content-type') ?? '';
+    if (!contentType.includes('text/event-stream') || !resp.body) {
+      // 旧 daemon 回退纯 JSON——过程不可视但功能不丢。
+      return (await resp.json()) as StudioNoteWriteResponse;
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let result: StudioNoteWriteResponse | null = null;
+    let errMsg = '';
+    const handleFrame = (frame: string) => {
+      const eventMatch = /^event: (\S+)/m.exec(frame);
+      const dataMatch = /^data: (.*)$/m.exec(frame);
+      if (!dataMatch) return;
+      let data: Record<string, unknown> | null = null;
+      try {
+        data = JSON.parse(dataMatch[1]!) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      const event = eventMatch?.[1] ?? '';
+      if (event === 'progress' && typeof data?.label === 'string') {
+        opts?.onProgress?.(data.label);
+      } else if (event === 'done' && data?.article) {
+        result = data as unknown as StudioNoteWriteResponse;
+      } else if (event === 'error') {
+        errMsg = typeof data?.error === 'string' ? data.error : 'AI 写笔记失败';
+      }
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx = -1;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        handleFrame(buf.slice(0, idx));
+        buf = buf.slice(idx + 2);
+      }
+    }
+    if (buf.trim()) handleFrame(buf);
+    if (result) return result;
+    return { error: errMsg || 'AI 写笔记失败（流中断）' };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return { error: '已中止', aborted: true };
+    }
     return { error: '连不上本地服务（daemon）' };
   }
 }

@@ -31,8 +31,11 @@ import {
   fetchSourceMaterial,
   topicOriginPlatform,
   lintStudioArticle,
+  downloadVideoByUrl,
+  extractScriptFromVideo,
   updateStudioArticle,
   uploadStudioAsset,
+  writeStudioNoteOneShot,
   type StudioLintHit,
 } from '../../providers/media-studio';
 import { buildStudioDraft } from './draft-builders';
@@ -153,6 +156,22 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     const fresh = await fetchStudioArticle(PLATFORM, article.id);
     if (fresh) setArticle(fresh);
     setFetchingSource(false);
+    // 视频源补转写口播(2026-07-23 用户拍板:原素材是视频→转写口播文案给 AI 写笔记参考;
+    // 下载/转写失败或纯音乐无口播→静默忽略,不影响创作)。异步后台跑,不阻塞界面。
+    if (r.noteType === 'video' && r.mediaUrl) {
+      void (async () => {
+        const dl = await downloadVideoByUrl(r.mediaUrl, r.referer || url, r.title || article.title || 'source');
+        if ('error' in dl) return;
+        const tr = await extractScriptFromVideo(dl.file);
+        if ('error' in tr || !tr.transcript.trim()) return;
+        const cur = articleRef.current;
+        if (!cur) return;
+        await updateStudioArticle(PLATFORM, cur.id, { extra: { sourceTranscript: tr.transcript } });
+        const fresh2 = await fetchStudioArticle(PLATFORM, cur.id);
+        if (fresh2 && articleRef.current?.id === cur.id) setArticle(fresh2);
+        studioToast.ok('已转写视频口播文案 ✓(写笔记会带上参考)');
+      })();
+    }
     const grew = nextContent.length > prevContent.length;
     if (imageUrls.length) {
       studioToast.ok(`已取回原素材:原文案+${imageUrls.length}张原图 ✓(右侧「原文」「参考图」)`);
@@ -169,6 +188,10 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
   const [aiRunning, setAiRunning] = useState(false);
   const [aiStage, setAiStage] = useState('');
   const [aiElapsed, setAiElapsed] = useState(0);
+  // 一次性成稿进行中(2026-07-22 用户拍板快路径,与完整 agent run 互斥)。
+  const [oneShotWriting, setOneShotWriting] = useState(false);
+  // 一次性成稿的实时过程步骤(SSE 推回:启动/逐张看图/撰写中,2026-07-23 用户拍板过程可视)。
+  const [oneShotSteps, setOneShotSteps] = useState<string[]>([]);
   const aiPanelRef = useRef<StudioAiPanelHandle | null>(null);
   const aiAnchorRef = useRef<HTMLDivElement | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -418,6 +441,63 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     [flushSave],
   );
 
+  // 一次性成稿(2026-07-22 用户拍板):原素材(原文案/原图)拉取步已备齐,写笔记不再起
+  // 完整 agent run(它会重抓同一篇原文+逐张读图,分钟级)——daemon 用本地选中的 agent
+  // 一次补全 JSON 直出直接写回;失败自动回退完整智能体精写,能力不回归。
+  // 2026-07-23 补:用户要进度可见+可中止——中止走 AbortController(不算失败,不回退)。
+  const oneShotAbortRef = useRef<AbortController | null>(null);
+  const writeNoteOneShot = useCallback(
+    async (note?: string) => {
+      const current = articleRef.current;
+      if (!current) return;
+      await flushSave();
+      const ac = new AbortController();
+      oneShotAbortRef.current = ac;
+      setOneShotWriting(true);
+      setOneShotSteps([]);
+      try {
+        const r = await writeStudioNoteOneShot(
+          PLATFORM,
+          {
+            articleId: current.id,
+            ...(note?.trim() ? { note: note.trim() } : {}),
+          },
+          {
+            signal: ac.signal,
+            onProgress: (label) =>
+              setOneShotSteps((prev) => (prev[prev.length - 1] === label ? prev : [...prev.slice(-7), label])),
+          },
+        );
+        if ('error' in r) {
+          if (r.aborted) {
+            studioToast.info('已中止本次 AI 写笔记');
+            return;
+          }
+          studioToast.info(`一次性成稿没成(${r.error})——改用智能体精写,慢一些`);
+          await startAiTask('write', note?.trim() ? { note: note.trim() } : undefined);
+          return;
+        }
+        setArticle(r.article);
+        void refreshArticles();
+        studioToast.ok(`AI 写笔记完成 ✓(${r.agent} 一次性成稿,标题/正文/标签/图集建议已回填)`);
+      } finally {
+        oneShotAbortRef.current = null;
+        setOneShotWriting(false);
+      }
+    },
+    [flushSave, refreshArticles, startAiTask],
+  );
+
+  // 一次性成稿计时(全局进度条用)——快路径不是 agent run,没有逐步过程流,
+  // 用「已运行秒数 + 已带素材说明 + 可中止」还原可见性(2026-07-23 用户反馈进度没了)。
+  const [oneShotElapsed, setOneShotElapsed] = useState(0);
+  useEffect(() => {
+    if (!oneShotWriting) return;
+    setOneShotElapsed(0);
+    const timer = window.setInterval(() => setOneShotElapsed((s) => s + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [oneShotWriting]);
+
   // AI 任务运行中每 3 秒轮询——agent 中途写回的文案/图集建议实时上屏。
   useEffect(() => {
     if (!effectiveAiRunning) return;
@@ -491,10 +571,10 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     await refreshArticles();
     setArticle(updated ?? created);
     setTab('copy');
-    // 让 articleRef 更新到新文章后再发 AI 任务(startAiTask 按 articleRef.current 挂 articleId)。
+    // 让 articleRef 更新到新文章后再发 AI 任务(writeNoteOneShot 按 articleRef.current 取稿)。
     await new Promise((res) => setTimeout(res, 60));
     studioToast.ok(`已下 ${r.imageUrls.length} 张原图进图集 + 取到原文案 ✓ 正按你的风格仿写成新笔记…`);
-    await startAiTask('write');
+    await writeNoteOneShot();
   }
 
   async function handleDeleteArticle() {
@@ -680,15 +760,17 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
       </div>
       )}
 
-      {(aiTask && aiRunning) || orphan ? (
+      {(aiTask && aiRunning) || orphan || oneShotWriting ? (
         <div className={c('aiGlobalBar')}>
           <span className={c('aiGlobalPulse')} />
           <span className={c('aiGlobalTitle')}>
-            {aiTask
-              ? `AI 正在执行：${aiTask.title}${aiStage ? ` · ${aiStage}` : ''} · 已运行 ${aiElapsed >= 60 ? `${Math.floor(aiElapsed / 60)} 分 ${aiElapsed % 60} 秒` : `${aiElapsed} 秒`}`
-              : '后台 AI 任务运行中（页面刷新前启动）——产物完成后自动写回并刷新'}
+            {oneShotWriting
+              ? `AI 正在一次性成稿（已带原文案${sourceContent ? ` ${Math.min(sourceContent.length, 9999)} 字` : ''}${sourceImages.length ? ` + ${sourceImages.length} 张参考图` : ''}，本地 agent 单次出稿无逐步过程）· 已运行 ${oneShotElapsed >= 60 ? `${Math.floor(oneShotElapsed / 60)} 分 ${oneShotElapsed % 60} 秒` : `${oneShotElapsed} 秒`}`
+              : aiTask
+                ? `AI 正在执行：${aiTask.title}${aiStage ? ` · ${aiStage}` : ''} · 已运行 ${aiElapsed >= 60 ? `${Math.floor(aiElapsed / 60)} 分 ${aiElapsed % 60} 秒` : `${aiElapsed} 秒`}`
+                : '后台 AI 任务运行中（页面刷新前启动）——产物完成后自动写回并刷新'}
           </span>
-          {aiTask ? (
+          {aiTask && !oneShotWriting ? (
             <button
               type="button"
               className={c('aiGlobalBtn')}
@@ -700,10 +782,20 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
           <button
             type="button"
             className={c('aiGlobalBtn')}
-            onClick={() => (orphan ? cancelOrphan() : aiPanelRef.current?.cancel())}
+            onClick={() => (oneShotWriting ? oneShotAbortRef.current?.abort() : orphan ? cancelOrphan() : aiPanelRef.current?.cancel())}
           >
             中止
           </button>
+        </div>
+      ) : null}
+      {/* 一次性成稿实时过程(SSE):启动 → 逐张看图 → 撰写中,当前步高亮 */}
+      {oneShotWriting && oneShotSteps.length > 0 ? (
+        <div className={c('aiGlobalSteps')}>
+          {oneShotSteps.map((s, i) => (
+            <span key={`${i}-${s}`} className={i === oneShotSteps.length - 1 ? c('aiGlobalStepCurrent') : undefined}>
+              {i === oneShotSteps.length - 1 ? '→' : '✓'} {s}
+            </span>
+          ))}
         </div>
       ) : null}
 
@@ -770,7 +862,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
               onExtractNote={(title, text, images) => void handleExtractNote(title, text, images)}
-              aiBusy={effectiveAiRunning}
+              aiBusy={effectiveAiRunning || oneShotWriting}
             />
           ) : null}
 
@@ -792,17 +884,17 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                 <div className={c('card')}>
                   <div className={c('cardLabel')}>
                     AI 写笔记
-                    <span className={c('cardHint')}>原素材拉好后点这里：先调研 → 按原文+知识库风格仿写出稿（标题/正文/标签/图集建议）→ 清 AI 腔</span>
+                    <span className={c('cardHint')}>原素材拉好后点这里：按原文+知识库风格一次性成稿（标题/正文/标签/图集建议）；失败自动转智能体精写</span>
                   </div>
                   <div className={c('row')}>
                     <button
                       type="button"
                       className={`${c('btn')} ${c('btnPrimary')}`}
-                      disabled={effectiveAiRunning || fetchingSource}
+                      disabled={effectiveAiRunning || fetchingSource || oneShotWriting}
                       title={fetchingSource ? '原素材拉取中——拉完再点,AI 才有原文可仿' : '按原素材(如有)+知识库风格仿写,结果写进下方标题/正文'}
-                      onClick={() => void startAiTask('write')}
+                      onClick={() => void writeNoteOneShot()}
                     >
-                      <Icon name="sparkles" size={14} /> {fetchingSource ? '原素材拉取中…' : 'AI 写笔记'}
+                      <Icon name="sparkles" size={14} /> {fetchingSource ? '原素材拉取中…' : oneShotWriting ? 'AI 写作中…' : 'AI 写笔记'}
                     </button>
                     <input
                       className={`${c('input')} ${c('grow')}`}
@@ -945,11 +1037,11 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                         <button
                           type="button"
                           className={c('btn')}
-                          disabled={effectiveAiRunning || !freePrompt.trim()}
+                          disabled={effectiveAiRunning || oneShotWriting || !freePrompt.trim()}
                           title="按你的想法让 AI 写一篇小红书文案(标题+正文+标签),到「文案」步查看"
-                          onClick={() => void startAiTask('write', { note: freePrompt.trim() })}
+                          onClick={() => void writeNoteOneShot(freePrompt.trim())}
                         >
-                          {effectiveAiRunning ? 'AI 写作中…' : '📝 AI 帮我写文案'}
+                          {effectiveAiRunning || oneShotWriting ? 'AI 写作中…' : '📝 AI 帮我写文案'}
                         </button>
                       ) : null}
                     </div>
