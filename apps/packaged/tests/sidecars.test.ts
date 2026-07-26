@@ -19,7 +19,7 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   buildPackagedDaemonSpawnEnv,
@@ -209,6 +209,94 @@ describe('packaged child Vite+ environment forwarding', () => {
       else process.env.VP_HOME = originalVpHome;
       rmSync(vpHome, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * A packaged Windows daemon that inherits neither `ComSpec` nor a
+ * `System32`-bearing PATH cannot spawn a single `.cmd` agent shim, and agent
+ * detection reports the ENOENT as "not installed" — every npm-installed CLI
+ * (claude, codex, gemini, ...) silently disappears from the picker while
+ * `.exe`-shaped agents keep working. Observed on a customer Windows 11 box
+ * whose system PATH had a corrupted `%SystemRoot%` token.
+ *
+ * `process.platform` is stubbed both ways so the Windows branches are
+ * exercised on every runner, mirroring the createCommandInvocation tests in
+ * packages/platform/tests/index.test.ts.
+ */
+describe('packaged child Windows environment forwarding', () => {
+  const originalPlatform = process.platform;
+  function setPlatform(value: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', { configurable: true, value });
+  }
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: originalPlatform,
+    });
+  });
+
+  it('forwards the Windows machine env a .cmd agent shim needs to spawn', () => {
+    setPlatform('win32');
+
+    const env = resolvePackagedChildBaseEnv({
+      APPDATA: 'C:\\Users\\Tester\\AppData\\Roaming',
+      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      LOCALAPPDATA: 'C:\\Users\\Tester\\AppData\\Local',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      RANDOM_INTERNAL_FLAG: 'drop-me',
+      SystemRoot: 'C:\\Windows',
+      TEMP: 'C:\\Users\\Tester\\AppData\\Local\\Temp',
+      USERPROFILE: 'C:\\Users\\Tester',
+    });
+
+    expect(env).toMatchObject({
+      APPDATA: 'C:\\Users\\Tester\\AppData\\Roaming',
+      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      LOCALAPPDATA: 'C:\\Users\\Tester\\AppData\\Local',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      SystemRoot: 'C:\\Windows',
+      TEMP: 'C:\\Users\\Tester\\AppData\\Local\\Temp',
+      USERPROFILE: 'C:\\Users\\Tester',
+    });
+    expect(env.RANDOM_INTERNAL_FLAG).toBeUndefined();
+  });
+
+  it('matches Windows env keys case-insensitively', () => {
+    setPlatform('win32');
+
+    const env = resolvePackagedChildBaseEnv({ COMSPEC: 'C:\\Windows\\System32\\cmd.exe' });
+
+    expect(env.COMSPEC).toBe('C:\\Windows\\System32\\cmd.exe');
+  });
+
+  it('keeps Windows-only variables out of the POSIX packaged child env', () => {
+    setPlatform('darwin');
+
+    const env = resolvePackagedChildBaseEnv({
+      APPDATA: 'C:\\Users\\Tester\\AppData\\Roaming',
+      HOME: '/Users/tester',
+    });
+
+    expect(env.HOME).toBe('/Users/tester');
+    expect(env.APPDATA).toBeUndefined();
+  });
+
+  it('anchors the packaged Windows PATH on the System32 that owns cmd.exe', () => {
+    const resolved = resolvePackagedPathEnv(
+      'C:\\Users\\Tester\\AppData\\Roaming\\npm',
+      'win32',
+    );
+
+    expect(resolved).toContain('C:\\Users\\Tester\\AppData\\Roaming\\npm');
+    expect(resolved).toContain('\\System32');
+  });
+
+  it('leaves the POSIX packaged PATH on the POSIX system bins', () => {
+    const resolved = resolvePackagedPathEnv('/opt/homebrew/bin', 'darwin');
+
+    expect(resolved).toContain('/usr/bin');
+    expect(resolved).not.toContain('\\System32');
   });
 });
 

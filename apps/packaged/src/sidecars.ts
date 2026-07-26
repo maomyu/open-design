@@ -53,11 +53,68 @@ const PACKAGED_CHILD_ENV_ALLOWLIST = [
   "no_proxy",
 ] as const;
 
-function shouldForwardPackagedChildEnv(key: string, includeProviderSecrets = false): boolean {
+// Windows counterpart of the POSIX-shaped list above. On Windows the machine
+// state a child needs is carried in env vars rather than fixed paths, so
+// dropping these is not a hardening win — it breaks core behavior:
+//
+//   - `ComSpec` is how every `.cmd` / `.bat` shim is launched
+//     (`createCommandInvocation` in @open-design/platform). Without it the
+//     spawn falls back to a bare `cmd.exe` resolved off PATH, which vanishes
+//     on any machine whose system PATH lost its `System32` entry — taking
+//     every npm-shimmed agent (claude, codex, ...) out of detection with it.
+//   - `PATHEXT` decides which extensions `resolveOnPath` treats as
+//     executable during agent detection.
+//   - `APPDATA` / `LOCALAPPDATA` / `USERPROFILE` / `TEMP` / `TMP` are where
+//     the agent CLIs keep credentials, caches, and scratch files, and where
+//     Node resolves `os.homedir()` / `os.tmpdir()` from.
+//
+// Matched case-insensitively because Windows env keys are case-insensitive
+// and the OS hands them back in inconsistent casing (`ComSpec` vs `COMSPEC`).
+const PACKAGED_CHILD_ENV_ALLOWLIST_WIN32 = [
+  "ALLUSERSPROFILE",
+  "APPDATA",
+  "CommonProgramFiles",
+  "CommonProgramFiles(x86)",
+  "CommonProgramW6432",
+  "ComSpec",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "LOCALAPPDATA",
+  "NUMBER_OF_PROCESSORS",
+  "OS",
+  "PATHEXT",
+  "PROCESSOR_ARCHITECTURE",
+  "PROCESSOR_ARCHITEW6432",
+  "ProgramData",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
+  "ProgramW6432",
+  "PUBLIC",
+  "SystemDrive",
+  "SystemRoot",
+  "TEMP",
+  "TMP",
+  "USERDOMAIN",
+  "USERNAME",
+  "USERPROFILE",
+  "windir",
+] as const;
+
+const PACKAGED_CHILD_ENV_ALLOWLIST_WIN32_KEYS = new Set<string>(
+  PACKAGED_CHILD_ENV_ALLOWLIST_WIN32.map((key) => key.toLowerCase()),
+);
+
+function shouldForwardPackagedChildEnv(
+  key: string,
+  includeProviderSecrets = false,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
   return (
     PACKAGED_CHILD_ENV_ALLOWLIST.includes(
       key as (typeof PACKAGED_CHILD_ENV_ALLOWLIST)[number],
     ) ||
+    (platform === "win32" &&
+      PACKAGED_CHILD_ENV_ALLOWLIST_WIN32_KEYS.has(key.toLowerCase())) ||
     (includeProviderSecrets && (key.endsWith("_API_KEY") || key.endsWith("_TOKEN")))
   );
 }
@@ -240,11 +297,31 @@ function extractPort(url: string): string {
 // resolver and this PATH builder cannot drift again. See issue #442.
 const PACKAGED_POSIX_SYSTEM_BINS = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] as const;
 
-export function resolvePackagedPathEnv(basePath = process.env.PATH ?? ""): string {
+// Windows counterpart of PACKAGED_POSIX_SYSTEM_BINS. `System32` is not
+// optional infrastructure on Windows: `cmd.exe` lives there and every `.cmd`
+// agent shim is spawned through it, so a machine whose system PATH lost the
+// entry (one corrupted `%SystemRoot%` token is enough) would otherwise leave
+// the packaged daemon unable to launch — or even detect — any shimmed CLI.
+// Built with literal `\` separators rather than `path.join` so the list is
+// correct when this module is exercised from a non-Windows host.
+function packagedWindowsSystemBins(env: NodeJS.ProcessEnv = process.env): string[] {
+  const systemRoot = (env.SystemRoot ?? env.windir ?? "C:\\Windows").replace(/[\\/]+$/, "");
+  return [
+    `${systemRoot}\\System32`,
+    systemRoot,
+    `${systemRoot}\\System32\\Wbem`,
+    `${systemRoot}\\System32\\WindowsPowerShell\\v1.0`,
+  ];
+}
+
+export function resolvePackagedPathEnv(
+  basePath = process.env.PATH ?? "",
+  platform: NodeJS.Platform = process.platform,
+): string {
   const candidates = [
     ...basePath.split(delimiter),
     ...wellKnownUserToolchainBins(),
-    ...PACKAGED_POSIX_SYSTEM_BINS,
+    ...(platform === "win32" ? packagedWindowsSystemBins() : PACKAGED_POSIX_SYSTEM_BINS),
   ];
   return [...new Set(candidates.filter((entry) => entry.length > 0))].join(delimiter);
 }

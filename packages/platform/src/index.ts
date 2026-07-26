@@ -614,11 +614,23 @@ function quoteWindowsCommandArg(value: string): string {
 // Without this, paths containing spaces (`C:\Users\First Last\...\foo.cmd`)
 // get split on the first space and cmd.exe reports "not recognized as an
 // internal or external command" — see issue #315.
+// Last-resort `cmd.exe` location for shim spawns whose env carries no
+// `ComSpec`. A bare `"cmd.exe"` is resolved through the child's PATH, so it
+// silently disappears on any machine whose system PATH lost its `System32`
+// entry — and then EVERY `.cmd`-shimmed CLI (npm-installed claude, codex,
+// gemini, ...) fails to spawn with ENOENT, which agent detection reports as
+// "not installed". Anchoring on `%SystemRoot%` keeps the spawn independent of
+// PATH health.
+function fallbackWindowsComSpec(env: NodeJS.ProcessEnv): string {
+  const systemRoot = (env.SystemRoot ?? process.env.SystemRoot ?? env.windir ?? process.env.windir ?? "C:\\Windows").replace(/[\\/]+$/, "");
+  return `${systemRoot}\\System32\\cmd.exe`;
+}
+
 function buildCmdShimInvocation(command: string, args: string[], env: NodeJS.ProcessEnv): CommandInvocation {
   const inner = [command, ...args].map(quoteWindowsCommandArg).join(" ");
   return {
     args: ["/d", "/s", "/c", `"${inner}"`],
-    command: env.ComSpec ?? process.env.ComSpec ?? "cmd.exe",
+    command: env.ComSpec ?? process.env.ComSpec ?? fallbackWindowsComSpec(env),
     windowsVerbatimArguments: true,
   };
 }

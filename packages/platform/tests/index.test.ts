@@ -521,6 +521,30 @@ describe("createCommandInvocation", () => {
     ]);
   });
 
+  // A bare `"cmd.exe"` is resolved through the child's PATH. On a machine
+  // whose system PATH lost its `System32` entry that spawn fails with ENOENT,
+  // which agent detection reports as "CLI not installed" — so every
+  // npm-shimmed agent vanishes from the picker at once. Anchor the fallback
+  // on `%SystemRoot%` so shim spawns survive an unhealthy PATH.
+  it("falls back to an absolute System32 cmd.exe when no ComSpec is available", () => {
+    setPlatform("win32");
+    const originalComSpec = process.env.ComSpec;
+    delete process.env.ComSpec;
+    try {
+      const invocation = createCommandInvocation({
+        command: "C:\\Users\\Tester\\AppData\\Roaming\\npm\\claude.cmd",
+        args: ["--version"],
+        env: { SystemRoot: "C:\\Windows" } as NodeJS.ProcessEnv,
+      });
+
+      expect(invocation.command).toBe("C:\\Windows\\System32\\cmd.exe");
+      expect(invocation.windowsVerbatimArguments).toBe(true);
+    } finally {
+      if (originalComSpec == null) delete process.env.ComSpec;
+      else process.env.ComSpec = originalComSpec;
+    }
+  });
+
   it("treats .bat shims the same as .cmd shims", () => {
     setPlatform("win32");
     const invocation = createCommandInvocation({
