@@ -131,10 +131,12 @@ class TikHubClient:
             # 也照样 0 条(2026-08-02 客户实测「男生变帅」)。补上"不限时间"这一档兜底。
             pt = self._douyin_publish_time(time_window)
             _dy_id = lambda it: str((it.get("aweme_info") or it).get("aweme_id") or id(it))
-            for wider, label in ((("180d", "180 天档") if pt in ("1", "7") else None),
-                                 ("all", "不限时间")):
-                if wider is None:
-                    continue
+            ladder: list[tuple[str, str]] = []
+            if pt in ("1", "7"):
+                ladder.append(("180d", "180 天档"))
+            if pt != "0":  # 已经是"不限时间"就没有更宽的档了
+                ladder.append(("all", "不限时间"))
+            for wider, label in ladder:
                 if len(items) >= min(count, 5):
                     break
                 logger.info(f"[采集保底] 抖音({time_window})仅 {len(items)} 条,放宽到{label}补采")

@@ -154,7 +154,12 @@ export async function dajialaHotSearch(
   const hits: MediaTopicHit[] = [];
   const seen = new Set<string>();
   // 从今天往回按 7 天一段推,直到覆盖用户选的时间窗;任一段失败不拖垮整体(已采到的照常返回)。
-  for (let end = 0; end < days; end += HOT_MAX_SPAN_DAYS) {
+  // 成本护栏:极致了按次计费(约 ¥0.4/次),近半年=26 段会烧 ¥10/搜——凑够 30 条就停,
+  // 且最多回溯 8 段(56 天);热词通常 1-2 段就够,冷词才会往深处翻。
+  const MAX_SEGMENTS = 8;
+  for (let seg = 0; seg < MAX_SEGMENTS; seg += 1) {
+    const end = seg * HOT_MAX_SPAN_DAYS;
+    if (end >= days || hits.length >= 30) break;
     const start = Math.min(days, end + HOT_MAX_SPAN_DAYS);
     try {
       for (const hit of await fetchWindow(start, end)) {
@@ -166,7 +171,7 @@ export async function dajialaHotSearch(
       }
     } catch (err) {
       // 第一段就失败=key/余额/参数问题,如实抛出;后续分段失败只是时间窗越界,保留已采到的。
-      if (end === 0) throw err;
+      if (seg === 0) throw err;
       break;
     }
   }
