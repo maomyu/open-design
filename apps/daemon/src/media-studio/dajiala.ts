@@ -48,13 +48,23 @@ async function postWithRetry(url: string, init: () => RequestInit): Promise<Reco
   throw lastErr instanceof Error ? lastErr : new DajialaError(String(lastErr));
 }
 
+/** 余额/鉴权类报错必须点名【是哪家】的账户——原文案只说「余额不足」,客户对着
+ *  DeepSeek 后台看余额充足,以为系统瞎报(2026-08-02 反馈实测:真正欠费的是极致了)。
+ *  各家 LLM/数据源的账户是分开的,不写清厂商+充值地址,用户无从下手。 */
+const DAJIALA_BILLING_HINT =
+  '（这是「极致了/大家来」dajiala.com 的账户余额,跟 DeepSeek/火山方舟等 AI 余额无关'
+  + '——去 https://www.dajiala.com 后台充值;key 在「设置 → 媒体生成 → 大家来」填）';
+
 function requireOk(data: Record<string, unknown>, feed: string): void {
-  const code = typeof data.code === 'number' ? data.code : -1;
+  // 极致了各端点返回码字段不统一:榜单类是 error_code,其余是 code——两个都认,
+  // 否则 error_code 路径会漏判(账号榜曾因此绕过本函数,连排查提示都没有)。
+  const raw = data.code ?? data.error_code;
+  const code = typeof raw === 'number' ? raw : Number(raw ?? -1);
   if (code !== 0) {
     const msg = String(data.msg ?? data.message ?? '未知错误');
     // 业务错误（如 101 文章已被发布者删除）直接透传原因；只有疑似
     // 鉴权/余额类问题才附排查提示，避免所有错误都误导用户去查 key。
-    const hint = /key|余额|欠费|充值|权限|登录/i.test(msg) ? '（检查 DAJIALA_API_KEY / 余额）' : '';
+    const hint = /key|余额|欠费|充值|权限|登录|金额/i.test(msg) ? DAJIALA_BILLING_HINT : '';
     throw new DajialaError(`${feed}：${msg}${hint}`);
   }
 }
@@ -117,23 +127,50 @@ function realtimeItemToHit(it: RawItem): MediaTopicHit {
   };
 }
 
+/** 极致了爆文榜的硬限制:单次请求 start_time~end_time 间隔不得超过 7 天。
+ *  超了直接 `code=-4 开始时间和结束时间间隔不能超过7天` 且 data 为空——用户在
+ *  界面选「近半年」时整页归零,看着像"这个词没内容"(2026-08-02 客户反馈实测)。 */
+const HOT_MAX_SPAN_DAYS = 7;
+
+/** 爆文榜:长时间窗按 7 天分段多次请求再合并去重(单次超 7 天会被服务端拒)。 */
 export async function dajialaHotSearch(
   apiKey: string,
   opts: { keyword?: string; days?: number; page?: number },
 ): Promise<MediaTopicHit[]> {
-  const form = new FormData();
-  form.append('key', apiKey);
-  form.append('keyword', opts.keyword ?? '');
-  form.append('pub_type', '0');
-  form.append('category', '0');
-  form.append('page', String(opts.page ?? 1));
-  form.append('start_time', isoDaysAgo(Math.max(1, opts.days ?? 7)));
-  form.append('end_time', isoDaysAgo(0));
-  const data = await postWithRetry(HOT_URL, () => ({ method: 'POST', body: form }));
-  requireOk(data, '爆文榜');
-  return extractHotItems(data)
-    .map(hotItemToHit)
-    .sort((a, b) => (b.readNum ?? 0) - (a.readNum ?? 0));
+  const days = Math.max(1, opts.days ?? 7);
+  const fetchWindow = async (fromDaysAgo: number, toDaysAgo: number) => {
+    const form = new FormData();
+    form.append('key', apiKey);
+    form.append('keyword', opts.keyword ?? '');
+    form.append('pub_type', '0');
+    form.append('category', '0');
+    form.append('page', String(opts.page ?? 1));
+    form.append('start_time', isoDaysAgo(fromDaysAgo));
+    form.append('end_time', isoDaysAgo(toDaysAgo));
+    const data = await postWithRetry(HOT_URL, () => ({ method: 'POST', body: form }));
+    requireOk(data, '爆文榜');
+    return extractHotItems(data).map(hotItemToHit);
+  };
+  const hits: MediaTopicHit[] = [];
+  const seen = new Set<string>();
+  // 从今天往回按 7 天一段推,直到覆盖用户选的时间窗;任一段失败不拖垮整体(已采到的照常返回)。
+  for (let end = 0; end < days; end += HOT_MAX_SPAN_DAYS) {
+    const start = Math.min(days, end + HOT_MAX_SPAN_DAYS);
+    try {
+      for (const hit of await fetchWindow(start, end)) {
+        const key = hit.url || hit.title;
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          hits.push(hit);
+        }
+      }
+    } catch (err) {
+      // 第一段就失败=key/余额/参数问题,如实抛出;后续分段失败只是时间窗越界,保留已采到的。
+      if (end === 0) throw err;
+      break;
+    }
+  }
+  return hits.sort((a, b) => (b.readNum ?? 0) - (a.readNum ?? 0));
 }
 
 export async function dajialaWebSearch(
@@ -394,10 +431,9 @@ export async function dajialaAccountRank(
       ...(opts.page != null ? { page: opts.page } : {}),
     }),
   }));
-  const errCode = String(data.error_code ?? data.code ?? '-1');
-  if (errCode !== '0') {
-    throw new DajialaError(`榜单返回 error_code=${errCode}: ${String(data.msg ?? '未知错误')}`);
-  }
+  // 走统一的 requireOk(它已同时认 code/error_code):否则本路径的余额/鉴权报错拿不到
+  // 「是哪家的余额、去哪充」提示——客户曾据此误判成 DeepSeek 欠费(2026-08-02 反馈)。
+  requireOk(data, '公众号类目榜');
   const outer = (data.data ?? {}) as Record<string, unknown>;
   const items = Array.isArray(outer.data) ? (outer.data as RawItem[]) : [];
   const num = (v: unknown) => (v == null || v === '' ? null : Number(v) || null);

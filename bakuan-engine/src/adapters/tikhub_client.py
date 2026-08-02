@@ -126,11 +126,20 @@ class TikHubClient:
             # 常无高互动新作;候选 0 条时降档阶梯"无米下锅",用户看到的就是"筛不到爆款"。
             # 首搜不足 5 条自动放宽到 180 天档重搜合并去重;精确时间窗由 criteria 按发布时间再筛
             # (放宽只是服务端粗筛,不污染规则语义,见 _douyin_publish_time 注释)。
-            if len(items) < min(count, 5) and self._douyin_publish_time(time_window) in ("1", "7"):
-                logger.info(f"[采集保底] 抖音窄窗({time_window})仅 {len(items)} 条,放宽到 180 天档补采")
-                _dy_id = lambda it: str((it.get("aweme_info") or it).get("aweme_id") or id(it))
+            # 放宽阶梯:1d/7d → 180 天档 → 不限时间(0)。此前只放宽到 180 档就到头,而默认时间窗
+            # 就是「近半年」(=180 档)——冷门词在 180 档搜不到时【毫无退路】,用户四个规则都不勾
+            # 也照样 0 条(2026-08-02 客户实测「男生变帅」)。补上"不限时间"这一档兜底。
+            pt = self._douyin_publish_time(time_window)
+            _dy_id = lambda it: str((it.get("aweme_info") or it).get("aweme_id") or id(it))
+            for wider, label in ((("180d", "180 天档") if pt in ("1", "7") else None),
+                                 ("all", "不限时间")):
+                if wider is None:
+                    continue
+                if len(items) >= min(count, 5):
+                    break
+                logger.info(f"[采集保底] 抖音({time_window})仅 {len(items)} 条,放宽到{label}补采")
                 have = {_dy_id(it) for it in items}
-                for it in self._douyin_search_paged(keyword, count=count, time_window="180d"):
+                for it in self._douyin_search_paged(keyword, count=count, time_window=wider):
                     if _dy_id(it) not in have:
                         items.append(it)
                         have.add(_dy_id(it))
@@ -186,7 +195,12 @@ class TikHubClient:
             try:
                 data = self._call("POST", _PLAT["douyin"]["search"], body=body)
             except Exception:
-                break  # 翻页途中失败:用已累积的,不整体失败
+                # 【第一页就失败必须抛】:401/402/限流被静默吞成空列表,上层看不到 collect_errors,
+                # 用户界面只会显示"这个词没采到内容",把数据源故障伪装成"没爆款"——客户对着有效
+                # 的 key 和有钱的账户干等(2026-08-02 反馈)。翻页途中失败才用已累积的,不整体失败。
+                if not out:
+                    raise
+                break
             d = data.get("data", {}) if isinstance(data, dict) else {}
             for it in _extract_items(data, _PLAT["douyin"]["list"], _PLAT["douyin"]["item_key"]):
                 aid = it.get("aweme_id")

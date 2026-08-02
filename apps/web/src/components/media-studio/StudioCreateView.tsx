@@ -17,6 +17,7 @@ import {
   fetchSourceMaterial,
   downloadStudioVideo,
   downloadVideoByUrl,
+  extractScriptFromVideo,
   topicOriginPlatform,
 } from '../../providers/media-studio';
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
@@ -207,6 +208,16 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
     // 链接兜底(B站等平台直链在单独的播放接口里)。
     if (topic.url) {
       studioToast.info('正在后台下载原视频…(大文件稍等,完成后右侧「原视频」可对照播放)');
+      /** 原视频下载完 → 自动 ASR 转写口播文案写进 extra.sourceTranscript。
+       *  这是「洗稿」的原料:AI 写脚本时 ai-tasks 会把它作为【原视频口播文案】注入 prompt,
+       *  没有它 AI 只能拿到标题从零编(2026-08-02 客户反馈:"只做到抓取没做到洗稿")。
+       *  纯音乐/无人声/转写失败都静默跳过——不能让它挡住创作。 */
+      const transcribeInto = async (videoFile: string) => {
+        const tr = await extractScriptFromVideo(videoFile);
+        if ('error' in tr || !tr.transcript.trim()) return;
+        await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscript: tr.transcript } });
+        studioToast.ok('已转写原视频口播文案 ✓(AI 写脚本会据此洗稿)');
+      };
       void (async () => {
         // yt-dlp 的报错带一大段"去 github 提 issue"技术话术,剪成人话。
         const tidy = (msg: string) =>
@@ -223,6 +234,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
           if ('error' in dl) { await fail(dl.error); return; }
           await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceVideoFile: dl.file, sourceVideoError: '' } });
           studioToast.ok('原视频已下载,右侧「原视频」可播放对照');
+          await transcribeInto(dl.file);
           return;
         }
         const src = await fetchSourceMaterial(topic.url);
@@ -233,6 +245,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
           if ('error' in dl) { await fail(src.error); return; }
           await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceVideoFile: dl.file, sourceVideoError: '' } });
           studioToast.ok('原视频已下载(用兜底下载器),右侧「原视频」可播放对照');
+          await transcribeInto(dl.file);
           return;
         }
         // 全文取长保旧:引擎详情接口的文案比候选预览长才覆盖(短 desc 不倒退)。
@@ -263,6 +276,8 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
           extra: { sourceVideoFile: dl.file, sourceVideoError: '', ...(betterText ? { sourceTranscript: betterText } : {}) },
         });
         studioToast.ok('原视频已下载,右侧「原视频」可播放对照');
+        // ASR 转写覆盖 betterText:后者只是平台简介(desc),前者才是真口播全文,洗稿要的是它。
+        await transcribeInto(dl.file);
       })();
     }
   }

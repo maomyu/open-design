@@ -107,6 +107,12 @@ export function createArticle(
       if (!title) title = str(t.title);
       // 保留原文链接：素材简报（research AI 任务）要用它抓原文。
       if (str(t.url)) extra.topicUrl = str(t.url);
+      // 切入角度/来源/原素材文案一并继承——此前这三个字段只存库不用,用户在「添加选题」
+      // 里填了却发现 AI 完全没读(2026-08-02 客户反馈)。sourceContent 是洗稿原料,
+      // 已有值(如 note 台自己抓的原文)不覆盖。
+      if (str(t.angle)) extra.topicAngle = str(t.angle);
+      if (str(t.source)) extra.topicSource = str(t.source);
+      if (str(t.source_content) && !str(extra.sourceContent)) extra.sourceContent = str(t.source_content);
       db.prepare(`UPDATE media_topics SET status = 'used' WHERE id = ?`).run(input.fromTopicId);
     }
   }

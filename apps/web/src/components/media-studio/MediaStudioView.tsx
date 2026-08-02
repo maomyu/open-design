@@ -30,6 +30,7 @@ import {
   deleteStudioTopic,
   fetchStudioArticle,
   fetchStudioArticles,
+  fetchSourceMaterial,
   fetchStudioPublishes,
   fetchStudioSnippets,
   fetchStudioTopics,
@@ -554,6 +555,18 @@ export function MediaStudioView(): JSX.Element {
     setTab('write');
     if (fromTopic) {
       setTopics((list) => list.map((t) => (t.id === fromTopic.id ? { ...t, status: 'used' } : t)));
+      // 选题带原文链接 → 先抓回正文存 extra.sourceContent,AI 才能【洗稿】(读原文观点→改写
+      // →补新观点),否则只有标题、只能从零编(2026-08-02 客户反馈)。抓取失败不挡写作。
+      if (fromTopic.url && !String((created.extra as Record<string, unknown>)?.sourceContent ?? '').trim()) {
+        studioToast.info('正在取回原文用于洗稿…');
+        const src = await fetchSourceMaterial(fromTopic.url);
+        if (!('error' in src) && src.text?.trim()) {
+          await updateStudioArticle(PLATFORM, created.id, { extra: { sourceContent: src.text } });
+          const fresh = await fetchStudioArticle(PLATFORM, created.id);
+          if (fresh) { setArticle(fresh); articleRef.current = fresh; }
+          studioToast.ok('已取回原文 ✓(AI 会据此洗稿并补新观点)');
+        }
+      }
       // 从选题过来 = 意图明确就是要写这篇——直接开写，不用再点一次。
       studioToast.ok('已建稿，AI 开始写作（右上角可看进度）');
       void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount, imageCount: aiImageCount, imageStyle: imgStyle });

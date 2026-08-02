@@ -374,25 +374,43 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     // 与「一步到位仿写」塞进 note 的【原口播文案】去重——note 已带就不再注入,免两份原稿打架。
     const origTranscript = String(extra.sourceTranscript ?? '').trim();
     const origContent = String(extra.sourceContent ?? '').trim();
+    const topicUrl = String(extra.topicUrl ?? '').trim();
+    const topicAngle = String(extra.topicAngle ?? '').trim();
     const noteHasOrigin = /原口播文案|原视频文案|原文参考/.test(note);
+    // 【洗稿】而不是「看一眼再自由发挥」(2026-08-02 客户反馈:"只能读取标题然后让 ai 从零
+    // 开始写"):明确要求先把原稿观点逐条拆出来、再换表达重写、最后按用户提示词补新观点并衔接。
+    // 原口播文案由「去创作」下载原视频后 ASR 转写落进 extra.sourceTranscript。
     const originRef = !noteHasOrigin && (origTranscript || origContent)
       ? [
-          '## 原视频/原文参考（学它的结构、钩子与信息点，绝不照抄原句、不搬它的品牌与产品）',
-          origTranscript ? `【原视频口播文案】\n${origTranscript.slice(0, 2000)}` : '',
-          origContent && origContent !== origTranscript ? `【原文/简介】\n${origContent.slice(0, 1500)}` : '',
+          '## 原视频/原文——这是要【洗稿】的素材,不是"参考一下"',
+          origTranscript ? `【原视频口播文案(ASR 转写)】\n${origTranscript.slice(0, 4000)}` : '',
+          origContent && origContent !== origTranscript ? `【原文/简介】\n${origContent.slice(0, 2000)}` : '',
+          '### 洗稿要求(按顺序做,别跳步)',
+          '1. **先拆观点**:把上面原稿讲的观点/信息点逐条列出来(心里列,不写进正文),看清它的论证顺序;',
+          '2. **再换表达重写**:保留有价值的观点内核,但**换一套说法**——换例子、换比喻、换句式、换开场角度,不许照抄原句;',
+          '3. **补新观点**:在原观点之外,按「补充要求」(用户提示词)再加 1-3 个原稿没有的新观点/新角度;',
+          '4. **衔接成篇**:把改写后的原观点 + 新观点按逻辑顺起来,读着是一条完整口播,不是拼盘;',
+          '5. 原稿的品牌/产品/博主个人经历一律不搬。',
         ].filter(Boolean).join('\n')
+      : '';
+    // 没抓到原文时,给出可自取的原文链接(总比只有标题强);有原文就不必再抓。
+    const fallbackFetch = !originRef && topicUrl
+      ? `## 原文链接(先抓它再动笔)\n${topicUrl}\n抓取失败就基于选题正常写,别空转重试。`
       : '';
     return {
       title: `AI 写脚本 · ${article.title || article.topic || '未命名'}`,
       prompt: [
         '# 任务：写一条短视频口播脚本（可直接开拍/配音）',
         `选题：${article.topic || article.title || '（按补充要求定）'}`,
+        // 切入角度是用户在「添加选题」时明确写下的差异化意图,必须进 prompt(此前只存库不用)。
+        topicAngle ? `切入角度（用户指定，按这个角度写）：${topicAngle}` : '',
         `主发平台：${targetPlatform}（按平台调性写：小红书=闺蜜感种草、抖音=前3秒钩子+快节奏、视频号=稳重可信、B站=展开讲逻辑、快手=实在接地气）`,
         `语气：${tone}；目标时长：${duration}（中文口播约 4-5 字/秒，控制字数）`,
         note.trim() ? `补充要求：${note.trim()}` : '',
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
         originRef,
+        fallbackFetch,
         (input.knowledge?.length ?? 0) > 0
           ? '## 产品纪律（硬性）：脚本主角必须是知识库里的自家产品/品牌，卖点从知识库取材；参考的爆款只借结构钩子，其它品牌名一律不出现。'
           : '',
@@ -419,8 +437,27 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     ]);
     const researchMd = String((article.extra as Record<string, unknown>).researchMd ?? '').trim();
     const topicUrl = String((article.extra as Record<string, unknown>).topicUrl ?? '');
+    const topicAngle = String((article.extra as Record<string, unknown>).topicAngle ?? '').trim();
+    // 公众号洗稿(2026-08-02 客户明确要求:"公众号也要做到能读取洗稿一部分原文章的观点,
+    // 再让 AI 给我增加新观点")。此前本分支只有「差异化调研」、原文正文从没进过 prompt。
+    const srcContent = String((article.extra as Record<string, unknown>).sourceContent ?? '').trim();
+    const rewriteBlock = srcContent
+      ? [
+          '## 原文——这是要【洗稿】的素材,不是"参考一下"',
+          srcContent.slice(0, 4000),
+          '### 洗稿要求(按顺序做,别跳步)',
+          '1. **先拆观点**:把原文讲的观点/信息点逐条列出来(心里列,不写进正文);',
+          '2. **再换表达重写**:保留有价值的观点内核,换例子、换论证方式、换句式,不许照抄原句;',
+          '3. **补新观点**:在原文之外,按「补充要求」再加 2-3 个原文没有的新观点/新角度;',
+          '4. **衔接成篇**:改写后的原观点 + 新观点按逻辑顺成一篇完整长文,不是拼盘;',
+          '5. 原文的品牌/产品/作者个人经历一律不搬;涉及事实数字仍要核实。',
+        ].join('\n')
+      : '';
     // 素材调研是写作的必经前置：做过就复用简报，没做过就在同一次任务里先调研。
-    const researchPhase = researchMd
+    // 已有原文(洗稿模式)时跳过调研——原文就在上面,再 curl 抓一遍纯浪费。
+    const researchPhase = srcContent
+      ? '## 素材调研（跳过）：原文已在上方「洗稿素材」里备齐——直接按洗稿要求动笔,不要再抓原文。涉及事实数字时才做最小必要核查。'
+      : researchMd
       ? `## 素材简报（已调研——事实与数据优先用这里的，不必重查）\n${researchMd.slice(0, 4000)}`
       : [
           '## 第 0 步：先做素材调研（必做，然后才动笔；**时间盒：最多 3 次检索，素材够支撑正文就立刻动笔**——宁可写作中发现缺口再补一查，绝不前置长调研）',
@@ -441,11 +478,13 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '**最高优先级：必须一次性交付完整成品，且成品必须通过 `od studio set` 命令写回（把稿子写成本地/项目目录文件不算交付）。全程绝不提问、绝不等待确认——任何取舍自己按最优判断拍板并继续（调研范围、结构、角度、案例取舍……全部如此）。**',
         '**进度自报（用户在界面上实时等着看）**：每进入一个阶段，先单独输出一行进度标记再干活——`【进度】1/3 调研素材中…`、`【进度】2/3 撰写正文中…`（初稿写回后）`【进度】3/3 清理 AI 腔、准备终稿…`。只输出这三条，别加别的进度行。',
         `选题：${article.topic || article.title || '（见下方补充要求）'}`,
+        topicAngle ? `切入角度（用户指定，按这个角度写）：${topicAngle}` : '',
         `文章类型：${articleType}`,
         input.wordCount?.trim() ? `目标字数：${input.wordCount.trim()} 字（允许 ±15%，宁短勿注水）` : '',
         note.trim() ? `补充要求：${note.trim()}` : '',
         accountBlock(input.account),
         knowledgeBlock(input.knowledge),
+        rewriteBlock,
         researchPhase,
         '## 硬约束',
         '- **标题必须重新拟**（选题原句只是方向描述，不是成品标题），**严格 ≤21 个中文字符**（微信硬限 64 字节，超出 `od studio set` 会直接报错拒收）。写完标题先数一遍字数再用。',

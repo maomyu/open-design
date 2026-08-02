@@ -674,7 +674,13 @@ class Pipeline:
                                             "time_window": _txt(f.get("时间窗")) or "7d"}, e)
                 summary.append({"keyword": kw, "error": str(e)[:120]})
         self.regenerate()   # 每轮顺带处理「重新生成」
-        return {"runs": summary}
+        # 顺带把本轮采到的选题候选吐回去——此前只返回计数,daemon 拿不到内容,监控采的爆款
+        # 只存在于飞书,创作台候选列表里一条都看不到("监控到的视频在哪操作?" 2026-08-02 客户反馈)。
+        # daemon 收到后回灌本地 media_topics,用户在创作台就能直接「去创作」。
+        items = sorted(self.radar_items,
+                       key=lambda x: (x.get("流量爆款分", 0) + x.get("精准意向分", 0)),
+                       reverse=True)
+        return {"runs": summary, "选题候选": items}
 
     # ── 候选 → 评分 → 脚本 → 封面 → 复盘/成本 ──
     def _process_candidate(self, rc: normalize.RawContent, *,

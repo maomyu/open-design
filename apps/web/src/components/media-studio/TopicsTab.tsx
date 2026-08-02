@@ -338,7 +338,12 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       const tier = 'tier' in scored ? (scored.tier ?? '') : '';
       setCollectTier(hitList.length > 0 ? tier : '');
       if (hitList.length === 0) {
-        studioToast.info('这个词实在没采到内容(可能太冷门/太新)。换个词,或勾具体爆款规则再试。');
+        // 别再引导用户「勾规则再试」——勾了只会更严(关掉自动降档),越勾越少(2026-08-02 审计)。
+        studioToast.info(
+          radarRules.size > 0
+            ? '这个词按你勾的爆款规则一条都没命中。把上面的规则勾选【全部取消】再搜一次——不勾=自动降档,冷门词也能给你找到相对最好的几条。'
+            : '这个词实在没采到内容(可能太冷门/太新,或该平台确实没有)。换个更宽的词试试,比如把「男生变帅」换成「变帅」「穿搭」。',
+        );
       } else {
         const tierLabel = tier ? `按【${tier}】档 · ` : '';
         studioToast.ok(`${tierLabel}真抓到 ${hitList.length} 个爆款,已列在下面(带链接·点赞·粉丝)。勾选想做的,再点「AI 帮我选题」生成候选选题。`);
