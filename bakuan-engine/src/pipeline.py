@@ -797,8 +797,8 @@ class Pipeline:
         if self.dry_run:
             self._sink.append({"table": table, "fields": fields})
             return f"dry_{len(self._sink)}"
-        if self._radar_mode and self._feishu_broken:
-            return ""  # radar 下飞书已判定不可用：瞬间跳过，别再慢重试
+        if self._feishu_broken:
+            return ""  # 飞书已判定不可用(radar 或授权过期)：瞬间跳过，别再慢重试
         try:
             return self.fs.add_record(table, fields)
         except Exception as e:  # noqa: BLE001
@@ -812,7 +812,7 @@ class Pipeline:
             for f in fields_list:
                 self._sink.append({"table": table, "fields": f})
             return [f"dry_{i}" for i in range(len(fields_list))]
-        if self._radar_mode and self._feishu_broken:
+        if self._feishu_broken:
             return []
         ids: list[str] = []
         try:
@@ -827,12 +827,21 @@ class Pipeline:
 
         radar 模式(给爆创选题步骤用)必须稳出选题 JSON，飞书数据中心是加分项：
         第一次写失败即「上锁」(_feishu_broken)，后续所有写入瞬间跳过，不再慢重试，
-        保证雷达秒级产出选题。非 radar 的完整管道遇到飞书写失败时如实抛出。
+        保证雷达秒级产出选题。
+
+        授权类失败(token 过期/未登录)在【任何模式】都只软失败:飞书授权过期是客户机
+        常态(2026-08-02 实测:过期后整条 link 被 add_record 硬抛炸穿,客户只看到一段
+        截断的 traceback)——链路照跑、产物照出,回写跳过并给一句"去重连飞书"的明话。
+        其余写失败在非 radar 模式仍如实抛出(那是真写入 bug,不该吞)。
         """
-        if self._radar_mode:
+        msg = f"{type(exc).__name__}: {str(exc)[:120]}"
+        auth_broken = any(k in str(exc) for k in ("token_missing", "authentication", "token_expired"))
+        if self._radar_mode or auth_broken:
             if not self._feishu_broken:
                 self._feishu_broken = True
-                logger.warning(f"[radar] 飞书数据中心暂不可用(未连接/未建表)，本轮跳过回写、只产出选题：{type(exc).__name__}: {str(exc)[:100]}")
+                hint = ("飞书授权已过期——去 App「数据中心 → 连接飞书」重新登录后,产物才会回写数据中心"
+                        if auth_broken else "飞书数据中心暂不可用(未连接/未建表)")
+                logger.warning(f"[feishu] {hint};本轮继续执行,跳过全部回写：{msg}")
             return ""
         raise exc
 
