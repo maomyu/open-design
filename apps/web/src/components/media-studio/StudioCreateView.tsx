@@ -213,10 +213,24 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
        *  没有它 AI 只能拿到标题从零编(2026-08-02 客户反馈:"只做到抓取没做到洗稿")。
        *  纯音乐/无人声/转写失败都静默跳过——不能让它挡住创作。 */
       const transcribeInto = async (videoFile: string) => {
+        // 转写全程要有状态(2026-08-04 用户反馈:"口播没有一个进度,不知道在转还是失败了")——
+        // sourceTranscriptStatus 落进稿件 extra,右侧「原文案」tab 持久显示,轮询自动刷新;
+        // 三种结局(成功/无口播/失败+原因)都明说,绝不静默。
+        studioToast.info('正在转写口播文案…(约 1-3 分钟,右侧「原文案」可看进度)');
+        await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscriptStatus: 'transcribing', sourceTranscriptError: '' } });
         const tr = await extractScriptFromVideo(videoFile);
-        if ('error' in tr || !tr.transcript.trim()) return;
-        await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscript: tr.transcript } });
-        studioToast.ok('已转写原视频口播文案 ✓(AI 写脚本会据此洗稿)');
+        if ('error' in tr) {
+          await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscriptStatus: 'failed', sourceTranscriptError: tr.error } });
+          studioToast.err(`口播转写失败:${tr.error}——检查「设置 → 媒体生成 → 火山语音」的 key;AI 仍可按标题+角度写`);
+          return;
+        }
+        if (!tr.transcript.trim()) {
+          await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscriptStatus: 'empty', sourceTranscriptError: '' } });
+          studioToast.info('这条视频没识别到口播(可能纯音乐/无人声)——AI 将按标题+切入角度写;想洗稿请换一条有口播的');
+          return;
+        }
+        await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscript: tr.transcript, sourceTranscriptStatus: 'done', sourceTranscriptError: '' } });
+        studioToast.ok(`已转写原视频口播文案 ✓(${tr.transcript.replace(/\s+/g, '').length} 字,AI 写脚本会据此洗稿)`);
       };
       void (async () => {
         // yt-dlp 的报错带一大段"去 github 提 issue"技术话术,剪成人话。

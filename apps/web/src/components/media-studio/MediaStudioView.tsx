@@ -564,7 +564,11 @@ export function MediaStudioView(): JSX.Element {
           await updateStudioArticle(PLATFORM, created.id, { extra: { sourceContent: src.text } });
           const fresh = await fetchStudioArticle(PLATFORM, created.id);
           if (fresh) { setArticle(fresh); articleRef.current = fresh; }
-          studioToast.ok('已取回原文 ✓(AI 会据此洗稿并补新观点)');
+          studioToast.ok(`已取回原文 ✓(${src.text.replace(/\s+/g, '').length} 字,AI 会据此洗稿并补新观点)`);
+        } else {
+          // 取不到也要明说(2026-08-04 用户反馈:没反馈不知道成没成)——不挡写作,如实降级。
+          const why = 'error' in src ? src.error : '原文为空';
+          studioToast.info(`原文没取到(${String(why).slice(0, 70)})——AI 将按选题直接写,不做洗稿`);
         }
       }
       // 从选题过来 = 意图明确就是要写这篇——直接开写，不用再点一次。

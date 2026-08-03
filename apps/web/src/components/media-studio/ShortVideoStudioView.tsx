@@ -210,21 +210,26 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   // 原视频后台下载中(去创作触发):轮询等 sourceVideoFile/sourceVideoError 落稿,
   // 到货即自动显示(2026-07-20 用户实测"下好了也没显示":此前只能手动刷新才看到)。
   const sourceVideoPending = hasSourceMaterial && !str(extra.sourceVideoFile) && !str(extra.sourceVideoError);
+  // 口播转写中也要持续轮询(2026-08-04 用户反馈:转写没有进度)——status 落在 extra,
+  // 转写完成/失败/无口播时轮询把新状态带回来,「原文案」tab 实时更新。
+  const transcriptPending = str(extra.sourceTranscriptStatus) === 'transcribing';
   useEffect(() => {
-    if (!sourceVideoPending || !article) return;
+    if ((!sourceVideoPending && !transcriptPending) || !article) return;
     const id = article.id;
     const timer = window.setInterval(() => {
       if (pendingRef.current) return; // 用户正在编辑,别用轮询结果覆盖
       void fetchStudioArticle(PLATFORM, id).then((a) => {
         if (!a || articleRef.current?.id !== a.id || pendingRef.current) return;
         const ex = (a.extra ?? {}) as Record<string, unknown>;
-        if (str(ex.sourceVideoFile) || str(ex.sourceVideoError)) {
+        const videoSettled = str(ex.sourceVideoFile) || str(ex.sourceVideoError);
+        const transcriptMoved = str(ex.sourceTranscriptStatus) !== str(extra.sourceTranscriptStatus) || str(ex.sourceTranscript) !== str(extra.sourceTranscript);
+        if (videoSettled || transcriptMoved) {
           setArticle((prev) => (prev && prev.id === a.id ? a : prev));
         }
       });
     }, 4000);
     return () => window.clearInterval(timer);
-  }, [sourceVideoPending, article?.id]);
+  }, [sourceVideoPending, transcriptPending, article?.id]);
 
   // ---- 数据加载 ----
   // 按当前平台过滤单池:匹配 subPlatform;无 subPlatform 的旧作品归到抖音
@@ -1040,6 +1045,12 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                       {str(extra.sourceTranscript)}
                     </div>
                   </>
+                ) : str(extra.sourceTranscriptStatus) === 'transcribing' ? (
+                  <div className={c('cardHint')}>⏳ 正在转写口播文案…(约 1-3 分钟,完成后这里自动显示全文)</div>
+                ) : str(extra.sourceTranscriptStatus) === 'empty' ? (
+                  <div className={c('cardHint')}>这条视频没有识别到口播(可能纯音乐/无人声)——AI 将按标题+切入角度写;想洗稿请换一条有口播的原视频。</div>
+                ) : str(extra.sourceTranscriptStatus) === 'failed' ? (
+                  <div className={c('cardHint')}>❌ 口播转写失败:{str(extra.sourceTranscriptError) || '未知原因'}。检查「设置 → 媒体生成 → 火山语音」的 key 后,重新点一次「去创作」。</div>
                 ) : (
                   <div className={c('cardHint')}>没有原文案——原视频下载完成后会自动带回;或去「创作」选题页用「提取文案仿写」。</div>
                 )}

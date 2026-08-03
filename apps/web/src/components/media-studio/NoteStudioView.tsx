@@ -160,16 +160,28 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     // 下载/转写失败或纯音乐无口播→静默忽略,不影响创作)。异步后台跑,不阻塞界面。
     if (r.noteType === 'video' && r.mediaUrl) {
       void (async () => {
+        // 转写全程有反馈(2026-08-04 用户反馈:没进度不知道在转还是失败)——三种结局都明说。
+        studioToast.info('正在转写视频口播文案…(约 1-3 分钟)');
         const dl = await downloadVideoByUrl(r.mediaUrl, r.referer || url, r.title || article.title || 'source');
-        if ('error' in dl) return;
+        if ('error' in dl) {
+          studioToast.info(`原视频下载失败(${dl.error.slice(0, 60)})——跳过转写,写笔记按原文案参考`);
+          return;
+        }
         const tr = await extractScriptFromVideo(dl.file);
-        if ('error' in tr || !tr.transcript.trim()) return;
+        if ('error' in tr) {
+          studioToast.err(`口播转写失败:${tr.error}——检查「设置 → 媒体生成 → 火山语音」的 key`);
+          return;
+        }
+        if (!tr.transcript.trim()) {
+          studioToast.info('这条视频没识别到口播(可能纯音乐)——写笔记按原文案/标题参考');
+          return;
+        }
         const cur = articleRef.current;
         if (!cur) return;
         await updateStudioArticle(PLATFORM, cur.id, { extra: { sourceTranscript: tr.transcript } });
         const fresh2 = await fetchStudioArticle(PLATFORM, cur.id);
         if (fresh2 && articleRef.current?.id === cur.id) setArticle(fresh2);
-        studioToast.ok('已转写视频口播文案 ✓(写笔记会带上参考)');
+        studioToast.ok(`已转写视频口播文案 ✓(${tr.transcript.replace(/\s+/g, '').length} 字,写笔记会带上参考)`);
       })();
     }
     const grew = nextContent.length > prevContent.length;
