@@ -10585,8 +10585,11 @@ export async function startServer({
     if (/douyin\.com|kuaishou\.com|xiaohongshu\.com|xhslink|v\.douyin/i.test(url)) {
       try {
         await fs.promises.mkdir(outDir, { recursive: true });
+        // 必须注入 bakuanKeysEnv:出厂 .env 的 key 全空,用户在「设置→媒体生成」配的
+        // TikHub key 只走这里注入。漏注入 → 直链解析必然无 key 失败 → 回退 yt-dlp →
+        // 用户看到「需登录/反爬」的错误归因,真因其实是 key 没传进来(2026-08-04 审计)。
         const rr = await execFileBuffered(py, ['scripts/resolve_video_url.py', '--url', url], {
-          cwd: engineDir, env: eng.env, timeout: 60_000,
+          cwd: engineDir, env: { ...eng.env, ...(await bakuanKeysEnv()) }, timeout: 60_000,
         });
         const jsonStr = (rr.stdout || '').slice((rr.stdout || '').indexOf('{'));
         const parsed = jsonStr ? JSON.parse(jsonStr) as { mediaUrl?: string; referer?: string; title?: string; error?: string } : {};
@@ -10726,9 +10729,12 @@ export async function startServer({
     if (!videoFile || !videoFile.startsWith('/')) return res.status(400).json({ error: '缺少本地视频文件路径' });
     try {
       const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
+      // 同上:火山语音 key 存在 provider volc-asr,只由 bakuanKeysEnv 注入 ASR_API_KEY。
+      // 漏注入 → transcribe.py 判定"没配 key"直接返回空 → 用户看到"纯音乐/无口播",
+      // 换一百条视频也没用(2026-08-04 审计,客户机必现)。
       const r = await execFileBuffered(eng.python, ['scripts/extract_script.py', '--video', videoFile], {
         cwd: eng.engineDir,
-        env: eng.env,
+        env: { ...eng.env, ...(await bakuanKeysEnv()) },
         timeout: 300_000,
       });
       const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));

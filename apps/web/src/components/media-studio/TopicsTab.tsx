@@ -636,12 +636,19 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
 
   async function submit() {
     if (!canAdd) return;
-    await onAdd({
+    // 存失败时【保留输入】并报错——旧写法无条件清空四个框,失败=内容丢了还零提示
+    // (2026-08-04 审计;同文件 saveHit 已是正确范式)。
+    const ok = await onAdd({
       title: title.trim(),
       ...(angle.trim() ? { angle: angle.trim() } : {}),
       ...(source.trim() ? { source: source.trim() } : {}),
       ...(url.trim() ? { url: url.trim() } : {}),
     });
+    if (ok === false) {
+      studioToast.err('添加失败——确认爆创后台在运行;你填的内容已保留,可直接重试');
+      return;
+    }
+    studioToast.ok('已加入候选 ✓(上方「候选选题」可见)');
     setTitle('');
     setAngle('');
     setSource('');

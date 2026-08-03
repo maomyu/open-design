@@ -936,19 +936,27 @@ function exitWithStructuredError({ code, message, data }) {
 // Map a daemon HTTP response into the exit-code envelope. Returns the
 // parsed body (so the caller can keep going if it doesn't want to exit).
 async function structuredHttpFailure(resp, fallbackCode = 'daemon-not-running') {
+  // 先读原始文本再解析:①body 只能消费一次——旧写法先 resp.json() 再 resp.text() 必抛
+  // "Body is unusable",fallback 永远拿到空串,于是所有失败都长成「HTTP 500: 」;
+  // ②/api/media-studio/* 与 /api/baokuan/* 返回的是【扁平】{error:"中文原因"},
+  // 旧写法只认 error.message,把 daemon 精心写的原因整条丢掉(2026-08-04 审计)。
+  const raw = await resp.text().catch(() => '');
   let parsed;
-  try { parsed = await resp.json(); } catch { parsed = {}; }
-  const errCode = normalizeRecoverableErrorCode(parsed?.error?.code, parsed?.error?.message);
+  try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = {}; }
+  const flat = typeof parsed?.error === 'string' ? parsed.error : '';
+  const nested = typeof parsed?.error?.message === 'string' ? parsed.error.message : '';
+  const detail = flat || nested || raw.slice(0, 300).trim();
+  const errCode = normalizeRecoverableErrorCode(parsed?.error?.code, nested);
   if (errCode && errCode in RECOVERABLE_EXIT_CODES) {
     exitWithStructuredError({
       code:    errCode,
-      message: parsed.error.message ?? `HTTP ${resp.status}`,
+      message: nested || `HTTP ${resp.status}`,
       data:    structuredErrorData(parsed.error),
     });
   }
   exitWithStructuredError({
     code:    fallbackCode,
-    message: parsed?.error?.message ?? `HTTP ${resp.status}: ${await resp.text().catch(() => '')}`,
+    message: detail ? `${detail}${flat || nested ? '' : ` (HTTP ${resp.status})`}` : `HTTP ${resp.status}(服务端未返回原因)`,
     data:    structuredErrorData(parsed?.error),
   });
 }

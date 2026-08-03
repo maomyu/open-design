@@ -15,6 +15,7 @@ import {
   createDatacenterRecord,
   deleteDatacenterRecord,
   fetchDatacenterRecords,
+  fetchDatacenterRecordsResult,
   syncDatacenterTable,
   updateDatacenterRecord,
 } from '../../providers/datacenter';
@@ -160,9 +161,12 @@ export function DataCenterView(): JSX.Element {
   const front = DATACENTER_TABLES.filter((t) => t.stage === 'front');
   const back = DATACENTER_TABLES.filter((t) => t.stage === 'back');
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(async (key: string) => {
     setLoading(true);
-    const recs = await fetchDatacenterRecords(key);
+    // 读失败要说清楚,别把"没连飞书/拉取失败"显示成「暂无数据」(2026-08-04 审计)。
+    const { records: recs, error } = await fetchDatacenterRecordsResult(key);
+    setLoadError(error ?? null);
     setRecords(recs);
     setCounts((c) => ({ ...c, [key]: recs.length }));
     setLoading(false);
@@ -212,7 +216,8 @@ export function DataCenterView(): JSX.Element {
       return;
     }
     setEditing(null);
-    setNote('已保存到本地，正在同步飞书…');
+    // 不再谎报"正在同步飞书"——没连飞书时 daemon 的推送直接 return,同步点永远停在灰色。
+    setNote('已保存到本地。若已连飞书会在后台推送(同步状态见每行左侧圆点);未连飞书则只存本地。');
     await load(table.key);
   }
 
@@ -355,7 +360,13 @@ export function DataCenterView(): JSX.Element {
           {loading ? (
             <div className={styles.empty}>加载中…</div>
           ) : records.length === 0 ? (
-            <div className={styles.empty}>{isUser ? '还没有记录，点「＋ 新建」加一条。' : '暂无数据。'}</div>
+            <div className={styles.empty}>
+              {loadError
+                ? `读取失败:${loadError}${isUser ? '' : '——本表数据实时读飞书,先到「数据中心 → 连接飞书」确认授权有效,再切回本表重试。'}`
+                : isUser
+                  ? '还没有记录，点「＋ 新建」加一条。'
+                  : '暂无数据——引擎还没往这张表写过内容(去创作台采一次选题就会有);若刚连上飞书,切到别的表再切回来可刷新。'}
+            </div>
           ) : (
             <div className={styles.tableScroll}>
               <table className={styles.table}>

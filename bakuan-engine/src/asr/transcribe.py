@@ -11,6 +11,26 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 
+class AsrError(Exception):
+    """转写失败带原因——四种完全不同的失败此前一律吞成空串,用户只看到"纯音乐/无口播",
+    换一百条视频也没用(2026-08-04 审计)。code 见 _ASR_HINT。"""
+
+    def __init__(self, code: str, detail: str = ""):
+        self.code = code
+        self.detail = detail
+        super().__init__(_ASR_HINT.get(code, f"转写失败({code}) {detail}".strip()))
+
+
+_ASR_HINT = {
+    "no_key": "没配火山语音 Key——口播转写走火山【语音技术】(与方舟 ark-* 不是同一套,key 不通用)。到「设置 → 媒体生成 → 火山语音」填入后重试。",
+    "45000010": "火山语音 Key 无效——你填的可能是方舟(ark-*)的 Key。语音技术是独立服务,到「设置 → 媒体生成 → 火山语音」换成语音技术的 Key。",
+    "45000030": "火山语音的「录音文件识别(大模型)」未开通——去火山控制台开通 volc.bigasr.auc 资源(通常需实名认证)后重试。",
+    "network": "连不上火山语音服务——检查网络/代理后重试。",
+    "timeout": "转写超时——视频较长或火山排队中。可换条短一点的视频,或稍后重试。",
+    "empty": "转写成功但没有文字——这条大概率是纯音乐/无口播,换一条有讲解的爆款。",
+}
+
+
 def transcribe(video_url: str, *, subtitle: str | None = None, duration_s: int = 0) -> str:
     """返回文案文本。有平台字幕直接用；否则调 ASR。失败返回空串（不丢任务）。
     duration_s: 已知视频时长(秒)时传入,轮询预算按时长自适应(长视频不再 2min 就放弃)。"""
@@ -20,6 +40,8 @@ def transcribe(video_url: str, *, subtitle: str | None = None, duration_s: int =
         return ""
     try:
         return _asr_backend(video_url, duration_s)
+    except AsrError:
+        raise                      # 带原因的失败向上抛,由调用方转成用户看得懂的提示
     except Exception:
         return ""
 
@@ -103,7 +125,7 @@ def _volc_run(audio_obj: dict, *, duration_s: int = 0) -> str:
     import uuid
     key = os.getenv("ASR_API_KEY", "")
     if not key or "待填" in key:
-        return ""
+        raise AsrError("no_key")
     base = os.getenv("ASR_BASE", "https://openspeech.bytedance.com/api/v3/auc/bigmodel")
     req_id = str(uuid.uuid4())
     headers = {"Content-Type": "application/json", "x-api-key": key,
@@ -116,10 +138,11 @@ def _volc_run(audio_obj: dict, *, duration_s: int = 0) -> str:
                                      "request": {"model_name": "bigmodel",
                                                  "enable_itn": True, "enable_punc": True}},
                                timeout=20)
-    except requests.RequestException:
-        return ""
-    if submit.headers.get("X-Api-Status-Code") != "20000000":
-        return ""
+    except requests.RequestException as e:
+        raise AsrError("network", str(e)[:80]) from e
+    sub_code = submit.headers.get("X-Api-Status-Code", "")
+    if sub_code != "20000000":
+        raise AsrError(sub_code, submit.headers.get("X-Api-Message", ""))
     # 几分钟的口播视频火山要转 1-3 分钟:上限太紧会全军覆没回退标题(2026-07-16 真机验证,
     # 36s 上限时相亲视频 20 轮仍 Processing)。已知时长→预算≈时长/3+20轮(上限240轮=12min);
     # 未知时长用默认 40×3s=2min。radar 走 ASR_OFF 不受影响。
@@ -130,8 +153,8 @@ def _volc_run(audio_obj: dict, *, duration_s: int = 0) -> str:
         time.sleep(3)
         try:
             q = requests.post(f"{base}/query", headers=headers, json={}, timeout=15)
-        except requests.RequestException:
-            return ""
+        except requests.RequestException as e:
+            raise AsrError("network", str(e)[:80]) from e
         code = q.headers.get("X-Api-Status-Code", "")
         if code == "20000000":            # 完成
             res = (q.json() or {}).get("result") or {}
@@ -146,8 +169,8 @@ def _volc_run(audio_obj: dict, *, duration_s: int = 0) -> str:
                 return "".join(u.get("text", "") for u in (res.get("utterances") or []))
             return ""
         if code not in ("20000001", "20000002"):   # 非处理中/排队中 → 出错
-            break
-    return ""   # 超时未完成（长视频）→ 放弃，用标题兜底，不拖慢主流程
+            raise AsrError(code, q.headers.get("X-Api-Message", ""))
+    raise AsrError("timeout", f"已等 {rounds * 3}s")
 
 
 def _whisper_asr(video_url: str) -> str:

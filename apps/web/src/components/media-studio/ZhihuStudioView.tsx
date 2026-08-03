@@ -331,7 +331,10 @@ export function ZhihuStudioView(): JSX.Element {
     const current = articleRef.current;
     if (!current) return;
     if (!window.confirm(`删除文章「${current.title || '(无标题)'}」？发布记录会一并删除。`)) return;
-    await deleteStudioArticle(PLATFORM, current.id);
+    if (!(await deleteStudioArticle(PLATFORM, current.id))) {
+      studioToast.err('删除失败——稿件仍在,确认后台在运行后重试');
+      return;
+    }
     const list = await refreshArticles();
     await selectArticle(list[0]?.id ?? null);
   }
@@ -411,7 +414,11 @@ export function ZhihuStudioView(): JSX.Element {
           </div>
         ) : null}
         <div className={c('row')} style={{ justifyContent: 'center' }}>
-        <button type="button" className={c('btn')} onClick={() => { setImportOpen((v) => !v); if (!importList) void fetchStudioArticles('wechat-mp').then(setImportList); }}>
+        <button type="button" className={c('btn')} onClick={() => { setImportOpen((v) => !v); if (!importList) void fetchStudioArticles('wechat-mp').then((l) => {
+        // 失败返回 null 会被渲染成永久「加载中…」且不会重试(2026-08-04 审计)。
+        if (!l) { studioToast.err('读取公众号文章列表失败——确认后台在运行,收起再展开可重试'); setImportOpen(false); return; }
+        setImportList(l);
+      }); }}>
           <Icon name="import" size={14} /> 从公众号导入
         </button>
         <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void handleCreateArticle()}>
@@ -512,7 +519,10 @@ export function ZhihuStudioView(): JSX.Element {
                 void (async () => {
                   const target = (articles ?? []).find((a) => a.id === id);
                   if (!window.confirm(`删除文章「${target?.title || '(无标题)'}」？`)) return;
-                  await deleteStudioArticle(PLATFORM, id);
+                  if (!(await deleteStudioArticle(PLATFORM, id))) {
+                    studioToast.err('删除失败——稿件仍在,确认后台在运行后重试');
+                    return;
+                  }
                   const list = await refreshArticles();
                   if (articleRef.current?.id === id) await selectArticle(list[0]?.id ?? null);
                 })();
@@ -534,6 +544,7 @@ export function ZhihuStudioView(): JSX.Element {
               }}
               onDelete={async (id) => {
                 if (await deleteStudioTopic(PLATFORM, id)) setTopics((list) => list.filter((t) => t.id !== id));
+    else studioToast.err('删除失败——这条选题还在,稍后重试');
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
@@ -551,7 +562,11 @@ export function ZhihuStudioView(): JSX.Element {
                     标题
                     <span className={c('cardHint')}>知乎标题上限 100 字</span>
                     <span className={c('headSpacer')} />
-                    <button type="button" className={c('btn')} onClick={() => { setImportOpen((v) => !v); if (!importList) void fetchStudioArticles('wechat-mp').then(setImportList); }}>
+                    <button type="button" className={c('btn')} onClick={() => { setImportOpen((v) => !v); if (!importList) void fetchStudioArticles('wechat-mp').then((l) => {
+        // 失败返回 null 会被渲染成永久「加载中…」且不会重试(2026-08-04 审计)。
+        if (!l) { studioToast.err('读取公众号文章列表失败——确认后台在运行,收起再展开可重试'); setImportOpen(false); return; }
+        setImportList(l);
+      }); }}>
                       <Icon name="import" size={13} /> 从公众号导入
                     </button>
                   </div>

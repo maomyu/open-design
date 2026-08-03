@@ -540,7 +540,11 @@ export function MediaStudioView(): JSX.Element {
         ? { accountId: loadStudioPref('account:wechat-mp', '') || accounts[0]!.id }
         : {}),
     });
-    if (!created) return;
+    if (!created) {
+      // 建稿失败必须出声(2026-08-04 审计:此前静默 return,按钮像没反应,是所有创作动线的第一步)。
+      studioToast.err('建稿失败——确认爆创后台在运行后重试;这条选题没被占用,可再点');
+      return;
+    }
     await refreshArticles();
     setArticle(created);
     // startAiTask 走 articleRef 取当前文章；setArticle 要到下次渲染才同步
@@ -583,7 +587,10 @@ export function MediaStudioView(): JSX.Element {
     if (!article) return;
     if (!window.confirm(`删除文章「${article.title || '(无标题)'}」？发布记录会一并删除。`)) return;
     pendingRef.current = null;
-    await deleteStudioArticle(PLATFORM, article.id);
+    if (!(await deleteStudioArticle(PLATFORM, article.id))) {
+      studioToast.err('删除失败——稿件仍在,确认后台在运行后重试');
+      return;
+    }
     const list = await refreshArticles();
     await selectArticle(list[0]?.id ?? null);
   }
@@ -892,9 +899,11 @@ export function MediaStudioView(): JSX.Element {
             <button
               type="button"
               className={`${c('btn')} ${c('btnPrimary')}`}
+              disabled={effectiveAiRunning}
               onClick={() => void startAiTask('write', { articleType: FIXED_ARTICLE_TYPE, wordCount: aiWordCount, imageCount: aiImageCount, imageStyle: imgStyle })}
             >
-              <Icon name="sparkles" size={14} /> AI 写一版
+              {/* 运行中必须置灰(2026-08-04 审计):否则用户看不出在跑会连点,每点一次都会 abort 掉上一条流 */}
+              <Icon name="sparkles" size={14} /> {effectiveAiRunning ? 'AI 任务进行中…' : 'AI 写一版'}
             </button>
 
           </div>
@@ -1893,7 +1902,10 @@ export function MediaStudioView(): JSX.Element {
                 void (async () => {
                   const target = (articles ?? []).find((a) => a.id === id);
                   if (!window.confirm(`删除文章「${target?.title || '(无标题)'}」？发布记录会一并删除。`)) return;
-                  await deleteStudioArticle(PLATFORM, id);
+                  if (!(await deleteStudioArticle(PLATFORM, id))) {
+                    studioToast.err('删除失败——稿件仍在,确认后台在运行后重试');
+                    return;
+                  }
                   const list = await refreshArticles();
                   if (articleRef.current?.id === id) await selectArticle(list[0]?.id ?? null);
                 })();

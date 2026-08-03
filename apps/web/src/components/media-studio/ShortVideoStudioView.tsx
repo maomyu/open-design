@@ -22,6 +22,8 @@ import {
   createStudioTopic,
   deleteStudioArticle,
   deleteStudioTopic,
+  downloadStudioVideo,
+  extractScriptFromVideo,
   fetchDownloadedVideoObjectUrl,
   fetchStudioArticle,
   fetchStudioArticles,
@@ -230,6 +232,58 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
     }, 4000);
     return () => window.clearInterval(timer);
   }, [sourceVideoPending, transcriptPending, article?.id]);
+
+  // 手动提取口播(2026-08-04 用户反馈:"界面上点不出原文"——原文案 tab 此前只有一行灰字
+  // 指路,没有任何可点的提取入口)。一键:没视频先按原文链接下载→转写→四态落 extra。
+  const [extractBusy, setExtractBusy] = useState(false);
+  const manualExtract = useCallback(async () => {
+    const cur = articleRef.current;
+    if (!cur) return;
+    const ex = (cur.extra ?? {}) as Record<string, unknown>;
+    setExtractBusy(true);
+    const setStatus = async (patch: Record<string, unknown>) => {
+      await updateStudioArticle(PLATFORM, cur.id, { extra: patch });
+      const fresh = await fetchStudioArticle(PLATFORM, cur.id);
+      if (fresh && articleRef.current?.id === cur.id) setArticle(fresh);
+    };
+    try {
+      let videoFile = str(ex.sourceVideoFile);
+      await setStatus({ sourceTranscriptStatus: 'transcribing', sourceTranscriptError: '' });
+      if (!videoFile) {
+        const url = str(ex.sourceUrl);
+        if (!url) {
+          await setStatus({ sourceTranscriptStatus: 'failed', sourceTranscriptError: '这条稿子没带原视频,也没有原文链接' });
+          studioToast.err('没有原视频可提取——这条稿子没带原视频链接');
+          return;
+        }
+        studioToast.info('正在下载原视频…(大文件稍等)');
+        const dl = await downloadStudioVideo(url);
+        if ('error' in dl) {
+          await setStatus({ sourceTranscriptStatus: 'failed', sourceTranscriptError: `原视频下载失败:${dl.error}` });
+          studioToast.err(`原视频下载失败:${dl.error}`);
+          return;
+        }
+        videoFile = dl.file;
+        await setStatus({ sourceVideoFile: dl.file, sourceVideoError: '' });
+      }
+      studioToast.info('正在转写口播文案…(约 1-3 分钟)');
+      const tr = await extractScriptFromVideo(videoFile);
+      if ('error' in tr) {
+        await setStatus({ sourceTranscriptStatus: 'failed', sourceTranscriptError: tr.error });
+        studioToast.err(`口播转写失败:${tr.error}——检查「设置 → 媒体生成 → 火山语音」的 key`);
+        return;
+      }
+      if (!tr.transcript.trim()) {
+        await setStatus({ sourceTranscriptStatus: 'empty', sourceTranscriptError: '' });
+        studioToast.info('这条视频没识别到口播(可能纯音乐/无人声)——想洗稿请换一条有口播的');
+        return;
+      }
+      await setStatus({ sourceTranscript: tr.transcript, sourceTranscriptStatus: 'done', sourceTranscriptError: '' });
+      studioToast.ok(`已转写口播文案 ✓(${tr.transcript.replace(/\s+/g, '').length} 字)`);
+    } finally {
+      setExtractBusy(false);
+    }
+  }, []);
 
   // ---- 数据加载 ----
   // 按当前平台过滤单池:匹配 subPlatform;无 subPlatform 的旧作品归到抖音
@@ -485,7 +539,11 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
       // 平台化:新作品直接归属当前平台(种进 targetPlatform,列表按它过滤)。
       extra: { targetPlatform: svPlatformLabel },
     });
-    if (!created) return;
+    if (!created) {
+      // 建稿失败必须出声(2026-08-04 审计:此前静默 return,按钮像没反应,是所有创作动线的第一步)。
+      studioToast.err('建稿失败——确认爆创后台在运行后重试;这条选题没被占用,可再点');
+      return;
+    }
     await refreshArticles();
     setArticle(created);
     window.localStorage.setItem(lastArticleKey, created.id);
@@ -497,7 +555,10 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
     if (!article) return;
     if (!window.confirm(`删除「${article.title || '(未命名)'}」？发布记录一并删除。`)) return;
     pendingRef.current = null;
-    await deleteStudioArticle(PLATFORM, article.id);
+    if (!(await deleteStudioArticle(PLATFORM, article.id))) {
+      studioToast.err('删除失败——稿件仍在,确认后台在运行后重试');
+      return;
+    }
     const list = await refreshArticles();
     await selectArticle(list[0]?.id ?? null);
   }
@@ -636,7 +697,10 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                 void (async () => {
                   const target = (articles ?? []).find((a) => a.id === id);
                   if (!window.confirm(`删除「${target?.title || '(未命名)'}」？发布记录一并删除。`)) return;
-                  await deleteStudioArticle(PLATFORM, id);
+                  if (!(await deleteStudioArticle(PLATFORM, id))) {
+                    studioToast.err('删除失败——稿件仍在,确认后台在运行后重试');
+                    return;
+                  }
                   const list = await refreshArticles();
                   if (articleRef.current?.id === id) await selectArticle(list[0]?.id ?? null);
                 })();
@@ -667,6 +731,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
               }}
               onDelete={async (id) => {
                 if (await deleteStudioTopic(PLATFORM, id)) setTopics((list) => list.filter((t) => t.id !== id));
+    else studioToast.err('删除失败——这条选题还在,稍后重试');
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
@@ -712,8 +777,9 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                         </option>
                       ))}
                     </select>
-                    <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void startAiTask('script')}>
-                      <Icon name="sparkles" size={14} /> AI 写脚本
+                    <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={effectiveAiRunning} onClick={() => void startAiTask('script')}>
+                      {/* 运行中置灰(2026-08-04 审计):连点会 abort 上一条流,表现为"越点越乱" */}
+                      <Icon name="sparkles" size={14} /> {effectiveAiRunning ? 'AI 任务进行中…' : 'AI 写脚本'}
                     </button>
                   </div>
                   <div className={c('row')}>
@@ -1045,14 +1111,21 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                       {str(extra.sourceTranscript)}
                     </div>
                   </>
-                ) : str(extra.sourceTranscriptStatus) === 'transcribing' ? (
+                ) : str(extra.sourceTranscriptStatus) === 'transcribing' || extractBusy ? (
                   <div className={c('cardHint')}>⏳ 正在转写口播文案…(约 1-3 分钟,完成后这里自动显示全文)</div>
-                ) : str(extra.sourceTranscriptStatus) === 'empty' ? (
-                  <div className={c('cardHint')}>这条视频没有识别到口播(可能纯音乐/无人声)——AI 将按标题+切入角度写;想洗稿请换一条有口播的原视频。</div>
-                ) : str(extra.sourceTranscriptStatus) === 'failed' ? (
-                  <div className={c('cardHint')}>❌ 口播转写失败:{str(extra.sourceTranscriptError) || '未知原因'}。检查「设置 → 媒体生成 → 火山语音」的 key 后,重新点一次「去创作」。</div>
                 ) : (
-                  <div className={c('cardHint')}>没有原文案——原视频下载完成后会自动带回;或去「创作」选题页用「提取文案仿写」。</div>
+                  <div>
+                    <div className={c('cardHint')} style={{ marginBottom: 8 }}>
+                      {str(extra.sourceTranscriptStatus) === 'empty'
+                        ? '这条视频没有识别到口播(可能纯音乐/无人声)——AI 将按标题+切入角度写;想洗稿请换一条有口播的原视频。'
+                        : str(extra.sourceTranscriptStatus) === 'failed'
+                          ? `❌ 口播转写失败:${str(extra.sourceTranscriptError) || '未知原因'}。检查「设置 → 媒体生成 → 火山语音」的 key 后重试。`
+                          : '还没有原文案——点下方按钮从原视频提取口播。'}
+                    </div>
+                    <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={extractBusy} onClick={() => void manualExtract()}>
+                      {str(extra.sourceTranscriptStatus) === 'failed' || str(extra.sourceTranscriptStatus) === 'empty' ? '重新提取口播文案' : '提取口播文案'}
+                    </button>
+                  </div>
                 )}
                 {str(extra.sourceUrl) ? (
                   <a href={str(extra.sourceUrl)} target="_blank" rel="noreferrer" className={c('cardHint')} style={{ marginTop: 8, display: 'inline-block' }}>看原文 ↗</a>

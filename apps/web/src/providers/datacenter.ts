@@ -20,13 +20,24 @@ async function readError(resp: Response): Promise<string> {
 }
 
 export async function fetchDatacenterRecords(tableKey: string): Promise<DatacenterRecord[]> {
+  return (await fetchDatacenterRecordsResult(tableKey)).records;
+}
+
+/** 带错误的读取:引擎表是实时读飞书的,把"没连飞书/拉取失败"一律吞成空数组会让
+ *  界面显示「暂无数据」——失败伪装成空态(2026-08-04 审计)。 */
+export async function fetchDatacenterRecordsResult(
+  tableKey: string,
+): Promise<{ records: DatacenterRecord[]; error?: string }> {
   try {
     const resp = await fetch(`${ROOT}/${encodeURIComponent(tableKey)}/records`);
-    if (!resp.ok) return [];
-    const data = (await resp.json()) as DatacenterRecordListResponse;
-    return Array.isArray(data.records) ? data.records : [];
-  } catch {
-    return [];
+    const raw = await resp.text().catch(() => '');
+    let data: DatacenterRecordListResponse & { error?: string } = {} as never;
+    try { data = raw ? JSON.parse(raw) : ({} as never); } catch { /* 非 JSON(HTML 500) */ }
+    if (!resp.ok) return { records: [], error: (typeof data.error === 'string' && data.error) || `请求失败 (${resp.status})` };
+    if (typeof data.error === 'string' && data.error) return { records: [], error: data.error };
+    return { records: Array.isArray(data.records) ? data.records : [] };
+  } catch (e) {
+    return { records: [], error: e instanceof Error ? e.message : '读取失败' };
   }
 }
 

@@ -22,11 +22,14 @@ const PLATFORM_LABELS: Record<string, string> = {
   bilibili: 'B站',
   kuaishou: '快手',
   channels: '视频号',
+  gzh: '公众号',
 };
 
 /** Which upstream a platform's 爆款 data actually comes from. */
 function sourceOf(platform: string): { name: string; keyLabel: string } {
-  return platform === 'channels'
+  // 视频号【和公众号】都走极致数据(dajiala);此前 gzh 被误判成 TikHub,
+  // 公众号采集挂了却提示用户去改 TikHub key(2026-08-04 审计)。
+  return platform === 'channels' || platform === 'gzh'
     ? { name: '极致数据(dajiala)', keyLabel: '极致数据 key' }
     : { name: 'TikHub', keyLabel: 'TikHub API Key' };
 }

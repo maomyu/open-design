@@ -29,17 +29,24 @@ def main() -> None:
     video = a.video or ""
     if not video and a.url:
         out = f"/tmp/bc_extract_{os.getpid()}.mp4"
+        dl_err = ""
         try:
-            subprocess.run(
+            r = subprocess.run(
                 [sys.executable, "-m", "yt_dlp", "--no-playlist", "--no-warnings",
                  "-f", "mp4/best", "-o", out, a.url],
                 capture_output=True, timeout=180,
             )
-        except Exception:
-            pass
+            if r.returncode != 0:
+                dl_err = (r.stderr or b"").decode("utf-8", "replace")[-240:].strip()
+        except Exception as e:  # noqa: BLE001
+            dl_err = str(e)[:200]
         video = out if os.path.exists(out) else ""
     if not video or not os.path.exists(video):
-        print(json.dumps({"error": "没拿到视频文件(下载失败或路径不存在)"}, ensure_ascii=False))
+        # 下载失败的真实原因必须带出去(此前一律"没拿到视频文件",用户无从下手)。
+        why = locals().get("dl_err") or ""
+        msg = f"下载原视频失败:{why}——多为需要登录态/平台反爬,可先在「账号」页登录该平台再试" if why \
+            else "没拿到视频文件(下载失败或路径不存在)"
+        print(json.dumps({"error": msg}, ensure_ascii=False))
         return
 
     aud = os.path.splitext(video)[0] + ".mp3"
@@ -62,6 +69,9 @@ def main() -> None:
 
     try:
         transcript = ASR.transcribe_local(aud) or ""
+    except ASR.AsrError as e:      # 带码的失败:key 无效/未开通/超时/网络——原样给用户
+        print(json.dumps({"error": str(e), "code": e.code}, ensure_ascii=False))
+        return
     except Exception as e:  # noqa: BLE001
         print(json.dumps({"error": f"转写失败:{e}"}, ensure_ascii=False))
         return
@@ -72,7 +82,7 @@ def main() -> None:
             pass
 
     if not transcript.strip():
-        print(json.dumps({"error": "转写为空(可能是纯音乐/无口播,或 ASR 未识别)", "video": video}, ensure_ascii=False))
+        print(json.dumps({"error": "转写成功但没有文字——这条大概率是纯音乐/无口播,换一条有讲解的爆款视频", "code": "empty", "video": video}, ensure_ascii=False))
         return
     print(json.dumps({"transcript": transcript, "video": video}, ensure_ascii=False))
 

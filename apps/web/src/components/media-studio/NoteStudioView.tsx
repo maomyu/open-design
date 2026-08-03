@@ -554,7 +554,11 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     const created = await createStudioArticle(PLATFORM, {
       ...(fromTopic ? { fromTopicId: fromTopic.id, title: fromTopic.title, topic: fromTopic.title } : {}),
     });
-    if (!created) return;
+    if (!created) {
+      // 建稿失败必须出声(2026-08-04 审计:此前静默 return,按钮像没反应,是所有创作动线的第一步)。
+      studioToast.err('建稿失败——确认爆创后台在运行后重试;这条选题没被占用,可再点');
+      return;
+    }
     await refreshArticles();
     setArticle(created);
     window.localStorage.setItem(LAST_ARTICLE_KEY, created.id);
@@ -593,7 +597,10 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
     if (!article) return;
     if (!window.confirm(`删除「${article.title || '(未命名)'}」？发布记录一并删除。`)) return;
     pendingRef.current = null;
-    await deleteStudioArticle(PLATFORM, article.id);
+    if (!(await deleteStudioArticle(PLATFORM, article.id))) {
+      studioToast.err('删除失败——稿件仍在,确认后台在运行后重试');
+      return;
+    }
     const list = await refreshArticles();
     await selectArticle(list[0]?.id ?? null);
   }
@@ -846,7 +853,10 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
                 void (async () => {
                   const target = (articles ?? []).find((a) => a.id === id);
                   if (!window.confirm(`删除「${target?.title || '(未命名)'}」？`)) return;
-                  await deleteStudioArticle(PLATFORM, id);
+                  if (!(await deleteStudioArticle(PLATFORM, id))) {
+                    studioToast.err('删除失败——稿件仍在,确认后台在运行后重试');
+                    return;
+                  }
                   const list = await refreshArticles();
                   if (articleRef.current?.id === id) await selectArticle(list[0]?.id ?? null);
                 })();
@@ -870,6 +880,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
               }}
               onDelete={async (id) => {
                 if (await deleteStudioTopic(PLATFORM, id)) setTopics((list) => list.filter((t) => t.id !== id));
+    else studioToast.err('删除失败——这条选题还在,稍后重试');
               }}
               onWrite={(topic) => void handleCreateArticle(topic)}
               onAiFind={(note, picked) => void startAiTask('topics', { note, ...(picked && picked.length > 0 ? { picked } : {}) })}
