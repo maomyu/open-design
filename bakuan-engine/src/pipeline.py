@@ -58,6 +58,13 @@ def _collect_error(platform: str, exc: BaseException) -> dict:
     return {"platform": platform, "status": status, "reason": reason[:200]}
 
 
+def _period_days(time_window: str) -> int:
+    """app 时间窗 key → 天数(极致数据 search_articles 的 period 参数)。
+    缺省/未知按 180 天(与 TikHub 侧默认一致),别再让公众号被闷在 7 天里。"""
+    tw = (time_window or "").strip().lower()
+    return {"1d": 1, "7d": 7, "30d": 30, "90d": 90, "180d": 180, "365d": 365, "all": 365}.get(tw, 180)
+
+
 class Pipeline:
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
@@ -106,12 +113,15 @@ class Pipeline:
         if self.dry_run:
             from src.adapters import mock
             return mock.mock_search(platform, keyword, count)
-        if platform == "gzh":
-            return self.dajiala.search_articles(keyword)
-        if platform == "channels":                 # 视频号走极致了
-            return self.dajiala.search_videos(keyword)
         # 时间窗透传给 TikHub 搜索(抖音据此选 publish_time 档 + 翻页累积到 count)。
         tw = (self._criteria or {}).get("time_window", "180d") if self._criteria else "180d"
+        if platform == "gzh":
+            # 公众号此前不传 period → dajiala 默认只搜 7 天,是【唯一】被砍到 7 天的平台:
+            # 用户界面选「近半年」对它完全失效,冷门/长尾词必然 0 条(2026-08-04 实测:
+            # 「男生变帅」7天=0条、180天=12条,首条阅读 5017)。按用户选的时间窗换算天数。
+            return self.dajiala.search_articles(keyword, period=_period_days(tw))
+        if platform == "channels":                 # 视频号走极致了
+            return self.dajiala.search_videos(keyword)
         # 小红书内容类型透传:图文笔记台只采图文(note_type=2),短视频台采视频(1)——前后端对应。
         nt = self.xhs_note_type if platform == "xiaohongshu" else None
         return self.tik.search_keyword(platform, keyword, count=count, time_window=tw, note_type=nt)

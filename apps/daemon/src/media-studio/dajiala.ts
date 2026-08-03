@@ -202,11 +202,20 @@ export async function dajialaWebSearch(
   return extractRealtimeItems(data).map(realtimeItemToHit);
 }
 
-/** URL 的 mid+idx+sn 唯一定位一篇公众号文章；拿不到就用归一化标题。 */
+/** 公众号文章的去重键。
+ *
+ *  两个坑都踩过(2026-08-04 实测 16 条爆文榜只剩 8 个 key,radar 静默丢掉一半):
+ *  ① 现代分享链是 /s/<token>,没有 mid/idx/sn —— 实测 16/16 条都不命中旧的 URL 分支;
+ *  ② 兜底标题 key 用 `[\s\W_]+` 且无 u 标志,JS 里 \W = [^A-Za-z0-9_],**中文全被剥光**,
+ *     纯中文标题一律归一化成空串 → 互不相干的文章被判成同一篇,只留一条。
+ *  改:URL 先取 /s/<token>,再退 mid+idx+sn;标题只压空白与标点,保留中日韩文字。 */
 function hitKey(hit: MediaTopicHit): string {
+  const token = hit.url.match(/\/s\/([A-Za-z0-9_-]{8,})/);
+  if (token) return `u:${token[1]}`;
   const m = hit.url.match(/mid=(\w+).*?idx=(\d+).*?sn=(\w+)/);
   if (m) return `u:${m[1]}_${m[2]}_${m[3]}`;
-  return `t:${hit.title.toLowerCase().replace(/[\s\W_]+/g, '')}`;
+  const title = hit.title.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+  return title ? `t:${title}` : `x:${hit.url || hit.title}`;
 }
 
 /** 抓取单篇公众号文章正文（article_detail 直调）——素材简报的原料。 */

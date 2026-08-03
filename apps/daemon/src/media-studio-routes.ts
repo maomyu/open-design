@@ -1244,9 +1244,23 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
     // 引擎产出表(选题池/成品/复盘/原始库/拆解库):数据是引擎写飞书的,这里【从飞书拉取】
     // 只读展示(app 本地没有);用户维护表读本地库。
     if (table.owner === 'engine') {
-      if (!feishuSync) return res.json({ records: [] });
+      // 三处「空表其实是失败」的收口(2026-08-04 审计):①没接飞书 ②引擎返回 ok:false
+      // ③抛异常。都要把原因给前端,否则界面一律显示「暂无数据」,用户以为表是空的。
+      if (!feishuSync) {
+        return res.json({ records: [], error: '还没连接飞书——本表数据实时读飞书。去「数据中心 → 连接飞书」授权后再看。' });
+      }
       try {
         const r = await feishuSync('list-record', { table: table.feishuName, limit: 200 });
+        if (r && r.ok === false) {
+          const why = String(r.error ?? '未知原因');
+          const authLike = /token_missing|authentication|need_user_authorization|授权/i.test(why);
+          return res.json({
+            records: [],
+            error: authLike
+              ? `飞书授权已过期(${why.slice(0, 80)})——去「数据中心 → 连接飞书」重新登录后即可看到数据。`
+              : `读取飞书失败:${why.slice(0, 160)}`,
+          });
+        }
         const rows: Array<{ id?: string; fields?: Record<string, unknown> }> = Array.isArray(r?.rows) ? r.rows : [];
         const records: DatacenterRecord[] = rows.map((row) => ({
           id: String(row.id ?? ''),

@@ -188,10 +188,10 @@ class LarkCliBitable:
     def list_records(self, table_name: str, *, filter_: str | None = None,
                      page_size: int = 200) -> list[dict]:
         args = ["+record-list", "--table-id", table_name, "--page-size", str(page_size)]
-        try:
-            data = self._run(args)
-        except Exception:
-            return []
+        # 不再 `except: return []`——鉴权失效/表被删/网络中断全被吞成"空表",
+        # 上层据此断言 ok:true,把失败升级成成功,界面显示「暂无数据」(2026-08-04 审计实测:
+        # lark-cli token_missing 时 5 张引擎表全部显示空表且零提示)。抛出去让调用方决定。
+        data = self._run(args)
         # lark-cli record-list 返回 record_id_list + fields(列名) + data(逐行值)
         ids = data.get("record_id_list", [])
         cols = data.get("fields", [])
