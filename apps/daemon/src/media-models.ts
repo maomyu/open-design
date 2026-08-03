@@ -36,6 +36,7 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
   { id: 'dajiala', label: '大家来（极致了数据）', hint: '公众号创作台选题数据 · 爆文榜/搜一搜/需求词/对标', integrated: true, defaultBaseUrl: 'https://www.dajiala.com', docsUrl: 'https://www.dajiala.com/main/interface' },
   { id: 'tikhub', label: 'TikHub', hint: '短视频/图文选题数据 · 抖音/小红书/快手 热榜与搜索(按平台分流)', integrated: true, defaultBaseUrl: 'https://api.tikhub.io', docsUrl: 'https://api.tikhub.io/' },
   { id: 'volcengine', label: 'Volcengine Ark (Doubao)', hint: 'Seedance 2.0 / Seedream 5.0（创作台生图默认 5.0）', integrated: true, defaultBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3', supportsCustomModel: true, customModelPlaceholder: 'doubao-seedream-5-0-260128 / -5-0-lite-260128 / -4-5-251128' },
+  { id: 'volc-asr', label: '火山语音（ASR 口播转写）', hint: '洗稿口播转写 · 与方舟 Ark 不同服务——火山控制台「语音技术 → 大模型录音文件识别」开通并取 API Key', integrated: true, defaultBaseUrl: 'https://openspeech.bytedance.com', docsUrl: 'https://console.volcengine.com/speech/app' },
   { id: 'grok', label: 'xAI Grok Imagine', hint: 'grok-imagine — image + video with native audio', integrated: true, defaultBaseUrl: 'https://api.x.ai/v1' },
   { id: 'hyperframes', label: 'HyperFrames', hint: 'Local HTML -> MP4 renderer', integrated: true, credentialsRequired: false, settingsVisible: false },
   { id: 'nanobanana', label: 'Nano Banana', hint: 'Google official by default; custom gateway configurable', integrated: true, defaultBaseUrl: 'https://generativelanguage.googleapis.com', supportsCustomModel: true },

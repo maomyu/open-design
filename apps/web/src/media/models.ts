@@ -33,6 +33,7 @@ export type MediaProviderId =
   | 'dajiala'
   | 'tikhub'
   | 'volcengine'
+  | 'volc-asr'
   | 'grok'
   | 'hyperframes'
   | 'nanobanana'
@@ -125,6 +126,17 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     docsUrl: 'https://console.volcengine.com/ark',
     supportsCustomModel: true,
     customModelPlaceholder: 'doubao-seedream-5-0-260128 / -5-0-lite-260128 / -4-5-251128',
+  },
+  {
+    // 洗稿的口播转写(ASR)走火山【语音技术】,和方舟 Ark 是两套服务、两把 key——
+    // ark-* 打语音接口一律 45000010 Invalid X-Api-Key(2026-08-03 客户机实测)。
+    // 此前没有此配置项,客户想配都没地方填,转写永远为空、洗稿只能拿标题兜底。
+    id: 'volc-asr',
+    label: '火山语音（ASR 口播转写）',
+    hint: '洗稿的原料:原视频口播转文字。与上面的方舟 Ark 不同服务——去火山控制台「语音技术 → 大模型录音文件识别」开通并获取 API Key',
+    integrated: true,
+    defaultBaseUrl: 'https://openspeech.bytedance.com',
+    docsUrl: 'https://console.volcengine.com/speech/app',
   },
   {
     id: 'grok',

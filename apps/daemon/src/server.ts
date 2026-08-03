@@ -9665,6 +9665,10 @@ export async function startServer({
       ["tikhub", ["TIKHUB_API_KEY"]],
       ["dajiala", ["DAJIALA_KEY", "DAJIALA_API_KEY"]],
       ["volcengine", ["ARK_API_KEY"]],
+      // 洗稿口播转写(ASR)是火山【语音技术】的独立服务,key 与方舟 ark-* 不通用
+      // (ark 打语音接口一律 45000010 Invalid X-Api-Key,2026-08-03 客户机实测)。
+      // 设置→媒体生成新增「火山语音」项后由此注入;没配则引擎转写为空、洗稿拿标题兜底。
+      ["volc-asr", ["ASR_API_KEY"]],
     ];
     for (const [pid, envNames] of providers) {
       try {
