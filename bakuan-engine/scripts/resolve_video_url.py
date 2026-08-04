@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import settings as _settings  # noqa: E402,F401  载入 .env(TIKHUB_API_KEY)
 from src.adapters import normalize  # noqa: E402
-from src.adapters.tikhub_client import TikHubClient, detect_platform  # noqa: E402
+from src.adapters.tikhub_client import TikHubClient, detect_platform, expand_share_url  # noqa: E402
 
 # 各平台落地页里视频/笔记 id 的取法(与 pipeline 的解析口径一致)。
 _ID_RE = re.compile(r"/(?:video|short-video|note|explore|discovery/item|photo|s)/([A-Za-z0-9_-]+)")
@@ -80,6 +80,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
     url = ap.parse_args().url.strip()
+    url = expand_share_url(url)   # 手机短分享链(v.douyin.com/xxx 等)先展开,短码不是视频 ID
 
     plat = detect_platform(url)
     if not plat:

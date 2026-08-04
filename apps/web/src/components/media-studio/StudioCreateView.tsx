@@ -217,7 +217,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         // sourceTranscriptStatus 落进稿件 extra,右侧「原文案」tab 持久显示,轮询自动刷新;
         // 三种结局(成功/无口播/失败+原因)都明说,绝不静默。
         studioToast.info('正在转写口播文案…(约 1-3 分钟,右侧「原文案」可看进度)');
-        await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscriptStatus: 'transcribing', sourceTranscriptError: '' } });
+        await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscriptStatus: 'transcribing', sourceTranscriptError: '', sourceTranscriptStartedAt: Date.now() } });
         const tr = await extractScriptFromVideo(videoFile);
         if ('error' in tr) {
           await updateStudioArticle(TOPIC_POOL, created.id, { extra: { sourceTranscriptStatus: 'failed', sourceTranscriptError: tr.error } });

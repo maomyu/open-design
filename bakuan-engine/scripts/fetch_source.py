@@ -19,8 +19,9 @@ def main() -> None:
         print(json.dumps({"error": "缺少 url"}, ensure_ascii=False))
         return
     url = sys.argv[1].strip()
-    from src.adapters.tikhub_client import TikHubClient, detect_platform
+    from src.adapters.tikhub_client import TikHubClient, detect_platform, expand_share_url
 
+    url = expand_share_url(url)   # 短分享链先展开,否则短码被当成视频 ID
     platform = detect_platform(url)
     if not platform:
         print(json.dumps({"error": f"无法识别平台:{url}"}, ensure_ascii=False))

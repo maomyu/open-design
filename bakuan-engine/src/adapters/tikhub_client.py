@@ -83,6 +83,28 @@ _URL_PATTERNS = [
 ]
 
 
+_SHORT_HOSTS = ("v.douyin.com", "v.kuaishou.com", "b23.tv", "xhslink.com", "v.ixigua.com", "v.qq.com/x/short")
+
+
+def expand_share_url(url: str, timeout: int = 10) -> str:
+    """把平台短分享链(v.douyin.com/xxx、b23.tv/xxx、xhslink.com/xxx…)展开成真实落地页。
+
+    手机端「复制链接」拿到的一律是短链(2026-08-04 客户实测:粘贴识别/下载全失败,
+    因为短链路径段被当成了视频 ID)。跟随重定向取最终 URL;非短链原样返回,失败也原样返回。"""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+        if not any(h.split("/")[0] in host for h in _SHORT_HOSTS):
+            return url
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"},
+                         allow_redirects=True, timeout=timeout, stream=True)
+        final = str(r.url or "")
+        r.close()
+        return final or url
+    except Exception:  # noqa: BLE001
+        return url
+
+
 def detect_platform(url: str) -> str | None:
     for name, pat in _URL_PATTERNS:
         if pat.search(url):

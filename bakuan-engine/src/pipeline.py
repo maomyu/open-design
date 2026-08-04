@@ -523,7 +523,8 @@ class Pipeline:
 
     # ── 入口 2：单链接 ──
     def run_single_link(self, url: str) -> dict:
-        from src.adapters.tikhub_client import detect_platform
+        from src.adapters.tikhub_client import detect_platform, expand_share_url
+        url = expand_share_url(url)   # 手机短分享链先展开(短码不是视频 ID)
         platform = detect_platform(url)
         if not platform:
             return {"error": f"无法识别平台：{url}"}

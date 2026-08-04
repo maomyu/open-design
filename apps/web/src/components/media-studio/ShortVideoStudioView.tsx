@@ -215,6 +215,16 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   // 口播转写中也要持续轮询(2026-08-04 用户反馈:转写没有进度)——status 落在 extra,
   // 转写完成/失败/无口播时轮询把新状态带回来,「原文案」tab 实时更新。
   const transcriptPending = str(extra.sourceTranscriptStatus) === 'transcribing';
+  // 转写顶栏秒表(2026-08-04 用户要求:开始/转写中/已转写全程持续可见,不点「原文案」tab 也能看到)
+  const [srcTick, setSrcTick] = useState(0);
+  const [srcBannerDismissed, setSrcBannerDismissed] = useState('');
+  useEffect(() => {
+    if (!transcriptPending) return;
+    const t = window.setInterval(() => setSrcTick((v) => v + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [transcriptPending]);
+  const srcStarted = Number((extra as Record<string, unknown>).sourceTranscriptStartedAt) || 0;
+  const srcElapsed = srcStarted ? Math.max(0, Math.floor((Date.now() - srcStarted) / 1000) + srcTick * 0) : 0;
   useEffect(() => {
     if ((!sourceVideoPending && !transcriptPending) || !article) return;
     const id = article.id;
@@ -248,7 +258,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
     };
     try {
       let videoFile = str(ex.sourceVideoFile);
-      await setStatus({ sourceTranscriptStatus: 'transcribing', sourceTranscriptError: '' });
+      await setStatus({ sourceTranscriptStatus: 'transcribing', sourceTranscriptError: '', sourceTranscriptStartedAt: Date.now() });
       if (!videoFile) {
         const url = str(ex.sourceUrl);
         if (!url) {
@@ -654,6 +664,39 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
           </button>
         </div>
       ) : null}
+
+      {/* 素材准备顶栏(2026-08-04 用户要求):下载中/转写中带秒数持续显示,已转写/无口播/失败驻留可关。 */}
+      {(() => {
+        const st = str(extra.sourceTranscriptStatus);
+        const dl = sourceVideoPending;
+        if (!dl && !st) return null;
+        const key = `${article?.id ?? ''}:${dl ? 'dl' : st}`;
+        if (srcBannerDismissed === key) return null;
+        const busyState = dl || st === 'transcribing';
+        const text = dl
+          ? '⏳ 原视频下载中…(下载完成后自动开始转写口播)'
+          : st === 'transcribing'
+            ? `🎙 正在转写口播文案…已等待 ${srcElapsed >= 60 ? `${Math.floor(srcElapsed / 60)} 分 ${srcElapsed % 60} 秒` : `${srcElapsed} 秒`}(一般 1-3 分钟,完成后自动显示在右侧「原文案」)`
+            : st === 'done'
+              ? `✅ 已转写口播文案(${str(extra.sourceTranscript).replace(/\s+/g, '').length} 字)——右侧「原文案」可查看,「AI 写脚本」会按它洗稿`
+              : st === 'empty'
+                ? 'ℹ️ 这条视频没识别到口播(可能纯音乐/无人声)——AI 将按标题+角度写;想洗稿请换有口播的原视频'
+                : `❌ 口播转写失败:${str(extra.sourceTranscriptError) || '未知原因'}`;
+        return (
+          <div className={c('aiGlobalBar')}>
+            {busyState ? <span className={c('aiGlobalPulse')} /> : null}
+            <span className={c('aiGlobalTitle')}>{text}</span>
+            {st === 'failed' ? (
+              <button type="button" className={c('aiGlobalBtn')} disabled={extractBusy} onClick={() => void manualExtract()}>
+                {extractBusy ? '提取中…' : '重新提取'}
+              </button>
+            ) : null}
+            {busyState ? null : (
+              <button type="button" className={c('aiGlobalBtn')} onClick={() => setSrcBannerDismissed(key)}>知道了</button>
+            )}
+          </div>
+        );
+      })()}
 
       <div className={c('tabs')} role="tablist" aria-label="短视频创作台导航">
         {TABS.map((item) => (
