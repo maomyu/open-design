@@ -1650,6 +1650,44 @@ export function topicOriginPlatform(url?: string | null): string {
   return 'other';
 }
 
+/**
+ * 这条选题链接拿到互动区能干什么。
+ *
+ * 互动区的「采集池」直接把创作台的选题候选端上来,但同一个平台的选题来源产出的链接【不是一回事】:
+ * 知乎热榜给的是【问题页】(评论挂在具体回答下,问题页读不到评论)、搜知乎给的才是【回答页】、
+ * AI 选题可能压根没有真实链接;微博热榜给的是 #话题# 搜索页而不是帖子。混在一张列表里,用户点进去
+ * 多半读不到评论、只能发开场评论——看着就像"采集池不对"(2026-08-04 用户反馈)。
+ *
+ * 判定口径必须与【引擎实际能力】一致(bakuan-engine/scripts/fetch_comments.py 的
+ * `_zhihu_id` / `_weibo_id` / `_note_id`),否则界面承诺了读评论、后端却读不到,更糟。
+ *
+ * - `commentable`  能读到评论 → 可以逐条 AI 回复
+ * - `opening-only` 打得开但读不到评论 → 只能发一条开场评论(抢首评)
+ * - `unusable`     根本不是一条内容(搜索页/话题页/无链接) → 不该出现在互动列表里
+ */
+export type InteractionTargetKind = 'commentable' | 'opening-only' | 'unusable';
+
+export function interactionTargetKind(platform: string, url?: string | null): InteractionTargetKind {
+  const u = (url || '').trim();
+  if (!u || topicOriginPlatform(u) !== platform) return 'unusable';
+  if (platform === 'zhihu') {
+    if (/\/answer\/\d+/.test(u)) return 'commentable'; // 回答页:评论接口按 answer_id 取
+    if (/zhuanlan\.zhihu\.com\/p\/\d+/.test(u)) return 'opening-only'; // 专栏文章:暂无评论接口
+    if (/\/question\/\d+/.test(u)) return 'opening-only'; // 只有问题页:读不到评论
+    return 'unusable'; // 搜索页等
+  }
+  if (platform === 'weibo') {
+    if (/\/(detail|status)\/[0-9A-Za-z]+/.test(u)) return 'commentable';
+    if (/weibo\.com\/(?:u\/)?\d+\/[0-9A-Za-z]{6,}/.test(u)) return 'commentable'; // /{uid}/{bid62}
+    return 'unusable'; // s.weibo.com 的 #话题#/搜索页不是帖子
+  }
+  if (platform === 'xiaohongshu') {
+    return /\/(explore|discovery\/item|item)\/[0-9a-zA-Z]+/.test(u) ? 'commentable' : 'unusable';
+  }
+  // 百度知道等:引擎没有评论接口,但页面本身能打开(评论走内置浏览器),按只能开场处理。
+  return 'opening-only';
+}
+
 /** 图片资产的本机绝对路径(「一键存草稿」CDP 注入用)。 */
 export async function fetchStudioAssetPaths(
   platform: string,

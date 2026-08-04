@@ -23,6 +23,7 @@ import {
   fetchMyNotes,
   fetchStudioTopics,
   topicOriginPlatform,
+  interactionTargetKind,
 } from '../providers/media-studio';
 import { studioToast, StudioToastHost } from './media-studio/StudioFeedback';
 import { MonitorBoard } from './media-studio/MonitorBoard';
@@ -211,12 +212,33 @@ export function InteractionView(): JSX.Element {
       const pool = PLATFORM === 'xiaohongshu' ? 'short-video' : PLATFORM;
       const topics = (await fetchStudioTopics(pool)) ?? [];
       setNotesBusy(false);
+      // 按【互动可用性】筛选与排序:同一平台的选题来源产出的链接不是一回事(知乎热榜给问题页、
+      // 搜知乎才给回答页、AI 选题可能没真链接;微博热榜给的是 #话题# 搜索页)。搜索页/话题页这类
+      // 根本不是一条内容的直接不进列表;能读评论的排前面;读不到评论的明确标注「只能发开场评论」,
+      // 免得用户以为是坏了(2026-08-04 用户反馈「知乎采集池不对」)。
       const opts = topics
-        .filter((t) => t.url && topicOriginPlatform(t.url) === PLATFORM)
-        .map((t) => ({ title: t.title, url: t.url, ...(t.heat ? { meta: t.heat } : {}) }));
+        .map((t) => ({ t, kind: interactionTargetKind(PLATFORM, t.url) }))
+        .filter((x) => x.kind !== 'unusable')
+        .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'commentable' ? -1 : 1))
+        .map(({ t, kind }) => ({
+          title: t.title,
+          url: t.url,
+          ...(kind === 'opening-only'
+            ? { meta: t.heat ? `${t.heat} · 只能发开场评论` : '只能发开场评论' }
+            : t.heat
+              ? { meta: t.heat }
+              : {}),
+        }));
       setNoteOptions(opts);
       if (opts.length === 0) {
-        const hint = PLATFORM === 'baidu-zhidao'
+        // 「池子里一条都没有」和「有内容但都不是能互动的链接」是两回事,提示要分开说,
+        // 否则用户对着满是选题的池子被告知"暂无内容",只会更懵。
+        const samePlatform = topics.filter((t) => t.url && topicOriginPlatform(t.url) === PLATFORM).length;
+        const hint = samePlatform > 0
+          ? `采集池里的 ${samePlatform} 条${platformDef.label}选题都不是可互动的链接（多为搜索页/话题页）——${
+              PLATFORM === 'zhihu' ? '去「文章→知乎→选题」用「搜知乎」采集,出的是可评论的回答页' : '换个来源重新采集'
+            };也可在下面手动粘贴链接`
+          : PLATFORM === 'baidu-zhidao'
           ? '采集池里暂无百度知道问题——先去「文章→百度知道→选题」搜相关问题'
           : PLATFORM === 'xiaohongshu'
           ? '采集池里暂无小红书笔记——先去创作台采集爆款'
