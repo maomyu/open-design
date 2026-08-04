@@ -241,7 +241,14 @@ export function MediaStudioView(): JSX.Element {
   // 预览宽度：默认全宽（用户拍板），手机 375px 作为可选切换。
   const [phonePreview, setPhonePreview] = useState(false);
   // 封面候选：一次生成 2 张对比选用；点「用这张」才落为封面。
-  const [coverCandidates, setCoverCandidates] = useState<string[]>([]);
+  // 封面候选【按文章存进 article.extra】。原来只放前端 useState:图其实已经生成并落盘在服务端,
+  // 但文章上没有任何记录——切平台/切导航/刷新后候选全消失,用户看到的就是"封面根本没存上";
+  // 而且切文章时不清空,B 文章会看到 A 文章的候选,点「用这张」就把 A 的图设成了 B 的封面。
+  const [coverCandidates, setCoverCandidatesRaw] = useState<string[]>([]);
+  const setCoverCandidates = (next: string[]): void => {
+    setCoverCandidatesRaw(next);
+    void editArticle({ extra: { coverCandidates: next } });
+  };
   const [coverGenBusy, setCoverGenBusy] = useState(false);
   // 划选改写：正文选中 ≥10 字时，「按我说的改」只改选中段。
   const [reviseSelection, setReviseSelection] = useState('');
@@ -363,6 +370,17 @@ export function MediaStudioView(): JSX.Element {
   // 新/未绑定文章按上次选择自动绑定（用户明确选过才种；没选过保持原状，
   // 「未绑定」选项仍可用）。一篇只种一次。
   const accountSeededRef = useRef<string | null>(null);
+  // 切文章时从 extra 恢复封面候选:切回这篇能看到上次生成的候选,切到别篇不会串台。
+  useEffect(() => {
+    const ex = (article?.extra ?? {}) as Record<string, unknown>;
+    setCoverCandidatesRaw(
+      Array.isArray(ex.coverCandidates)
+        ? (ex.coverCandidates as unknown[]).filter((u): u is string => typeof u === 'string')
+        : [],
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [article?.id]);
+
   useEffect(() => {
     if (!article?.id || accounts.length === 0 || accountSeededRef.current === article.id) return;
     accountSeededRef.current = article.id;
@@ -1097,7 +1115,7 @@ export function MediaStudioView(): JSX.Element {
         return;
       }
       // 去重兜底：同 URL 只留一条（React key 必须唯一）。
-      setCoverCandidates((prev) => [...new Set([...urls, ...prev])].slice(0, 6));
+      setCoverCandidates([...new Set([...urls, ...coverCandidates])].slice(0, 6));
       studioToast.ok(urls.length === 2 ? '2 张候选已生成，对比后点「用这张」' : '生成 1 张候选（另一张失败）');
     };
     const saveCoverToLibrary = async () => {
@@ -1226,7 +1244,7 @@ export function MediaStudioView(): JSX.Element {
                     <button
                       type="button"
                       className={c('btn')}
-                      onClick={() => setCoverCandidates((list) => list.filter((u) => u !== url))}
+                      onClick={() => setCoverCandidates(coverCandidates.filter((u) => u !== url))}
                     >
                       弃
                     </button>

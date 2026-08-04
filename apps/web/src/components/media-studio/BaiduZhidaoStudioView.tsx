@@ -82,6 +82,12 @@ export function BaiduZhidaoStudioView(): JSX.Element {
       typeof v === 'string' && IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : dflt;
     setCoverStyleRaw(pick(ex.coverStyle, 'bigtext'));
     setImageStyleRaw(pick(ex.imageStyle, 'whiteboard'));
+    // 候选也按文章恢复:切回这篇能看到上次生成的候选,切到别篇不会串台。
+    setCoverCandidatesRaw(
+      Array.isArray(ex.coverCandidates)
+        ? (ex.coverCandidates as unknown[]).filter((u): u is string => typeof u === 'string')
+        : [],
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article?.id]);
   const setCoverStyle = (v: string) => { setCoverStyleRaw(v); void editArticle({ extra: { coverStyle: v } }); };
@@ -106,7 +112,14 @@ export function BaiduZhidaoStudioView(): JSX.Element {
   const platformAccounts = usePlatformAccountNames();
   // 封面/配图/实时预览(2026-07-10 用户拍板:和公众号一致)。
   const [coverGenBusy, setCoverGenBusy] = useState(false);
-  const [coverCandidates, setCoverCandidates] = useState<string[]>([]);
+  // 封面候选【按文章存进 article.extra】。原来只放前端 useState:图其实已经生成并落盘在服务端,
+  // 但文章上没有任何记录——切平台/切导航/刷新后候选全消失,用户看到的就是"封面根本没存上";
+  // 而且切文章时不清空,B 文章会看到 A 文章的候选,点「用这张」就把 A 的图设成了 B 的封面。
+  const [coverCandidates, setCoverCandidatesRaw] = useState<string[]>([]);
+  const setCoverCandidates = (next: string[]): void => {
+    setCoverCandidatesRaw(next);
+    void editArticle({ extra: { coverCandidates: next } });
+  };
   const [imageBusy, setImageBusy] = useState(false);
   const [imagePrompt, setImagePrompt] = useState('');
   const [imageNotice, setImageNotice] = useState<string | null>(null);
@@ -285,7 +298,7 @@ export function BaiduZhidaoStudioView(): JSX.Element {
       setImageNotice('error' in first ? first.error : '生成失败');
       return;
     }
-    setCoverCandidates((prev) => [...new Set([...urls, ...prev])].slice(0, 6));
+    setCoverCandidates([...new Set([...urls, ...coverCandidates])].slice(0, 6));
   }
 
   /** 单张配图:AI 生成/上传 → 追加 ![](url) 到正文末尾(发布时原位插入)。 */
