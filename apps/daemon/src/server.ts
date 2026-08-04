@@ -10064,7 +10064,9 @@ export async function startServer({
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
     const url = String(req.body?.url || '').trim();
     if (!url) return res.status(400).json({ error: '缺少 url' });
-    const isPlatformLink = /xiaohongshu\.com|xhslink\.com|douyin\.com|iesdouyin\.com|kuaishou\.com|chenzhongtech\.com|bilibili\.com|b23\.tv/i.test(url);
+    // 知乎/微博也走引擎:它们的正文由各自的 TikHub 详情接口取(engine fetch_source 内部分流),
+    // 【不能退到通用网页抓正文】——知乎有反爬,抓回来的是登录墙而不是回答内容。
+    const isPlatformLink = /xiaohongshu\.com|xhslink\.com|douyin\.com|iesdouyin\.com|kuaishou\.com|chenzhongtech\.com|bilibili\.com|b23\.tv|zhihu\.com|weibo\.(com|cn)/i.test(url);
     let engineErr = '';
     if (isPlatformLink) {
       try {

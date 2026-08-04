@@ -704,7 +704,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               : browserCollect
               ? `选平台 + 填方向 + 勾爆款筛选 → 点「真抓爆款」→ ${collectSource} 直采真实爆款(带粉丝/点赞/评论)、按标准评分列出,十几秒出`
               : aiOnly
-                ? '数据源按需勾选组合（组合会被记住）——候选统一由「AI 帮我选题」产出'
+                ? '数据源按需勾选组合（组合会被记住）——采到的爆款可「全部存为候选」直接进池（创作和互动都用这个池子），也可交给「AI 帮我选题」转成差异化选题'
                 : '数据源按需勾选组合，不同行业用不同搭配（组合会被记住）'}
           </span>
         </div>
@@ -1014,7 +1014,11 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                 <th>{tikhubTargets ? '账号' : '公众号'}</th>
                 <th>数据</th>
                 <th>
-                  {!aiOnly && hits.some((h) => !savedHitUrls.has(h.url || h.title)) ? (
+                  {/* 采集到的爆款【原始链接文章】必须能直接存进候选池——候选池既是创作的入口,也是
+                      互动区的目标来源(2026-08-04 用户定调:四个平台一律「采集→全部存为候选→创作/互动」)。
+                      原来这里被 aiOnly 压着,知乎/微博采到的爆款只能喂给 AI 转题、原始链接进不了池,
+                      互动区因此永远拿不到真实的可评论文章。aiOnly 只该表示「没有浏览器直采」。 */}
+                  {hits.some((h) => !savedHitUrls.has(h.url || h.title)) ? (
                     <button
                       type="button"
                       className={`${c('btn')} ${c('btnPrimary')}`}
@@ -1113,16 +1117,14 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                           <Icon name="sparkles" size={13} /> AI 转题
                         </button>
                       )}{' '}
-                      {aiOnly ? null : (
-                        <button
-                          type="button"
-                          className={c('btn')}
-                          disabled={savedHitUrls.has(hit.url || hit.title)}
-                          onClick={() => void saveHit(hit)}
-                        >
-                          {savedHitUrls.has(hit.url || hit.title) ? '已存' : '存为候选'}
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className={c('btn')}
+                        disabled={savedHitUrls.has(hit.url || hit.title)}
+                        onClick={() => void saveHit(hit)}
+                      >
+                        {savedHitUrls.has(hit.url || hit.title) ? '已存' : '存为候选'}
+                      </button>
                     </td>
                   </tr>
                 );
@@ -1134,7 +1136,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       <div className={c('card')}>
         <div className={c('cardLabel')}>候选选题（{candidates.length}）</div>
         {candidates.length === 0 ? (
-          <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : questionMode ? '还没有候选——用上面「搜相关问题」找到要答的问题,勾选后「AI 帮我选题」沉淀成候选;也可在下方手动添加。' : hideAiTopic ? '还没有候选——上面「真抓爆款」采集后,点「全部存为候选」或每条的「存为候选」进来;也可在下方手动添加。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
+          <div className={c('empty')}>{aiOnly ? '还没有候选——上面采集后点「全部存为候选」把爆款原文直接存进来（互动区也用这个池子）；或填方向点「AI 帮我选题」让 AI 结合热点产出。' : questionMode ? '还没有候选——用上面「搜相关问题」找到要答的问题,勾选后「AI 帮我选题」沉淀成候选;也可在下方手动添加。' : hideAiTopic ? '还没有候选——上面「真抓爆款」采集后,点「全部存为候选」或每条的「存为候选」进来;也可在下方手动添加。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
         ) : (
           <table className={c('table')}>
             <thead>

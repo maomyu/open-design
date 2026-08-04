@@ -20,6 +20,7 @@ import {
   createStudioAiTask,
   createStudioArticle,
   createStudioTopic,
+  fetchSourceMaterial,
   deleteStudioArticle,
   deleteStudioTopic,
   fetchStudioArticle,
@@ -83,6 +84,12 @@ export function ZhihuStudioView(): JSX.Element {
       typeof v === 'string' && IMAGE_STYLE_PRESETS.some((s) => s.id === v) ? v : dflt;
     setCoverStyleRaw(pick(ex.coverStyle, 'bigtext'));
     setImageStyleRaw(pick(ex.imageStyle, 'whiteboard'));
+    // 候选也按文章恢复:切回这篇能看到上次生成的候选,切到别篇不会串台。
+    setCoverCandidatesRaw(
+      Array.isArray(ex.coverCandidates)
+        ? (ex.coverCandidates as unknown[]).filter((u): u is string => typeof u === 'string')
+        : [],
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article?.id]);
   const setCoverStyle = (v: string) => { setCoverStyleRaw(v); void editArticle({ extra: { coverStyle: v } }); };
@@ -107,7 +114,14 @@ export function ZhihuStudioView(): JSX.Element {
   const platformAccounts = usePlatformAccountNames();
   // 封面/配图/实时预览(2026-07-10 用户拍板:和公众号一致)。
   const [coverGenBusy, setCoverGenBusy] = useState(false);
-  const [coverCandidates, setCoverCandidates] = useState<string[]>([]);
+  // 封面候选【按文章存进 article.extra】。原来只放前端 useState:图其实已经生成并落盘在服务端,
+  // 但文章上没有任何记录——切平台/切导航/刷新后候选全消失,用户看到的就是"封面根本没存上";
+  // 而且切文章时不清空,B 文章会看到 A 文章的候选,点「用这张」就把 A 的图设成了 B 的封面。
+  const [coverCandidates, setCoverCandidatesRaw] = useState<string[]>([]);
+  const setCoverCandidates = (next: string[]): void => {
+    setCoverCandidatesRaw(next);
+    void editArticle({ extra: { coverCandidates: next } });
+  };
   const [imageBusy, setImageBusy] = useState(false);
   const [imagePrompt, setImagePrompt] = useState('');
   const [imageNotice, setImageNotice] = useState<string | null>(null);
@@ -286,7 +300,7 @@ export function ZhihuStudioView(): JSX.Element {
       setImageNotice('error' in first ? first.error : '生成失败');
       return;
     }
-    setCoverCandidates((prev) => [...new Set([...urls, ...prev])].slice(0, 6));
+    setCoverCandidates([...new Set([...urls, ...coverCandidates])].slice(0, 6));
   }
 
   /** 单张配图:AI 生成/上传 → 追加 ![](url) 到正文末尾(发布时原位插入)。 */
@@ -324,6 +338,18 @@ export function ZhihuStudioView(): JSX.Element {
     setTab('write');
     if (topic) {
       articleRef.current = created;
+      // 「去创作」先把爆款【原文】拉回来当仿写素材,再动笔。原来只把标题带过去,AI 只能自己联网
+      // 重新检索——既慢又跟你采到的那篇没关系(2026-08-04 用户:去创作就该直接拉原文素材并改写)。
+      // 知乎/微博的正文走各自的 TikHub 详情接口(不抓网页,不受反爬影响)。拉不到就照常写,不阻断。
+      if (topic.url) {
+        studioToast.info('正在取原文素材…');
+        const src = await fetchSourceMaterial(topic.url);
+        if (!('error' in src) && (src.text || '').trim()) {
+          await updateStudioArticle(PLATFORM, created.id, {
+            extra: { topicUrl: topic.url, sourceContent: src.text.slice(0, 4000) },
+          });
+        }
+      }
       void startAiTask('write');
     }
   }
@@ -527,7 +553,11 @@ export function ZhihuStudioView(): JSX.Element {
           {tab === 'topics' ? (
             <TopicsTab
               platform={PLATFORM}
-              aiOnly
+              /* 与小红书同一条路(2026-08-04 用户定调「移除 AI 转题,保持和小红书逻辑一致」):
+                 采集爆款 → 全部存为候选 → 去创作(自动拉原文仿写)/互动。hideAiTopic 同时去掉
+                 「AI 转题」和「AI 帮我选题」两个入口——原文仿写已经能覆盖,不需要再绕 AI 出题。
+                 不传 browserCollect:知乎没有内置浏览器直采,爆款走 TikHub 接口(tikhubTargets)。 */
+              hideAiTopic
               tikhubTargets={[{ id: 'zhihu', label: '知乎' }]}
               topics={topics}
               onAdd={async (draft) => {

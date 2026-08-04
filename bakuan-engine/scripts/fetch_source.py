@@ -21,6 +21,41 @@ def main() -> None:
     url = sys.argv[1].strip()
     from src.adapters.tikhub_client import TikHubClient, detect_platform
 
+    # 知乎/微博走【各自的详情接口】取正文,不走 detect_platform + fetch_detail 那条级联:
+    #   ① 这两家没进 _URL_PATTERNS(故意的,进了会污染 fetch_detail 等其它调用方);
+    #   ② 它们没有"原图直链/媒体直链"这类东西,要的就是标题 + 正文;
+    #   ③ 按网页抓正文会撞反爬(知乎尤其),接口路径已在互动区的 withNote 上验证过。
+    # id 抽取【复用 fetch_comments 那一套】,免得两处规则各写各的、慢慢漂移。
+    if re.search(r"zhihu\.com", url, re.I) or re.search(r"weibo\.(com|cn)", url, re.I):
+        from scripts.fetch_comments import _weibo_id, _zhihu_id
+
+        tik = TikHubClient()
+        if re.search(r"zhihu\.com", url, re.I):
+            answer_id = _zhihu_id(url)
+            question = re.search(r"/question/(\d+)", url)
+            if answer_id:
+                brief = tik.fetch_note_brief("zhihu", answer_id)
+            elif question:
+                # 只有问题链接:取问题标题+描述当素材(能写,但不是某个具体回答的正文)
+                brief = tik.fetch_note_brief("zhihu", question.group(1), zhihu_question=True)
+            else:
+                print(json.dumps({"error": f"识别不出知乎内容 id:{url}"}, ensure_ascii=False))
+                return
+        else:
+            post_id = _weibo_id(url)
+            if not post_id:
+                print(json.dumps({"error": f"识别不出微博帖子 id(话题/搜索页不是帖子):{url}"}, ensure_ascii=False))
+                return
+            brief = tik.fetch_note_brief("weibo", post_id)
+        if not brief:
+            print(json.dumps({"error": "取不到本条正文(内容可能已删,或链接不是一条具体内容)"}, ensure_ascii=False))
+            return
+        print(json.dumps(
+            {"title": brief.get("title", ""), "text": brief.get("text", ""), "images": []},
+            ensure_ascii=False,
+        ))
+        return
+
     platform = detect_platform(url)
     if not platform:
         print(json.dumps({"error": f"无法识别平台:{url}"}, ensure_ascii=False))

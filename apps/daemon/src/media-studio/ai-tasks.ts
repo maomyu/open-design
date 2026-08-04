@@ -110,6 +110,30 @@ async function readSkillBody(skillDirName: string): Promise<string | null> {
   return readWorkbenchFile(path.join('.claude', 'skills', skillDirName, 'SKILL.md'));
 }
 
+/**
+ * 取 markdown 里指定二级小节的内容（含其下的 `###` 子节，到下一个 `##` 为止）。
+ *
+ * 用来只注入技能文件里【当前任务真正用得上】的那一段。技能 SKILL.md 是写给人和 CLI 看的完整
+ * 文档，整份塞进写作提示词既烧 token 又误导模型（例如 AI 检测器那份，大半是命令行用法/参数/
+ * 安装来源，写作时一条都用不上，却会诱导模型去跑命令行工具）。
+ *
+ * 找不到该小节就返回 null，调用方回退到整份文件——技能文件改了标题也不至于把内容整个丢掉。
+ */
+function markdownSection(md: string, heading: string): string | null {
+  const lines = md.split('\n');
+  const start = lines.findIndex((l) => l.trim() === heading);
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    // `## ` 是同级标题(结束);`### ` 不匹配这个正则,子节会被保留。
+    if (/^##\s/.test(lines[i]!)) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n').trim() || null;
+}
+
 export interface ComposeAiTaskInput {
   kind: StudioAiTaskKind;
   platform: string;
@@ -392,14 +416,103 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
     };
   }
 
+  if (kind === 'write' && platform === 'zhihu') {
+    // 知乎是【问答体】,不是公众号推文。原先所有非笔记平台都掉进下面那个通用分支,套的是
+    // 「贝拉公众号爆文方法论 + 公众号体裁 + 1500-2000 字长文」——写知乎却按公众号的路子写,
+    // 既慢(注入 22KB 公众号技能)又不对味(2026-08-04 用户提出要各平台自己的体裁)。
+    const researchMd = String((article.extra as Record<string, unknown>).researchMd ?? '').trim();
+    // 「去创作」时拉回来的爆款原文——有它就照着仿写,不必再联网重查(省一大截时间,也更贴题)。
+    const sourceContent = String((article.extra as Record<string, unknown>).sourceContent ?? '').trim();
+    const sourceBlock = sourceContent
+      ? `## 原文参考（这是你要【仿写】的那篇知乎爆款原文——学它的切入角度/论据组织/表达节奏，但必须换成你自己的立场、素材和例子，绝不照抄，避免判重）\n${sourceContent.slice(0, 2500)}`
+      : '';
+    const researchPhase = sourceContent
+      ? '## 素材：上面那篇原文就是主素材。只有在它缺关键事实（数字/政策/时间）时才补一次检索，否则直接动笔。'
+      : researchMd
+      ? `## 素材简报（已调研——事实优先用这里的，不必重查）\n${researchMd.slice(0, 3000)}`
+      : [
+          '## 第 0 步：先做素材调研（时间盒：最多 2 次检索，够写就动笔）',
+          '1. 用你的检索工具找同题的高赞回答，看它们的结论怎么给、拿什么当论据；',
+          '2. 记下可引用的事实/数字/政策条款（知乎读者会较真，没出处的数字不要写）。',
+        ].join('\n');
+    return {
+      title: `AI 写知乎回答 · ${article.title || article.topic || '未命名'}`,
+      prompt: [
+        '# 任务：写一篇知乎回答/文章（可直接发布）',
+        `选题：${article.topic || article.title || '（按补充要求定）'}`,
+        note.trim() ? `补充要求：${note.trim()}` : '',
+        input.wordCount ? `目标字数：${input.wordCount}` : '',
+        accountBlock(input.account),
+        knowledgeBlock(input.knowledge),
+        sourceBlock,
+        researchPhase,
+        '## 知乎体裁（按这个写，不要写成公众号推文）',
+        '- **结论前置**：开头 2-3 句直接把结论/立场给出来。知乎读者是带着问题来的，不接受铺垫式开场；',
+        '- **一手感**：用「我」的视角讲具体经历、具体数字、具体时间地点（"我 2024 年考的，报名费 XX"），这是知乎最吃的东西；泛泛而谈的科普会被划走；',
+        '- **分点讲透**：用 `##` 小标题分 3-5 块，每块先给判断再给依据，别堆并列；',
+        '- **敢下判断**：该说"不值得"就说不值得，给清楚适用条件（什么人值得、什么人别去）；骑墙话（"因人而异""各有利弊"）是知乎最讨厌的；',
+        '- **有出处**：涉及政策/费用/时间的硬信息标明来源或"以官方公告为准"，不写"据统计""有数据显示"这种模糊引用。',
+        '## 明确不要',
+        '- 不要「谢邀」「先说结论：」这类套路开场（已经烂大街，显得油）；',
+        '- 不要结尾求赞求关注（知乎社区反感，会掉赞）；',
+        '- 不要公众号腔：排比煽情、"你有没有发现"、"划重点"、大量emoji、"小编"；',
+        '- 不要写标题党标题——知乎标题就是问题本身或平实陈述。',
+        '## AI 腔自查（写完过一遍再交付）',
+        '- 套话短语（在这个时代/值得一提的是/需要注意的是）、总结套话（综上所述/总而言之）、聊天痕迹（你知道吗/想象一下）、模糊引用（有数据显示/专家指出）、骑墙表达——发现即改写。',
+        '## 交付',
+        `1. 正文存 /tmp/studio-zhihu-${article.id.slice(0, 8)}.md，执行 \`od studio set ${article.id} --platform zhihu --body-file /tmp/studio-zhihu-${article.id.slice(0, 8)}.md --title "<标题>" --digest "<一句话摘要>"\`；`,
+        '2. 对话里只报 1-3 句总结。',
+        cli,
+      ].filter(Boolean).join('\n\n'),
+    };
+  }
+
+  if (kind === 'write' && platform === 'weibo') {
+    const weiboSource = String((article.extra as Record<string, unknown>).sourceContent ?? '').trim();
+    // 微博是【短平快】:创作台默认字数就是 100-140,而原来它掉进通用分支跑「公众号长文
+    // 1500-2000 字 + 贝拉方法论」,体裁完全错配(2026-08-04)。
+    return {
+      title: `AI 写微博 · ${article.title || article.topic || '未命名'}`,
+      prompt: [
+        '# 任务：写一条微博（可直接发布）',
+        `选题：${article.topic || article.title || '（按补充要求定）'}`,
+        note.trim() ? `补充要求：${note.trim()}` : '',
+        `目标字数：${input.wordCount || '100-140'}（**140 字以内最利传播**——超了会被折叠成"全文"，转发率明显下降；要写长文请走头条文章）`,
+        accountBlock(input.account),
+        knowledgeBlock(input.knowledge),
+        weiboSource
+          ? `## 原文参考（这是你要【仿写】的那条微博爆款——学它的钩子和表达节奏，换你自己的角度和话术，绝不照抄）\n${weiboSource.slice(0, 1200)}`
+          : '',
+        '## 微博体裁（按这个写，不要写成公众号/知乎）',
+        '- **第一句就是钩子**：微博在信息流里只露前一行，第一句抓不住人就滑走了；',
+        '- **有态度**：微博是表达场，要有明确观点或情绪，不要中立播报；',
+        '- **口语短句**：一句一个意思，别用长定语从句；可以用 1-3 个 emoji 断句，不要堆；',
+        '- **话题标签**：正文里自然带 1-2 个 `#话题#`（微博的话题是写在正文里的，不是附在末尾的标签列表）；',
+        '- **可带互动钩子**：结尾一个短问题或"你们呢"，但别写成"欢迎评论区讨论"这种官腔。',
+        '## 明确不要',
+        '- 不要分点、不要小标题、不要 markdown 排版——微博不渲染这些，发出去就是一坨符号；',
+        '- 不要"小编"、不要"划重点"、不要长篇铺垫；',
+        '- 不要把话题标签堆在末尾（那是小红书的写法）。',
+        '## 交付',
+        `1. 正文存 /tmp/studio-weibo-${article.id.slice(0, 8)}.md（**只放要发的那段话本身**），执行 \`od studio set ${article.id} --platform weibo --body-file /tmp/studio-weibo-${article.id.slice(0, 8)}.md --title "<12 字内摘要，仅列表显示用>"\`；`,
+        '2. 对话里只报 1-2 句总结。',
+        cli,
+      ].filter(Boolean).join('\n\n'),
+    };
+  }
+
   if (kind === 'write') {
     const articleType = input.articleType || '信息服务攻略';
     const writerSkill = WRITER_SKILL_BY_TYPE[articleType] ?? 'MY-wechat-writer-service';
-    const [method, writer, detector] = await Promise.all([
+    const [method, writer, detectorFull] = await Promise.all([
       readWorkbenchFile(path.join('.claude', 'skills', 'MY-wechat-shared', 'references', 'viral-method.md')),
       readSkillBody(writerSkill),
       readSkillBody('MY-wechat-ai-detector'),
     ]);
+    // 写作任务只需要 AI 腔的【特征表】(哪些词/句式算 AI 腔),不需要检测器的命令行用法、参数、
+    // 安装来源那些——它们占掉近 3KB,还会诱导模型去跑命令行工具。专门的 ai-check 任务另外注入
+    // 整份技能(那里确实要用 CLI),两处不要混。
+    const detector = detectorFull ? markdownSection(detectorFull, '## 检测类别') ?? detectorFull : null;
     const researchMd = String((article.extra as Record<string, unknown>).researchMd ?? '').trim();
     const topicUrl = String((article.extra as Record<string, unknown>).topicUrl ?? '');
     // 素材调研是写作的必经前置：做过就复用简报，没做过就在同一次任务里先调研。

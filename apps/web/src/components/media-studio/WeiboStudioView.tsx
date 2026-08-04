@@ -17,6 +17,7 @@ import {
   createStudioAiTask,
   createStudioArticle,
   createStudioTopic,
+  fetchSourceMaterial,
   deleteStudioArticle,
   deleteStudioTopic,
   fetchStudioArticle,
@@ -240,6 +241,18 @@ export function WeiboStudioView(): JSX.Element {
     setTab('write');
     if (topic) {
       articleRef.current = created;
+      // 「去创作」先把爆款【原文】拉回来当仿写素材,再动笔。原来只把标题带过去,AI 只能自己联网
+      // 重新检索——既慢又跟你采到的那篇没关系(2026-08-04 用户:去创作就该直接拉原文素材并改写)。
+      // 知乎/微博的正文走各自的 TikHub 详情接口(不抓网页,不受反爬影响)。拉不到就照常写,不阻断。
+      if (topic.url) {
+        studioToast.info('正在取原文素材…');
+        const src = await fetchSourceMaterial(topic.url);
+        if (!('error' in src) && (src.text || '').trim()) {
+          await updateStudioArticle(PLATFORM, created.id, {
+            extra: { topicUrl: topic.url, sourceContent: src.text.slice(0, 4000) },
+          });
+        }
+      }
       void startAiTask('write');
     }
   }
@@ -434,7 +447,9 @@ export function WeiboStudioView(): JSX.Element {
           {tab === 'topics' ? (
             <TopicsTab
               platform={PLATFORM}
-              aiOnly
+              /* 与小红书同一条路:采集爆款 → 全部存为候选 → 去创作(自动拉原文仿写)/互动。
+                 hideAiTopic 去掉「AI 转题」「AI 帮我选题」。不传 browserCollect(微博走 TikHub 接口)。 */
+              hideAiTopic
               tikhubTargets={[{ id: 'weibo', label: '微博' }]}
               topics={topics}
               onAdd={async (draft) => {
