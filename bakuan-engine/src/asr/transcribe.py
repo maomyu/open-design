@@ -18,7 +18,10 @@ class AsrError(Exception):
     def __init__(self, code: str, detail: str = ""):
         self.code = code
         self.detail = detail
-        super().__init__(_ASR_HINT.get(code, f"转写失败({code}) {detail}".strip()))
+        msg = _ASR_HINT.get(code, f"转写失败({code}) {detail}".strip())
+        if detail and code in ("network", "timeout"):
+            msg = f"{msg}(细节:{detail})"
+        super().__init__(msg)
 
 
 _ASR_HINT = {
@@ -131,15 +134,25 @@ def _volc_run(audio_obj: dict, *, duration_s: int = 0) -> str:
     headers = {"Content-Type": "application/json", "x-api-key": key,
                "X-Api-Resource-Id": "volc.bigasr.auc",
                "X-Api-Request-Id": req_id, "X-Api-Sequence": "-1"}
-    try:
-        submit = requests.post(f"{base}/submit", headers=headers,
-                               json={"user": {"uid": "zmt-hot-monitor"},
-                                     "audio": audio_obj,
-                                     "request": {"model_name": "bigmodel",
-                                                 "enable_itn": True, "enable_punc": True}},
-                               timeout=20)
-    except requests.RequestException as e:
-        raise AsrError("network", str(e)[:80]) from e
+    # 提交带整段音频 base64(可达数 MB):读超时放宽到 90s,且瞬时网络抖动重试一次——
+    # 2026-08-04 客户机实测:探针/复跑全通,用户点的那一刻抖一下就被判"连不上",太脆。
+    submit = None
+    sub_err = None
+    for attempt in (1, 2):
+        try:
+            submit = requests.post(f"{base}/submit", headers=headers,
+                                   json={"user": {"uid": "zmt-hot-monitor"},
+                                         "audio": audio_obj,
+                                         "request": {"model_name": "bigmodel",
+                                                     "enable_itn": True, "enable_punc": True}},
+                                   timeout=(15, 90))
+            break
+        except requests.RequestException as e:  # noqa: PERF203
+            sub_err = e
+            if attempt == 1:
+                time.sleep(2)
+    if submit is None:
+        raise AsrError("network", f"提交 {type(sub_err).__name__}") from sub_err
     sub_code = submit.headers.get("X-Api-Status-Code", "")
     if sub_code != "20000000":
         raise AsrError(sub_code, submit.headers.get("X-Api-Message", ""))
@@ -149,12 +162,17 @@ def _volc_run(audio_obj: dict, *, duration_s: int = 0) -> str:
     rounds = int(os.getenv("ASR_MAX_POLL", "40"))
     if duration_s:
         rounds = max(rounds, min(240, duration_s // 3 + 20))
+    net_misses = 0
     for _ in range(rounds):
         time.sleep(3)
         try:
             q = requests.post(f"{base}/query", headers=headers, json={}, timeout=15)
-        except requests.RequestException as e:
-            raise AsrError("network", str(e)[:80]) from e
+        except requests.RequestException as e:  # 单次抖动不判死:连续 3 次才算网络断
+            net_misses += 1
+            if net_misses >= 3:
+                raise AsrError("network", f"查询连续{net_misses}次失败 {type(e).__name__}") from e
+            continue
+        net_misses = 0
         code = q.headers.get("X-Api-Status-Code", "")
         if code == "20000000":            # 完成
             res = (q.json() or {}).get("result") or {}
