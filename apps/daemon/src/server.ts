@@ -10726,7 +10726,10 @@ export async function startServer({
       return res.status(403).json({ error: 'cross-origin request rejected' });
     }
     const videoFile = String(req.body?.videoFile || '').trim();
-    if (!videoFile || !videoFile.startsWith('/')) return res.status(400).json({ error: '缺少本地视频文件路径' });
+    // 绝对路径判定必须跨平台:此前用 startsWith('/'),Windows 的 C:\... 永远过不了,
+    // 客户机上界面转写请求全被 400「缺少本地视频文件路径」拒掉(2026-08-04 客户实测)。
+    if (!videoFile || !path.isAbsolute(videoFile)) return res.status(400).json({ error: '缺少本地视频文件路径' });
+    if (!fs.existsSync(videoFile)) return res.status(422).json({ error: '视频文件不存在(可能已被清理)——重新点一次「去创作」或「提取口播文案」重新下载' });
     try {
       const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
       // 同上:火山语音 key 存在 provider volc-asr,只由 bakuanKeysEnv 注入 ASR_API_KEY。
@@ -10762,7 +10765,7 @@ export async function startServer({
     const desc = String(req.body?.desc || '').trim();
     const tags = String(req.body?.tags || '').trim();
     const coverPath = String(req.body?.coverPath || '').trim();
-    if (!videoFile || !videoFile.startsWith('/')) return res.status(400).json({ error: '缺少本地视频文件路径' });
+    if (!videoFile || !path.isAbsolute(videoFile)) return res.status(400).json({ error: '缺少本地视频文件路径' });
     if (!cookieFile) return res.status(400).json({ error: 'B站还没登录——请先去「账号」页给B站添加账号并扫码登录' });
     try {
       const eng = await resolveBakuanEngine(BAKUAN_ENGINE_CTX);
@@ -10770,7 +10773,7 @@ export async function startServer({
       if (title) args.push('--title', title);
       if (desc) args.push('--desc', desc);
       if (tags) args.push('--tags', tags);
-      if (coverPath.startsWith('/')) args.push('--cover', coverPath);
+      if (coverPath && path.isAbsolute(coverPath)) args.push('--cover', coverPath);   // startsWith('/') 会把 Windows 封面路径静默丢掉
       const r = await execFileBuffered(eng.python, args, { cwd: eng.engineDir, env: eng.env, timeout: 300_000 });
       const s = (r.stdout || '').slice((r.stdout || '').indexOf('{'));
       let parsed: { ok?: boolean; draft_id?: unknown; error?: string };
