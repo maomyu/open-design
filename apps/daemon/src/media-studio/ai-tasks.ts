@@ -175,6 +175,16 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
   const { kind, article, note, platform } = input;
   const cli = cliBlock(input.cliPath);
 
+  // win 没有 /tmp:所有让 agent 落盘的临时文件统一放系统临时目录,并用正斜杠形式
+  // (node 的 fs 和各家 CLI 的工具在 Windows 都认正斜杠;反斜杠嵌进提示词/JSON 会被当转义)。
+  // 2026-08-04 客户机(Windows)实测:硬编码 /tmp 让公众号研究简报/图文正文/终稿写回全部落空。
+  const artId8 = (article?.id ?? 'shared').slice(0, 8);
+  const tmpDirFwd = os.tmpdir().replace(/\\/g, '/');
+  const researchTmp = `${tmpDirFwd}/studio-research-${artId8}.md`;
+  const noteTmp = `${tmpDirFwd}/studio-note-${artId8}.md`;
+  const noteIdeasTmp = `${tmpDirFwd}/studio-note-ideas-${artId8}.txt`;
+  const articleTmp = `${tmpDirFwd}/studio-article-${artId8}.md`;
+
   if (kind === 'topics') {
     const direction = note.trim() || '（用户没给方向——先按账号人设推断最合适的领域）';
     const picked = (input.picked ?? []).slice(0, 8);
@@ -240,10 +250,10 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '2. 用你可用的搜索/抓取工具再补 2-4 个独立信源（数据、案例、反方观点）。',
         '3. 产出简报 markdown：核心事实（带来源）/ 可用数据与案例 / 大家都在写什么角度 / 差异化切入建议 / 风险与需核实点。',
         '## 交付',
-        `1. 简报存临时文件 /tmp/studio-research-${article.id.slice(0, 8)}.md；`,
+        `1. 简报存临时文件 ${researchTmp}；`,
         '2. 用 node 一行把它写进文章的 extra.researchMd（写作时会自动带上）：',
         '```bash',
-        `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{researchMd:fs.readFileSync("/tmp/studio-research-${article.id.slice(0, 8)}.md","utf8")}})}).then(r=>console.log("saved",r.status))'`,
+        `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{researchMd:fs.readFileSync("${researchTmp}","utf8")}})}).then(r=>console.log("saved",r.status))'`,
         '```',
         cli,
       ].filter(Boolean).join('\n\n'),
@@ -310,9 +320,9 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
               ? `1. 抓选题原文：\`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${article.platform}/article-detail" -H 'Content-Type: application/json' -d '{"url":"${topicUrl}"}'\`；`
               : '1. 用你的检索工具找 2-3 篇同题优质内容（看结构、看评论区在问什么）。',
             '2. 记下：可用事实/数字、大家的写法、评论区高频疑问（笔记的互动钩子就从这来）。',
-            `3. 把简报存 /tmp/studio-research-${article.id.slice(0, 8)}.md 并写回文章（下次写作直接复用，不再重查）：`,
+            `3. 把简报存 ${researchTmp} 并写回文章（下次写作直接复用，不再重查）：`,
             '```bash',
-            `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{researchMd:fs.readFileSync("/tmp/studio-research-${article.id.slice(0, 8)}.md","utf8")}})}).then(r=>console.log("research saved",r.status))'`,
+            `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{researchMd:fs.readFileSync("${researchTmp}","utf8")}})}).then(r=>console.log("research saved",r.status))'`,
             '```',
           ].join('\n');
     return {
@@ -351,11 +361,11 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         '- 后续每张一个要点。',
         '- 每条只写【画面内容】(主体/构图/信息),**禁止写画风词**(插画/手绘/摄影/水彩/3D/卡通等)——画风由图集页的风格模板在生图时动态注入,描述里写了画风会和用户选的风格打架。',
         '## 交付',
-        `1. 正文存临时文件 /tmp/studio-note-${article.id.slice(0, 8)}.md（纯正文，不含标题/标签/图集建议）；`,
-        `2. \`od studio set ${article.id} --platform ${article.platform} --body-file /tmp/studio-note-${article.id.slice(0, 8)}.md --title "<≤20字标题>" --digest "<一句话简介>" --tags "标签1,标签2"\`；`,
-        `3. 图集画面建议（每行一张的画面描述）存 /tmp/studio-note-ideas-${article.id.slice(0, 8)}.txt，写进 extra：`,
+        `1. 正文存临时文件 ${noteTmp}（纯正文，不含标题/标签/图集建议）；`,
+        `2. \`od studio set ${article.id} --platform ${article.platform} --body-file ${noteTmp} --title "<≤20字标题>" --digest "<一句话简介>" --tags "标签1,标签2"\`；`,
+        `3. 图集画面建议（每行一张的画面描述）存 ${noteIdeasTmp}，写进 extra：`,
         '```bash',
-        `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{imageIdeas:fs.readFileSync("/tmp/studio-note-ideas-${article.id.slice(0, 8)}.txt","utf8")}})}).then(r=>console.log("ideas saved",r.status))'`,
+        `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{imageIdeas:fs.readFileSync("${noteIdeasTmp}","utf8")}})}).then(r=>console.log("ideas saved",r.status))'`,
         '```',
         '4. 写完先按 AI 腔自查清一遍（机翻感/套话），再交付。',
         cli,
@@ -465,9 +475,9 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
             ? `1. 抓选题原文：\`curl -s -X POST "$OD_DAEMON_URL/api/media-studio/${article.platform}/article-detail" -H 'Content-Type: application/json' -d '{"url":"${topicUrl}"}'\`（返回 title/account/markdown；接口失败就跳过原文，别空转重试）。`
             : '1. 没有选题原文链接——直接用你的检索工具找 2-4 篇高质量相关内容。',
           '2. 补齐关键事实：涉及费用/时长/政策/流程的数字必须有出处；顺手记下大家都在写的角度，好做差异化。',
-          `3. 把简报（核心事实带来源/可用数据案例/差异化切入/需核实点）存 /tmp/studio-research-${article.id.slice(0, 8)}.md，并写回文章备查：`,
+          `3. 把简报（核心事实带来源/可用数据案例/差异化切入/需核实点）存 ${researchTmp}，并写回文章备查：`,
           '```bash',
-          `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{researchMd:fs.readFileSync("/tmp/studio-research-${article.id.slice(0, 8)}.md","utf8")}})}).then(r=>console.log("research saved",r.status))'`,
+          `node -e 'const fs=require("fs");fetch(process.env.OD_DAEMON_URL+"/api/media-studio/${article.platform}/articles/${article.id}",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({extra:{researchMd:fs.readFileSync("${researchTmp}","utf8")}})}).then(r=>console.log("research saved",r.status))'`,
           '```',
           '4. 然后基于简报里的事实写作——正文里的数字、结论必须能在简报中找到依据。',
         ].join('\n');
@@ -520,9 +530,9 @@ export async function composeStudioAiTask(input: ComposeAiTaskInput): Promise<Co
         writer ? `## 文章类型写法（${writerSkill}，落笔层）\n${writer}` : '（工作台写作技能文件缺失——按公众号最佳实践写。）',
         detector ? `## AI 腔自查（写完必须过一遍再交付，与写作同一次完成）\n${detector}` : '',
         '## 交付（写作 + 清 AI 腔一次完成，不分两趟；但要两次写回让用户实时看到）',
-        `1. **初稿写完立刻先写回一次**（用户界面在实时等着看）：初稿存 /tmp/studio-article-${article.id.slice(0, 8)}.md，马上执行 \`od studio set ${article.id} --body-file /tmp/studio-article-${article.id.slice(0, 8)}.md --title "<拟好的标题,≤21个中文字符>" --digest "<一句话摘要>"\`——**标题和摘要初稿就要有**，不许留空到最后；`,
+        `1. **初稿写完立刻先写回一次**（用户界面在实时等着看）：初稿存 ${articleTmp}，马上执行 \`od studio set ${article.id} --body-file ${articleTmp} --title "<拟好的标题,≤21个中文字符>" --digest "<一句话摘要>"\`——**标题和摘要初稿就要有**，不许留空到最后；`,
         '2. 然后**按上面的 AI 腔自查方法通读清理一遍**（机翻感/套话/空转过渡/防御性自证）；',
-        `3. 清理后的终稿覆盖同一个临时文件，再写回一次：\`od studio set ${article.id} --body-file /tmp/studio-article-${article.id.slice(0, 8)}.md --title "<终稿标题>" --digest "<一句话摘要>"\`。`,
+        `3. 清理后的终稿覆盖同一个临时文件，再写回一次：\`od studio set ${article.id} --body-file ${articleTmp} --title "<终稿标题>" --digest "<一句话摘要>"\`。`,
         cli,
       ].filter(Boolean).join('\n\n'),
     };

@@ -28,7 +28,8 @@ def main() -> None:
 
     video = a.video or ""
     if not video and a.url:
-        out = f"/tmp/bc_extract_{os.getpid()}.mp4"
+        import tempfile
+        out = os.path.join(tempfile.gettempdir(), f"bc_extract_{os.getpid()}.mp4")  # win 没有 /tmp
         dl_err = ""
         try:
             r = subprocess.run(

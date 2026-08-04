@@ -960,7 +960,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                     </label>
                     {str(extra.coverPath) ? (
                       <>
-                        <span className={c('cardHint')}>已选：{str(extra.coverPath).split('/').pop()}</span>
+                        <span className={c('cardHint')}>已选：{str(extra.coverPath).split(/[\\/]/).pop()}</span>
                         <button type="button" className={c('btn')} onClick={() => editArticle({ extra: { coverPath: '' } })}>移除</button>
                       </>
                     ) : null}
@@ -1149,7 +1149,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
                   ))}
                 </div>
               ) : null}
-              <div className={c('videoCardMeta')}>{videoPath ? `成片：${videoPath.split('/').pop()}` : '成片：未就绪'}</div>
+              <div className={c('videoCardMeta')}>{videoPath ? `成片：${videoPath.split(/[\\/]/).pop()}` : '成片：未就绪'}</div>
             </div>
             )}
           </div>
