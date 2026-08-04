@@ -12,6 +12,7 @@ import {
   fetchTikhubFeed,
   collectScoreTopics,
   downloadStudioVideo,
+  fetchSourceMaterial,
   downloadVideoByUrl,
   extractScriptFromVideo,
 } from '../../providers/media-studio';
@@ -233,6 +234,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const [angle, setAngle] = useState('');
   const [source, setSource] = useState('');
   const [url, setUrl] = useState('');
+  // 「粘贴链接一键识别」(2026-08-04 用户拍板:四框全手填太麻烦——只有链接是必须的,
+  // 标题/来源/原文案都能从链接识别出来;识别到的原素材随选题沉淀,去创作直接有洗稿原料)
+  const [recognizeBusy, setRecognizeBusy] = useState(false);
+  const [fetchedMaterial, setFetchedMaterial] = useState<{ sourceContent?: string; sourceImages?: string[] } | null>(null);
   const [direction, setDirection] = useState(restored.direction);
   // 🎯 爆款筛选（可选，喂给「AI 帮我选题」的爆款雷达）：时间窗 + 可组合的爆款规则（命中任一）。
   const [radarWindow, setRadarWindow] = useState<'all' | '7d' | '30d' | '180d'>('180d');
@@ -634,6 +639,44 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     }
   }
 
+  /** 链接 → 平台名(自动填「来源」)。 */
+  function urlPlatformLabel(u: string): string {
+    if (/douyin\.com|iesdouyin/i.test(u)) return '抖音';
+    if (/xiaohongshu\.com|xhslink/i.test(u)) return '小红书';
+    if (/kuaishou\.com|chenzhongtech/i.test(u)) return '快手';
+    if (/bilibili\.com|b23\.tv/i.test(u)) return 'B站';
+    if (/channels\.weixin|finder\.video/i.test(u)) return '视频号';
+    if (/mp\.weixin\.qq\.com/i.test(u)) return '公众号';
+    return '网页链接';
+  }
+
+  async function recognizeUrl() {
+    const u = url.trim();
+    if (!u) { studioToast.err('先粘贴原文链接再点识别'); return; }
+    setRecognizeBusy(true);
+    try {
+      const r = await fetchSourceMaterial(u);
+      if ('error' in r) {
+        studioToast.err(`识别失败:${r.error}——可手动填标题后直接「添加」(链接会一并存进选题)`);
+        return;
+      }
+      if (r.title.trim()) setTitle(r.title.trim());
+      setSource(urlPlatformLabel(u));
+      setFetchedMaterial({
+        ...(r.text.trim() ? { sourceContent: r.text } : {}),
+        ...(r.images.length > 0 ? { sourceImages: r.images } : {}),
+      });
+      const bits = [
+        r.title.trim() ? '标题' : '',
+        r.text.trim() ? `原文${r.text.replace(/\s+/g, '').length}字` : '',
+        r.images.length > 0 ? `原图${r.images.length}张` : '',
+      ].filter(Boolean);
+      studioToast.ok(`已识别 ✓(${bits.join('/') || '仅链接'})——确认标题没问题就点「添加」`);
+    } finally {
+      setRecognizeBusy(false);
+    }
+  }
+
   async function submit() {
     if (!canAdd) return;
     // 存失败时【保留输入】并报错——旧写法无条件清空四个框,失败=内容丢了还零提示
@@ -643,6 +686,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       ...(angle.trim() ? { angle: angle.trim() } : {}),
       ...(source.trim() ? { source: source.trim() } : {}),
       ...(url.trim() ? { url: url.trim() } : {}),
+      // 识别到的原文案/原图随选题沉淀——去创作时直接是洗稿原料(和「存为候选」同款语义)
+      ...(fetchedMaterial?.sourceContent ? { sourceContent: fetchedMaterial.sourceContent } : {}),
+      ...(fetchedMaterial?.sourceImages ? { sourceImages: fetchedMaterial.sourceImages } : {}),
     });
     if (ok === false) {
       studioToast.err('添加失败——确认爆创后台在运行;你填的内容已保留,可直接重试');
@@ -653,6 +699,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     setAngle('');
     setSource('');
     setUrl('');
+    setFetchedMaterial(null);
   }
 
   return (
@@ -1197,13 +1244,27 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       <div className={c('card')}>
         <div className={c('cardLabel')}>
           添加选题
-          <span className={c('cardHint')}>手动记一个想法，或把 AI 对话/爆文榜里的候选沉淀进来</span>
+          <span className={c('cardHint')}>最快:粘贴链接 → 点「识别」自动填标题/来源、带回原文案 → 点「添加」;也可纯手动记一个想法</span>
+        </div>
+        <div className={c('row')}>
+          <input
+            className={`${c('input')} ${c('grow')}`}
+            value={url}
+            placeholder="粘贴原文链接（抖音/小红书/公众号/B站等）→ 点「识别」"
+            onChange={(e) => { setUrl(e.target.value); setFetchedMaterial(null); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void recognizeUrl();
+            }}
+          />
+          <button type="button" className={c('btn')} disabled={recognizeBusy || !url.trim()} onClick={() => void recognizeUrl()}>
+            {recognizeBusy ? '识别中…' : '识别'}
+          </button>
         </div>
         <div className={c('row')}>
           <input
             className={`${c('input')} ${c('grow')}`}
             value={title}
-            placeholder="选题标题（必填）"
+            placeholder="选题标题（必填；点「识别」可自动填）"
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') void submit();
@@ -1214,7 +1275,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           <input
             className={`${c('input')} ${c('grow')}`}
             value={angle}
-            placeholder="切入角度（可选）"
+            placeholder="切入角度（可选，AI 会按这个角度写）"
             onChange={(e) => setAngle(e.target.value)}
           />
           <input
@@ -1224,16 +1285,18 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             placeholder="来源（可选）"
             onChange={(e) => setSource(e.target.value)}
           />
-          <input
-            className={`${c('input')} ${c('grow')}`}
-            value={url}
-            placeholder="原文链接（可选）"
-            onChange={(e) => setUrl(e.target.value)}
-          />
           <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} disabled={!canAdd} onClick={() => void submit()}>
             添加
           </button>
         </div>
+        {fetchedMaterial ? (
+          <div className={c('cardHint')}>
+            已带回原素材:{fetchedMaterial.sourceContent ? `原文 ${fetchedMaterial.sourceContent.replace(/\s+/g, '').length} 字` : ''}
+            {fetchedMaterial.sourceContent && fetchedMaterial.sourceImages ? ' + ' : ''}
+            {fetchedMaterial.sourceImages ? `原图 ${fetchedMaterial.sourceImages.length} 张` : ''}
+            ——「添加」后随选题沉淀,去创作直接洗稿
+          </div>
+        ) : null}
       </div>
       )}
     </>
