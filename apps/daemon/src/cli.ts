@@ -2373,7 +2373,7 @@ async function runStudio(args) {
   od studio topics [--json] · topic-add --title t [--angle a] [--url u] [--source s] [--heat 高|中|低]
   od studio find --keyword "<方向>" [--feed radar|hot|search|kwdb|sug|peers] [--accounts "号1,号2"] [--days 7]
   od studio find --feed tikhub --target douyin|xiaohongshu|kuaishou|zhihu|weibo [--mode hot|search] [--keyword w]
-  od studio topic-verify --url u · topic-comments --url u · account-rank [--type N] [--page N]
+  od studio topic-verify --url u · topic-comments --url u · account-rank --keyword 领域词 [--page N](¥0.2/条)
   od studio fetch --url "<原文链接>"                          # 抓原文转 markdown(素材)
 
 【AI 任务】(与界面「AI 帮我…」同一引擎;跑完产物自动落库)
@@ -2793,6 +2793,8 @@ async function runStudio(args) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        // 上游类目榜 2026-08-21 停服,替代接口按关键词找号(¥0.2/条,一页约20条≈¥4)
+        ...(typeof flags.keyword === 'string' && flags.keyword ? { keyword: flags.keyword } : {}),
         ...(typeof flags.type === 'string' && flags.type ? { type: Number(flags.type) } : {}),
         ...(typeof flags.page === 'string' && flags.page ? { page: Number(flags.page) } : {}),
       }),

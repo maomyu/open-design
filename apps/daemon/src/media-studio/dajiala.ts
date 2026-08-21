@@ -137,6 +137,20 @@ export async function dajialaHotSearch(
   apiKey: string,
   opts: { keyword?: string; days?: number; page?: number },
 ): Promise<MediaTopicHit[]> {
+  // 2026-08-21 上游变更:hot_typical_search 返回 `2005 接口已停止维护`,且已从极致了
+  // 官方接口目录移除(确认永久下线)。爆文榜改由「搜一搜实时搜全部(可排序)」web_search
+  // 按热度排序承接:同为热文语义,单次 ¥0.5(反而比旧版近半年 8 段 ¥3.2 便宜)。
+  // 注意:替代源不支持时间窗过滤,days 参数不再生效(保留签名兼容调用方)。
+  void opts.days;
+  void opts.page;
+  const hits = await dajialaWebSearch(apiKey, { keyword: opts.keyword ?? '', sort: 'hottest' });
+  return hits.sort((a, b) => (b.readNum ?? 0) - (a.readNum ?? 0));
+}
+
+async function dajialaHotSearchLegacy(
+  apiKey: string,
+  opts: { keyword?: string; days?: number; page?: number },
+): Promise<MediaTopicHit[]> {
   const days = Math.max(1, opts.days ?? 7);
   const fetchWindow = async (fromDaysAgo: number, toDaysAgo: number) => {
     const form = new FormData();
@@ -306,12 +320,22 @@ export async function dajialaKwSearch(
   apiKey: string,
   opts: { keyword: string; page?: number },
 ): Promise<MediaTopicHit[]> {
-  const data = await postWithRetry(KWDB_URL, () => ({
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kw: opts.keyword, key: apiKey, page: opts.page ?? 1 }),
-  }));
-  requireOk(data, '全库搜索');
+  let data: Record<string, unknown>;
+  try {
+    data = await postWithRetry(KWDB_URL, () => ({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kw: opts.keyword, key: apiKey, page: opts.page ?? 1 }),
+    }));
+    requireOk(data, '全库搜索');
+  } catch (err) {
+    // kw_search 已不在极致了官方接口目录(2026-08-21 核对),随时可能像爆文榜一样停服。
+    // 命中「停止维护」时自动切 web_search 承接(¥0.5/次),用户无感。其余错误如实抛出。
+    if (err instanceof Error && /停止维护/.test(err.message)) {
+      return dajialaWebSearch(apiKey, { keyword: opts.keyword, sort: 'hottest' });
+    }
+    throw err;
+  }
   const items = Array.isArray(data.data) ? (data.data as RawItem[]) : [];
   return items
     .map((it) => ({
@@ -367,7 +391,8 @@ export async function dajialaPeersLatest(
 
 const READ_ZAN_PRO_URL = 'https://www.dajiala.com/fbmain/monitor/v3/read_zan_pro';
 const COMMENT_URL = 'https://www.dajiala.com/fbmain/monitor/v3/article_comment2';
-const RANK_URL = 'https://www.dajiala.com/fbmain/rank/v1/get_account_type_rank';
+const RANK_URL = 'https://www.dajiala.com/fbmain/rank/v1/get_account_type_rank'; // 2026-08-21 上游停服,留档
+const ACCOUNT_SEARCH_URL = 'https://www.dajiala.com/fbmain/monitor/v3/wx_account/search';
 
 export interface ArticleEngagement {
   read: number;
@@ -434,30 +459,36 @@ export interface RankedAccount {
 /** 公众号类目榜（实测外层是 error_code 而非 code；空参=默认总榜，type/page 原样透传）。 */
 export async function dajialaAccountRank(
   apiKey: string,
-  opts: { type?: number; page?: number },
+  opts: { keyword?: string; type?: number; page?: number },
 ): Promise<RankedAccount[]> {
-  const data = await postWithRetry(RANK_URL, () => ({
+  // 2026-08-21 上游变更:get_account_type_rank 返回 `2005 接口已停止维护`,已从官方目录
+  // 移除。改由「根据关键字查询公众号」wx_account/search 承接:输入领域关键词,返回该领域
+  // 公众号(带粉丝数/头条均阅/均赞)。计费方式变了:**¥0.2/条,一页约 20 条 ≈ ¥4/次**,
+  // 比旧榜单贵——调用方(UI/CLI)必须把单价写在入口上,别让用户盲点。
+  const keyword = String(opts.keyword ?? '').trim();
+  if (!keyword) {
+    throw new DajialaError(
+      '公众号类目榜的上游接口已停止维护;替代方案需要提供领域关键词(如「健身」「情感」),'
+      + '按关键词返回该领域公众号(极致了按 ¥0.2/条计费,一页约 20 条 ≈ ¥4)。',
+    );
+  }
+  const data = await postWithRetry(ACCOUNT_SEARCH_URL, () => ({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      key: apiKey,
-      ...(opts.type != null ? { type: opts.type } : {}),
-      ...(opts.page != null ? { page: opts.page } : {}),
-    }),
+    body: JSON.stringify({ keyword, page: opts.page ?? 1, key: apiKey, verifycode: '' }),
   }));
   // 走统一的 requireOk(它已同时认 code/error_code):否则本路径的余额/鉴权报错拿不到
   // 「是哪家的余额、去哪充」提示——客户曾据此误判成 DeepSeek 欠费(2026-08-02 反馈)。
-  requireOk(data, '公众号类目榜');
-  const outer = (data.data ?? {}) as Record<string, unknown>;
-  const items = Array.isArray(outer.data) ? (outer.data as RawItem[]) : [];
+  requireOk(data, '领域公众号搜索');
+  const items = Array.isArray(data.data) ? (data.data as RawItem[]) : [];
   const num = (v: unknown) => (v == null || v === '' ? null : Number(v) || null);
-  return items.map((it) => ({
-    rank: Number(it.rank ?? 0) || 0,
-    name: String(it.mp_name ?? '（未知）'),
+  return items.map((it, i) => ({
+    rank: i + 1,
+    name: String(it.name ?? '（未知）'),
     wxid: String(it.wxid ?? ''),
-    avgRead: num(it.avg_readnum),
-    avgTopRead: num(it.avg_top_readnum),
-    postTotal: num(it.post_total),
-    index: it.dajiala_index != null ? String(it.dajiala_index) : null,
+    avgRead: num(it.fans),            // 无榜单均阅字段,fans 放入首列量级参考
+    avgTopRead: num(it.avg_top_read),
+    postTotal: null,
+    index: it.avg_top_zan != null && it.avg_top_zan !== '' ? `赞${it.avg_top_zan}` : null,
   }));
 }

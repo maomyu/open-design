@@ -515,6 +515,7 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   app.post('/api/media-studio/:platform/topics/account-rank', withDajialaKey(async (key, body) => {
     return {
       accounts: await dajialaAccountRank(key, {
+        ...(body.keyword != null ? { keyword: String(body.keyword) } : {}),
         ...(body.type != null ? { type: Number(body.type) } : {}),
         ...(body.page != null ? { page: Number(body.page) } : {}),
       }),
