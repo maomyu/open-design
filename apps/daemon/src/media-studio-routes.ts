@@ -110,6 +110,7 @@ import {
 import { composeImagePrompt, imageMarkerContext } from './media-studio/image-context.js';
 import { fontSizesFromExtra, renderWechatHtml, WECHAT_SKINS } from './media-studio/wechat-render.js';
 import { publishWechatDraft, WechatPublishError } from './media-studio/wechat-publish.js';
+import { listMediaDiscoverySnapshots } from './media-studio/discovery-store.js';
 
 const STUDIO_PLATFORM_CN: Record<string, string> = {
   douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书', shipinhao: '视频号',
@@ -2213,6 +2214,10 @@ export function registerMediaStudioRoutes(app: Express, deps: RegisterMediaStudi
   });
 
   // ---- topics（选题导航） ----
+  app.get('/api/media-studio/:platform/discoveries', (req, res) => {
+    res.json({ snapshots: listMediaDiscoverySnapshots(db, req.params.platform) });
+  });
+
   app.get('/api/media-studio/:platform/topics', (req, res) => {
     res.json({ topics: listTopics(db, req.params.platform) });
   });

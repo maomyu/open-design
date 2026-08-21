@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { migrateCritique } from './critique/persistence.js';
 import { migrateMediaTasks } from './media-tasks.js';
 import { migratePlugins } from './plugins/persistence.js';
+import { migrateMediaDiscovery } from './media-studio/discovery-store.js';
 
 type SqliteDb = Database.Database;
 type DbRow = Record<string, any>;
@@ -319,6 +320,7 @@ function migrate(db: SqliteDb): void {
     CREATE INDEX IF NOT EXISTS idx_media_publishes_article
       ON media_publishes(article_id, created_at DESC);
   `);
+  migrateMediaDiscovery(db);
   // Forward-compatible column add for databases created before metadata_json.
   // SQLite has no IF NOT EXISTS for ALTER, so we check pragma_table_info.
   const cols = db.prepare(`PRAGMA table_info(projects)`).all() as DbRow[];

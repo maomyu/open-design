@@ -23,6 +23,7 @@ import {
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { studioToast, StudioToastHost } from './StudioFeedback';
 import { useOrphanRun } from './useOrphanRun';
+import { keepMediaStudioListOnLoadFailure } from './refresh-state';
 import { NoteStudioView } from './NoteStudioView';
 import { ShortVideoStudioView } from './ShortVideoStudioView';
 import type { SauPlatformId } from '@open-design/contracts';
@@ -108,7 +109,8 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
   };
 
   const refreshTopics = useCallback(async () => {
-    setTopics((await fetchStudioTopics(TOPIC_POOL)) ?? []);
+    const loaded = await fetchStudioTopics(TOPIC_POOL);
+    setTopics((current) => keepMediaStudioListOnLoadFailure(current, loaded));
   }, []);
   useEffect(() => {
     void refreshTopics();

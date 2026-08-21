@@ -439,7 +439,11 @@ import {
   type EngineContext,
 } from './media-studio/bakuan-engine.js';
 import { describeCollectFailure } from './media-studio/collect-errors.js';
-import { createTopic } from './media-studio/store.js';
+import {
+  mediaTopicHitsFromEngine,
+  saveFeishuMonitorDiscoverySnapshots,
+  saveMediaDiscoverySnapshot,
+} from './media-studio/discovery-store.js';
 import { registerPluginDraftRoutes } from './plugin-draft-routes.js';
 import { registerSkillDraftRoutes } from './skill-draft-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
@@ -10030,40 +10034,11 @@ export async function startServer({
   // 完整管道常超 5 分钟——不先发响应头,od CLI/外部智能体侧必 UND_ERR_HEADERS_TIMEOUT 断线
   // (daemon 这边其实还在跑,白干)。心跳写空格是 JSON 合法前导空白,消费端 resp.json() 无感。
   // 代价:错误只能编码在 200 体里({error}),od CLI 的 post 守卫据此设退出码。
-  /** 引擎采到的选题候选 → 回灌本地 media_topics,让创作台「候选选题」直接看得到。
-   *  此前定时监控采的爆款只写飞书,创作台一条都不显示,用户问"监控到的视频在哪操作"
-   *  (2026-08-02 客户反馈)。按 URL 去重,已存在的不重复插。 */
-  function backfillTopicsFromEngine(items: unknown): number {
-    if (!Array.isArray(items) || items.length === 0) return 0;
-    let added = 0;
-    for (const raw of items.slice(0, 60)) {
-      try {
-        const it = raw as Record<string, unknown>;
-        const title = String(it['标题'] ?? '').trim();
-        const url = String(it['查看原文'] ?? it['链接'] ?? '').trim();
-        if (!title) continue;
-        // 同一条爆款重复采集(定时任务天天跑)不重复入库:按 url 优先,没有 url 用标题。
-        const dupe = url
-          ? db.prepare(`SELECT id FROM media_topics WHERE url = ? LIMIT 1`).get(url)
-          : db.prepare(`SELECT id FROM media_topics WHERE title = ? LIMIT 1`).get(title);
-        if (dupe) continue;
-        const zh = String(it['平台'] ?? '').trim();
-        const pool = zh === '公众号' ? 'wechat-mp' : 'short-video';
-        const heat = it['热度'] != null ? String(it['热度']) : '';
-        createTopic(db, pool, {
-          title,
-          ...(url ? { url } : {}),
-          ...(heat ? { heat } : {}),
-          source: zh ? `监控采集·${zh}` : '监控采集',
-          // 评分理由当切入角度的种子;原文案(小红书图文有)带过去给 AI 洗稿。
-          ...(it['评分理由'] ? { angle: String(it['评分理由']).slice(0, 200) } : {}),
-          ...(it['原文案'] ? { sourceContent: String(it['原文案']) } : {}),
-          ...(Array.isArray(it['原图']) ? { sourceImages: it['原图'] as string[] } : {}),
-        });
-        added += 1;
-      } catch { /* 单条脏数据不影响整批 */ }
-    }
-    return added;
+  /** 飞书监控结果独立常驻，不再自动冒充用户已经确认的「候选选题」。用户仍可在创作台
+   *  看见并手动存为候选；新一轮为空时 discovery store 会保留上一批非空结果。 */
+  function persistEngineDiscoveries(items: unknown): Record<string, number> | null {
+    if (!Array.isArray(items)) return null;
+    return saveFeishuMonitorDiscoverySnapshots(db, items);
   }
   async function respondBaokuanLong(res: any, pipeArgs: string[], errPrefix: string): Promise<void> {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -10071,8 +10046,8 @@ export async function startServer({
     const beat = setInterval(() => { try { res.write(' '); } catch { /* 客户端已断,end 时收尾 */ } }, 15_000);
     try {
       const data = await runBaokuanPipeline(pipeArgs);
-      const backfilled = backfillTopicsFromEngine((data as Record<string, unknown>)?.['选题候选']);
-      if (backfilled > 0) (data as Record<string, unknown>).backfilledTopics = backfilled;
+      const persisted = persistEngineDiscoveries((data as Record<string, unknown>)?.['选题候选']);
+      if (persisted) (data as Record<string, unknown>).persistedDiscoveries = persisted;
       res.end(JSON.stringify(data));
     } catch (err) {
       res.end(JSON.stringify({ error: errPrefix + dcErr(err) }));
@@ -10286,7 +10261,30 @@ export async function startServer({
       try { parsed = JSON.parse(s); } catch {
         return res.status(500).json({ error: '评分失败：' + (r.stderr || r.stdout).slice(-300) });
       }
-      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null, feishuSynced: parsed.feishu_synced !== false });
+      const rawTopics = Array.isArray(parsed['选题候选']) ? parsed['选题候选'] : [];
+      const discoveryPlatform = String(
+        req.body?.discoveryPlatform || 'short-video',
+      ).trim().slice(0, 100);
+      const discoveryScopeKey = String(
+        req.body?.discoveryScopeKey || `${discoveryPlatform}|${platforms}`,
+      ).trim().slice(0, 200);
+      // 持久化是采集接口的服务端不变量：UI 与 od baokuan collect 走同一端点，
+      // 都会常驻；空轮次仅记 lastAttempt，不覆盖上一批非空结果。
+      const discovery = saveMediaDiscoverySnapshot(db, discoveryPlatform, {
+        source: 'manual-grab',
+        scopeKey: discoveryScopeKey,
+        query: keyword,
+        tier: parsed.tier == null ? '' : String(parsed.tier),
+        items: mediaTopicHitsFromEngine(rawTopics),
+      });
+      return res.json({
+        keyword,
+        count: parsed.count ?? 0,
+        topics: rawTopics,
+        tier: parsed.tier ?? null,
+        feishuSynced: parsed.feishu_synced !== false,
+        discovery,
+      });
     } catch (err) {
       return res.status(500).json({ error: '评分失败：' + String(err && err.message ? err.message : err) });
     } finally {
@@ -10370,7 +10368,30 @@ export async function startServer({
       if ((parsed.count ?? 0) === 0 && collectFailure) {
         return res.status(502).json({ error: collectFailure });
       }
-      return res.json({ keyword, count: parsed.count ?? 0, topics: parsed['选题候选'] ?? [], tier: parsed.tier ?? null, feishuSynced: parsed.feishu_synced !== false });
+      const rawTopics = Array.isArray(parsed['选题候选']) ? parsed['选题候选'] : [];
+      const discoveryPlatform = String(
+        req.body?.discoveryPlatform || (xhsType === 'image' ? 'note' : 'short-video'),
+      ).trim().slice(0, 100);
+      const discoveryScopeKey = String(
+        req.body?.discoveryScopeKey || `${discoveryPlatform}|${platforms}`,
+      ).trim().slice(0, 200);
+      // 持久化是采集接口的服务端不变量：UI 与 od baokuan collect 走同一端点，
+      // 都会常驻；空轮次仅记 lastAttempt，不覆盖上一批非空结果。
+      const discovery = saveMediaDiscoverySnapshot(db, discoveryPlatform, {
+        source: 'manual-grab',
+        scopeKey: discoveryScopeKey,
+        query: keyword,
+        tier: parsed.tier == null ? '' : String(parsed.tier),
+        items: mediaTopicHitsFromEngine(rawTopics),
+      });
+      return res.json({
+        keyword,
+        count: parsed.count ?? 0,
+        topics: rawTopics,
+        tier: parsed.tier ?? null,
+        feishuSynced: parsed.feishu_synced !== false,
+        discovery,
+      });
     } catch (err) {
       return res.status(500).json({ error: 'TikHub 采集/评分失败：' + String(err && err.message ? err.message : err) });
     }

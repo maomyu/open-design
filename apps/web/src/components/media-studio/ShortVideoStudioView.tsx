@@ -40,6 +40,7 @@ import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './St
 import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCards';
 import { buildStudioDraft } from './draft-builders';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
+import { keepMediaStudioListOnLoadFailure } from './refresh-state';
 import { hasFeature, useLicense } from '../../state/license';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
@@ -299,7 +300,8 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   // 按当前平台过滤单池:匹配 subPlatform;无 subPlatform 的旧作品归到抖音
   // (第一个平台,不丢)。
   const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
-    const all = (await fetchStudioArticles(PLATFORM)) ?? [];
+    const all = await fetchStudioArticles(PLATFORM);
+    if (all === null) return [];
     const list = all.filter((a) => (a.subPlatform || '抖音') === svPlatformLabel);
     setArticles(list);
     return list;
@@ -308,6 +310,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
   const selectArticle = useCallback(async (id: string | null) => {
     if (id) {
       const a = await fetchStudioArticle(PLATFORM, id);
+      if (!a) return;
       setArticle(a);
       if (a) window.localStorage.setItem(lastArticleKey, a.id);
     } else {
@@ -324,7 +327,8 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
       if (embedded && articleId) {
         await selectArticle(articleId);
         setTab('script');
-        setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+        const loaded = await fetchStudioTopics(PLATFORM);
+        setTopics((current) => keepMediaStudioListOnLoadFailure(current, loaded));
         return;
       }
       const list = await refreshArticles();
@@ -332,7 +336,8 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
       if (pick) await selectArticle(pick.id);
       else setTab('topics');
-      setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+      const loaded = await fetchStudioTopics(PLATFORM);
+      setTopics((current) => keepMediaStudioListOnLoadFailure(current, loaded));
     })();
   }, [refreshArticles, selectArticle, lastArticleKey, embedded, articleId]);
 
@@ -516,7 +521,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
           }
         });
       }
-      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics((current) => keepMediaStudioListOnLoadFailure(current, list)));
     }, 3000);
     return () => window.clearInterval(timer);
   }, [effectiveAiRunning]);
@@ -527,7 +532,7 @@ export function ShortVideoStudioView({ platform: svPlatform, entryMode = 'full',
       else if (outcome === 'error') studioToast.err('AI 任务出错，详情见底部面板');
       else studioToast.info('AI 任务已中止');
       void refreshArticles();
-      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics((current) => keepMediaStudioListOnLoadFailure(current, list)));
       const current = articleRef.current;
       if (current) {
         void fetchStudioArticle(PLATFORM, current.id).then((a) => {

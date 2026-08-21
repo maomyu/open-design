@@ -35,6 +35,7 @@ import { TopicsTab, type PickedHit } from './TopicsTab';
 import { weiboPreviewDoc } from './zhihu-preview';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
+import { keepMediaStudioListOnLoadFailure } from './refresh-state';
 import styles from './MediaStudio.module.css';
 
 const c = (key: string): string => (styles as Record<string, string | undefined>)[key] ?? '';
@@ -89,14 +90,15 @@ export function WeiboStudioView(): JSX.Element {
 
   // ---- 数据加载 ----
   const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
-    const list = (await fetchStudioArticles(PLATFORM)) ?? [];
-    setArticles(list);
-    return list;
+    const loaded = await fetchStudioArticles(PLATFORM);
+    setArticles((current) => keepMediaStudioListOnLoadFailure(current, loaded));
+    return loaded ?? [];
   }, []);
 
   const selectArticle = useCallback(async (id: string | null) => {
     if (id) {
       const a = await fetchStudioArticle(PLATFORM, id);
+      if (!a) return;
       setArticle(a);
       if (a) {
         window.localStorage.setItem(LAST_ARTICLE_KEY, a.id);
@@ -115,7 +117,8 @@ export function WeiboStudioView(): JSX.Element {
       const pick = list.find((a) => a.id === remembered) ?? list[0] ?? null;
       if (pick) await selectArticle(pick.id);
       else setTab('topics');
-      setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+      const loaded = await fetchStudioTopics(PLATFORM);
+      setTopics((current) => keepMediaStudioListOnLoadFailure(current, loaded));
     })();
   }, [refreshArticles, selectArticle]);
 
@@ -210,7 +213,7 @@ export function WeiboStudioView(): JSX.Element {
           }
         });
       }
-      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics((current) => keepMediaStudioListOnLoadFailure(current, list)));
     }, 3000);
     return () => window.clearInterval(timer);
   }, [effectiveAiRunning]);
@@ -221,7 +224,7 @@ export function WeiboStudioView(): JSX.Element {
       else if (outcome === 'error') studioToast.err('AI 任务出错，详情见底部面板');
       else studioToast.info('AI 任务已中止');
       void refreshArticles();
-      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics((current) => keepMediaStudioListOnLoadFailure(current, list)));
       const current = articleRef.current;
       if (current) {
         void fetchStudioArticle(PLATFORM, current.id).then((a) => {

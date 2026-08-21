@@ -276,8 +276,9 @@ export interface MediaSnippetResponse {
 
 // ---- topic data feeds（大家来爆文榜/微信搜一搜/双信号雷达，daemon 直调） ----
 
-/** One hot-article hit from the dajiala data feeds. Transient (not stored)
- *  until the user promotes it into a MediaTopic candidate. */
+export type MediaDiscoverySource = 'feishu-monitor' | 'manual-grab';
+
+/** One hot-article hit from a topic feed or discovery snapshot. */
 export interface MediaTopicHit {
   title: string;
   url: string;
@@ -294,6 +295,33 @@ export interface MediaTopicHit {
   sourceContent?: string;
   /** 小红书图文爆款采集时随本条带回的原图直链——「提取图文仿写」下载进图集。 */
   sourceImages?: string[];
+  /** 持久化发现结果的来源。旧的即时搜索结果可不带。 */
+  discoverySource?: MediaDiscoverySource;
+}
+
+/** 爆款发现结果的当前快照。每个创作台、来源和采集范围只保留一份当前快照；
+ *  新的空结果只更新 lastAttempt*，不会清掉上一次成功抓到的 items。 */
+export interface MediaDiscoverySnapshot {
+  id: string;
+  platform: MediaStudioPlatform;
+  source: MediaDiscoverySource;
+  scopeKey: string;
+  query: string;
+  tier: string;
+  items: MediaTopicHit[];
+  updatedAt: number;
+  lastAttemptAt: number;
+  lastAttemptStatus: 'success' | 'empty';
+}
+
+export interface MediaDiscoverySnapshotResponse {
+  snapshot: MediaDiscoverySnapshot;
+  /** 本次 items 为空，因此服务端保留了上一批非空结果。 */
+  retainedPrevious: boolean;
+}
+
+export interface MediaDiscoverySnapshotListResponse {
+  snapshots: MediaDiscoverySnapshot[];
 }
 
 export interface TopicFeedSearchRequest {

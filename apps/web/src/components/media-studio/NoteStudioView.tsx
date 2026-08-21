@@ -46,6 +46,7 @@ import { ArticleListCard, SafeHandoffCard, VersionsCard } from './StudioSharedCa
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { loadPreferredImageModel, savePreferredImageModel } from './image-model-pref';
 import { loadStudioPref, saveStudioPref } from './studio-prefs';
+import { keepMediaStudioListOnLoadFailure } from './refresh-state';
 import { useOrphanRun } from './useOrphanRun';
 import { usePlatformAccountNames } from './usePlatformAccounts';
 import { navigate } from '../../router';
@@ -268,14 +269,15 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
 
   // ---- 数据加载 ----
   const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
-    const list = (await fetchStudioArticles(PLATFORM)) ?? [];
-    setArticles(list);
-    return list;
+    const loaded = await fetchStudioArticles(PLATFORM);
+    setArticles((current) => keepMediaStudioListOnLoadFailure(current, loaded));
+    return loaded ?? [];
   }, []);
 
   const selectArticle = useCallback(async (id: string | null) => {
     if (id) {
       const a = await fetchStudioArticle(PLATFORM, id);
+      if (!a) return;
       setArticle(a);
       if (a) window.localStorage.setItem(LAST_ARTICLE_KEY, a.id);
     } else {
@@ -318,7 +320,8 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
       if (embedded && articleId) {
         await selectArticle(articleId);
         setTab('copy');
-        setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+        const loaded = await fetchStudioTopics(PLATFORM);
+        setTopics((current) => keepMediaStudioListOnLoadFailure(current, loaded));
         return;
       }
       const remembered = window.localStorage.getItem(LAST_ARTICLE_KEY);
@@ -328,12 +331,13 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
         // 直接生图:没有现成稿就自动建一篇空白草稿承载图集/文案,用户无需先去选题。
         const created = await createStudioArticle(PLATFORM, { title: '' });
         if (created) {
-          setArticles((await refreshArticles()) as MediaArticleSummary[]);
+          await refreshArticles();
           await selectArticle(created.id);
         }
         setTab('gallery');
       } else setTab('topics');
-      setTopics((await fetchStudioTopics(PLATFORM)) ?? []);
+      const loaded = await fetchStudioTopics(PLATFORM);
+      setTopics((current) => keepMediaStudioListOnLoadFailure(current, loaded));
     })();
   }, [refreshArticles, selectArticle, directImage, embedded, articleId]);
 
@@ -523,7 +527,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
           }
         });
       }
-      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics((current) => keepMediaStudioListOnLoadFailure(current, list)));
     }, 3000);
     return () => window.clearInterval(timer);
   }, [effectiveAiRunning]);
@@ -534,7 +538,7 @@ export function NoteStudioView({ entryMode = 'note', articleId }: { entryMode?: 
       else if (outcome === 'error') studioToast.err('AI 任务出错，详情见底部面板');
       else studioToast.info('AI 任务已中止');
       void refreshArticles();
-      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics((current) => keepMediaStudioListOnLoadFailure(current, list)));
       const current = articleRef.current;
       if (current) {
         void fetchStudioArticle(PLATFORM, current.id).then((a) => {

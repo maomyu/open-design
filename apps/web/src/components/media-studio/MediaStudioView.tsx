@@ -46,6 +46,7 @@ import {
 import { StudioAiPanel, type StudioAiOutcome, type StudioAiPanelHandle, type StudioAiTask } from './StudioAiPanel';
 import { NextStepBar, SaveStatusBadge, StudioToastHost, studioToast } from './StudioFeedback';
 import { ArticleListCard, VersionsCard } from './StudioSharedCards';
+import { keepMediaStudioListOnLoadFailure } from './refresh-state';
 import { openStudioBrowser } from '../../providers/media-studio';
 import { TopicsTab, type PickedHit } from './TopicsTab';
 import { useOrphanRun } from './useOrphanRun';
@@ -267,14 +268,15 @@ export function MediaStudioView(): JSX.Element {
 
   // ---- data loading ----
   const refreshArticles = useCallback(async (): Promise<MediaArticleSummary[]> => {
-    const list = (await fetchStudioArticles(PLATFORM)) ?? [];
-    setArticles(list);
-    return list;
+    const loaded = await fetchStudioArticles(PLATFORM);
+    setArticles((current) => keepMediaStudioListOnLoadFailure(current, loaded));
+    return loaded ?? [];
   }, []);
 
   const selectArticle = useCallback(async (id: string | null) => {
     if (id) {
       const a = await fetchStudioArticle(PLATFORM, id);
+      if (!a) return;
       setArticle(a);
       if (a) window.localStorage.setItem(LAST_ARTICLE_KEY, a.id);
     } else {
@@ -297,7 +299,7 @@ export function MediaStudioView(): JSX.Element {
         fetchStudioSnippets(PLATFORM),
         fetchPlatformAccounts(),
       ]);
-      setTopics(topicList ?? []);
+      setTopics((current) => keepMediaStudioListOnLoadFailure(current, topicList));
       setSnippets(snippetList);
       const platformAccounts = accountsResp?.platforms.find((p) => p.id === PLATFORM)?.accounts ?? [];
       setAccounts(platformAccounts);
@@ -498,7 +500,7 @@ export function MediaStudioView(): JSX.Element {
           }
         });
       }
-      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics((current) => keepMediaStudioListOnLoadFailure(current, list)));
     }, 3000);
     return () => window.clearInterval(timer);
   }, [effectiveAiRunning]);
@@ -509,7 +511,7 @@ export function MediaStudioView(): JSX.Element {
       else if (outcome === 'error') studioToast.err('AI 任务出错，详情见底部面板');
       else studioToast.info('AI 任务已中止');
       void refreshArticles();
-      void fetchStudioTopics(PLATFORM).then((list) => setTopics(list ?? []));
+      void fetchStudioTopics(PLATFORM).then((list) => setTopics((current) => keepMediaStudioListOnLoadFailure(current, list)));
       const current = articleRef.current;
       if (current) {
         void fetchStudioArticle(PLATFORM, current.id).then((a) => {

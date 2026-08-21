@@ -18,6 +18,8 @@ import type {
   MediaRenderResponse,
   MediaSnippet,
   MediaTopic,
+  MediaDiscoverySnapshot,
+  MediaDiscoverySnapshotResponse,
   CreateStudioCollectRequest,
   StudioCollectJob,
   StudioAiTaskRequest,
@@ -202,6 +204,17 @@ export async function fetchStudioTopics(platform: string): Promise<MediaTopic[] 
   }
 }
 
+export async function fetchStudioDiscoveries(platform: string): Promise<MediaDiscoverySnapshot[] | null> {
+  try {
+    const resp = await fetch(`${ROOT}/${encodeURIComponent(platform)}/discoveries`);
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { snapshots?: MediaDiscoverySnapshot[] };
+    return data.snapshots ?? [];
+  } catch {
+    return null;
+  }
+}
+
 export async function createStudioTopic(
   platform: string,
   body: CreateMediaTopicRequest,
@@ -288,16 +301,27 @@ export async function collectScoreTopics(
   pages = 1,
   /** 小红书内容类型:'image' 图文(图文笔记台)/'video' 视频(短视频台)——前后端对应图文笔记模块。 */
   xhsContentType?: 'image' | 'video',
-): Promise<{ topics: Array<Record<string, unknown>>; count: number; tier?: string | null; feishuSynced?: boolean } | { error: string }> {
+  discoveryTarget?: { platform: string; scopeKey: string },
+): Promise<{ topics: Array<Record<string, unknown>>; count: number; tier?: string | null; feishuSynced?: boolean; discovery?: MediaDiscoverySnapshotResponse } | { error: string }> {
   try {
     const resp = await fetch(`${ROOT}/collect-score`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword, platforms, pages, ...(criteria ? { criteria } : {}), ...(xhsContentType ? { xhsContentType } : {}) }),
+      body: JSON.stringify({
+        keyword,
+        platforms,
+        pages,
+        ...(criteria ? { criteria } : {}),
+        ...(xhsContentType ? { xhsContentType } : {}),
+        ...(discoveryTarget ? {
+          discoveryPlatform: discoveryTarget.platform,
+          discoveryScopeKey: discoveryTarget.scopeKey,
+        } : {}),
+      }),
     });
-    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string; tier?: string | null; feishuSynced?: boolean };
+    const d = (await resp.json()) as { topics?: Array<Record<string, unknown>>; count?: number; error?: string; tier?: string | null; feishuSynced?: boolean; discovery?: MediaDiscoverySnapshotResponse };
     if (!resp.ok) return { error: d.error || 'TikHub 采集/评分失败' };
-    return { topics: d.topics ?? [], count: d.count ?? 0, tier: d.tier ?? null, feishuSynced: d.feishuSynced };
+    return { topics: d.topics ?? [], count: d.count ?? 0, tier: d.tier ?? null, feishuSynced: d.feishuSynced, discovery: d.discovery };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

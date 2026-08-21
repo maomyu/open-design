@@ -2,7 +2,7 @@
 // 组合：爆文榜/搜一搜/全库搜索/需求词/对标动态）+「AI 帮我选题」。
 // 独立可用，也向写作/脚本步输送选题。
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { MediaTopic, MediaTopicHit } from '@open-design/contracts';
+import type { MediaDiscoverySnapshot, MediaTopic, MediaTopicHit } from '@open-design/contracts';
 import { Icon } from '../Icon';
 import {
   fetchAccountRank,
@@ -15,6 +15,7 @@ import {
   fetchSourceMaterial,
   downloadVideoByUrl,
   extractScriptFromVideo,
+  fetchStudioDiscoveries,
 } from '../../providers/media-studio';
 import { grabVideoSrc, exportBrowserCookies } from '../../runtime/browser-panes';
 import { studioToast } from './StudioFeedback';
@@ -23,12 +24,6 @@ import styles from './MediaStudio.module.css';
 
 const COLLECT_PLATFORM_LABEL: Record<string, string> = { douyin: '抖音', xiaohongshu: '小红书', kuaishou: '快手', bilibili: 'B站', channels: '视频号' };
 
-// 真抓爆款结果的【模块级存储 + 事件】。采集时内置浏览器会切到前台采集页,导致选题页组件卸载;
-// runDirectCollect 是独立 async 会跑完,但卸载后 setHits 失效。故把爆款结果写进模块存储 + 广播事件,
-// 选题页(重新)挂载时读回来显示,不受卸载影响。★按采集平台分桶(key=采集平台组合),否则切子平台
-// (如快手→B站)会读回上个平台的爆款结果、串台(2026-07-15 用户报)。
-const latestBaokuanHitsByPlat: Record<string, MediaTopicHit[]> = {};
-const BAOKUAN_HITS_EVENT = 'od:baokuan-hits';
 // 采集进度提示也走模块存储 + 事件:采集时选题页会被切走卸载,本地 state 会丢,导致用户看到
 // 空白以为没反应。用模块级状态,重新挂载也能显示"正在采集/评分中…",有明确加载反馈。
 let baokuanStatus = '';
@@ -159,6 +154,43 @@ function mergeHits(lists: MediaTopicHit[][]): MediaTopicHit[] {
   return [...bucket.values()].sort(
     (a, b) => b.signals.length - a.signals.length || (b.readNum ?? 0) - (a.readNum ?? 0),
   );
+}
+
+function visibleDiscoverySnapshots(
+  snapshots: MediaDiscoverySnapshot[],
+  manualScopeKey: string,
+): MediaDiscoverySnapshot[] {
+  return snapshots.filter(
+    (snapshot) => snapshot.source === 'feishu-monitor'
+      || (snapshot.source === 'manual-grab' && snapshot.scopeKey === manualScopeKey),
+  );
+}
+
+function hitsFromDiscoverySnapshots(
+  snapshots: MediaDiscoverySnapshot[],
+  manualScopeKey: string,
+): MediaTopicHit[] {
+  const sourceOrder = { 'feishu-monitor': 0, 'manual-grab': 1 } as const;
+  return visibleDiscoverySnapshots(snapshots, manualScopeKey)
+    .sort((a, b) => sourceOrder[a.source] - sourceOrder[b.source] || b.updatedAt - a.updatedAt)
+    .flatMap((snapshot) => snapshot.items.map((item) => ({
+      ...item,
+      discoverySource: snapshot.source,
+    })));
+}
+
+function replaceDiscoverySnapshot(
+  snapshots: MediaDiscoverySnapshot[],
+  snapshot: MediaDiscoverySnapshot,
+): MediaDiscoverySnapshot[] {
+  return [
+    ...snapshots.filter((item) => !(
+      item.platform === snapshot.platform
+      && item.source === snapshot.source
+      && item.scopeKey === snapshot.scopeKey
+    )),
+    snapshot,
+  ];
 }
 
 const SIGNAL_LABEL: Record<MediaTopicHit['signals'][number], string> = {
@@ -314,7 +346,14 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       setBaokuanStatus(`正在用 ${collectSource} 直采【${names}】${radarPages} 页并按爆款标准筛选评分…(约十几秒${radarPages > 1 ? '~' + radarPages * 8 + '秒' : ''})`);
       // 小红书内容类型按创作台区分:图文笔记台(platform==='note')只采【图文】,短视频台采【视频】。
       const xhsType = xhsContentType ?? (platform === 'note' ? 'image' : 'video');
-      const scored = await collectScoreTopics(kw, collectTargets, buildCriteria(), radarPages, xhsType);
+      const scored = await collectScoreTopics(
+        kw,
+        collectTargets,
+        buildCriteria(),
+        radarPages,
+        xhsType,
+        { platform, scopeKey: baokuanPlatKey },
+      );
       if ('error' in scored) { setBaokuanStatus(''); studioToast.err(scored.error); return; }
       // 评出的爆款 → hits 列表(带链接/点赞/播放/评论,可勾选),像公众号那样先列出来,
       // 再由用户勾选 +「AI 帮我选题」推荐成候选选题。不直接进候选表。
@@ -334,15 +373,28 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
           ...(typeof t['原文案'] === 'string' && t['原文案'] ? { sourceContent: String(t['原文案']) } : {}),
           ...(Array.isArray(t['原图']) ? { sourceImages: (t['原图'] as unknown[]).filter((u): u is string => typeof u === 'string') } : {}),
         }));
-      // 写模块存储(按平台分桶)+ 广播:即使采集把选题页卸载过,重新挂载也能读到本平台这批爆款。
-      latestBaokuanHitsByPlat[baokuanPlatKey] = hitList;
-      window.dispatchEvent(new CustomEvent<{ plat: string; hits: MediaTopicHit[] }>(BAOKUAN_HITS_EVENT, { detail: { plat: baokuanPlatKey, hits: hitList } }));
-      setHits(hitList);
+      // 采集接口已在 daemon 内原子落库，UI/CLI 行为一致。空批次只记录本次为空，
+      // 服务端继续返回上一批非空结果；应用重启/升级/组件卸载都不会清掉。
+      const persisted = scored.discovery ?? null;
+      if (persisted) {
+        setDiscoverySnapshots((previous) => replaceDiscoverySnapshot(previous, persisted.snapshot));
+      } else if (hitList.length > 0) {
+        // 服务端保存失败时仍展示本次结果，但明确提示尚未获得持久化保障。
+        setHits((previous) => [
+          ...previous.filter((item) => item.discoverySource !== 'manual-grab'),
+          ...hitList.map((item) => ({ ...item, discoverySource: 'manual-grab' as const })),
+        ]);
+        studioToast.err('本次爆款已抓到，但常驻保存失败——请确认后台正常后重新抓一次');
+      }
       setBaokuanStatus('');
       // 自动降档命中的档位(引擎回传):存起来显示在爆款列表上方,让用户知道这批是哪个质量档。
       const tier = 'tier' in scored ? (scored.tier ?? '') : '';
-      setCollectTier(hitList.length > 0 ? tier : '');
+      setCollectTier(persisted?.snapshot.tier ?? (hitList.length > 0 ? tier : ''));
       if (hitList.length === 0) {
+        if (persisted?.retainedPrevious) {
+          studioToast.info(`本次没有新爆款，已保留上一次的 ${persisted.snapshot.items.length} 条常驻结果，不会清空。`);
+          return;
+        }
         // 别再引导用户「勾规则再试」——勾了只会更严(关掉自动降档),越勾越少(2026-08-02 审计)。
         studioToast.info(
           radarRules.size > 0
@@ -421,19 +473,35 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     }
   };
 
-  // 内置浏览器采集(短视频爆款)从模块存储【本平台桶】恢复；其余(文章台)从 localStorage 留存恢复。
-  const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? (latestBaokuanHitsByPlat[baokuanPlatKey] ?? []) : restored.hits));
-  // 真抓爆款结果:挂载/切平台时从模块存储读回【本平台】那桶(没有就清空,不串上个平台),并监听广播。
+  const [discoverySnapshots, setDiscoverySnapshots] = useState<MediaDiscoverySnapshot[]>([]);
+  // 真抓爆款和飞书自动监控都从 SQLite 恢复。手动抓取按当前创作台/平台范围隔离；
+  // 飞书监控作为独立来源常驻，二者不会互相覆盖。
+  const [hits, setHits] = useState<MediaTopicHit[]>(() => (browserCollect ? [] : restored.hits));
   useEffect(() => {
     if (!browserCollect) return;
-    setHits(latestBaokuanHitsByPlat[baokuanPlatKey] ?? []);
-    const onHits = (ev: Event) => {
-      const d = (ev as CustomEvent<{ plat: string; hits: MediaTopicHit[] }>).detail;
-      if (d && d.plat === baokuanPlatKey) setHits(d.hits);
+    let cancelled = false;
+    const loadDiscoveries = () => void fetchStudioDiscoveries(platform).then((snapshots) => {
+      if (cancelled || snapshots == null) return;
+      setDiscoverySnapshots(snapshots);
+      const manual = snapshots.find(
+        (snapshot) => snapshot.source === 'manual-grab' && snapshot.scopeKey === baokuanPlatKey,
+      );
+      setCollectTier(manual?.tier ?? '');
+    });
+    loadDiscoveries();
+    const timer = window.setInterval(loadDiscoveries, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
-    window.addEventListener(BAOKUAN_HITS_EVENT, onHits);
-    return () => window.removeEventListener(BAOKUAN_HITS_EVENT, onHits);
-  }, [browserCollect, baokuanPlatKey]);
+  }, [browserCollect, platform, baokuanPlatKey]);
+  useEffect(() => {
+    if (browserCollect) setHits(hitsFromDiscoverySnapshots(discoverySnapshots, baokuanPlatKey));
+  }, [browserCollect, discoverySnapshots, baokuanPlatKey]);
+  const currentDiscoverySnapshots = useMemo(
+    () => visibleDiscoverySnapshots(discoverySnapshots, baokuanPlatKey),
+    [discoverySnapshots, baokuanPlatKey],
+  );
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedNotice, setFeedNotice] = useState<string | null>(restored.notice);
   const [savedHitUrls, setSavedHitUrls] = useState<Set<string>>(() => new Set(restored.savedUrls));
@@ -975,6 +1043,14 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             <style>{'@keyframes od-spin{to{transform:rotate(360deg)}}'}</style>
           </div>
         ) : null}
+        {browserCollect && currentDiscoverySnapshots.some((snapshot) => snapshot.items.length > 0) ? (
+          <div className={c('notice')} style={{ marginBottom: 8 }}>
+            常驻结果：{currentDiscoverySnapshots
+              .filter((snapshot) => snapshot.items.length > 0)
+              .map((snapshot) => `${snapshot.source === 'feishu-monitor' ? '飞书自动监控' : '真抓爆款'} ${snapshot.items.length} 条（${new Date(snapshot.updatedAt).toLocaleString()}）`)
+              .join(' · ')}
+          </div>
+        ) : null}
         {hits.length > 0 && browserCollect && collectTier ? (
           <div className={c('notice')} style={{ marginBottom: 8 }}>
             智能降档:按 <b>【{collectTier}】</b> 档采到 {hits.length} 条
@@ -986,7 +1062,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             <thead>
               <tr>
                 <th title="勾选=优先参考——AI 帮我选题时优先围绕勾选的文章深挖">选</th>
-                <th>信号</th>
+                <th>{browserCollect ? '抓取来源' : '信号'}</th>
                 <th>标题</th>
                 <th>{tikhubTargets ? '账号' : '公众号'}</th>
                 <th>数据</th>
@@ -996,8 +1072,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
             <tbody>
               {hits.slice(0, 30).map((hit) => {
                 const pickKey = hit.url || hit.title;
+                const rowKey = browserCollect ? `${hit.discoverySource ?? 'unknown'}|${pickKey}` : pickKey;
                 return (
-                  <tr key={pickKey}>
+                  <tr key={rowKey}>
                     <td>
                       <input
                         type="checkbox"
@@ -1006,7 +1083,9 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
                         onChange={() => togglePick(hit)}
                       />
                     </td>
-                    <td>{signalTag(hit.signals)}</td>
+                    <td>{browserCollect
+                      ? hit.discoverySource === 'feishu-monitor' ? '☁️ 飞书自动监控' : '⚡ 真抓爆款'
+                      : signalTag(hit.signals)}</td>
                     <td>
                       {hit.url ? (
                         <a

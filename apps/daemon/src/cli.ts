@@ -2369,6 +2369,7 @@ async function runStudio(args) {
   od studio versions <id> · od studio version-save <id> [--label l] · od studio restore <id> <versionId>
 
 【选题】
+  od studio discoveries [--platform p] [--json]               # 常驻爆款（飞书自动监控/真抓爆款分来源）
   od studio topics [--json] · topic-add --title t [--angle a] [--url u] [--source s] [--heat 高|中|低]
   od studio find --keyword "<方向>" [--feed radar|hot|search|kwdb|sug|peers] [--accounts "号1,号2"] [--days 7]
   od studio find --feed tikhub --target douyin|xiaohongshu|kuaishou|zhihu|weibo [--mode hot|search] [--keyword w]
@@ -2544,6 +2545,19 @@ async function runStudio(args) {
       process.exit(1);
     }
     return out(data, `已发到草稿箱 draft media_id: ${data?.record?.draftMediaId}（去公众号后台确认群发）`);
+  }
+  if (sub === 'discoveries') {
+    const resp = await fetch(`${base}/discoveries`);
+    if (!resp.ok) return fail(resp, 'list discoveries');
+    const data = await resp.json();
+    if (flags.json) return out(data);
+    for (const snapshot of data?.snapshots ?? []) {
+      const source = snapshot.source === 'feishu-monitor' ? '飞书自动监控' : '真抓爆款';
+      const updated = snapshot.updatedAt ? new Date(snapshot.updatedAt).toLocaleString() : '尚无成功批次';
+      console.log(`${source}  ${snapshot.items?.length ?? 0} 条  更新于 ${updated}${snapshot.query ? `  关键词:${snapshot.query}` : ''}`);
+      for (const item of snapshot.items ?? []) console.log(`  · ${item.title}${item.url ? `\n    ${item.url}` : ''}`);
+    }
+    return;
   }
   if (sub === 'topics') {
     const resp = await fetch(`${base}/topics`);
@@ -8014,10 +8028,20 @@ async function runBaokuan(args) {
         console.error('需要 --keyword <关键词>');
         process.exit(2);
       }
+      const requestedPlatforms = flags.platforms ? splitList(flags.platforms) : [];
+      const scopePlatformIds = requestedPlatforms.map((platform) => ({
+        抖音: 'douyin',
+        小红书: 'xiaohongshu',
+        快手: 'kuaishou',
+        视频号: 'channels',
+        B站: 'bilibili',
+      })[platform] || platform);
       const body = {
         keyword: flags.keyword,
-        ...(flags.platforms ? { platforms: splitList(flags.platforms) } : {}),
+        ...(requestedPlatforms.length > 0 ? { platforms: requestedPlatforms } : {}),
         ...(flags.pages ? { pages: Number(flags.pages) } : {}),
+        discoveryPlatform: 'short-video',
+        ...(scopePlatformIds.length > 0 ? { discoveryScopeKey: `short-video|${scopePlatformIds.join(',')}` } : {}),
       };
       const data = await post('/api/media-studio/collect-score', body);
       if (flags.json) return writeJson(data);
