@@ -80,7 +80,12 @@ function handleFor(ctx: EngineContext, engineDir: string): EngineHandle {
     // PYTHONUTF8:中文 Windows 的 ANSI 码页是 GBK,不钉 UTF-8 的话 ①引擎里 subprocess text=True
     // 会拿 GBK 解码 lark-cli/yt-dlp 的 UTF-8 输出(读线程炸、stdout=None)②print 中文可能
     // UnicodeEncodeError。POSIX 上本就是 UTF-8,无副作用。
-    env: { ...process.env, PATH: pathParts.join(path.delimiter), PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+    // 同 daemon 侧:摘掉 HERMES_/OPENCLAW_/LARK_CHANNEL——同机装了 hermes 时,lark-cli 会
+    // 判定自己在别的 agent 工作区里而拒绝服务(2026-08-22 客户机事故:飞书全链路瘫痪)。
+    env: {
+      ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(HERMES_|OPENCLAW_|LARK_CHANNEL)/i.test(k))),
+      PATH: pathParts.join(path.delimiter), PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
+    },
   };
 }
 

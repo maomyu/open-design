@@ -656,14 +656,31 @@ class Pipeline:
         return {"regenerated": done}
 
     # ── 入口 3：定时批量 ──
-    def run_scheduled(self) -> dict:
+    def run_scheduled(self, monitor_rows: list[dict] | None = None) -> dict:
         if not self.dry_run:
             from src.feishu import config_sync
-            applied = config_sync.sync_from_feishu(self.fs)
-            if applied:
-                logger.info(f"飞书配置热更新生效：{applied}")
-        rows = self.fs.list_records("监控配置库", filter_="CurrentValue.[是否启用]=true")
-        logger.info(f"[定时] 启用配置 {len(rows)} 条")
+            try:
+                applied = config_sync.sync_from_feishu(self.fs)
+                if applied:
+                    logger.info(f"飞书配置热更新生效：{applied}")
+            except Exception as e:  # noqa: BLE001 配置热更新失败不该拖垮整轮监控
+                logger.warning(f"飞书系统配置读取跳过：{type(e).__name__}: {str(e)[:120]}")
+        # 配置源优先级:daemon 传入的【App 本地监控配置】> 飞书监控配置库。
+        # 本地优先是 2026-08-22 客户机事故的结论:客户在界面配了 3 条启用监控,但飞书表里
+        # 只有 1 条未启用的示例行(推送没真正到位),于是整轮 runs=[] 且一声不吭——
+        # 界面配了就该能跑,飞书只作云端镜像,不该成为运行的必要条件。
+        if monitor_rows is not None:
+            rows = monitor_rows
+            logger.info(f"[定时] 启用配置 {len(rows)} 条(来源:App 本地监控配置)")
+        else:
+            try:
+                rows = self.fs.list_records("监控配置库", filter_="CurrentValue.[是否启用]=true")
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"[定时] 读飞书监控配置库失败:{type(e).__name__}: {str(e)[:160]}")
+                rows = []
+            logger.info(f"[定时] 启用配置 {len(rows)} 条(来源:飞书监控配置库)")
+        if not rows:
+            logger.warning("[定时] 没有启用的监控项——去「数据中心 → 监控配置库」添加关键词/竞品账号并勾选「是否启用」")
         summary = []
         for r in rows:
             f = r.get("fields", {})
@@ -1034,6 +1051,10 @@ def main():
     ap.add_argument("--platforms", default=",".join(S.PLATFORMS))
     ap.add_argument("--link")
     ap.add_argument("--scheduled", action="store_true")
+    ap.add_argument("--monitor-config",
+                    help="监控配置 JSON(daemon 从 App 本地库传入)。给了就用它,不再依赖飞书——"
+                         "飞书授权/同步一断,客户在界面配的监控就全哑了(2026-08-22 客户机实测:"
+                         "本地 3 条启用配置,飞书表里只有 1 条未启用的示例行,定时跑出来 runs=[])")
     ap.add_argument("--regenerate", action="store_true", help="处理飞书「重新生成」")
     ap.add_argument("--min-threshold", type=int, default=0, help="本关键词自定最低点赞/热度门槛")
     ap.add_argument("--dry-run", action="store_true", help="离线假数据跑通全链路，无需 Key")
@@ -1100,7 +1121,16 @@ def main():
                          ensure_ascii=False, indent=2))
         return
     if args.scheduled:
-        print(json.dumps(pipe.run_scheduled(), ensure_ascii=False, indent=2))
+        # daemon 传 --monitor-config 时用 App 本地配置(不依赖飞书);解析失败按未传处理。
+        rows = None
+        if args.monitor_config:
+            try:
+                parsed = json.loads(args.monitor_config)
+                if isinstance(parsed, list):
+                    rows = [r if isinstance(r, dict) and "fields" in r else {"fields": r} for r in parsed]
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"--monitor-config 解析失败,回退飞书配置:{e}")
+        print(json.dumps(pipe.run_scheduled(rows), ensure_ascii=False, indent=2))
     elif args.regenerate:
         print(json.dumps(pipe.regenerate(), ensure_ascii=False, indent=2))
     elif args.account:

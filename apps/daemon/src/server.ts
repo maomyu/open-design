@@ -443,7 +443,9 @@ import {
   mediaTopicHitsFromEngine,
   saveFeishuMonitorDiscoverySnapshots,
   saveMediaDiscoverySnapshot,
+
 } from './media-studio/discovery-store.js';
+import { listDatacenterRecords } from './media-studio/datacenter-store.js';
 import { registerPluginDraftRoutes } from './plugin-draft-routes.js';
 import { registerSkillDraftRoutes } from './skill-draft-routes.js';
 import { EmptyTranscriptError, synthesizeHandoffPrompt } from './handoff-design.js';
@@ -9712,14 +9714,31 @@ export async function startServer({
   let feishuLastLogin = null;      // 最近一次用户登录链接缓存 {url,userCode}(status 复用,避免每次刷新都换码)
   let feishuStarting = false;      // 正在发起登录(防 status 轮询并发重复起进程)
 
+  /** 剔除会让 lark-cli 切换工作区的 agent 上下文变量。
+   *
+   *  客户机装了 hermes 后,`HERMES_HOME` 让 lark-cli 判定自己跑在 hermes 里,于是拒绝所有
+   *  调用:`hermes context detected but lark-cli is not bound to it`,要求先 `config bind`;
+   *  即便绑了,profile 也会变成该 app 的 id,跟爆创固定用的 baochuang-client 对不上。
+   *  爆创用的是自己那份已授权配置,不该被同机其它 agent 的环境影响——spawn 时摘掉即可
+   *  (2026-08-22 客户机实测:摘掉后 baochuang-client 的 bot/user 身份都是 ready)。 */
+  function withoutAgentContextVars(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    const out: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(env)) {
+      if (/^(HERMES_|OPENCLAW_|LARK_CHANNEL)/i.test(k)) continue;
+      out[k] = v;
+    }
+    return out;
+  }
+
   // daemon 侧 lark-cli spawn 的环境:packaged 下先确保自带 lark-cli 已解出,再把其目录放
   // PATH 最前——客户机基本没装 lark-cli;此前只有引擎子进程 env(handleFor)带它,连接
   // 飞书流程(config init / auth login / auth status)用 daemon 自己的 PATH,会误报「未检测到 lark-cli」。
   async function larkCliSpawnEnv() {
     await ensureLarkCli(BAKUAN_ENGINE_CTX).catch(() => { /* 解压失败退回系统 PATH */ });
     const dir = larkCliRuntimeDir(BAKUAN_ENGINE_CTX);
-    if (!dir) return process.env;
-    return { ...process.env, PATH: [dir, process.env.PATH].filter(Boolean).join(path.delimiter) };
+    const base = withoutAgentContextVars(process.env);
+    if (!dir) return base;
+    return { ...base, PATH: [dir, base.PATH].filter(Boolean).join(path.delimiter) };
   }
 
   // 本机是否装了 lark-cli(装机自检;packaged 自带的也算「已装」)。
@@ -10055,7 +10074,18 @@ export async function startServer({
   }
   app.post('/api/baokuan/scheduled', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
-    await respondBaokuanLong(res, ['--scheduled'], '定时批量跑失败：');
+    // 监控配置以【App 本地库】为准传给引擎:客户在界面配好的监控项,不该因为飞书授权
+    // 或同步出问题就整轮跑空(2026-08-22 客户机实测:本地 3 条启用,飞书只有 1 条未启用的
+    // 示例行,于是 runs=[] 且毫无提示)。飞书退回为云端镜像,读不到也不影响跑。
+    const enabled = listDatacenterRecords(db, 'monitor')
+      .map((r) => r.fields as Record<string, unknown>)
+      .filter((f) => {
+        const on = f['是否启用'];
+        return on === true || on === 1 || on === '是' || String(on).toLowerCase() === 'true';
+      });
+    const args = ['--scheduled'];
+    if (enabled.length > 0) args.push('--monitor-config', JSON.stringify(enabled));
+    await respondBaokuanLong(res, args, '定时批量跑失败：');
   });
   app.post('/api/baokuan/account', async (req, res) => {
     if (!isLocalSameOrigin(req, resolvedPort)) return res.status(403).json({ error: 'cross-origin request rejected' });
