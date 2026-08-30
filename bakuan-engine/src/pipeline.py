@@ -72,6 +72,11 @@ class Pipeline:
         self._fans_cache: dict[str, int] = {}  # 作者粉丝数缓存
         self._rid_by_cid: dict[str, str] = {}  # content_id → 原始库 record_id（关联字段用）
         self.radar_items: list[dict] = []      # --radar 模式：吐给爆创选题步骤的选题候选
+        # 本轮【采到的全部爆款】(含去重跳过的)——只用于展示,不代表要精处理。
+        # 2026-08-22 客户机事故:监控词跑过几轮后,再采到的都是"已处理过"的内容而被去重
+        # 跳过,于是入候选池 0 条、快照 items=0,客户在候选区什么都看不到,判定"监控没用"。
+        # 去重是为了不重复烧钱做精处理,但【展示】不该跟着消失:采到什么就让用户看到什么。
+        self.monitor_items: list[dict] = []
         self._radar_mode: bool = False         # 雷达模式：只评分选题，跳过脚本/封面
         self._feishu_broken: bool = False      # radar 下飞书回写一旦失败即上锁，后续跳过不再慢重试
         self._collect_data: dict | None = None  # 内置浏览器采集数据 {平台:[条目]}；非空则替代 API 采集
@@ -391,6 +396,12 @@ class Pipeline:
                     # 空 ID 后缀=脏数据("平台_");strip("_")判不出(剩平台名为真值),判后缀。
                     if not rc.content_id.split("_", 1)[-1].strip("_ "):
                         continue
+                    # 展示层先收一份:本轮采到的都要能在候选区看到。
+                    # 后面的去重、阈值、爆款初筛都是【精处理的准入条件】(为省钱只对达标内容
+                    # 做拆解/脚本/封面),不该连"让用户看一眼"都一起否掉——2026-08-22 客户机
+                    # 实测:监控跑通了但默认爆款标准把 1 天窗内容全筛光,客户候选区依旧空白,
+                    # 判定"监控没用"。采到什么就展示什么,达不达标交给用户自己判断。
+                    self._collect_monitor_item(rc)
                     if not self._radar_mode and store.is_duplicate(rc.content_id, rc.fingerprint):
                         # 重复抓取(验收3):不重复建主记录,但记最新快照(供增速/快速起量)并把
                         # 最新互动数据刷回原始库那条既有主记录。
@@ -705,10 +716,46 @@ class Pipeline:
         # 顺带把本轮采到的选题候选吐回去——此前只返回计数,daemon 拿不到内容,监控采的爆款
         # 只存在于飞书,创作台候选列表里一条都看不到("监控到的视频在哪操作?" 2026-08-02 客户反馈)。
         # daemon 收到后回灌本地 media_topics,用户在创作台就能直接「去创作」。
-        items = sorted(self.radar_items,
-                       key=lambda x: (x.get("流量爆款分", 0) + x.get("精准意向分", 0)),
+        # 展示口径 = 本轮新入候选池的(radar_items,带完整评分) + 采到但被去重跳过的
+        # (monitor_items,只带基础互动数)。按链接去重,新候选优先。
+        seen_urls = {x.get("查看原文") for x in self.radar_items if x.get("查看原文")}
+        merged = list(self.radar_items) + [x for x in self.monitor_items
+                                           if x.get("查看原文") not in seen_urls]
+        items = sorted(merged,
+                       key=lambda x: (x.get("流量爆款分", 0) + x.get("精准意向分", 0),
+                                      x.get("点赞", 0) or 0),
                        reverse=True)
+        logger.info(f"[定时] 本轮展示候选 {len(items)} 条(其中 {len(self.radar_items)} 条达爆款标准已做精处理,"
+                    f"其余 {len(items) - len(self.radar_items)} 条仅采集展示)")
         return {"runs": summary, "选题候选": items}
+
+    def _collect_monitor_item(self, rc: normalize.RawContent) -> None:
+        """把一条采到的爆款收进展示列表(不做精处理时也让用户看得见)。
+
+        字段与 radar_items 对齐,前端 mediaTopicHitsFromEngine 能直接吃;没跑评分的
+        条目分数留 0,排序时自然靠后。"""
+        try:
+            raw = rc.raw if isinstance(getattr(rc, "raw", None), dict) else {}
+            item = {
+                "标题": rc.title, "平台": normalize.cn_platform(rc.platform),
+                "流量爆款分": 0, "精准意向分": 0, "热度": "", "所属榜单": [],
+                "查看原文": rc.url,
+                "点赞": rc.likes, "播放": rc.plays, "评论": rc.comments,
+                "收藏": rc.collects, "粉丝": rc.fans,
+                "评分理由": "已处理过,本轮只更新数据",
+            }
+            if rc.platform == "xiaohongshu" and raw.get("images_list"):
+                imgs = []
+                for it in raw.get("images_list") or []:
+                    if isinstance(it, dict):
+                        u = it.get("url_size_large") or it.get("url") or it.get("original")
+                        if u:
+                            imgs.append(u)
+                item["原文案"] = (raw.get("desc") or raw.get("title") or "").strip()
+                item["原图"] = imgs
+            self.monitor_items.append(item)
+        except Exception:  # noqa: BLE001 展示收集绝不能影响主链路
+            pass
 
     # ── 候选 → 评分 → 脚本 → 封面 → 复盘/成本 ──
     def _process_candidate(self, rc: normalize.RawContent, *,
