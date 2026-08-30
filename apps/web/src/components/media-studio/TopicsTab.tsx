@@ -17,6 +17,7 @@ import {
   extractScriptFromVideo,
   fetchStudioDiscoveries,
 } from '../../providers/media-studio';
+import { runScheduledMonitorNow } from '../../providers/daemon';
 import { grabVideoSrc, exportBrowserCookies } from '../../runtime/browser-panes';
 import { studioToast } from './StudioFeedback';
 import { hasFeature, useLicense } from '../../state/license';
@@ -216,7 +217,8 @@ export interface TopicsTabProps {
   aiOnly?: boolean;
   topics: MediaTopic[];
   /** 返回是否真的存成功(false=后端拒/网络错)——存为候选据此决定是否标「已存」,失败不置灰、可重试。 */
-  onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string; sourceContent?: string; sourceImages?: string[] }) => Promise<boolean>;
+  // 回传新建的选题对象(而非 boolean):监控发现行点「去创作」时,存候选后要立刻拿它进创作。
+  onAdd: (draft: { title: string; angle?: string; source?: string; url?: string; heat?: string; sourceContent?: string; sourceImages?: string[] }) => Promise<MediaTopic | null>;
   onDelete: (id: string) => Promise<void>;
   onWrite: (topic: MediaTopic) => void;
   /** picked = 用户勾选的优先参考；单篇「AI 转题」= note 空 + picked 一篇。 */
@@ -571,6 +573,39 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const canAdd = title.trim().length > 0;
   const candidates = useMemo(() => topics.filter((t) => t.status === 'candidate'), [topics]);
   const used = useMemo(() => topics.filter((t) => t.status === 'used'), [topics]);
+  // 「监控发现」= 两个来源的常驻爆款快照(☁️飞书自动监控 / ⚡真抓爆款),直接列进候选区。
+  // 2026-08-22 客户要求:两个来源都要在「候选选题」里看得见、点得动,且互不覆盖;
+  // 但不写进 media_topics 表——飞书一轮几十条,无条件入库几天就把精选候选池冲垮,
+  // 且删掉下一轮又会回来。这里只做展示层合并:存为候选才真正入库。
+  const monitorHits = useMemo(() => {
+    const taken = new Set<string>();
+    for (const t of topics) {
+      if (t.url) taken.add(t.url);
+      taken.add(t.title);
+    }
+    return hits.filter((h) => !taken.has(h.url || '') && !taken.has(h.title) && !savedHitUrls.has(h.url || h.title));
+  }, [hits, topics, savedHitUrls]);
+
+  // 「立即监控一次」(2026-08-22 客户要求:定时→手动,想监控时点一下)。跑完把新快照
+  // 拉回来,飞书结果就出现在上面的「监控发现」里;不点就不花钱(定时那份成本可省)。
+  const [monitorBusy, setMonitorBusy] = useState(false);
+  async function runMonitorNow() {
+    if (monitorBusy) return;
+    setMonitorBusy(true);
+    studioToast.info('正在跑一轮监控…按「监控配置」里启用的关键词/账号采集,通常 1-3 分钟');
+    try {
+      const r = await runScheduledMonitorNow();
+      if ('error' in r) {
+        studioToast.err(`监控失败:${r.error.slice(0, 120)}`);
+        return;
+      }
+      const snaps = await fetchStudioDiscoveries(platform);
+      if (snaps) setDiscoverySnapshots(snaps);
+      studioToast.ok('监控完成 ✓ 新结果已列在「候选选题 · 监控发现」里');
+    } finally {
+      setMonitorBusy(false);
+    }
+  }
   // 已用过默认折叠(2026-07-18 用户反馈:候选区顺序要贴操作逻辑,历史项别占视线)。
   const [showUsed, setShowUsed] = useState(false);
 
@@ -687,10 +722,10 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
   const signalTag = (signals: MediaTopicHit['signals']) =>
     signals.length >= 2 ? `⭐ ${signals.map((s) => SIGNAL_LABEL[s].replace(/^\S+\s/, '')).join('+')}` : SIGNAL_LABEL[signals[0] ?? 'trending'];
 
-  async function saveHit(hit: MediaTopicHit) {
+  async function saveHit(hit: MediaTopicHit): Promise<MediaTopic | null> {
     // 只有真存成功才标「已存」置灰(2026-07-20 审计撞出:此前无条件置灰,后端拒/网络错时
     // 假成功——候选没入库、按钮永久置灰且持久化到 localStorage,用户再也存不了这条)。
-    const ok = await onAdd({
+    const created = await onAdd({
       title: hit.title,
       source: hit.account,
       ...(hit.url ? { url: hit.url } : {}),
@@ -699,12 +734,20 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       ...(hit.sourceContent ? { sourceContent: hit.sourceContent } : {}),
       ...(hit.sourceImages && hit.sourceImages.length > 0 ? { sourceImages: hit.sourceImages } : {}),
     });
-    if (ok) {
+    if (created) {
       setSavedHitUrls((prev) => new Set(prev).add(hit.url || hit.title));
       studioToast.ok('已存为候选 ✓（下方「候选选题」可见）');
     } else {
       studioToast.err('存候选失败——请确认爆创后台在运行,稍后重试(这条没被占用,可再点)');
     }
+    return created;
+  }
+
+  /** 监控发现行的「去创作」:先落成正式候选(拿到 topic),再直接进创作——省掉用户
+   *  「先存候选、再回来点去创作」两步(2026-08-22 客户要求两个来源都能在候选区直接开工)。 */
+  async function writeFromHit(hit: MediaTopicHit) {
+    const created = await saveHit(hit);
+    if (created) onWrite(created);
   }
 
   /** 链接 → 平台名(自动填「来源」)。 */
@@ -749,7 +792,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
     if (!canAdd) return;
     // 存失败时【保留输入】并报错——旧写法无条件清空四个框,失败=内容丢了还零提示
     // (2026-08-04 审计;同文件 saveHit 已是正确范式)。
-    const ok = await onAdd({
+    const created = await onAdd({
       title: title.trim(),
       ...(angle.trim() ? { angle: angle.trim() } : {}),
       ...(source.trim() ? { source: source.trim() } : {}),
@@ -758,7 +801,7 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
       ...(fetchedMaterial?.sourceContent ? { sourceContent: fetchedMaterial.sourceContent } : {}),
       ...(fetchedMaterial?.sourceImages ? { sourceImages: fetchedMaterial.sourceImages } : {}),
     });
-    if (ok === false) {
+    if (!created) {
       studioToast.err('添加失败——确认爆创后台在运行;你填的内容已保留,可直接重试');
       return;
     }
@@ -1178,8 +1221,22 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
         ) : null}
       </div>
       <div className={c('card')}>
-        <div className={c('cardLabel')}>候选选题（{candidates.length}）</div>
-        {candidates.length === 0 ? (
+        <div className={c('cardLabel')}>
+          候选选题（{candidates.length}{monitorHits.length > 0 ? ` + 监控发现 ${monitorHits.length}` : ''}）
+          {browserCollect ? (
+            <button
+              type="button"
+              className={c('btn')}
+              style={{ float: 'right' }}
+              disabled={monitorBusy}
+              title="立刻跑一轮「监控配置」里启用的关键词/账号(按需付费,不点不花钱)"
+              onClick={() => void runMonitorNow()}
+            >
+              {monitorBusy ? '监控中…' : '⟳ 立即监控一次'}
+            </button>
+          ) : null}
+        </div>
+        {candidates.length === 0 && monitorHits.length === 0 ? (
           <div className={c('empty')}>{aiOnly ? '还没有候选——填个方向，点「AI 帮我选题」，候选由 AI 结合热点产出。' : '还没有候选——用上面「真抓爆款」或「AI 帮我选题」产出;也可在下方手动添加。'}</div>
         ) : (
           <table className={c('table')}>
@@ -1193,6 +1250,55 @@ export function TopicsTab({ platform, aiOnly = false, topics, onAdd, onDelete, o
               </tr>
             </thead>
             <tbody>
+              {/* 监控发现(2026-08-22):飞书自动监控 + 真抓爆款的常驻结果直接列在候选区,
+                  来源可辨、互不覆盖、可直接开工;点「去创作」会先自动落成正式候选。 */}
+              {monitorHits.length > 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ background: 'var(--od-surface-muted, #faf6f0)', fontSize: 12, color: '#8a7f74' }}>
+                    监控发现（{monitorHits.length}）——采集到的爆款常驻在此,点「去创作」直接开写,或「存为候选」留着
+                  </td>
+                </tr>
+              ) : null}
+              {monitorHits.map((h) => (
+                <tr key={`mh-${h.url || h.title}`}>
+                  <td>
+                    <span className={c('chip')} style={{ marginRight: 6 }}>
+                      {h.discoverySource === 'feishu-monitor' ? '☁️ 飞书监控' : '⚡ 真抓'}
+                    </span>
+                    {h.title}
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap', color: '#e8582e', fontWeight: 600 }}>
+                    {h.readNum ? `阅读 ${h.readNum}` : h.hot || (h.signals.length >= 2 ? '⭐ 双高' : '—')}
+                  </td>
+                  <td>{h.desc ? h.desc.slice(0, 40) : '—'}</td>
+                  <td>
+                    {h.url ? (
+                      <a
+                        className={c('link')}
+                        href={h.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => {
+                          if (onOpenLink && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+                            e.preventDefault();
+                            onOpenLink(h.url);
+                          }
+                        }}
+                      >
+                        {h.account || '看原文 ↗'}
+                      </a>
+                    ) : (h.account || '—')}
+                  </td>
+                  <td className={c('tdActions')}>
+                    <button type="button" className={`${c('btn')} ${c('btnPrimary')}`} onClick={() => void writeFromHit(h)}>
+                      去创作
+                    </button>{' '}
+                    <button type="button" className={c('btn')} onClick={() => void saveHit(h)}>
+                      存为候选
+                    </button>
+                  </td>
+                </tr>
+              ))}
               {candidates.map((t) => (
                 <Fragment key={t.id}>
                 <tr>

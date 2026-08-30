@@ -757,6 +757,27 @@ async function feishuCfgErr(resp: Response, fallback: string): Promise<string> {
   return `${fallback}（${resp.status}）`;
 }
 
+/** 手动跑一轮飞书监控(2026-08-22 客户要求把定时改成"想监控时点一下")。
+ *  长任务:服务端 respondBaokuanLong 先发 200 再流,失败信息在 body.error 里,
+ *  所以不能只看 resp.ok(昨日审计已记录该端点的这一特性)。 */
+export async function runScheduledMonitorNow(): Promise<{ ok: true; runs: unknown } | { error: string }> {
+  try {
+    const resp = await fetch('/api/baokuan/scheduled', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const raw = await resp.text().catch(() => '');
+    let data: Record<string, unknown> = {};
+    try { data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}; } catch { /* 非 JSON */ }
+    if (typeof data.error === 'string' && data.error) return { error: data.error };
+    if (!resp.ok) return { error: raw.slice(0, 200) || `请求失败 (${resp.status})` };
+    return { ok: true, runs: data.runs ?? null };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : '监控执行失败' };
+  }
+}
+
 // ── 爆款引擎运维面(模块9/10):成本报表/失败队列/重试/备份/开机自启 ──
 export async function fetchBaokuanCost(days = 7): Promise<import('@open-design/contracts').BaokuanCostReport | null> {
   try {

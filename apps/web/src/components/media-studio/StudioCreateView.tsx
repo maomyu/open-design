@@ -406,7 +406,7 @@ export function StudioCreateView({ onNavigate }: { onNavigate: (view: string) =>
         onAdd={async (draft) => {
           const created = await createStudioTopic(TOPIC_POOL, draft);
           if (created) setTopics((list) => [created, ...list]);
-          return Boolean(created);
+          return created ?? null;
         }}
         onDelete={async (id) => {
           if (await deleteStudioTopic(TOPIC_POOL, id)) setTopics((list) => list.filter((t) => t.id !== id));
